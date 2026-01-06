@@ -1,0 +1,28 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/wbb/catkin_ws_3d/devel/include/**",
+        "/opt/ros/noetic/include/**",
+        "/home/wbb/ws_livox/devel/include/**",
+        "/home/wbb/catkin_ws_3d/src/FAST_LIO/include/**",
+        "/home/wbb/catkin_ws_3d/src/FAST_LIO_LOCALIZATION-ROS-NOETIC/include/**",
+        "/home/wbb/catkin_ws_3d/src/MoveBase3D/global_planner_3d/include/**",
+        "/home/wbb/catkin_ws_3d/src/pointcloud_to_laserscan/include/**",
+        "/home/wbb/catkin_ws_3d/src/MoveBase3D/rover_gpr/include/**",
+        "/home/wbb/catkin_ws_3d/src/sentry_tools/velocity_smoother_ema/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}
