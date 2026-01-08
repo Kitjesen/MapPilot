@@ -13,7 +13,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2")
 set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -march=native") # have to enable because of gtsam
 
-set(GTSAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/gtsam-4.1.1/install/lib/cmake/GTSAM)
+# set(GTSAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/gtsam-4.1.1/install/lib/cmake/GTSAM)
 
 find_package(GTSAM REQUIRED)
 find_package(Eigen3 REQUIRED)

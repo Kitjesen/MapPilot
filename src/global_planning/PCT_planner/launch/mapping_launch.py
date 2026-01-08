@@ -5,6 +5,10 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
+#command to save the map
+#    ros2 service call /pgo/save_map interface/srv/SaveMaps "{file_path: '/home/sunrise/my_map.pcd'}"
+
+
 def generate_launch_description():
     """
     Launch file for Mapping Phase only.

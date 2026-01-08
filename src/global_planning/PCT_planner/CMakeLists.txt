@@ -18,6 +18,11 @@ install(DIRECTORY planner
   DESTINATION share/${PROJECT_NAME}
 )
 
+# Install Resources (Map files etc)
+install(DIRECTORY rsc
+  DESTINATION share/${PROJECT_NAME}
+)
+
 # Install Entry Point Script
 install(PROGRAMS planner/scripts/global_planner.py
   DESTINATION lib/${PROJECT_NAME}

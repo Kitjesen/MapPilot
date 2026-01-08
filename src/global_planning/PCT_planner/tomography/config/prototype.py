@@ -3,10 +3,10 @@ from sensor_msgs.msg import PointField
 
 
 POINT_FIELDS_XYZI = [
-    PointField('x', 0, PointField.FLOAT32, 1),
-    PointField('y', 4, PointField.FLOAT32, 1),
-    PointField('z', 8, PointField.FLOAT32, 1),
-    PointField('intensity', 12, PointField.FLOAT32, 1)
+    PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+    PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+    PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+    PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1)
 ]
 
 

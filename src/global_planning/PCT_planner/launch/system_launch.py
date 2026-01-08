@@ -28,12 +28,10 @@ def generate_launch_description():
     # Launch Arguments
     map_path_arg = DeclareLaunchArgument(
         'map_path',
-        default_value='',
+        default_value='/home/sunrise/data/SLAM/navigation/src/global_planning/PCT_planner/rsc/tomogram/spiral0.3_2',
         description='Path to map file (without extension). E.g. /home/user/map. Layout: map.pcd and map.pickle'
     )
     
-    map_path = LaunchConfiguration('map_path')
-
     map_path = LaunchConfiguration('map_path')
     
     # Initial Pose Arguments
@@ -282,21 +280,21 @@ def generate_launch_description():
     # --- Hardware Driver ---
     
     # Generic Robot Driver: Topic -> Motors
-    robot_driver = Node(
-        package='robot_driver',
-        executable='driver_node.py',
-        name='robot_driver',
-        output='screen',
-        parameters=[{
-            'control_rate': 50.0,
-            'robot_port': '/dev/ttyUSB0', 
-            'baudrate': 115200
-        }],
-        remappings=[
-            ('/wheel_odom', '/wheel_odom'),
-            ('/cmd_vel', '/cmd_vel')
-        ]
-    )
+    # robot_driver = Node(
+    #    package='robot_driver',
+    #    executable='driver_node.py',
+    #    name='robot_driver',
+    #    output='screen',
+    #    parameters=[{
+    #        'control_rate': 50.0,
+    #        'robot_port': '/dev/ttyUSB0', 
+    #        'baudrate': 115200
+    #    }],
+    #    remappings=[
+    #        ('/wheel_odom', '/wheel_odom'),
+    #        ('/cmd_vel', '/cmd_vel')
+    #    ]
+    # )
 
     # --- Joystick (Optional for manual control) ---
     joy_dev_arg = DeclareLaunchArgument(
@@ -347,7 +345,7 @@ def generate_launch_description():
         terrain_analysis_ext_node,
         local_planner_node,
         path_follower_node,
-        robot_driver,
+        # robot_driver,
         joy_node,
         # visualization_node
     ])

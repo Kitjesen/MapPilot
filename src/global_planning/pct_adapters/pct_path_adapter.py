@@ -21,6 +21,11 @@ from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PointStamped, Point
 import time
 import math
+import numpy as np
+# Monkey patch for transforms3d compatibility with newer numpy
+if not hasattr(np, 'float'):
+    np.float = float
+
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
