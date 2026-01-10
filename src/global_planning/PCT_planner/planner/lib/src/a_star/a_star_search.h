@@ -92,6 +92,15 @@ class Astar {
   void ConvertClosedSetToMatrix(
       const std::unordered_map<int, Node*>& closed_set);
 
+  double GetNeighborAverageCost(const Node* node1);
+
+  bool IsValidNodeCoord(int layer, int y, int x) const;
+
+  //后端路径重新优化，选取代价更低的路径
+  bool RefinePathSerach();
+
+
+
  private:
   HeuristicType h_type_ = kDiagonal;
 
@@ -104,7 +113,7 @@ class Astar {
   double cost_threshold_ = 35;
   double step_cost_weight_ = 1.0;
 
-  int search_layer_depth_ = 1;
+  // int search_layer_depth_ = 1;
   std::vector<int> search_layers_offset_;
 
   bool debug_ = false;

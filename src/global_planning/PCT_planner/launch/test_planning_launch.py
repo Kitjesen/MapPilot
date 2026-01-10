@@ -22,13 +22,13 @@ def generate_launch_description():
 
     # 2. Static TF (Simulate Robot at Origin)
     # map -> body (Robot Frame)
-    # COMMENTED OUT: Use manual command to set start position
-    # static_tf_node = Node(
-    #     package='tf2_ros',
-    #     executable='static_transform_publisher',
-    #     name='static_tf_pub',
-    #     arguments=['0', '0', '0', '0', '0', '0', 'map', 'body']
-    # )
+    # ENABLED for test mode (connects map->odom, effectively assuming odom starts at map origin)
+    static_tf_node = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_pub',
+        arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom']
+    )
 
     # 3. PCT Global Planner
     pct_share = get_package_share_directory('pct_planner')
@@ -111,7 +111,8 @@ def generate_launch_description():
             'joyToSpeedDelay': 2.0,
         }],
         remappings=[
-            ('/terrain_map', '/terrain_map_dummy') # Connect to nothing
+            ('/terrain_map', '/terrain_map_dummy'), # Connect to nothing
+            ('/cloud_registered', '/cloud_map')     # Use Global Frame
         ]
     )
 
@@ -128,7 +129,7 @@ def generate_launch_description():
             'pubSkipNum': 1,
             'twoWayDrive': True,
             'lookAheadDis': 0.5,
-            'maxSpeed': 0.5,
+            'maxSpeed': 1.0,
             'maxAccel': 1.0, 
             'autonomyMode': True,
             'autonomySpeed': 0.5,
@@ -138,7 +139,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         map_path_arg,
-        # static_tf_node, # Disabled
+        static_tf_node, # Enabled for map->odom
         pct_planner,
         pct_adapter,
         local_planner_node,

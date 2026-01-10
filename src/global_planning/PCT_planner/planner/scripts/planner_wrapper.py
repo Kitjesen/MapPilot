@@ -103,33 +103,26 @@ class TomogramPlanner(object):
     def plan(self, start_pos, end_pos, start_height=0, end_height=0):
         """
         规划路径的方法，支持设置起始点和终点的高度。
-
-        :param start_pos: 起始点的二维位置 (x, y)
-        :param end_pos: 终点的二维位置 (x, y)
-        :param start_height: 起始点的高度（切片索引）
-        :param end_height: 终点的高度（切片索引）
         """
         
         # 将起始点和终点的二维位置转换为索引
         self.start_idx[1:] = self.pos2idx(start_pos)
         self.end_idx[1:] = self.pos2idx(end_pos)
         
-        print("self.slice_h0:", self.slice_h0)
-        print("self.slice_dh:", self.slice_dh)
-        print("self.resolution:", self.resolution)
-
-        # print("self.center:", self.center)
-        # print("self.offset:", self.offset)
-
-        # 设置起始点和终点的高度
-        self.start_idx[0] = self.height2idx(start_height)
-        self.end_idx[0] = self.height2idx(end_height)
+        # 使用 pos2slice 替代旧的 height2idx，与参考项目对齐
+        # 注意：这里我们优先使用传入的 height 参数，如果它是 0 且 pos Z 信息缺失才用默认逻辑
+        # 在 global_planner.py 中，我们传入的是 start_h 和 end_h (来自 get_robot_pose 和 goal_pose.z)
         
-        # print("self.start_idx:", self.start_idx)
-        # print("self.end_idx:", self.end_idx)
+        self.start_idx[0] = self.pos2slice(start_height)
+        self.end_idx[0] = self.pos2slice(end_height)
+        
+        # 调试信息
+        # print(f"Plan request: StartIdx={self.start_idx}, EndIdx={self.end_idx}")
+
         self.planner.plan(self.start_idx, self.end_idx, True)
         path_finder: a_star.Astar = self.planner.get_path_finder()
         path = path_finder.get_result_matrix()
+        
         if len(path) == 0:
             return None
 
@@ -144,9 +137,6 @@ class TomogramPlanner(object):
         traj_raw = optimizer.get_result_matrix()
         layers = optimizer.get_layers()
         heights = optimizer.get_heights()
-        
-        # print("heights:", heights[554:554+10])
-        # print("heights.shape:", heights.shape)  
 
         opt_init = np.concatenate([opt_init.transpose(1, 0), init_layer.reshape(-1, 1)], axis=-1)
         traj = np.concatenate([traj_raw, layers.reshape(-1, 1)], axis=-1)
@@ -157,17 +147,34 @@ class TomogramPlanner(object):
         return traj_3d
     
     def pos2idx(self, pos):
+        # 移除打印，保持性能
         pos = pos - self.center
         idx = np.round(pos / self.resolution).astype(np.int32) + self.offset
+        
+        # Safety clamp for XY
+        if self.map_dim:
+            idx[0] = np.clip(idx[0], 0, self.map_dim[0] - 1)
+            idx[1] = np.clip(idx[1], 0, self.map_dim[1] - 1)
+
         idx = np.array([idx[1], idx[0]], dtype=np.float32)
         return idx
     
+    def pos2slice(self, z):
+        """将z坐标转换为切片索引 (Copied from reference project)"""
+        if self.slice_dh is None or self.slice_dh == 0:
+            return 0.0
+            
+        # 计算相对于起始高度的切片数
+        slice_offset = (z - self.slice_h0) / self.slice_dh
+        
+        # 转换为整数索引并确保在有效范围内
+        slice_idx = np.round(slice_offset)
+        
+        if self.n_slice is not None:
+             slice_idx = max(0.0, min(float(slice_idx), float(self.n_slice - 1)))
+        
+        return float(slice_idx)
+
+    # 兼容旧接口，将其指向新函数
     def height2idx(self, height):
-        height = height + 0.108
-        if height > 11.3:
-            height = 11.3
-        idx = height *6.0/11.9
-        # print("height:", height)
-        # idx = height * self.slice_dh
-        # print("idx:", idx)
-        return idx
+        return self.pos2slice(height)

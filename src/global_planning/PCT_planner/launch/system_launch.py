@@ -161,8 +161,7 @@ def generate_launch_description():
             'checkCollision': True,
         }],
         remappings=[
-        #    ('/state_estimation', '/Odometry'),
-        #    ('/registered_scan', '/cloud_registered')
+            ('/cloud_registered', '/cloud_map') # Use Global Frame PointCloud
         ]
     )
 
@@ -192,8 +191,7 @@ def generate_launch_description():
             'localTerrainMapRadius': 4.0,
         }],
         remappings=[
-        #    ('/state_estimation', '/Odometry'),     # Configured in C++
-        #    ('/registered_scan', '/cloud_registered'), # Configured in C++
+            ('/cloud_registered', '/cloud_map'), # Use Global Frame PointCloud
             ('/terrain_map', '/terrain_map')
         ]
     )
@@ -246,8 +244,7 @@ def generate_launch_description():
             'joyToSpeedDelay': 2.0,
         }],
         remappings=[
-        #    ('/state_estimation', '/Odometry'),
-        #    ('/registered_scan', '/cloud_registered'),
+            ('/cloud_registered', '/cloud_map'), # Use Global Frame PointCloud
             ('/terrain_map', '/terrain_map')
         ]
     )
@@ -335,6 +332,7 @@ def generate_launch_description():
     return LaunchDescription([
         map_path_arg,
         x_arg, y_arg, z_arg, yaw_arg,
+        joy_dev_arg,
         livox_launch,
         lio_node,
         localizer_node,

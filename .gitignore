@@ -1,7 +1,62 @@
+# ROS 2 编译产物
 build/
 install/
 log/
+
+# ROS bag 文件（通常很大）
 *.bag
-*.db
+*.db3
+*.mcap
+
+# Python 缓存
 *.pyc
 __pycache__/
+*.py[cod]
+*$py.class
+
+# C++ 编译产物
+*.o
+*.so
+*.a
+*.dylib
+*.exe
+*.out
+
+
+!src/global_planning/PCT_planner/rsc/PCD/example.pcd
+!src/global_planning/PCT_planner/rsc/tomogram/example.pickle
+
+# IDE 和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 日志文件
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+# ROS bag 数据库文件
+*.db3
+*.mcap
+
+# C++ 编译产物
+*.so
+*.a
+*.o
+
+# 大型地图文件（根据需要调整）
+maps/*.pcd
+src/global_planning/PCT_planner/rsc/PCD/*.pcd
+src/global_planning/PCT_planner/rsc/tomogram/*.pickle
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

@@ -1,0 +1,3 @@
+[submodule "src/utils/OrbbecSDK_ROS2"]
+	path = src/utils/OrbbecSDK_ROS2
+	url = https://gitee.com/orbbecdeveloper/OrbbecSDK_ROS2.git

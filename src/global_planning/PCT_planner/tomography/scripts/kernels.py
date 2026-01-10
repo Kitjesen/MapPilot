@@ -1,6 +1,8 @@
 import numpy as np
+from numba import jit, prange
 
 
+@jit(nopython=True)
 def get_index_map_1d(px, py, cx, cy, resolution, n_row, n_col):
     """Return 1D index of a point (x, y) in a layer"""
     idx_x = int(round((px - cx) / resolution)) + n_row // 2
@@ -11,14 +13,16 @@ def get_index_map_1d(px, py, cx, cy, resolution, n_row, n_col):
     return n_col * idx_x + idx_y
 
 
+@jit(nopython=True)
 def get_index_block_1d(idx, layer_n, layer_size):
     """Return 1D index of a point (x, y) in multi-layer map block"""
     return layer_size * layer_n + idx
 
 
+@jit(nopython=True)
 def tomographyKernel_cpu(points, center, layers_g, layers_c, resolution, n_row, n_col, n_slice, slice_h0, slice_dh):
     """
-    CPU version of tomography kernel
+    CPU version of tomography kernel (Accelerated with Numba)
     Processes points to build ground and ceiling layers
     """
     cx, cy = center[0], center[1]
@@ -39,12 +43,18 @@ def tomographyKernel_cpu(points, center, layers_g, layers_c, resolution, n_row, 
             
             if pz <= slice_height:
                 # Update ground layer (take maximum)
-                layers_g.flat[block_idx] = max(layers_g.flat[block_idx], pz)
+                # Note: max() between float and memory view works in Numba
+                val = layers_g.flat[block_idx]
+                if pz > val:
+                    layers_g.flat[block_idx] = pz
             else:
                 # Update ceiling layer (take minimum)
-                layers_c.flat[block_idx] = min(layers_c.flat[block_idx], pz)
+                val = layers_c.flat[block_idx]
+                if pz < val:
+                    layers_c.flat[block_idx] = pz
 
 
+@jit(nopython=True)
 def get_idx_relative(idx, dx, dy, n_row, n_col, layer_size):
     """Return 1D index of the relative point (x+dx, y+dy) in multi-layer map block"""
     idx_2d = idx % layer_size
@@ -61,12 +71,13 @@ def get_idx_relative(idx, dx, dy, n_row, n_col, layer_size):
     return n_col * dx + dy + idx
 
 
+@jit(nopython=True, parallel=True)
 def travKernel_cpu(interval, grad_mag_sq, grad_mag_max, trav_cost, 
                    n_row, n_col, half_kernel_size, 
                    interval_min, interval_free, step_cross, step_stand, 
                    standable_th, cost_barrier):
     """
-    CPU version of traversability kernel
+    CPU version of traversability kernel (Accelerated with Numba)
     Computes travel cost based on interval and terrain gradient
     """
     layer_size = n_row * n_col
@@ -74,15 +85,19 @@ def travKernel_cpu(interval, grad_mag_sq, grad_mag_max, trav_cost,
     step_stand_sq = step_stand ** 2
     
     total_size = interval.size
-    for i in range(total_size):
+    # Parallel loop over all grid cells
+    for i in prange(total_size):
         if interval.flat[i] < interval_min:
             trav_cost.flat[i] = cost_barrier
             continue
         else:
-            trav_cost.flat[i] += max(0.0, 20 * (interval_free - interval.flat[i]))
+            # Use separate variable to avoid read-write race if any (though i is unique here)
+            cost = 0.0
+            cost += max(0.0, 20 * (interval_free - interval.flat[i]))
             
         if grad_mag_sq.flat[i] <= step_stand_sq:
-            trav_cost.flat[i] += 15 * grad_mag_sq.flat[i] / step_stand_sq
+                cost += 15 * grad_mag_sq.flat[i] / step_stand_sq
+                trav_cost.flat[i] += cost
             continue
         else:
             if grad_mag_max.flat[i] <= step_cross_sq:
@@ -99,22 +114,25 @@ def travKernel_cpu(interval, grad_mag_sq, grad_mag_max, trav_cost,
                     trav_cost.flat[i] = cost_barrier
                     continue
                 else:
-                    trav_cost.flat[i] += 20 * grad_mag_max.flat[i] / step_cross_sq
+                        cost += 20 * grad_mag_max.flat[i] / step_cross_sq
+                        trav_cost.flat[i] += cost
             else:
                 trav_cost.flat[i] = cost_barrier
                 continue
 
 
+@jit(nopython=True, parallel=True)
 def inflationKernel_cpu(trav_cost, score_table, inflated_cost, 
                         n_row, n_col, half_kernel_size):
     """
-    CPU version of inflation kernel
+    CPU version of inflation kernel (Accelerated with Numba)
     Applies inflation to travel cost map
     """
     layer_size = n_row * n_col
     total_size = trav_cost.size
     
-    for i in range(total_size):
+    # Parallel loop
+    for i in prange(total_size):
         counter = 0
         max_cost = inflated_cost.flat[i]
         

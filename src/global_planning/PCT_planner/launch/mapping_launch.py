@@ -63,16 +63,17 @@ def generate_launch_description():
     # rviz_node = Node( ...)
 
     # --- Static Transforms ---
-    tf_map_lidar = Node(
+    # Connect standard ROS 'map' frame to FastLIO's 'odom' frame
+    tf_map_odom = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='map_to_lidar_publisher',
-        arguments=['0', '0', '0', '0', '0', '0', 'map', 'lidar']
+        name='map_to_odom_publisher',
+        arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom']
     )
 
     return LaunchDescription([
         livox_launch,
-        tf_map_lidar,
+        tf_map_odom,
         lio_node,
         pgo_node
     ])
