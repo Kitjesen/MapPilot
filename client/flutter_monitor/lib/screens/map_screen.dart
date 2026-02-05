@@ -21,6 +21,7 @@ class _MapScreenState extends State<MapScreen> {
   Pose? _currentPose;
   StreamSubscription? _subscription;
   final TransformationController _transformController = TransformationController();
+  double _currentYaw = 0.0;
 
   @override
   void initState() {
@@ -46,6 +47,13 @@ class _MapScreenState extends State<MapScreen> {
       if (!mounted) return;
       setState(() {
         _currentPose = state.pose;
+        
+        // Calculate Yaw
+        final q = state.pose.orientation;
+        final siny_cosp = 2 * (q.w * q.z + q.x * q.y);
+        final cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
+        _currentYaw = math.atan2(siny_cosp, cosy_cosp);
+
         final point = Offset(state.pose.position.x, state.pose.position.y);
         
         if (_path.isEmpty || (_path.last - point).distance > 0.05) {
@@ -124,6 +132,35 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
           
+          // Floating Compass
+          Positioned(
+            left: 20,
+            top: MediaQuery.of(context).padding.top + 60,
+            child: GlassCard(
+              borderRadius: 30,
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                children: [
+                  Transform.rotate(
+                    angle: -_currentYaw, // Rotate opposite to robot to show North relative to robot? 
+                    // Or if map is fixed North-up, and robot rotates, then compass should just point North (fixed).
+                    // But if we want to show Robot Heading, we rotate the arrow.
+                    // Let's assume Map is North-Up (fixed).
+                    // So a Compass usually points North. If the map is fixed, North is always Up.
+                    // If we want a "Heading Indicator", it rotates to match the robot.
+                    // Let's make a Heading Indicator.
+                    child: const Icon(Icons.navigation, color: Colors.blue, size: 32),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${(_currentYaw * 180 / math.pi).toStringAsFixed(0)}°',
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           // Floating Controls
           Positioned(
             right: 20,

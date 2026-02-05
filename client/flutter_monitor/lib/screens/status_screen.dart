@@ -14,7 +14,7 @@ class StatusScreen extends StatefulWidget {
   State<StatusScreen> createState() => _StatusScreenState();
 }
 
-class _StatusScreenState extends State<StatusScreen> {
+class _StatusScreenState extends State<StatusScreen> with SingleTickerProviderStateMixin {
   StreamSubscription<FastState>? _fastStateSubscription;
   StreamSubscription<SlowState>? _slowStateSubscription;
   
@@ -25,10 +25,22 @@ class _StatusScreenState extends State<StatusScreen> {
   DateTime? _lastUpdateTime;
   String _connectionStatus = 'Connected';
 
+  late AnimationController _breathingController;
+  late Animation<double> _breathingAnimation;
+
   @override
   void initState() {
     super.initState();
     _startStreaming();
+    
+    _breathingController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+    
+    _breathingAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _breathingController, curve: Curves.easeInOut),
+    );
   }
 
   void _startStreaming() {
@@ -79,7 +91,7 @@ class _StatusScreenState extends State<StatusScreen> {
   void dispose() {
     _fastStateSubscription?.cancel();
     _slowStateSubscription?.cancel();
-    // widget.client.disconnect(); // Do not disconnect shared client
+    _breathingController.dispose();
     super.dispose();
   }
 
@@ -99,13 +111,28 @@ class _StatusScreenState extends State<StatusScreen> {
               color: _latestFastState != null ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
               child: Row(
                 children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _latestFastState != null ? const Color(0xFF34C759) : const Color(0xFFFF3B30),
-                      shape: BoxShape.circle,
-                    ),
+                  AnimatedBuilder(
+                    animation: _breathingAnimation,
+                    builder: (context, child) {
+                      return Opacity(
+                        opacity: _latestFastState != null ? _breathingAnimation.value : 1.0,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: _latestFastState != null ? const Color(0xFF34C759) : const Color(0xFFFF3B30),
+                            shape: BoxShape.circle,
+                            boxShadow: _latestFastState != null ? [
+                              BoxShadow(
+                                color: const Color(0xFF34C759).withOpacity(0.5),
+                                blurRadius: 6,
+                                spreadRadius: 1,
+                              )
+                            ] : [],
+                          ),
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -158,16 +185,32 @@ class _StatusScreenState extends State<StatusScreen> {
     );
   }
 
+  Widget _buildAssetIcon(String path, {double height = 24, Color? color}) {
+    return Image.asset(
+      path,
+      height: height,
+      color: color,
+      errorBuilder: (context, error, stackTrace) {
+        // Fallback to standard icons if asset fails
+        IconData fallbackIcon;
+        if (path.contains('battery')) fallbackIcon = Icons.battery_std;
+        else if (path.contains('processor')) fallbackIcon = Icons.memory;
+        else if (path.contains('speedometer')) fallbackIcon = Icons.speed;
+        else if (path.contains('signal')) fallbackIcon = Icons.wifi;
+        else fallbackIcon = Icons.smart_toy;
+        
+        return Icon(fallbackIcon, size: height, color: color ?? Colors.black54);
+      },
+    );
+  }
+
   Widget _buildMainStatusCard() {
     final pose = _latestFastState!.pose;
     return GlassCard(
       padding: const EdgeInsets.all(24),
       child: Column(
         children: [
-          // Using Icon as fallback/primary if asset not loaded, but user asked for generated icons.
-          // Since I can't guarantee asset loading in preview, I'll use a large icon or the asset if I can.
-          // Let's use the asset I generated.
-          Image.asset('assets/icon_robot_model.png', height: 120, color: Colors.black87),
+          _buildAssetIcon('assets/icon_robot_model.png', height: 120, color: Colors.black87),
           const SizedBox(height: 24),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -190,8 +233,9 @@ class _StatusScreenState extends State<StatusScreen> {
         label: 'Battery',
         value: battery.toStringAsFixed(0),
         unit: '%',
-        icon: Icon(
-          battery > 20 ? Icons.battery_full : Icons.battery_alert,
+        icon: _buildAssetIcon(
+          'assets/icon_battery.png', 
+          height: 24,
           color: battery > 20 ? Colors.green : Colors.red,
         ),
       ),
@@ -206,7 +250,7 @@ class _StatusScreenState extends State<StatusScreen> {
         label: 'CPU Load',
         value: cpu.toStringAsFixed(0),
         unit: '%',
-        icon: const Icon(Icons.memory, color: Colors.blue),
+        icon: _buildAssetIcon('assets/icon_processor.png', height: 24, color: Colors.blue),
       ),
     );
   }
@@ -224,7 +268,7 @@ class _StatusScreenState extends State<StatusScreen> {
             label: 'Linear Velocity',
             value: linear.toStringAsFixed(2),
             unit: 'm/s',
-            icon: const Icon(Icons.speed, color: Colors.orange),
+            icon: _buildAssetIcon('assets/icon_speedometer.png', height: 24, color: Colors.orange),
           ),
           Container(width: 1, height: 40, color: Colors.black12),
           ValueDisplay(
@@ -247,7 +291,7 @@ class _StatusScreenState extends State<StatusScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.wifi, size: 20, color: Colors.black54),
+              _buildAssetIcon('assets/icon_signal.png', height: 20, color: Colors.black54),
               const SizedBox(width: 8),
               Text(
                 'TOPIC RATES',
