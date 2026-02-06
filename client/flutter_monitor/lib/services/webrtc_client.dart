@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:grpc/grpc.dart';
 
-import '../generated/data.pbgrpc.dart';
+import 'package:robot_proto/src/data.pbgrpc.dart';
 
 /// WebRTC 连接状态
 enum WebRTCConnectionState {

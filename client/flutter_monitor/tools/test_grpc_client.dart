@@ -2,9 +2,9 @@
 
 import 'dart:io';
 import 'package:grpc/grpc.dart';
-import 'lib/generated/telemetry.pbgrpc.dart';
-import 'lib/generated/system.pbgrpc.dart';
-import 'lib/generated/google/protobuf/empty.pb.dart';
+import 'package:robot_proto/src/telemetry.pbgrpc.dart';
+import 'package:robot_proto/src/system.pbgrpc.dart';
+import 'package:protobuf/well_known_types/google/protobuf/empty.pb.dart';
 
 void main(List<String> args) async {
   final host = args.isNotEmpty ? args[0] : '192.168.66.190';

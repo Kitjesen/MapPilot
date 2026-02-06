@@ -299,14 +299,14 @@ DataService 提供：
 
 ## 11. 实施计划（按产品里程碑）
 
-### Phase 0（Week 0–1）：网络与基础设施
+### Phase 0（Week 0–1）：网络与基础设施 ✅ 大部分完成（2026-02-06）
 
-* [ ] 机器人 AP 配置（SSID/密码/网段/IP 可配置）
-* [ ] mDNS 配置（`robot.local` 可解析）+ 备用固定 IP
-* [ ] 端口白名单与防火墙规则（仅开放 50051/8080/必要端口）
-* [ ] 远程端联通性验证（手机/平板/PC 接入 AP）
+* [ ] 机器人 AP 配置（SSID/密码/网段/IP 可配置）— 当前通过现有 Wi-Fi 网络可达
+* [x] mDNS 配置（`robot.local` → 192.168.66.190）+ avahi gRPC 服务发现（_grpc._tcp）
+* [x] 端口白名单与防火墙规则（iptables：SSH/gRPC/mDNS/WebRTC UDP/ICMP，其余 DROP）
+* [x] 远程端联通性验证（grpcurl via 192.168.66.190:50051 验证通过）
 
-### Phase 1（Week 1–2）：主干打通
+### Phase 1（Week 1–2）：主干打通 ✅ 已完成
 
 * [x] 定义 proto（System/Control/Telemetry/Data + common）
 * [x] gRPC Gateway 跑通：fast_state、AcquireLease、StreamTeleop（空实现可）
@@ -314,23 +314,35 @@ DataService 提供：
 * [x] App：能连上、看 fast_state、发 teleop（基础 UI）
 * [x] **[新增]** DataService 图像流（gRPC）跑通
 
+### Phase 1.5（验证 & Bug 修复）✅ 已完成（2026-02-06）
+
+* [x] grpcurl 接口逐一验证（4 个 Service、17 个测试项全部通过）
+* [x] Bug 修复：Heartbeat RTT 计算负值 → 使用纳秒精度 + abs()
+* [x] Bug 修复：SlowState 模式硬编码 → ModeProvider 回调从 ControlService 实时获取
+* [x] 安装 libdatachannel 0.24.1（从源码编译，ARM64）
+* [x] WebRTC Bridge 启用：SDP Answer + ICE Candidate 生成验证通过
+* [x] WebRTCSignaling 双向流验证通过（Offer → Answer + ICE 完整握手）
+
 ### Phase 2（Week 3–4）：控制与任务产品化
 
-* [ ] 事务型 RPC：SetMode / StartTask / CancelTask + request_id 幂等
-* [ ] Lease 续约/抢占规则
-* [ ] event_stream（含回放与 ack）
+* [x] 事务型 RPC：SetMode / StartTask / CancelTask + request_id 幂等（已实现）
+* [x] Lease 续约/抢占规则（已实现，AcquireLease/RenewLease/ReleaseLease 验证通过）
+* [x] event_stream（含回放与 ack）（EventBuffer 已实现，回放验证通过）
 * [ ] 弱网断连恢复流程跑通（含 teleop 失联停车）
+* [ ] 事件系统与 ROS2 `/diagnostics` 集成
 
 ### Phase 3（Week 5–6）：视频产品化
 
-* [ ] WebRTC 推流（Jetson NVENC）(若 gRPC 流满足需求可推迟)
-* [ ] DataService：StartCamera/StopCamera/SwitchProfile
+* [x] WebRTC 信令通道（gRPC 双向流）打通
+* [x] libdatachannel 集成（PeerConnection + ICE + SDP）
+* [ ] WebRTC 推流（实际视频帧发送，需 H.264 编码器集成）
+* [ ] DataService：StartCamera/StopCamera/SwitchProfile（旧接口可用，需配置 webrtc_enabled）
 * [ ] Videos 降级策略 + 反馈到 slow_state
 
 ### Phase 4（Week 7–8）：数据面与运维能力
 
-* [ ] 点云订阅（profile、预算约束、压缩）
-* [ ] 地图/日志下载（分块）
+* [ ] 点云订阅（profile、预算约束、压缩）— Subscribe 接口已实现，需有 publisher 测试
+* [ ] 地图/日志下载（分块）— DownloadFile 接口已实现
 * [ ] 权限（viewer/operator/admin）与审计日志（P1）
 
 ---

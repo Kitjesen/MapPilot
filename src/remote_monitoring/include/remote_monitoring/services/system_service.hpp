@@ -1,6 +1,10 @@
 #pragma once
 
+#include <memory>
+#include <string>
+
 #include "grpcpp/grpcpp.h"
+#include "rclcpp/rclcpp.hpp"
 #include "system.grpc.pb.h"
 
 namespace remote_monitoring {
@@ -8,7 +12,10 @@ namespace services {
 
 class SystemServiceImpl final : public robot::v1::SystemService::Service {
 public:
-  SystemServiceImpl();
+  /// 构造函数，接受 ROS2 node 用于调用 service client。
+  SystemServiceImpl(rclcpp::Node *node,
+                    const std::string &robot_id = "robot_001",
+                    const std::string &firmware_version = "1.0.0");
   
   grpc::Status Login(grpc::ServerContext *context,
                      const robot::v1::LoginRequest *request,
@@ -30,9 +37,18 @@ public:
                                const google::protobuf::Empty *request,
                                robot::v1::CapabilitiesResponse *response) override;
 
+  grpc::Status Relocalize(grpc::ServerContext *context,
+                          const robot::v1::RelocalizeRequest *request,
+                          robot::v1::RelocalizeResponse *response) override;
+
+  grpc::Status SaveMap(grpc::ServerContext *context,
+                       const robot::v1::SaveMapRequest *request,
+                       robot::v1::SaveMapResponse *response) override;
+
 private:
-  std::string robot_id_{"robot_001"};
-  std::string firmware_version_{"1.0.0"};
+  rclcpp::Node *node_;
+  std::string robot_id_;
+  std::string firmware_version_;
 };
 
 }  // namespace services

@@ -153,7 +153,7 @@ void WebRTCPeer::AddRemoteCandidate(const std::string &candidate, const std::str
   }
 }
 
-void WebRTCPeer::SendVideoFrame(const uint8_t *data, size_t size, uint64_t timestamp_us) {
+void WebRTCPeer::SendVideoFrame(const uint8_t *data, size_t size, uint64_t /*timestamp_us*/) {
   std::lock_guard<std::mutex> lock(mutex_);
   
   if (!video_track_ || !connected_) {
@@ -249,9 +249,24 @@ bool WebRTCBridge::Initialize() {
   // 配置 ICE 服务器
   rtc_config_.iceServers.push_back(rtc::IceServer(stun_server));
   
-  if (!turn_server.empty()) {
+  if (!turn_server.empty() && !turn_username.empty()) {
+    // TURN server: hostname, service(port), username, password, relay type
+    // Parse turn_server which may be "turn:host:port" or just "host:port"
+    std::string turn_host = turn_server;
+    std::string turn_port = "3478";
+    // Strip "turn:" prefix if present
+    if (turn_host.find("turn:") == 0) {
+      turn_host = turn_host.substr(5);
+    }
+    // Extract port if present
+    auto colon_pos = turn_host.rfind(':');
+    if (colon_pos != std::string::npos) {
+      turn_port = turn_host.substr(colon_pos + 1);
+      turn_host = turn_host.substr(0, colon_pos);
+    }
     rtc_config_.iceServers.push_back(
-        rtc::IceServer(turn_server, turn_username, turn_password));
+        rtc::IceServer(turn_host, turn_port, turn_username, turn_password,
+                       rtc::IceServer::RelayType::TurnUdp));
   }
   
   RCLCPP_INFO(node_->get_logger(), 
@@ -498,8 +513,8 @@ void WebRTCBridge::BroadcastFrame(const uint8_t *data, size_t size, uint64_t tim
   }
 }
 
-std::vector<uint8_t> WebRTCBridge::EncodeFrame(const uint8_t *data, size_t size, 
-                                                int width, int height) {
+std::vector<uint8_t> WebRTCBridge::EncodeFrame(const uint8_t * /*data*/, size_t /*size*/, 
+                                                int /*width*/, int /*height*/) {
   // TODO: 集成 OpenH264 编码器
   // 当前返回空，表示跳过原始帧
   // 实际部署需要：

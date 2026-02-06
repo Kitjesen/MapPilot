@@ -8,9 +8,8 @@
 4. [故障排查](#故障排查)
 
 ---
-
-
-PCT Planner 在map坐标系下工作
+项目地址：https://github.com/Kitjesen/3d_NAV.git
+" PCT Planner 在map坐标系下工作 "
 
 
 ## 系统概述
@@ -286,8 +285,6 @@ rviz2 -d src/global_planning/PCT_planner/rsc/rviz/pct_ros.rviz
 
 ---
 
-### 📊 查看系统状态
-
 ```bash
 # 查看所有话题
 ros2 topic list
@@ -307,7 +304,6 @@ ros2 node info /global_planner
 
 ---
 
-### 🎨 可视化 Tomogram
 
 ```bash
 # 可视化已保存的地图
@@ -316,15 +312,3 @@ python3 src/global_planning/PCT_planner/tomography/scripts/visualize_tomogram.py
 # 查看地图统计信息
 python3 src/global_planning/PCT_planner/planner/scripts/test/check_map.py [地图名]
 ```
-
----
-
-## 📞 需要帮助?
-
-- 查看详细文档: `docs/`
-- 查看包 README: `src/*/README.md`
-- GitHub Issues: [项目链接]
-
----
-
-**祝你使用愉快！** 🎉

@@ -3,6 +3,10 @@ grpc_gateway:
     # gRPC 服务器端口
     grpc_port: 50051
     
+    # 机器人标识（可配置）
+    robot_id: "robot_001"
+    firmware_version: "1.0.0"
+    
     # 状态流频率
     fast_state_hz: 30.0
     slow_state_hz: 1.0
@@ -10,20 +14,39 @@ grpc_gateway:
     # 频率统计窗口（秒）
     rate_window_sec: 2.0
     
-    # ROS2 话题配置
+    # ==================== 核心话题 ====================
+    # StatusAggregator 订阅的话题
     odom_topic: "/Odometry"
     terrain_map_topic: "/terrain_map"
     path_topic: "/path"
     slow_down_topic: "/slow_down"
+    
+    # 新增：丰富遥测的话题
+    cmd_vel_monitor_topic: "/cmd_vel"
+    planner_status_topic: "/pct_planner/status"
+    way_point_topic: "/way_point"
+    global_path_topic: "/pct_path"
+    lidar_topic: "/cloud_registered"
 
-    # DataService 默认订阅源（也可在请求 resource_id.name 里直接传 /topic 覆盖）
+    # ==================== SafetyGate 话题 ====================
+    safety_odom_topic: "/Odometry"
+    cmd_vel_topic: "/cmd_vel"
+    stop_topic: "/stop"
+
+    # ==================== ModeManager 话题 ====================
+    mode_stop_topic: "/stop"
+    mode_speed_topic: "/speed"
+    goal_pose_topic: "/goal_pose"
+
+    # ==================== DataService 话题 ====================
     data_camera_topic: "/camera/color/image_raw/compressed"
     data_camera_fallback_topic: "/camera/color/compressed"
     data_map_topic: "/overall_map"
     data_pointcloud_topic: "/cloud_registered"
+    data_terrain_topic: "/terrain_map_ext"
     data_file_root: ""
 
-    # WebRTC push streaming (external command-based)
+    # ==================== WebRTC 配置 ====================
     webrtc_enabled: false
     webrtc_offer_timeout_ms: 3000
     webrtc_start_command: ""
@@ -31,12 +54,12 @@ grpc_gateway:
     webrtc_offer_path: "/tmp/webrtc_offer_{session_id}.sdp"
     webrtc_ice_path: "/tmp/webrtc_ice_{session_id}.txt"
     
-    # TF 坐标系
+    # ==================== TF 坐标系 ====================
     tf_map_frame: "map"
     tf_odom_frame: "odom"
     tf_body_frame: "body"
     
-    # Safety Gate 配置
+    # ==================== Safety Gate 配置 ====================
     deadman_timeout_ms: 300.0
     max_speed: 1.0
     max_angular: 1.0

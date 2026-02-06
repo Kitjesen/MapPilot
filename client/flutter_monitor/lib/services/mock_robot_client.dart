@@ -5,11 +5,12 @@ import 'package:fixnum/fixnum.dart';
 import 'package:protobuf/well_known_types/google/protobuf/duration.pb.dart' as pb;
 import 'package:protobuf/well_known_types/google/protobuf/timestamp.pb.dart';
 
-import '../generated/common.pb.dart';
-import '../generated/control.pb.dart';
-import '../generated/telemetry.pb.dart';
-import '../generated/data.pb.dart';
-import '../generated/data.pbgrpc.dart';
+import 'package:robot_proto/src/common.pb.dart';
+import 'package:robot_proto/src/control.pb.dart';
+import 'package:robot_proto/src/telemetry.pb.dart';
+import 'package:robot_proto/src/system.pb.dart';
+import 'package:robot_proto/src/data.pb.dart';
+import 'package:robot_proto/src/data.pbgrpc.dart';
 import 'robot_client_base.dart';
 
 class MockRobotClient implements RobotClientBase {
@@ -97,7 +98,13 @@ class MockRobotClient implements RobotClientBase {
           ..odomHz = 10
           ..terrainMapHz = 5
           ..pathHz = 2
-          ..lidarHz = 15);
+          ..lidarHz = 15
+          ..cmdVelHz = 0
+          ..globalPathHz = 0)
+        ..navigation = (NavigationStatus()
+          ..globalPlannerStatus = 'IDLE'
+          ..localizationValid = true
+          ..slowDownLevel = 0);
     });
   }
 
@@ -212,6 +219,46 @@ class MockRobotClient implements RobotClientBase {
   @override
   Future<void> ackEvent(String eventId) async {
     // no-op for mock
+  }
+
+  @override
+  Future<RelocalizeResponse> relocalize({
+    required String pcdPath,
+    double x = 0, double y = 0, double z = 0,
+    double yaw = 0, double pitch = 0, double roll = 0,
+  }) async {
+    return RelocalizeResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..message = 'Mock relocalize OK';
+  }
+
+  @override
+  Future<SaveMapResponse> saveMap({required String filePath, bool savePatches = false}) async {
+    return SaveMapResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..message = 'Mock save map OK';
+  }
+
+  @override
+  Future<StartTaskResponse> startTask({required TaskType taskType, String paramsJson = ''}) async {
+    return StartTaskResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..taskId = 'mock-task-001'
+      ..task = (Task()
+        ..taskId = 'mock-task-001'
+        ..type = taskType
+        ..status = TaskStatus.TASK_STATUS_RUNNING);
+  }
+
+  @override
+  Future<CancelTaskResponse> cancelTask({required String taskId}) async {
+    return CancelTaskResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..task = (Task()
+        ..taskId = taskId
+        ..status = TaskStatus.TASK_STATUS_CANCELLED);
   }
 
   @override

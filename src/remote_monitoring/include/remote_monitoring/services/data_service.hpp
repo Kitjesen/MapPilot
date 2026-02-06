@@ -95,6 +95,7 @@ private:
   std::string camera_fallback_topic_;
   std::string map_topic_;
   std::string pointcloud_topic_;
+  std::string terrain_topic_;
   std::string file_root_;
   bool webrtc_enabled_{false};
   int webrtc_offer_timeout_ms_{3000};

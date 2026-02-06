@@ -246,6 +246,8 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   node_->declare_parameter<std::string>("data_map_topic", "/overall_map");
   node_->declare_parameter<std::string>("data_pointcloud_topic",
                                         "/cloud_registered");
+  node_->declare_parameter<std::string>("data_terrain_topic",
+                                        "/terrain_map_ext");
   node_->declare_parameter<std::string>("data_file_root", "");
   node_->declare_parameter<bool>("webrtc_enabled", false);
   node_->declare_parameter<int>("webrtc_offer_timeout_ms", 3000);
@@ -261,6 +263,7 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
       node_->get_parameter("data_camera_fallback_topic").as_string();
   map_topic_ = node_->get_parameter("data_map_topic").as_string();
   pointcloud_topic_ = node_->get_parameter("data_pointcloud_topic").as_string();
+  terrain_topic_ = node_->get_parameter("data_terrain_topic").as_string();
   file_root_ = node_->get_parameter("data_file_root").as_string();
   webrtc_enabled_ = node_->get_parameter("webrtc_enabled").as_bool();
   webrtc_offer_timeout_ms_ =
@@ -303,6 +306,14 @@ DataServiceImpl::ListResources(grpc::ServerContext *,
                               pointcloud_topic_);
   pointcloud->set_available(true);
   AddDefaultProfiles(pointcloud);
+
+  auto *terrain = response->add_resources();
+  terrain->mutable_id()->set_type(robot::v1::RESOURCE_TYPE_POINTCLOUD);
+  terrain->mutable_id()->set_name("terrain");
+  terrain->set_description("Terrain analysis PointCloud2 stream, default topic: " +
+                           terrain_topic_);
+  terrain->set_available(true);
+  AddDefaultProfiles(terrain);
 
   return grpc::Status::OK;
 }
@@ -662,6 +673,10 @@ std::string DataServiceImpl::ResolveTopic(
   case robot::v1::RESOURCE_TYPE_MAP:
     return map_topic_;
   case robot::v1::RESOURCE_TYPE_POINTCLOUD:
+    // Differentiate between lidar cloud and terrain by resource name
+    if (name == "terrain" || name == "terrain_map" || name == "terrain_map_ext") {
+      return terrain_topic_;
+    }
     return pointcloud_topic_;
   default:
     return {};

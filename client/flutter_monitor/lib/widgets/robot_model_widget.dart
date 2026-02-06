@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import '../generated/common.pb.dart';
+import 'package:robot_proto/src/common.pb.dart';
 
 class RobotModelWidget extends StatefulWidget {
   final Pose? currentPose;

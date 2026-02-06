@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:grpc/grpc.dart';
-import '../generated/telemetry.pbgrpc.dart';
-import '../generated/system.pbgrpc.dart';
-import '../generated/control.pbgrpc.dart';
-import '../generated/data.pbgrpc.dart';
-import '../generated/common.pb.dart';
+import 'package:robot_proto/src/telemetry.pbgrpc.dart';
+import 'package:robot_proto/src/system.pbgrpc.dart';
+import 'package:robot_proto/src/system.pb.dart';
+import 'package:robot_proto/src/control.pbgrpc.dart';
+import 'package:robot_proto/src/data.pbgrpc.dart';
+import 'package:robot_proto/src/common.pb.dart';
 import 'package:protobuf/well_known_types/google/protobuf/empty.pb.dart';
 import 'package:protobuf/well_known_types/google/protobuf/timestamp.pb.dart';
 import 'package:fixnum/fixnum.dart';
@@ -269,6 +270,50 @@ class RobotClient implements RobotClientBase {
   /// 获取机器人能力
   Future<CapabilitiesResponse> getCapabilities() async {
     return await _systemClient.getCapabilities(Empty());
+  }
+
+  /// 重定位
+  @override
+  Future<RelocalizeResponse> relocalize({
+    required String pcdPath,
+    double x = 0, double y = 0, double z = 0,
+    double yaw = 0, double pitch = 0, double roll = 0,
+  }) async {
+    final request = RelocalizeRequest()
+      ..base = _createRequestBase()
+      ..pcdPath = pcdPath
+      ..x = x ..y = y ..z = z
+      ..yaw = yaw ..pitch = pitch ..roll = roll;
+    return await _systemClient.relocalize(request);
+  }
+
+  /// 保存地图
+  @override
+  Future<SaveMapResponse> saveMap({required String filePath, bool savePatches = false}) async {
+    final request = SaveMapRequest()
+      ..base = _createRequestBase()
+      ..filePath = filePath
+      ..savePatches = savePatches;
+    return await _systemClient.saveMap(request);
+  }
+
+  /// 启动任务
+  @override
+  Future<StartTaskResponse> startTask({required TaskType taskType, String paramsJson = ''}) async {
+    final request = StartTaskRequest()
+      ..base = _createRequestBase()
+      ..taskType = taskType
+      ..paramsJson = paramsJson;
+    return await _controlClient.startTask(request);
+  }
+
+  /// 取消任务
+  @override
+  Future<CancelTaskResponse> cancelTask({required String taskId}) async {
+    final request = CancelTaskRequest()
+      ..base = _createRequestBase()
+      ..taskId = taskId;
+    return await _controlClient.cancelTask(request);
   }
 
   /// 断开连接

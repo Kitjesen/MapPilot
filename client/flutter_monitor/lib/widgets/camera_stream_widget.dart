@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../services/robot_client_base.dart';
-import '../generated/common.pb.dart';
-import '../generated/data.pb.dart';
+import 'package:robot_proto/src/common.pb.dart';
+import 'package:robot_proto/src/data.pb.dart';
 
 class CameraStreamWidget extends StatefulWidget {
   final RobotClientBase client;

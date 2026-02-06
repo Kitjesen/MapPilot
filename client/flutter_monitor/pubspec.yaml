@@ -14,6 +14,13 @@ dependencies:
   grpc: ^5.1.0
   protobuf: ^6.0.0
   
+  # Robot proto definitions (generated gRPC stubs)
+  robot_proto:
+    git:
+      url: git@github.com:Kitjesen/Robot_Proto.git
+      path: dart
+      ref: main
+  
   # State Management
   provider: ^6.1.0
   

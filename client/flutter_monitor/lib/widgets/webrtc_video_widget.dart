@@ -7,7 +7,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../services/robot_client_base.dart';
 import '../services/webrtc_client.dart';
-import '../generated/data.pbgrpc.dart';
+import 'package:robot_proto/src/data.pbgrpc.dart';
 
 /// WebRTC 视频显示组件
 class WebRTCVideoWidget extends StatefulWidget {
