@@ -395,8 +395,7 @@ private:
       float pathDir = atan2(disY, disX);
 
       float dirDiff = vehicleYaw_ - vehicleYawRec_ - pathDir;
-      if (dirDiff > PI) dirDiff -= 2 * PI;
-      else if (dirDiff < -PI) dirDiff += 2 * PI;
+      // 一次归一化到 (-π, π] 即可 (两个 [-π,π] 量之差在 [-2π, 2π] 内)
       if (dirDiff > PI) dirDiff -= 2 * PI;
       else if (dirDiff < -PI) dirDiff += 2 * PI;
 

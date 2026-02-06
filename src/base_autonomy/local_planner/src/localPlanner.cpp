@@ -952,8 +952,9 @@ private:
             if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
             else rotDirW = fabs(fabs(rotDir - 27) + 1);
             float groupDirW = 4  - fabs(pathList_[i % pathNum_] - 3);
-            float score = (1 - sqrt(sqrt(dirWeight_ * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW;
-            if (relativeGoalDis < omniDirGoalThre_) score = (1 - sqrt(sqrt(dirWeight_ * dirDiff))) * groupDirW * groupDirW;
+            float dw = std::fabs(dirWeight_ * dirDiff);  // 防御负参数导致 NaN
+            float score = (1 - std::sqrt(std::sqrt(dw))) * rotDirW * rotDirW * rotDirW * rotDirW;
+            if (relativeGoalDis < omniDirGoalThre_) score = (1 - std::sqrt(std::sqrt(dw))) * groupDirW * groupDirW;
             if (score > 0) {
               clearPathPerGroupScore_[groupNum_ * rotDir + pathList_[i % pathNum_]] += score;
               clearPathPerGroupNum_[groupNum_ * rotDir + pathList_[i % pathNum_]]++;

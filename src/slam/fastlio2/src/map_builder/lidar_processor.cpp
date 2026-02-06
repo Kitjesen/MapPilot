@@ -23,7 +23,7 @@ LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_co
     m_kf->setStopFunction([&](const V21D &delta) -> bool
                           { V3D rot_delta = delta.block<3, 1>(0, 0);
                             V3D t_delta = delta.block<3, 1>(3, 0);
-                            return (rot_delta.norm() * 57.3 < 0.01) && (t_delta.norm() * 100 < 0.015); });
+                            return (rot_delta.norm() * (180.0 / M_PI) < 0.01) && (t_delta.norm() * 100 < 0.015); });
 }
 
 void LidarProcessor::trimCloudMap()
@@ -235,6 +235,9 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
     share_data.valid = true;
     share_data.H.setZero();
     share_data.b.setZero();
+    // 缓存不变矩阵, 避免逐点重复乘法
+    const M3D R_wi = state.r_wi;
+    const M3D R_wl = R_wi * state.r_il;           // R_world_lidar (常量)
     Eigen::Matrix<double, 1, 12> J;
     for (int i = 0; i < effect_feat_num; i++)
     {
@@ -243,13 +246,13 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
         const PointType &norm_p = m_effect_norm_vec->points[i];
         Eigen::Vector3d laser_p_vec(laser_p.x, laser_p.y, laser_p.z);
         Eigen::Vector3d norm_vec(norm_p.x, norm_p.y, norm_p.z);
-        Eigen::Matrix<double, 1, 3> B = -norm_vec.transpose() * state.r_wi * Sophus::SO3d::hat(state.r_il * laser_p_vec + state.t_wi);
+        Eigen::Matrix<double, 1, 3> B = -norm_vec.transpose() * R_wi * Sophus::SO3d::hat(state.r_il * laser_p_vec + state.t_il);
         J.block<1, 3>(0, 0) = B;
         J.block<1, 3>(0, 3) = norm_vec.transpose();
         if (m_config.esti_il)
         {
-            Eigen::Matrix<double, 1, 3> C = -norm_vec.transpose() * state.r_wi * state.r_il * Sophus::SO3d::hat(laser_p_vec);
-            Eigen::Matrix<double, 1, 3> D = norm_vec.transpose() * state.r_wi;
+            Eigen::Matrix<double, 1, 3> C = -norm_vec.transpose() * R_wl * Sophus::SO3d::hat(laser_p_vec);
+            Eigen::Matrix<double, 1, 3> D = norm_vec.transpose() * R_wi;
             J.block<1, 3>(0, 6) = C;
             J.block<1, 3>(0, 9) = D;
         }
@@ -264,7 +267,6 @@ CloudType::Ptr LidarProcessor::transformCloud(CloudType::Ptr inp, const M3D &r, 
     transform.block<3, 3>(0, 0) = r.cast<float>();
     transform.block<3, 1>(0, 3) = t.cast<float>();
     CloudType::Ptr ret(new CloudType);
-    pcl::transformPointCloud(*inp, *ret, transform);
     pcl::transformPointCloud(*inp, *ret, transform);
     return ret;
 }
