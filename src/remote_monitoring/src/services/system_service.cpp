@@ -5,7 +5,10 @@
 namespace remote_monitoring {
 namespace services {
 
-SystemServiceImpl::SystemServiceImpl() {}
+SystemServiceImpl::SystemServiceImpl(rclcpp::Node *node,
+                                     const std::string &robot_id,
+                                     const std::string &firmware_version)
+    : node_(node), robot_id_(robot_id), firmware_version_(firmware_version) {}
 
 grpc::Status SystemServiceImpl::Login(
   grpc::ServerContext *,
@@ -93,6 +96,33 @@ grpc::Status SystemServiceImpl::GetCapabilities(
   response->add_supported_tasks(robot::v1::TASK_TYPE_MAPPING);
   response->set_teleop_supported(true);
   response->set_mapping_supported(true);
+  
+  return grpc::Status::OK;
+}
+
+grpc::Status SystemServiceImpl::Relocalize(
+  grpc::ServerContext *,
+  const robot::v1::RelocalizeRequest *request,
+  robot::v1::RelocalizeResponse *response) {
+  
+  response->mutable_base()->set_request_id(request->base().request_id());
+  // TODO: 实现重定位逻辑，调用 /relocalize 服务
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  response->set_success(true);
+  
+  return grpc::Status::OK;
+}
+
+grpc::Status SystemServiceImpl::SaveMap(
+  grpc::ServerContext *,
+  const robot::v1::SaveMapRequest *request,
+  robot::v1::SaveMapResponse *response) {
+  
+  response->mutable_base()->set_request_id(request->base().request_id());
+  // TODO: 实现保存地图逻辑，调用 /save_map 服务
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  response->set_success(true);
+  response->set_message("Map saved to: " + request->file_path());
   
   return grpc::Status::OK;
 }

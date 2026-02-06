@@ -6,8 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/robot_connection_provider.dart';
-import '../generated/common.pb.dart';
-import '../generated/telemetry.pb.dart';
+import 'package:robot_proto/robot_proto.dart';
 import '../widgets/glass_widgets.dart';
 import '../widgets/robot_model_widget.dart';
 

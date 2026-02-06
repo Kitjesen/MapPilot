@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'robot_client_base.dart';
-import '../generated/telemetry.pb.dart';
+import 'package:robot_proto/robot_proto.dart';
 
 /// 连接状态枚举
 enum ConnectionStatus {

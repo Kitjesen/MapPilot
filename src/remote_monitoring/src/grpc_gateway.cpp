@@ -24,7 +24,7 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
   idempotency_cache_ = std::make_shared<core::IdempotencyCache>();
 
   // 创建服务实现
-  system_service_ = std::make_shared<services::SystemServiceImpl>();
+  system_service_ = std::make_shared<services::SystemServiceImpl>(node_);
   control_service_ =
       std::make_shared<services::ControlServiceImpl>(lease_mgr_, safety_gate_,
                                                      event_buffer_,

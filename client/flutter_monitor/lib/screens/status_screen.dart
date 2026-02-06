@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:provider/provider.dart';
 import '../services/robot_connection_provider.dart';
-import '../generated/telemetry.pb.dart';
+import 'package:robot_proto/robot_proto.dart';
 import '../widgets/glass_widgets.dart';
 
 class StatusScreen extends StatefulWidget {

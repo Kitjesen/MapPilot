@@ -288,10 +288,62 @@ python3 src/global_planning/PCT_planner/planner/scripts/test/check_map.py [地�
 
 ---
 
+## 📱 远程监控客户端
+
+Flutter 客户端通过 gRPC 实时监控和遥操作机器人。
+
+| 功能 | 说明 |
+|------|------|
+| 实时遥测 | 位姿、速度、姿态、系统资源 |
+| 遥操作 | 双摇杆、模式切换、紧急停止 |
+| 视频流 | WebRTC + JPEG 回退 |
+| 3D 可视化 | URDF 机器人模型 |
+| 2D 轨迹 | 实时路径 + 全局地图 |
+
+### 安装 APK
+
+**方式一：GitHub Release (推荐)**
+
+从 [Releases](https://github.com/Kitjesen/3d_NAV/releases/latest) 页面下载最新 `MapPilot-*.apk`，传到手机安装。
+
+**方式二：本地编译**
+
+```bash
+cd client/flutter_monitor
+flutter pub get
+flutter build apk --release
+# 输出: build/app/outputs/flutter-apk/app-release.apk
+```
+
+> 注意: APK 编译需要 x86_64 Linux/Mac/Windows，ARM64 设备请使用 GitHub Actions 自动构建。
+
+### OTA 升级流程
+
+```
+开发者推送代码 → GitHub Actions 自动编译 APK → 发布到 Release
+                                                    ↓
+                        手机浏览器访问 Release 页面 ← 下载安装
+```
+
+**步骤：**
+
+1. **开发者**：修改 `client/flutter_monitor/` 代码后推送到 `main` 分支
+2. **CI 自动构建**：GitHub Actions 自动编译 APK 并发布到 Release
+3. **用户更新**：
+   - 手机浏览器访问: `https://github.com/Kitjesen/3d_NAV/releases/latest`
+   - 下载最新 `MapPilot-*.apk`
+   - 覆盖安装即可（数据保留）
+
+**快捷方式：** 将 Release 页面添加到手机主屏幕书签，随时检查更新。
+
+---
+
 ## 📚 文档
 
 - [`AGENTS.md`](AGENTS.md) - 系统架构详解
 - [`src/slam/interface/README.md`](src/slam/interface/README.md) - 接口定义
+- [`client/flutter_monitor/README.md`](client/flutter_monitor/README.md) - 客户端详细文档
+- [`src/remote_monitoring/README.md`](src/remote_monitoring/README.md) - gRPC 服务端文档
 
 ---
 
