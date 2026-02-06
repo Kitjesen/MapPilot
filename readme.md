@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="FIG/MapPilot.png" alt="MapPilot Logo" width="200"/>
+</p>
+
 #  SLAM 导航系统快速启动指南
 
 ## 📋 目录
