@@ -8,6 +8,12 @@
 build/
 lib/generated/
 
+# Dart
+*.dart.js
+*.js_
+*.js.deps
+*.js.map
+
 # IDE
 .idea/
 *.iml
@@ -25,3 +31,14 @@ desktop.ini
 *.log
 *.pyc
 __pycache__/
+
+# Android local properties
+android/local.properties
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# Local config
+*.env
+*.env.*

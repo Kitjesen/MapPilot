@@ -290,21 +290,48 @@ python3 src/global_planning/PCT_planner/planner/scripts/test/check_map.py [地�
 
 ## 📱 远程监控客户端
 
-Flutter 客户端通过 gRPC 实时监控和遥操作机器人。
+Flutter 客户端 (**MapPilot**) 通过 gRPC 实时监控和遥操作机器人，支持 Android / Linux / Web。
 
-| 功能 | 说明 |
-|------|------|
-| 实时遥测 | 位姿、速度、姿态、系统资源 |
-| 遥操作 | 双摇杆、模式切换、紧急停止 |
-| 视频流 | WebRTC + JPEG 回退 |
-| 3D 可视化 | URDF 机器人模型 |
-| 2D 轨迹 | 实时路径 + 全局地图 |
+| 页面 | 功能 | 说明 |
+|------|------|------|
+| Status | 实时遥测 | 位姿、速度、姿态、系统资源 (10Hz / 1Hz) |
+| Control | 遥操作 | 双摇杆、模式切换、紧急停止、FPV 视频 |
+| Map | 轨迹可视化 | 2D/3D 地图、实时路径、点云叠加 |
+| Events | 事件时间线 | 严重级别着色 + 确认机制 |
+| **Settings** | 设置与管理 | 连接信息、文件管理、云端更新 |
+
+### 文件管理 (OTA 部署)
+
+直接从手机上传训练好的模型、地图、配置文件到机器人：
+
+```
+手机 (Settings → 文件管理)
+  ↓  选择文件 / 选择分类 (模型·地图·配置·固件)
+  ↓  gRPC UploadFile (64KB 分块)
+  ↓
+机器人 → /home/sunrise/models/yolo_terrain.pt
+```
+
+### 云端更新 (Cloud OTA)
+
+App 联网从 GitHub Releases 获取最新版本，一键下载并部署到机器人：
+
+```
+GitHub Releases (云端)
+  ↓  ① App 查询 API → 显示可用版本
+  ↓  ② HTTP 下载资产文件
+  ↓  ③ gRPC 上传到机器人
+  ↓
+机器人文件就位，重启服务即可生效
+```
+
+**操作步骤：** Settings → 云端更新 → 检查 → 选择文件 → ☁️ 下载并部署
 
 ### 安装 APK
 
 **方式一：GitHub Release (推荐)**
 
-从 [Releases](https://github.com/Kitjesen/3d_NAV/releases/latest) 页面下载最新 `MapPilot-*.apk`，传到手机安装。
+从 [Releases](https://github.com/Kitjesen/3d_NAV/releases/latest) 页面下载最新 `MapPilot-*.apk`。
 
 **方式二：本地编译**
 
@@ -312,38 +339,33 @@ Flutter 客户端通过 gRPC 实时监控和遥操作机器人。
 cd client/flutter_monitor
 flutter pub get
 flutter build apk --release
-# 输出: build/app/outputs/flutter-apk/app-release.apk
 ```
 
-> 注意: APK 编译需要 x86_64 Linux/Mac/Windows，ARM64 设备请使用 GitHub Actions 自动构建。
+> APK 编译需要 x86_64 环境，ARM64 设备请使用 GitHub Actions 自动构建。
 
-### OTA 升级流程
+### 发布模型到云端
 
+通过 GitHub Actions 发布模型/固件，App 即可一键拉取部署：
+
+```bash
+# 方式一: 手动触发 (GitHub → Actions → Release Models & Firmware)
+# 方式二: Git tag 触发
+git tag models-v1.0.0
+git push origin models-v1.0.0
 ```
-开发者推送代码 → GitHub Actions 自动编译 APK → 发布到 Release
-                                                    ↓
-                        手机浏览器访问 Release 页面 ← 下载安装
-```
-
-**步骤：**
-
-1. **开发者**：修改 `client/flutter_monitor/` 代码后推送到 `main` 分支
-2. **CI 自动构建**：GitHub Actions 自动编译 APK 并发布到 Release
-3. **用户更新**：
-   - 手机浏览器访问: `https://github.com/Kitjesen/3d_NAV/releases/latest`
-   - 下载最新 `MapPilot-*.apk`
-   - 覆盖安装即可（数据保留）
-
-**快捷方式：** 将 Release 页面添加到手机主屏幕书签，随时检查更新。
 
 ---
 
 ## 📚 文档
 
-- [`AGENTS.md`](AGENTS.md) - 系统架构详解
-- [`src/slam/interface/README.md`](src/slam/interface/README.md) - 接口定义
-- [`client/flutter_monitor/README.md`](client/flutter_monitor/README.md) - 客户端详细文档
-- [`src/remote_monitoring/README.md`](src/remote_monitoring/README.md) - gRPC 服务端文档
+| 文档 | 说明 |
+|------|------|
+| [`AGENTS.md`](AGENTS.md) | 系统架构详解 (话题、坐标系、启动流程) |
+| [`client/flutter_monitor/README.md`](client/flutter_monitor/README.md) | Flutter 客户端文档 (功能、架构、OTA) |
+| [`src/remote_monitoring/README.md`](src/remote_monitoring/README.md) | gRPC 服务端文档 |
+| [`src/robot_proto/README.md`](src/robot_proto/README.md) | Protobuf 接口定义 |
+| [`src/slam/interface/README.md`](src/slam/interface/README.md) | SLAM 接口定义 |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 系统架构设计 |
 
 ---
 

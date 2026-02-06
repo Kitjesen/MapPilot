@@ -261,6 +261,71 @@ class MockRobotClient implements RobotClientBase {
         ..status = TaskStatus.TASK_STATUS_CANCELLED);
   }
 
+  // ==================== 文件管理 (OTA) Mock ====================
+
+  @override
+  Future<UploadFileResponse> uploadFile({
+    required List<int> localBytes,
+    required String remotePath,
+    required String filename,
+    String category = 'model',
+    bool overwrite = true,
+    void Function(double progress)? onProgress,
+  }) async {
+    // 模拟分块上传进度
+    const steps = 10;
+    for (int i = 1; i <= steps; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      onProgress?.call(i / steps);
+    }
+    return UploadFileResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..remotePath = remotePath
+      ..bytesReceived = Int64(localBytes.length)
+      ..message = 'Mock upload OK: $filename';
+  }
+
+  @override
+  Future<ListRemoteFilesResponse> listRemoteFiles({
+    required String directory,
+    String category = '',
+  }) async {
+    final now = DateTime.now().toIso8601String();
+    return ListRemoteFilesResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..files.addAll([
+        RemoteFileInfo()
+          ..path = '$directory/yolov8n.pt'
+          ..filename = 'yolov8n.pt'
+          ..size = Int64(6 * 1024 * 1024)
+          ..modifiedTime = now
+          ..category = 'model',
+        RemoteFileInfo()
+          ..path = '$directory/terrain_model.onnx'
+          ..filename = 'terrain_model.onnx'
+          ..size = Int64(12 * 1024 * 1024)
+          ..modifiedTime = now
+          ..category = 'model',
+        RemoteFileInfo()
+          ..path = '$directory/slam_config.yaml'
+          ..filename = 'slam_config.yaml'
+          ..size = Int64(2048)
+          ..modifiedTime = now
+          ..category = 'config',
+      ])
+      ..totalSize = Int64(18 * 1024 * 1024)
+      ..freeSpace = Int64(8 * 1024 * 1024 * 1024);
+  }
+
+  @override
+  Future<DeleteRemoteFileResponse> deleteRemoteFile({required String remotePath}) async {
+    return DeleteRemoteFileResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..message = 'Mock delete OK: $remotePath';
+  }
+
   @override
   Future<void> disconnect() async {
     _connected = false;

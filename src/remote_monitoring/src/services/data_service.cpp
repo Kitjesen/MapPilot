@@ -496,6 +496,289 @@ DataServiceImpl::DownloadFile(grpc::ServerContext *context,
   return grpc::Status::OK;
 }
 
+// ==================== File Upload (OTA) ====================
+
+grpc::Status
+DataServiceImpl::UploadFile(grpc::ServerContext *context,
+                            grpc::ServerReader<robot::v1::UploadFileChunk> *reader,
+                            robot::v1::UploadFileResponse *response) {
+  robot::v1::UploadFileChunk chunk;
+  std::ofstream output_file;
+  std::string remote_path;
+  uint64_t total_expected = 0;
+  uint64_t bytes_received = 0;
+  bool first_chunk = true;
+
+  while (reader->Read(&chunk)) {
+    if (context->IsCancelled()) {
+      return grpc::Status(grpc::CANCELLED, "Upload cancelled by client");
+    }
+
+    if (first_chunk) {
+      first_chunk = false;
+      const auto &meta = chunk.metadata();
+      remote_path = meta.remote_path();
+
+      if (remote_path.empty()) {
+        response->mutable_base()->set_error_code(
+            robot::v1::ERROR_CODE_INVALID_REQUEST);
+        response->set_success(false);
+        response->set_message("remote_path is required in first chunk metadata");
+        return grpc::Status::OK;
+      }
+
+      // 路径安全检查
+      if (remote_path.find("..") != std::string::npos) {
+        response->mutable_base()->set_error_code(
+            robot::v1::ERROR_CODE_INVALID_REQUEST);
+        response->set_success(false);
+        response->set_message("Path traversal not allowed");
+        return grpc::Status::OK;
+      }
+
+      total_expected = meta.total_size();
+
+      // 检查文件是否已存在
+      if (!meta.overwrite() && FileExists(remote_path)) {
+        response->mutable_base()->set_error_code(
+            robot::v1::ERROR_CODE_INVALID_REQUEST);
+        response->set_success(false);
+        response->set_message("File already exists and overwrite=false");
+        return grpc::Status::OK;
+      }
+
+      // 确保目录存在
+      {
+        auto last_slash = remote_path.rfind('/');
+        if (last_slash != std::string::npos) {
+          std::string dir = remote_path.substr(0, last_slash);
+          std::string mkdir_cmd = "mkdir -p '" + dir + "'";
+          std::system(mkdir_cmd.c_str());
+        }
+      }
+
+      // 打开输出文件
+      output_file.open(remote_path, std::ios::binary | std::ios::trunc);
+      if (!output_file.is_open()) {
+        response->mutable_base()->set_error_code(
+            robot::v1::ERROR_CODE_INTERNAL_ERROR);
+        response->set_success(false);
+        response->set_message("Failed to create file: " + remote_path);
+        return grpc::Status::OK;
+      }
+
+      RCLCPP_INFO(node_->get_logger(),
+                  "Upload started: %s (%s, %lu bytes, category=%s)",
+                  meta.filename().c_str(), remote_path.c_str(),
+                  static_cast<unsigned long>(total_expected),
+                  meta.category().c_str());
+    }
+
+    if (!output_file.is_open()) {
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_INTERNAL_ERROR);
+      response->set_success(false);
+      response->set_message("File not open (missing metadata in first chunk?)");
+      return grpc::Status::OK;
+    }
+
+    // 写入数据
+    const auto &data = chunk.data();
+    if (!data.empty()) {
+      output_file.write(data.data(), static_cast<std::streamsize>(data.size()));
+      bytes_received += data.size();
+    }
+
+    if (chunk.is_last()) {
+      break;
+    }
+  }
+
+  if (output_file.is_open()) {
+    output_file.close();
+  }
+
+  RCLCPP_INFO(node_->get_logger(),
+              "Upload complete: %s (%lu bytes received)",
+              remote_path.c_str(),
+              static_cast<unsigned long>(bytes_received));
+
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  response->set_success(true);
+  response->set_remote_path(remote_path);
+  response->set_bytes_received(bytes_received);
+  response->set_message("Upload complete");
+  return grpc::Status::OK;
+}
+
+// ==================== List Remote Files ====================
+
+grpc::Status
+DataServiceImpl::ListRemoteFiles(
+    grpc::ServerContext *,
+    const robot::v1::ListRemoteFilesRequest *request,
+    robot::v1::ListRemoteFilesResponse *response) {
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+
+  const std::string &directory = request->directory();
+  if (directory.empty()) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INVALID_REQUEST);
+    response->mutable_base()->set_error_message("directory is required");
+    return grpc::Status::OK;
+  }
+
+  // 路径安全检查
+  if (directory.find("..") != std::string::npos) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INVALID_REQUEST);
+    response->mutable_base()->set_error_message("Path traversal not allowed");
+    return grpc::Status::OK;
+  }
+
+  // 使用 ls -la 获取文件列表 (简单实现)
+  // 更好的方式是直接用 std::filesystem，但 ROS2 Humble 默认 C++17
+  std::string cmd = "find '" + directory + "' -maxdepth 1 -type f -printf '%f\\t%s\\t%T+\\n' 2>/dev/null";
+  FILE *pipe = popen(cmd.c_str(), "r");
+  if (!pipe) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INTERNAL_ERROR);
+    response->mutable_base()->set_error_message("Failed to list directory");
+    return grpc::Status::OK;
+  }
+
+  char line[1024];
+  uint64_t total_size = 0;
+  const std::string &category_filter = request->category();
+
+  while (fgets(line, sizeof(line), pipe)) {
+    std::string line_str(line);
+    // 移除尾部换行
+    while (!line_str.empty() && (line_str.back() == '\n' || line_str.back() == '\r')) {
+      line_str.pop_back();
+    }
+    if (line_str.empty()) continue;
+
+    // 解析: filename\tsize\tmodified_time
+    size_t tab1 = line_str.find('\t');
+    size_t tab2 = line_str.find('\t', tab1 + 1);
+    if (tab1 == std::string::npos || tab2 == std::string::npos) continue;
+
+    std::string filename = line_str.substr(0, tab1);
+    std::string size_str = line_str.substr(tab1 + 1, tab2 - tab1 - 1);
+    std::string mod_time = line_str.substr(tab2 + 1);
+
+    uint64_t file_size = 0;
+    try {
+      file_size = std::stoull(size_str);
+    } catch (...) {
+      continue;
+    }
+
+    // 推断 category
+    std::string ext;
+    auto dot_pos = filename.rfind('.');
+    if (dot_pos != std::string::npos) {
+      ext = filename.substr(dot_pos + 1);
+    }
+
+    std::string file_category = "other";
+    if (ext == "pt" || ext == "pth" || ext == "onnx" || ext == "tflite" || ext == "engine") {
+      file_category = "model";
+    } else if (ext == "pcd" || ext == "ply" || ext == "pickle" || ext == "pgm") {
+      file_category = "map";
+    } else if (ext == "yaml" || ext == "yml" || ext == "json" || ext == "xml" || ext == "cfg" || ext == "ini") {
+      file_category = "config";
+    } else if (ext == "bin" || ext == "hex" || ext == "img" || ext == "deb") {
+      file_category = "firmware";
+    }
+
+    // 过滤
+    if (!category_filter.empty() && file_category != category_filter) {
+      continue;
+    }
+
+    auto *info = response->add_files();
+    info->set_path(directory + "/" + filename);
+    info->set_filename(filename);
+    info->set_size(file_size);
+    info->set_modified_time(mod_time);
+    info->set_category(file_category);
+
+    total_size += file_size;
+  }
+
+  pclose(pipe);
+
+  response->set_total_size(total_size);
+
+  // 获取磁盘剩余空间
+  std::string df_cmd = "df -B1 '" + directory + "' 2>/dev/null | tail -1 | awk '{print $4}'";
+  FILE *df_pipe = popen(df_cmd.c_str(), "r");
+  if (df_pipe) {
+    char buf[64];
+    if (fgets(buf, sizeof(buf), df_pipe)) {
+      try {
+        response->set_free_space(std::stoull(std::string(buf)));
+      } catch (...) {}
+    }
+    pclose(df_pipe);
+  }
+
+  return grpc::Status::OK;
+}
+
+// ==================== Delete Remote File ====================
+
+grpc::Status
+DataServiceImpl::DeleteRemoteFile(
+    grpc::ServerContext *,
+    const robot::v1::DeleteRemoteFileRequest *request,
+    robot::v1::DeleteRemoteFileResponse *response) {
+  const std::string &path = request->remote_path();
+
+  if (path.empty()) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INVALID_REQUEST);
+    response->set_success(false);
+    response->set_message("remote_path is required");
+    return grpc::Status::OK;
+  }
+
+  // 路径安全检查
+  if (path.find("..") != std::string::npos) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INVALID_REQUEST);
+    response->set_success(false);
+    response->set_message("Path traversal not allowed");
+    return grpc::Status::OK;
+  }
+
+  // 只允许删除文件，不允许删除目录
+  if (!FileExists(path)) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+    response->set_success(false);
+    response->set_message("File not found: " + path);
+    return grpc::Status::OK;
+  }
+
+  if (std::remove(path.c_str()) != 0) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INTERNAL_ERROR);
+    response->set_success(false);
+    response->set_message("Failed to delete: " + path);
+    return grpc::Status::OK;
+  }
+
+  RCLCPP_INFO(node_->get_logger(), "Deleted file: %s", path.c_str());
+
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  response->set_success(true);
+  response->set_message("File deleted: " + path);
+  return grpc::Status::OK;
+}
+
 grpc::Status
 DataServiceImpl::StartCamera(grpc::ServerContext *,
                              const robot::v1::StartCameraRequest *request,

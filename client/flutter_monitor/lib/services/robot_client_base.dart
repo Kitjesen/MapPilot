@@ -36,6 +36,32 @@ abstract class RobotClientBase {
   /// 取消任务
   Future<CancelTaskResponse> cancelTask({required String taskId});
 
+  // ==================== 文件管理 (OTA) ====================
+
+  /// 上传文件到机器人 (模型/地图/配置)
+  /// [localBytes] 文件二进制内容
+  /// [remotePath] 目标路径
+  /// [filename] 文件名
+  /// [category] 分类: "model", "map", "config", "firmware"
+  /// [onProgress] 上传进度回调 (0.0 ~ 1.0)
+  Future<UploadFileResponse> uploadFile({
+    required List<int> localBytes,
+    required String remotePath,
+    required String filename,
+    String category = 'model',
+    bool overwrite = true,
+    void Function(double progress)? onProgress,
+  });
+
+  /// 列出远程目录文件
+  Future<ListRemoteFilesResponse> listRemoteFiles({
+    required String directory,
+    String category = '',
+  });
+
+  /// 删除远程文件
+  Future<DeleteRemoteFileResponse> deleteRemoteFile({required String remotePath});
+
   Future<void> disconnect();
   bool get isConnected;
   

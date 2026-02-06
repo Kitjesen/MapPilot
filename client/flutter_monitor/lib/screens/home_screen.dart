@@ -7,6 +7,7 @@ import 'status_screen.dart';
 import 'control_screen.dart';
 import 'map_screen.dart';
 import 'events_screen.dart';
+import 'settings_screen.dart';
 import '../main.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -26,6 +27,17 @@ class _HomeScreenState extends State<HomeScreen> {
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
     ]);
+  }
+
+  // 非 Control 的 tab 对应 IndexedStack 的映射
+  // index: 0=Status, 1=Control(push), 2=Map, 3=Events, 4=Settings
+  // IndexedStack: [Status, Map, Events, Settings]
+  int _indexedStackIndex() {
+    if (_currentIndex == 0) return 0;
+    if (_currentIndex == 2) return 1;
+    if (_currentIndex == 3) return 2;
+    if (_currentIndex == 4) return 3;
+    return 0;
   }
 
   void _onTabSelected(int index) {
@@ -86,11 +98,12 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           // 使用 IndexedStack 保持屏幕状态
           IndexedStack(
-            index: _currentIndex > 1 ? _currentIndex - 1 : _currentIndex,
+            index: _indexedStackIndex(),
             children: const [
               StatusScreen(),
               MapScreen(),
               EventsScreen(),
+              SettingsScreen(),
             ],
           ),
 
@@ -219,6 +232,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildNavItem(2, Icons.map_outlined, Icons.map, 'Map'),
                 _buildNavItem(3, Icons.notifications_outlined,
                     Icons.notifications, 'Events'),
+                _buildNavItem(4, Icons.settings_outlined, Icons.settings, 'Settings'),
                 // 断开连接按钮
                 _buildDisconnectButton(),
               ],

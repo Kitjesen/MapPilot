@@ -36,7 +36,9 @@ dependencies:
   # Utils
   uuid: ^4.2.1
   fixnum: ^1.1.0
-  # image: ^4.7.2  # Removed - no longer needed
+  file_picker: ^8.0.0
+  http: ^1.2.0
+  shared_preferences: ^2.2.0
   
   # WebRTC for real-time video/audio
   flutter_webrtc: ^0.12.6

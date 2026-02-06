@@ -44,6 +44,24 @@ public:
                const robot::v1::DownloadFileRequest *request,
                grpc::ServerWriter<robot::v1::FileChunk> *writer) override;
 
+  // 文件上传 (OTA 部署)
+  grpc::Status
+  UploadFile(grpc::ServerContext *context,
+             grpc::ServerReader<robot::v1::UploadFileChunk> *reader,
+             robot::v1::UploadFileResponse *response) override;
+
+  // 列出远程目录文件
+  grpc::Status
+  ListRemoteFiles(grpc::ServerContext *context,
+                  const robot::v1::ListRemoteFilesRequest *request,
+                  robot::v1::ListRemoteFilesResponse *response) override;
+
+  // 删除远程文件
+  grpc::Status
+  DeleteRemoteFile(grpc::ServerContext *context,
+                   const robot::v1::DeleteRemoteFileRequest *request,
+                   robot::v1::DeleteRemoteFileResponse *response) override;
+
   grpc::Status StartCamera(grpc::ServerContext *context,
                            const robot::v1::StartCameraRequest *request,
                            robot::v1::StartCameraResponse *response) override;

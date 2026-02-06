@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:fixnum/fixnum.dart';
 import 'package:grpc/grpc.dart';
 import 'package:robot_proto/src/telemetry.pbgrpc.dart';
 import 'package:robot_proto/src/system.pbgrpc.dart';
@@ -8,7 +9,6 @@ import 'package:robot_proto/src/data.pbgrpc.dart';
 import 'package:robot_proto/src/common.pb.dart';
 import 'package:protobuf/well_known_types/google/protobuf/empty.pb.dart';
 import 'package:protobuf/well_known_types/google/protobuf/timestamp.pb.dart';
-import 'package:fixnum/fixnum.dart';
 import 'package:uuid/uuid.dart';
 import 'robot_client_base.dart';
 
@@ -314,6 +314,78 @@ class RobotClient implements RobotClientBase {
       ..base = _createRequestBase()
       ..taskId = taskId;
     return await _controlClient.cancelTask(request);
+  }
+
+  // ==================== 文件管理 (OTA) ====================
+
+  /// 上传文件到机器人
+  @override
+  Future<UploadFileResponse> uploadFile({
+    required List<int> localBytes,
+    required String remotePath,
+    required String filename,
+    String category = 'model',
+    bool overwrite = true,
+    void Function(double progress)? onProgress,
+  }) async {
+    const chunkSize = 64 * 1024; // 64KB per chunk
+    final totalSize = localBytes.length;
+
+    final controller = StreamController<UploadFileChunk>();
+    final responseFuture = _dataClient.uploadFile(controller.stream);
+
+    // 发送第一个 chunk (包含 metadata)
+    int offset = 0;
+    final firstEnd = totalSize < chunkSize ? totalSize : chunkSize;
+    controller.add(UploadFileChunk()
+      ..metadata = (UploadFileMetadata()
+        ..base = _createRequestBase()
+        ..remotePath = remotePath
+        ..filename = filename
+        ..totalSize = Int64(totalSize)
+        ..overwrite = overwrite
+        ..category = category)
+      ..offset = Int64(offset)
+      ..data = localBytes.sublist(offset, firstEnd)
+      ..isLast = (firstEnd >= totalSize));
+    offset = firstEnd;
+    onProgress?.call(offset / totalSize);
+
+    // 发送后续 chunks
+    while (offset < totalSize) {
+      final end = (offset + chunkSize) < totalSize ? offset + chunkSize : totalSize;
+      controller.add(UploadFileChunk()
+        ..offset = Int64(offset)
+        ..data = localBytes.sublist(offset, end)
+        ..isLast = (end >= totalSize));
+      offset = end;
+      onProgress?.call(offset / totalSize);
+    }
+
+    await controller.close();
+    return await responseFuture;
+  }
+
+  /// 列出远程目录文件
+  @override
+  Future<ListRemoteFilesResponse> listRemoteFiles({
+    required String directory,
+    String category = '',
+  }) async {
+    final request = ListRemoteFilesRequest()
+      ..base = _createRequestBase()
+      ..directory = directory
+      ..category = category;
+    return await _dataClient.listRemoteFiles(request);
+  }
+
+  /// 删除远程文件
+  @override
+  Future<DeleteRemoteFileResponse> deleteRemoteFile({required String remotePath}) async {
+    final request = DeleteRemoteFileRequest()
+      ..base = _createRequestBase()
+      ..remotePath = remotePath;
+    return await _dataClient.deleteRemoteFile(request);
   }
 
   /// 断开连接

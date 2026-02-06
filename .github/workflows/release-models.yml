@@ -1,0 +1,133 @@
+name: Release Models & Firmware
+
+# 手动触发 - 用于发布训练好的模型、地图、配置、固件到 GitHub Release
+# App 端的 "云端更新" 功能会从这里拉取最新资产
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. models-v1.0.0)'
+        required: true
+        type: string
+      release_name:
+        description: 'Release name'
+        required: true
+        default: 'Model & Firmware Release'
+        type: string
+      release_notes:
+        description: 'Release notes (Markdown supported)'
+        required: false
+        default: '模型/固件更新包，可通过 MapPilot App 的 "云端更新" 自动部署到机器人。'
+        type: string
+      models_path:
+        description: 'Models glob pattern (e.g. models/*.pt models/*.onnx)'
+        required: false
+        default: ''
+        type: string
+      configs_path:
+        description: 'Config files glob pattern (e.g. configs/*.yaml)'
+        required: false
+        default: ''
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+  # 也支持 tag push 触发 (例如推送 models-v1.0.0 tag)
+  push:
+    tags:
+      - 'models-*'
+      - 'firmware-*'
+      - 'release-*'
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true  # 如果模型文件使用 Git LFS
+
+      - name: Collect release assets
+        id: collect
+        run: |
+          mkdir -p release_assets
+
+          # 收集模型文件 (如果指定)
+          if [ -n "${{ inputs.models_path }}" ]; then
+            for pattern in ${{ inputs.models_path }}; do
+              cp -v $pattern release_assets/ 2>/dev/null || true
+            done
+          fi
+
+          # 收集配置文件 (如果指定)
+          if [ -n "${{ inputs.configs_path }}" ]; then
+            for pattern in ${{ inputs.configs_path }}; do
+              cp -v $pattern release_assets/ 2>/dev/null || true
+            done
+          fi
+
+          # 如果通过 tag 触发，自动收集 models/ 和 configs/ 目录下的文件
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # 收集常见模型文件
+            find . -maxdepth 3 \( \
+              -name "*.pt" -o -name "*.pth" -o -name "*.onnx" \
+              -o -name "*.tflite" -o -name "*.engine" \
+            \) -exec cp -v {} release_assets/ \; 2>/dev/null || true
+          fi
+
+          # 列出收集到的文件
+          echo "=== Collected Assets ==="
+          ls -la release_assets/ || echo "No assets found"
+
+          # 检查是否有文件
+          ASSET_COUNT=$(find release_assets/ -type f | wc -l)
+          echo "asset_count=$ASSET_COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Determine tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+            echo "name=${{ inputs.release_name }}" >> "$GITHUB_OUTPUT"
+            echo "notes=${{ inputs.release_notes }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "name=Release $TAG" >> "$GITHUB_OUTPUT"
+            echo "notes=自动发布 - 通过 MapPilot App 云端更新部署到机器人。" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.name }}
+          body: |
+            ${{ steps.tag.outputs.notes }}
+
+            ---
+
+            **通过 MapPilot App 部署到机器人:**
+            1. 打开 MapPilot App → 设置 → 云端更新
+            2. 点击「检查更新」
+            3. 选择文件，点击 ☁️ 按钮自动下载并部署
+
+            **手动部署:**
+            ```bash
+            # 下载文件到机器人
+            scp <asset_file> sunrise@<robot_ip>:/home/sunrise/models/
+            ```
+          files: release_assets/*
+          draft: false
+          prerelease: ${{ steps.tag.outputs.prerelease }}
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
