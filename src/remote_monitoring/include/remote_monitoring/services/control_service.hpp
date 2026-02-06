@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 
 #include "control.grpc.pb.h"
 #include "grpcpp/grpcpp.h"
@@ -20,7 +21,8 @@ class ControlServiceImpl final : public robot::v1::ControlService::Service {
 public:
   ControlServiceImpl(std::shared_ptr<core::LeaseManager> lease_mgr,
                      std::shared_ptr<core::SafetyGate> safety_gate,
-                     std::shared_ptr<core::EventBuffer> event_buffer);
+                     std::shared_ptr<core::EventBuffer> event_buffer,
+                     std::shared_ptr<core::IdempotencyCache> idempotency_cache);
 
   grpc::Status AcquireLease(grpc::ServerContext *context,
                             const robot::v1::AcquireLeaseRequest *request,
@@ -56,7 +58,13 @@ public:
                           const robot::v1::CancelTaskRequest *request,
                           robot::v1::CancelTaskResponse *response) override;
 
+  // 获取当前模式（供 StatusAggregator 读取）
+  robot::v1::RobotMode GetCurrentMode() const { return current_mode_.load(); }
+
 private:
+  // 从 gRPC context 提取客户端标识（peer address）
+  static std::string ExtractPeerId(grpc::ServerContext *context);
+
   std::shared_ptr<core::LeaseManager> lease_mgr_;
   std::shared_ptr<core::SafetyGate> safety_gate_;
   std::shared_ptr<core::EventBuffer> event_buffer_;

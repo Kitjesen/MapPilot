@@ -1,5 +1,6 @@
 #include "remote_monitoring/grpc_gateway.hpp"
 #include "remote_monitoring/core/event_buffer.hpp"
+#include "remote_monitoring/core/idempotency_cache.hpp"
 #include "remote_monitoring/core/lease_manager.hpp"
 #include "remote_monitoring/core/safety_gate.hpp"
 #include "remote_monitoring/services/control_service.hpp"
@@ -20,15 +21,22 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
   lease_mgr_ = std::make_shared<core::LeaseManager>();
   event_buffer_ = std::make_shared<core::EventBuffer>(1000);
   safety_gate_ = std::make_shared<core::SafetyGate>(node_);
+  idempotency_cache_ = std::make_shared<core::IdempotencyCache>();
 
   // 创建服务实现
   system_service_ = std::make_shared<services::SystemServiceImpl>();
   control_service_ =
       std::make_shared<services::ControlServiceImpl>(lease_mgr_, safety_gate_,
-                                                     event_buffer_);
+                                                     event_buffer_,
+                                                     idempotency_cache_);
   telemetry_service_ = std::make_shared<services::TelemetryServiceImpl>(
       aggregator_, event_buffer_);
   data_service_ = std::make_shared<services::DataServiceImpl>(node_);
+
+  // 让 StatusAggregator 可以获取真实模式
+  aggregator_->SetModeProvider([this]() {
+    return control_service_->GetCurrentMode();
+  });
 }
 
 GrpcGateway::~GrpcGateway() { Stop(); }
@@ -62,16 +70,20 @@ void GrpcGateway::Run() {
   RCLCPP_INFO(rclcpp::get_logger("grpc_gateway"),
               "gRPC Gateway listening on :%d", port_);
 
-  // Lease 超时检查
-  auto last_check = std::chrono::system_clock::now();
+  // 后台循环：Safety Gate deadman 必须高频检查（≤100ms），
+  // Lease 超时和幂等缓存清理频率可以较低（1s）。
+  auto last_slow_check = std::chrono::steady_clock::now();
   while (!stop_.load()) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    const auto now = std::chrono::system_clock::now();
-    if (now - last_check > std::chrono::seconds(1)) {
+    // 每次循环都检查 deadman（~50ms 间隔，远小于 300ms 超时）
+    safety_gate_->CheckDeadman();
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_slow_check > std::chrono::seconds(1)) {
       lease_mgr_->CheckTimeout();
-      safety_gate_->CheckDeadman();
-      last_check = now;
+      idempotency_cache_->Cleanup();
+      last_slow_check = now;
     }
   }
 }

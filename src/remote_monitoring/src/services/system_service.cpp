@@ -46,14 +46,18 @@ grpc::Status SystemServiceImpl::Heartbeat(
   robot::v1::HeartbeatResponse *response) {
   
   const auto now = std::chrono::system_clock::now();
-  const auto now_sec = std::chrono::duration_cast<std::chrono::seconds>(
-                         now.time_since_epoch()).count();
-  response->mutable_server_timestamp()->set_seconds(now_sec);
+  const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        now.time_since_epoch()).count();
+  response->mutable_server_timestamp()->set_seconds(now_ns / 1000000000LL);
+  response->mutable_server_timestamp()->set_nanos(
+      static_cast<int32_t>(now_ns % 1000000000LL));
   
-  // 计算 RTT
+  // 计算 RTT（纳秒级精度）
   if (request->has_client_timestamp()) {
-    const auto client_sec = request->client_timestamp().seconds();
-    const auto rtt_ms = (now_sec - client_sec) * 1000;
+    const int64_t client_ns = request->client_timestamp().seconds() * 1000000000LL
+                            + request->client_timestamp().nanos();
+    const int64_t rtt_ns = std::max<int64_t>(0, now_ns - client_ns);
+    const double rtt_ms = static_cast<double>(rtt_ns) / 1000000.0;
     response->mutable_server_quality()->set_rtt_ms(rtt_ms);
   }
   

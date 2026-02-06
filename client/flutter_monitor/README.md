@@ -1,203 +1,152 @@
-# Robot Monitor Flutter Client
+# Robot Monitor — Flutter Client
 
-Flutter 客户端，通过 gRPC 实时监控机器人导航系统状态。
+通过 gRPC 实时监控和遥操作机器人的 Flutter 客户端。
 
 ## 功能
 
-- 实时位姿显示（X, Y, Z, Roll, Pitch, Yaw）
-- 速度监控（线速度、角速度）
-- 话题频率统计（/Odometry, /terrain_map, /path, LiDAR）
-- 系统资源监控（CPU, Memory, Temperature）
-- TF 状态检查
+- **实时遥测**：位姿、速度、姿态、话题频率、系统资源（10Hz / 1Hz）
+- **遥操作控制**：双摇杆、模式切换、紧急停止、租约管理
+- **视频流**：WebRTC 实时视频 + JPEG 流回退
+- **3D 可视化**：Three.js URDF 机器人模型
+- **2D 轨迹**：实时路径 + 全局地图 + 点云叠加
+- **事件时间线**：按严重级别着色的事件流 + 确认机制
+- **自动重连**：指数退避重连 + 连接健康检查
 
-## 前置要求
+## 快速开始
+
+### 1. 前置要求
 
 - Flutter SDK >= 3.0.0
-- Dart SDK
-- protoc（Protocol Buffers编译器）
-- protoc-gen-dart
-
-## 安装步骤
-
-### 1. 安装 Flutter
-
-```bash
-# 下载 Flutter（Linux）
-cd ~
-wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.16.0-stable.tar.xz
-tar xf flutter_linux_3.16.0-stable.tar.xz
-export PATH="$PATH:`pwd`/flutter/bin"
-
-# 验证安装
-flutter doctor
-```
-
-### 2. 安装 protoc-gen-dart
+- protoc + protoc-gen-dart
 
 ```bash
 dart pub global activate protoc_plugin
 export PATH="$PATH:$HOME/.pub-cache/bin"
 ```
 
-### 3. 生成 Dart gRPC 代码
-
-在项目根目录执行：
+### 2. 生成 gRPC 代码
 
 ```bash
-cd /home/sunrise/data/SLAM/navigation/client/flutter_monitor
-
-# 生成 Dart proto 文件
-protoc --dart_out=grpc:lib/generated \
-  -I proto \
-  proto/common.proto \
-  proto/system.proto \
-  proto/control.proto \
-  proto/telemetry.proto \
-  proto/data.proto
+./generate_proto.sh
 ```
 
-### 4. 安装依赖
+### 3. 安装依赖 & 运行
 
 ```bash
 flutter pub get
+flutter run -d linux     # 桌面端
+flutter run -d android   # Android
+flutter run -d chrome    # Web
 ```
 
-## 运行
-
-### 桌面端（Linux）
+### 4. 打包 APK
 
 ```bash
-flutter run -d linux
+flutter build apk --release
+# 输出: build/app/outputs/flutter-apk/app-release.apk
 ```
-
-### Android（连接设备或模拟器）
-
-```bash
-flutter run -d android
-```
-
-### Web（测试用）
-
-```bash
-flutter run -d chrome
-```
-
-## 配置
-
-默认连接地址：`192.168.66.190:50051`
-
-可以在连接界面修改 IP 和端口。
 
 ## 项目结构
 
 ```
 flutter_monitor/
-├── pubspec.yaml           # 依赖配置
-├── proto/                 # Proto 源文件（从 remote_monitoring 复制）
-│   ├── common.proto
-│   ├── system.proto
-│   ├── control.proto
-│   ├── telemetry.proto
-│   └── data.proto
 ├── lib/
-│   ├── main.dart          # 应用入口，连接界面
-│   ├── generated/         # protoc 生成的 Dart 代码
-│   │   ├── common.pb.dart
-│   │   ├── system.pbgrpc.dart
-│   │   ├── telemetry.pbgrpc.dart
-│   │   └── ...
+│   ├── main.dart                           # 入口 + 连接页面
+│   ├── screens/
+│   │   ├── home_screen.dart                # 主导航（底部Tab + 断连）
+│   │   ├── status_screen.dart              # 实时仪表盘
+│   │   ├── control_screen.dart             # 遥操作（摇杆 + FPV）
+│   │   ├── map_screen.dart                 # 2D/3D 轨迹可视化
+│   │   └── events_screen.dart              # 事件时间线
 │   ├── services/
-│   │   └── robot_client.dart   # gRPC 客户端封装
-│   └── screens/
-│       └── status_screen.dart  # 状态展示页面
-└── README.md
+│   │   ├── robot_connection_provider.dart   # 集中状态管理 (Provider)
+│   │   ├── robot_client_base.dart          # 抽象接口
+│   │   ├── robot_client.dart               # gRPC 实现
+│   │   ├── mock_robot_client.dart          # Mock 演示
+│   │   └── webrtc_client.dart              # WebRTC 信令
+│   ├── widgets/
+│   │   ├── glass_widgets.dart              # 毛玻璃组件
+│   │   ├── camera_stream_widget.dart       # JPEG 相机流
+│   │   ├── webrtc_video_widget.dart        # WebRTC 视频
+│   │   └── robot_model_widget.dart         # 3D URDF 查看器
+│   └── generated/                          # protoc 自动生成 (gitignored)
+├── proto/                                  # Protobuf 定义
+│   ├── common.proto
+│   ├── telemetry.proto
+│   ├── control.proto
+│   ├── data.proto
+│   └── system.proto
+├── assets/
+│   ├── libs/                               # Three.js + URDFLoader
+│   ├── meshes/                             # STL 网格文件
+│   ├── urdf/                               # URDF 机器人模型
+│   └── urdf_viewer*.html                   # 3D 查看器页面
+├── tools/
+│   └── test_grpc_client.dart               # gRPC 连接测试工具
+├── generate_proto.sh                       # Proto 代码生成脚本
+└── pubspec.yaml                            # 依赖配置
 ```
 
-## 使用说明
+## 架构
 
-1. 启动机器人端 gRPC 服务：
-   ```bash
-   ros2 run remote_monitoring grpc_gateway
-   ```
+### 状态管理
 
-2. 确认机器人 IP（例如：192.168.66.190）
+使用 `Provider` + `ChangeNotifier` 集中管理：
 
-3. 启动 Flutter 应用
+```
+RobotConnectionProvider (ChangeNotifier)
+├── 连接状态 (connected / reconnecting / error)
+├── FastState / SlowState 广播流
+├── 租约状态
+├── 自动重连 (指数退避: 2s → 4s → 8s → 30s)
+└── 连接健康检查 (5s 轮询)
+```
 
-4. 输入机器人 IP 和端口（50051）
+### gRPC 服务
 
-5. 点击 "Connect" 连接
+| 服务 | 用途 |
+|------|------|
+| `TelemetryService` | FastState (10Hz), SlowState (1Hz), Events |
+| `ControlService` | Lease, SetMode, EmergencyStop, Teleop |
+| `DataService` | 资源订阅 (Camera/Map/PointCloud), WebRTC 信令 |
+| `SystemService` | GetRobotInfo, GetCapabilities |
 
-6. 查看实时数据流
+### 性能优化
+
+- `setState` 节流：FastState UI 更新限 10FPS，Map 位姿限 5Hz
+- `RepaintBoundary`：隔离高频更新组件
+- `AutomaticKeepAliveClientMixin`：Tab 切换保持屏幕状态
+- `shouldRepaint` 精确判断：数据版本号 + 坐标比较
+- Teleop 命令限 20Hz
+- 事件列表限 200 条 + 虚拟滚动
+
+## 配置
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| Robot IP | `192.168.66.190` | 连接页面可修改 |
+| gRPC Port | `50051` | 连接页面可修改 |
+| FastState Hz | `10.0` | 快速状态流频率 |
+| Max Path Points | `5000` | 轨迹最大点数 |
+| Max Events | `200` | 事件列表最大条数 |
+| Reconnect Max | `10` 次 | 最大重连尝试 |
 
 ## 故障排查
 
-### 连接失败
-
-- 检查机器人和客户端是否在同一网络
-- 确认 gRPC Gateway 正在运行：`ss -tlnp | grep 50051`
-- 尝试 ping 机器人 IP
-- 检查防火墙设置
-
-### 生成代码错误
-
 ```bash
-# 确认 protoc 版本
-protoc --version  # 应该 >= 3.12
+# 检查机器人服务
+ss -tlnp | grep 50051
 
-# 确认 protoc-gen-dart 已安装
-which protoc-gen-dart
+# 测试 gRPC 连接
+grpcurl -plaintext <ROBOT_IP>:50051 list
+
+# 运行 gRPC 测试脚本
+dart run tools/test_grpc_client.dart <ROBOT_IP> 50051
+
+# Flutter 依赖问题
+flutter clean && flutter pub get
 ```
-
-### Flutter 依赖问题
-
-```bash
-flutter clean
-flutter pub get
-```
-
-## API 说明
-
-### RobotClient
-
-```dart
-// 创建客户端
-final client = RobotClient(host: '192.168.66.190', port: 50051);
-
-// 连接
-await client.connect();
-
-// 订阅快速状态（10Hz）
-client.streamFastState(desiredHz: 10.0).listen((state) {
-  print('Position: ${state.pose.position}');
-  print('Velocity: ${state.velocity.linear}');
-});
-
-// 订阅慢速状态（1Hz）
-client.streamSlowState().listen((state) {
-  print('CPU: ${state.resources.cpuPercent}%');
-});
-
-// 断开连接
-await client.disconnect();
-```
-
-## 后续扩展
-
-- [ ] 添加路径可视化（2D 轨迹图）
-- [ ] 事件流展示（告警、错误）
-- [ ] 遥操作控制（需要租约）
-- [ ] 任务管理界面
-- [ ] 历史数据图表
-- [ ] 多机器人切换
 
 ## 技术栈
 
-- **Flutter**: UI 框架
-- **gRPC**: 通信协议
-- **Protobuf**: 数据序列化
-- **flutter_bloc**: 状态管理（可选）
-
-## License
-
-MIT
+Flutter + gRPC + Protobuf + WebRTC + Three.js + Provider

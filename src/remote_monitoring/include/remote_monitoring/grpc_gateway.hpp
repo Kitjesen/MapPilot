@@ -15,6 +15,7 @@ namespace core {
 class LeaseManager;
 class EventBuffer;
 class SafetyGate;
+class IdempotencyCache;
 }
 
 namespace services {
@@ -43,6 +44,7 @@ private:
   std::shared_ptr<core::LeaseManager> lease_mgr_;
   std::shared_ptr<core::EventBuffer> event_buffer_;
   std::shared_ptr<core::SafetyGate> safety_gate_;
+  std::shared_ptr<core::IdempotencyCache> idempotency_cache_;
   
   // 服务实现
   std::shared_ptr<services::SystemServiceImpl> system_service_;

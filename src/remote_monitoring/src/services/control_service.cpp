@@ -60,13 +60,26 @@ void FillControlLatency(const google::protobuf::Timestamp &client_ts,
 ControlServiceImpl::ControlServiceImpl(
     std::shared_ptr<core::LeaseManager> lease_mgr,
     std::shared_ptr<core::SafetyGate> safety_gate,
-    std::shared_ptr<core::EventBuffer> event_buffer)
+    std::shared_ptr<core::EventBuffer> event_buffer,
+    std::shared_ptr<core::IdempotencyCache> idempotency_cache)
     : lease_mgr_(std::move(lease_mgr)), safety_gate_(std::move(safety_gate)),
       event_buffer_(std::move(event_buffer)),
-      idempotency_cache_(std::make_shared<core::IdempotencyCache>()) {}
+      idempotency_cache_(std::move(idempotency_cache)) {}
+
+std::string ControlServiceImpl::ExtractPeerId(grpc::ServerContext *context) {
+  if (context == nullptr) {
+    return "unknown";
+  }
+  // gRPC peer() 返回 "ipv4:x.x.x.x:port" 或 "ipv6:[::]:port"
+  std::string peer = context->peer();
+  if (peer.empty()) {
+    return "unknown";
+  }
+  return peer;
+}
 
 grpc::Status
-ControlServiceImpl::AcquireLease(grpc::ServerContext *,
+ControlServiceImpl::AcquireLease(grpc::ServerContext *context,
                                  const robot::v1::AcquireLeaseRequest *request,
                                  robot::v1::AcquireLeaseResponse *response) {
 
@@ -80,8 +93,9 @@ ControlServiceImpl::AcquireLease(grpc::ServerContext *,
 
   response->mutable_base()->set_request_id(request->base().request_id());
 
+  const std::string holder_id = ExtractPeerId(context);
   robot::v1::OperatorLease lease;
-  if (lease_mgr_->AcquireLease("client_001", &lease)) {
+  if (lease_mgr_->AcquireLease(holder_id, &lease)) {
     *response->mutable_lease() = lease;
     response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
   } else {

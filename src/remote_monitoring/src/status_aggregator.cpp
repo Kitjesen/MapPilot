@@ -2,6 +2,9 @@
 
 #include <chrono>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 #include "tf2/LinearMath/Matrix3x3.h"
 #include "tf2/LinearMath/Quaternion.h"
@@ -65,6 +68,10 @@ StatusAggregator::StatusAggregator(rclcpp::Node *node)
     std::chrono::duration<double>(1.0 / std::max(slow_hz_, 0.1)), [this]() { update_slow_state(); });
 }
 
+void StatusAggregator::SetModeProvider(ModeProvider provider) {
+  mode_provider_ = std::move(provider);
+}
+
 void StatusAggregator::OdomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg) {
   odom_rate_.tick();
   latest_odom_ = msg;
@@ -78,8 +85,10 @@ void StatusAggregator::PathCallback(const nav_msgs::msg::Path::ConstSharedPtr) {
   path_rate_.tick();
 }
 
-void StatusAggregator::SlowDownCallback(const std_msgs::msg::Int8::ConstSharedPtr) {
-  // 缓存用于 slow_state
+void StatusAggregator::SlowDownCallback(const std_msgs::msg::Int8::ConstSharedPtr msg) {
+  if (msg) {
+    slow_down_level_.store(msg->data);
+  }
 }
 
 void StatusAggregator::update_rates() {
@@ -170,7 +179,28 @@ void StatusAggregator::update_slow_state() {
   header->mutable_timestamp()->set_nanos(now_ns % 1000000000);
   header->set_frame_id(tf_odom_frame_);
   
-  state.set_current_mode("autonomous");  // TODO: 从实际模式读取
+  // 从 ControlService 获取真实模式
+  if (mode_provider_) {
+    const auto mode = mode_provider_();
+    switch (mode) {
+      case robot::v1::ROBOT_MODE_IDLE:       state.set_current_mode("idle"); break;
+      case robot::v1::ROBOT_MODE_MANUAL:     state.set_current_mode("manual"); break;
+      case robot::v1::ROBOT_MODE_TELEOP:     state.set_current_mode("teleop"); break;
+      case robot::v1::ROBOT_MODE_AUTONOMOUS: state.set_current_mode("autonomous"); break;
+      case robot::v1::ROBOT_MODE_MAPPING:    state.set_current_mode("mapping"); break;
+      case robot::v1::ROBOT_MODE_ESTOP:      state.set_current_mode("estop"); break;
+      default:                               state.set_current_mode("unknown"); break;
+    }
+  } else {
+    state.set_current_mode("idle");
+  }
+
+  // 系统资源
+  auto *resources = state.mutable_resources();
+  resources->set_cpu_percent(ReadCpuUsage());
+  resources->set_mem_percent(ReadMemUsage());
+  resources->set_cpu_temp(ReadCpuTemp());
+  // battery_percent / battery_voltage 需要外部话题或驱动，暂留 0
   
   // 话题频率
   auto *rates = state.mutable_topic_rates();
@@ -181,6 +211,94 @@ void StatusAggregator::update_slow_state() {
   
   std::lock_guard<std::mutex> lock(slow_mutex_);
   latest_slow_state_ = state;
+}
+
+// ==================== 系统资源读取（Linux /proc） ====================
+
+double StatusAggregator::ReadCpuUsage() {
+  // 读取 /proc/stat 计算整体 CPU 使用率
+  // 格式: cpu user nice system idle iowait irq softirq steal guest guest_nice
+  std::ifstream file("/proc/stat");
+  if (!file.is_open()) {
+    return 0.0;
+  }
+
+  std::string label;
+  uint64_t user, nice, system, idle, iowait, irq, softirq, steal;
+  file >> label >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal;
+  if (label != "cpu") {
+    return 0.0;
+  }
+
+  const uint64_t total = user + nice + system + idle + iowait + irq + softirq + steal;
+  const uint64_t idle_total = idle + iowait;
+
+  // 首次调用无法计算差值，返回 0
+  // 注意：这是一个简化实现，static 变量在多实例时有问题，
+  // 但本系统只有一个 StatusAggregator 实例。
+  static uint64_t s_prev_total = 0;
+  static uint64_t s_prev_idle = 0;
+
+  if (s_prev_total == 0) {
+    s_prev_total = total;
+    s_prev_idle = idle_total;
+    return 0.0;
+  }
+
+  const uint64_t d_total = total - s_prev_total;
+  const uint64_t d_idle = idle_total - s_prev_idle;
+  s_prev_total = total;
+  s_prev_idle = idle_total;
+
+  if (d_total == 0) {
+    return 0.0;
+  }
+
+  return 100.0 * static_cast<double>(d_total - d_idle) / static_cast<double>(d_total);
+}
+
+double StatusAggregator::ReadMemUsage() {
+  // 读取 /proc/meminfo
+  std::ifstream file("/proc/meminfo");
+  if (!file.is_open()) {
+    return 0.0;
+  }
+
+  uint64_t mem_total = 0, mem_available = 0;
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.rfind("MemTotal:", 0) == 0) {
+      std::istringstream iss(line);
+      std::string key;
+      iss >> key >> mem_total;
+    } else if (line.rfind("MemAvailable:", 0) == 0) {
+      std::istringstream iss(line);
+      std::string key;
+      iss >> key >> mem_available;
+    }
+    if (mem_total > 0 && mem_available > 0) {
+      break;
+    }
+  }
+
+  if (mem_total == 0) {
+    return 0.0;
+  }
+
+  return 100.0 * static_cast<double>(mem_total - mem_available)
+       / static_cast<double>(mem_total);
+}
+
+double StatusAggregator::ReadCpuTemp() {
+  // 读取 /sys/class/thermal/thermal_zone0/temp（毫摄氏度）
+  std::ifstream file("/sys/class/thermal/thermal_zone0/temp");
+  if (!file.is_open()) {
+    return 0.0;
+  }
+
+  int temp_milli = 0;
+  file >> temp_milli;
+  return static_cast<double>(temp_milli) / 1000.0;
 }
 
 }  // namespace remote_monitoring

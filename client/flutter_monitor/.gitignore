@@ -12,6 +12,16 @@ lib/generated/
 .idea/
 *.iml
 .vscode/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Misc
+*.log
+*.pyc
+__pycache__/

@@ -3,7 +3,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_joystick/flutter_joystick.dart';
-import '../services/robot_client_base.dart';
+import 'package:provider/provider.dart';
+import '../services/robot_connection_provider.dart';
 import '../generated/common.pb.dart';
 import '../generated/control.pb.dart';
 import '../widgets/glass_widgets.dart';
@@ -11,30 +12,33 @@ import '../widgets/camera_stream_widget.dart';
 import '../widgets/webrtc_video_widget.dart';
 
 class ControlScreen extends StatefulWidget {
-  final RobotClientBase client;
-
-  const ControlScreen({super.key, required this.client});
+  const ControlScreen({super.key});
 
   @override
   State<ControlScreen> createState() => _ControlScreenState();
 }
 
 class _ControlScreenState extends State<ControlScreen> {
-  bool _hasLease = false;
-  final StreamController<Twist> _velocityController = StreamController<Twist>.broadcast();
+  final StreamController<Twist> _velocityController =
+      StreamController<Twist>.broadcast();
   StreamSubscription? _teleopSubscription;
   double _linearX = 0.0;
   double _linearY = 0.0;
   double _angularZ = 0.0;
 
+  // 发送节流
+  DateTime _lastTwistSend = DateTime(2000);
+  static const _twistSendInterval = Duration(milliseconds: 50); // 20Hz max
+
   @override
   void initState() {
     super.initState();
-    _checkLease();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+    // 隐藏系统状态栏提升沉浸感
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   @override
@@ -45,99 +49,136 @@ class _ControlScreenState extends State<ControlScreen> {
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
     ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
-  Future<void> _checkLease() async {
-    // TODO: better lease state tracking
-  }
-
   Future<void> _toggleLease() async {
-    if (_hasLease) {
-      await widget.client.releaseLease();
-      setState(() {
-        _hasLease = false;
-        _teleopSubscription?.cancel();
-        _teleopSubscription = null;
-      });
+    final provider = context.read<RobotConnectionProvider>();
+    HapticFeedback.mediumImpact();
+
+    if (provider.hasLease) {
+      await provider.releaseLease();
+      _teleopSubscription?.cancel();
+      _teleopSubscription = null;
     } else {
-      final success = await widget.client.acquireLease();
+      final success = await provider.acquireLease();
       if (success) {
-        setState(() {
-          _hasLease = true;
-        });
         _startTeleopStream();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to acquire lease')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('无法获取控制权'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
     }
   }
 
   void _startTeleopStream() {
     try {
-      _teleopSubscription = widget.client.streamTeleop(_velocityController.stream).listen((feedback) {
-        // Handle feedback
-      }, onError: (e) {
-        print('Teleop stream error: $e');
-        setState(() {
-          _hasLease = false;
-        });
-      });
+      final client = context.read<RobotConnectionProvider>().client;
+      if (client == null) return;
+
+      _teleopSubscription =
+          client.streamTeleop(_velocityController.stream).listen(
+        (feedback) {
+          // Handle feedback (e.g., safety warnings)
+        },
+        onError: (e) {
+          debugPrint('Teleop stream error: $e');
+          if (mounted) {
+            context.read<RobotConnectionProvider>().releaseLease();
+          }
+        },
+      );
     } catch (e) {
-      print('Failed to start teleop stream: $e');
+      debugPrint('Failed to start teleop stream: $e');
     }
   }
 
   void _onLeftJoystickChange(StickDragDetails details) {
-    if (!_hasLease) return;
-    const double maxLinearSpeed = 1.0; 
+    final provider = context.read<RobotConnectionProvider>();
+    if (!provider.hasLease) return;
+    const double maxLinearSpeed = 1.0;
     _linearX = -details.y * maxLinearSpeed;
     _linearY = details.x * maxLinearSpeed;
-    _sendTwist();
+    _throttledSendTwist();
   }
 
   void _onRightJoystickChange(StickDragDetails details) {
-    if (!_hasLease) return;
-    const double maxAngularSpeed = 1.5; 
+    final provider = context.read<RobotConnectionProvider>();
+    if (!provider.hasLease) return;
+    const double maxAngularSpeed = 1.5;
     _angularZ = -details.x * maxAngularSpeed;
-    _sendTwist();
+    _throttledSendTwist();
+  }
+
+  void _throttledSendTwist() {
+    final now = DateTime.now();
+    if (now.difference(_lastTwistSend) >= _twistSendInterval) {
+      _lastTwistSend = now;
+      _sendTwist();
+    }
   }
 
   void _sendTwist() {
     final twist = Twist()
-      ..linear = (Vector3()..x = _linearX..y = _linearY)
+      ..linear = (Vector3()
+        ..x = _linearX
+        ..y = _linearY)
       ..angular = (Vector3()..z = _angularZ);
     _velocityController.add(twist);
+    if (mounted) setState(() {}); // 更新显示
   }
 
   Future<void> _setMode(RobotMode mode) async {
-    final success = await widget.client.setMode(mode);
-    if (success) {
+    HapticFeedback.lightImpact();
+    final client = context.read<RobotConnectionProvider>().client;
+    if (client == null) return;
+
+    final success = await client.setMode(mode);
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Mode set to $mode')),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to set mode')),
+        SnackBar(
+          content: Text(success ? '模式已切换: $mode' : '模式切换失败'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 1),
+        ),
       );
     }
   }
 
   Future<void> _emergencyStop() async {
-    await widget.client.emergencyStop(hardStop: false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('EMERGENCY STOP TRIGGERED')),
-    );
+    HapticFeedback.heavyImpact();
+    final client = context.read<RobotConnectionProvider>().client;
+    if (client == null) return;
+
+    await client.emergencyStop(hardStop: false);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('紧急停止已触发'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final provider = context.watch<RobotConnectionProvider>();
+    final hasLease = provider.hasLease;
+    final client = provider.client;
+
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        automaticallyImplyLeading: false, // Hide default back button
+        automaticallyImplyLeading: false,
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: GlassCard(
@@ -148,7 +189,8 @@ class _ControlScreenState extends State<ControlScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: Colors.black87),
+                icon: const Icon(Icons.arrow_back_ios_new,
+                    size: 18, color: Colors.black87),
                 onPressed: () => Navigator.of(context).pop(),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
@@ -167,21 +209,17 @@ class _ControlScreenState extends State<ControlScreen> {
         ),
         centerTitle: true,
         actions: [
-          // Camera indicator
           Padding(
             padding: const EdgeInsets.only(right: 12.0),
             child: GlassCard(
               borderRadius: 20,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               blurSigma: 10,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.videocam,
-                    size: 14,
-                    color: Colors.blue[700],
-                  ),
+                  Icon(Icons.videocam, size: 14, color: Colors.blue[700]),
                   const SizedBox(width: 6),
                   Text(
                     'FPV',
@@ -195,29 +233,34 @@ class _ControlScreenState extends State<ControlScreen> {
               ),
             ),
           ),
-          // Lease toggle
           Padding(
             padding: const EdgeInsets.only(right: 24.0),
             child: GestureDetector(
               onTap: _toggleLease,
               child: GlassCard(
                 borderRadius: 20,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                color: _hasLease ? Colors.green.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                color: hasLease
+                    ? Colors.green.withOpacity(0.2)
+                    : Colors.grey.withOpacity(0.2),
                 child: Row(
                   children: [
                     Icon(
-                      _hasLease ? Icons.lock_open : Icons.lock,
+                      hasLease ? Icons.lock_open : Icons.lock,
                       size: 16,
-                      color: _hasLease ? Colors.green[700] : Colors.grey[700],
+                      color:
+                          hasLease ? Colors.green[700] : Colors.grey[700],
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      _hasLease ? 'LEASE ACTIVE' : 'NO LEASE',
+                      hasLease ? 'LEASE ACTIVE' : 'NO LEASE',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: _hasLease ? Colors.green[800] : Colors.grey[800],
+                        color: hasLease
+                            ? Colors.green[800]
+                            : Colors.grey[800],
                       ),
                     ),
                   ],
@@ -229,21 +272,22 @@ class _ControlScreenState extends State<ControlScreen> {
       ),
       body: Stack(
         children: [
-          // Camera Background (FPV Style) - WebRTC优先，fallback到图片流
+          // Camera Background (FPV Style)
           Positioned.fill(
-            child: widget.client.dataServiceClient != null
+            child: client?.dataServiceClient != null
                 ? WebRTCVideoWidget(
-                    client: widget.client,
+                    client: client!,
                     cameraId: 'front',
                     autoConnect: true,
                     fit: BoxFit.cover,
-                    // 连接失败时 fallback 到旧的图片流
-                    errorWidget: CameraStreamWidget(client: widget.client),
+                    errorWidget: CameraStreamWidget(client: client),
                   )
-                : CameraStreamWidget(client: widget.client),
+                : client != null
+                    ? CameraStreamWidget(client: client)
+                    : Container(color: Colors.black87),
           ),
-          
-          // Dark gradient overlay for better control visibility
+
+          // Dark gradient overlay
           Positioned.fill(
             child: Container(
               decoration: BoxDecoration(
@@ -259,21 +303,24 @@ class _ControlScreenState extends State<ControlScreen> {
               ),
             ),
           ),
-          
+
           // Main Layout
           Padding(
-            padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60, bottom: 20, left: 40, right: 40),
+            padding: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 60,
+                bottom: 20,
+                left: 40,
+                right: 40),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Left Joystick (Translation)
                 _buildJoystickSection(
                   label: 'TRANSLATION',
                   icon: Icons.open_with,
                   listener: _onLeftJoystickChange,
                   mode: JoystickMode.all,
                 ),
-                
+
                 // Center Controls
                 Expanded(
                   child: Padding(
@@ -288,9 +335,14 @@ class _ControlScreenState extends State<ControlScreen> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              _buildModeButton('IDLE', RobotMode.ROBOT_MODE_IDLE, Colors.grey),
-                              _buildModeButton('MANUAL', RobotMode.ROBOT_MODE_MANUAL, Colors.blue),
-                              _buildModeButton('AUTO', RobotMode.ROBOT_MODE_AUTONOMOUS, Colors.purple),
+                              _buildModeButton('IDLE',
+                                  RobotMode.ROBOT_MODE_IDLE, Colors.grey),
+                              _buildModeButton('MANUAL',
+                                  RobotMode.ROBOT_MODE_MANUAL, Colors.blue),
+                              _buildModeButton(
+                                  'AUTO',
+                                  RobotMode.ROBOT_MODE_AUTONOMOUS,
+                                  Colors.purple),
                             ],
                           ),
                         ),
@@ -311,7 +363,9 @@ class _ControlScreenState extends State<ControlScreen> {
                                   offset: const Offset(0, 8),
                                 ),
                               ],
-                              border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
+                              border: Border.all(
+                                  color: Colors.white.withOpacity(0.5),
+                                  width: 2),
                             ),
                             child: const Center(
                               child: Text(
@@ -329,12 +383,16 @@ class _ControlScreenState extends State<ControlScreen> {
                         const Spacer(),
                         // Status Text
                         GlassCard(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
                           child: Text(
-                            'Linear: ${_linearX.toStringAsFixed(2)}, ${_linearY.toStringAsFixed(2)} | Angular: ${_angularZ.toStringAsFixed(2)}',
+                            'Vx: ${_linearX.toStringAsFixed(2)}  Vy: ${_linearY.toStringAsFixed(2)}  Wz: ${_angularZ.toStringAsFixed(2)}',
                             style: TextStyle(
                               fontSize: 12,
-                              fontFamily: 'Courier', // Monospace for numbers
+                              fontFamily: 'monospace',
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ],
                               color: Colors.black.withOpacity(0.6),
                             ),
                           ),
@@ -344,7 +402,6 @@ class _ControlScreenState extends State<ControlScreen> {
                   ),
                 ),
 
-                // Right Joystick (Rotation)
                 _buildJoystickSection(
                   label: 'ROTATION',
                   icon: Icons.rotate_right,
@@ -397,8 +454,9 @@ class _ControlScreenState extends State<ControlScreen> {
             height: 180,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.white.withOpacity(0.2), // Frosted base
-              border: Border.all(color: Colors.white.withOpacity(0.4), width: 1),
+              color: Colors.white.withOpacity(0.2),
+              border:
+                  Border.all(color: Colors.white.withOpacity(0.4), width: 1),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.05),
@@ -425,7 +483,8 @@ class _ControlScreenState extends State<ControlScreen> {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: Colors.white.withOpacity(0.4),
-              border: Border.all(color: Colors.white.withOpacity(0.6), width: 1),
+              border:
+                  Border.all(color: Colors.white.withOpacity(0.6), width: 1),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.1),

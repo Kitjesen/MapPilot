@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <string>
 
@@ -12,6 +13,7 @@
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 
+#include "control.pb.h"
 #include "telemetry.pb.h"
 
 namespace remote_monitoring {
@@ -27,6 +29,9 @@ private:
   std::atomic<float> rate_hz_{0.0f};
 };
 
+// 模式查询回调类型
+using ModeProvider = std::function<robot::v1::RobotMode()>;
+
 class StatusAggregator {
 public:
   explicit StatusAggregator(rclcpp::Node *node);
@@ -38,6 +43,9 @@ public:
   double fast_state_hz() const { return fast_hz_; }
   double slow_state_hz() const { return slow_hz_; }
 
+  // 设置模式提供者（由 GrpcGateway 注入，从 ControlService 读取真实模式）
+  void SetModeProvider(ModeProvider provider);
+
 private:
   void OdomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
   void TerrainCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
@@ -48,6 +56,11 @@ private:
   void update_fast_state();
   void update_slow_state();
   bool check_tf(const std::string &target, const std::string &source);
+
+  // 读取 /proc 系统资源（Linux）
+  static double ReadCpuUsage();
+  static double ReadMemUsage();
+  static double ReadCpuTemp();
 
   rclcpp::Node *node_;
   double fast_hz_{30.0};
@@ -84,6 +97,16 @@ private:
   
   // 缓存最新 odom
   nav_msgs::msg::Odometry::ConstSharedPtr latest_odom_;
+
+  // 缓存 slow_down 值
+  std::atomic<int8_t> slow_down_level_{0};
+
+  // 模式提供者
+  ModeProvider mode_provider_;
+
+  // CPU 使用率计算所需的上一次采样值
+  mutable uint64_t prev_cpu_total_{0};
+  mutable uint64_t prev_cpu_idle_{0};
 };
 
 }  // namespace remote_monitoring

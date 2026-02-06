@@ -4,51 +4,65 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
-import '../services/robot_client_base.dart';
+import 'package:provider/provider.dart';
+import '../services/robot_connection_provider.dart';
 import '../generated/common.pb.dart';
+import '../generated/telemetry.pb.dart';
 import '../widgets/glass_widgets.dart';
 import '../widgets/robot_model_widget.dart';
 
 class MapScreen extends StatefulWidget {
-  final RobotClientBase client;
-
-  const MapScreen({super.key, required this.client});
+  const MapScreen({super.key});
 
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen>
+    with AutomaticKeepAliveClientMixin {
   final List<Offset> _path = [];
   List<Offset> _globalMapPoints = [];
   List<Offset> _localCloudPoints = [];
-  
+
   Pose? _currentPose;
-  StreamSubscription? _subscription;
+  StreamSubscription<FastState>? _fastSub;
   StreamSubscription? _mapSubscription;
   StreamSubscription? _pclSubscription;
-  
-  final TransformationController _transformController = TransformationController();
+
+  final TransformationController _transformController =
+      TransformationController();
   double _currentYaw = 0.0;
   bool _showGlobalMap = true;
   bool _show3DModel = true;
 
+  // 节流：地图位姿更新限制在 5Hz
+  DateTime _lastPoseUpdate = DateTime(2000);
+  static const _poseUpdateInterval = Duration(milliseconds: 200);
+
+  // 地图点数据版本号，用于优化 shouldRepaint
+  int _mapDataVersion = 0;
+
+  @override
+  bool get wantKeepAlive => true;
+
   @override
   void initState() {
     super.initState();
-    _startListening();
-    _subscribeToMaps();
-    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startListening();
+      _subscribeToMaps();
+    });
+
     // Initial view
     final matrix = Matrix4.identity()
-      ..translate(200.0, 300.0) 
-      ..scale(20.0); 
+      ..translate(200.0, 300.0)
+      ..scale(20.0);
     _transformController.value = matrix;
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
+    _fastSub?.cancel();
     _mapSubscription?.cancel();
     _pclSubscription?.cancel();
     _transformController.dispose();
@@ -56,46 +70,56 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _subscribeToMaps() {
+    final client = context.read<RobotConnectionProvider>().client;
+    if (client == null) return;
+
     // Subscribe to Global Map
-    _mapSubscription = widget.client.subscribeToResource(
-      ResourceId()..type = ResourceType.RESOURCE_TYPE_MAP
-    ).listen((chunk) {
+    _mapSubscription = client
+        .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_MAP)
+        .listen((chunk) {
       if (!mounted) return;
       _parseAndSetPoints(chunk.data, isGlobal: true);
+    }, onError: (e) {
+      debugPrint('[MapScreen] Map subscription error: $e');
     });
 
     // Subscribe to Local Cloud
-    _pclSubscription = widget.client.subscribeToResource(
-      ResourceId()..type = ResourceType.RESOURCE_TYPE_POINTCLOUD
-    ).listen((chunk) {
+    _pclSubscription = client
+        .subscribeToResource(
+            ResourceId()..type = ResourceType.RESOURCE_TYPE_POINTCLOUD)
+        .listen((chunk) {
       if (!mounted) return;
       _parseAndSetPoints(chunk.data, isGlobal: false);
+    }, onError: (e) {
+      debugPrint('[MapScreen] Pointcloud subscription error: $e');
     });
   }
 
   void _parseAndSetPoints(List<int> data, {required bool isGlobal}) {
-    // Basic parsing assuming float32 fields
-    // Global Map (XYZ): 12 bytes
-    // Local Cloud (XYZI): 16 bytes
+    if (data.isEmpty) return;
+
     final pointStep = isGlobal ? 12 : 16;
     final points = <Offset>[];
-    
+
     final byteData = Uint8List.fromList(data).buffer.asByteData();
     final count = data.length ~/ pointStep;
-    
+
     // Downsample for performance
-    final stride = isGlobal ? 10 : 2; // Show 1/10th of global, 1/2 of local
-    
+    final stride = isGlobal ? 10 : 2;
+
     for (var i = 0; i < count; i += stride) {
       final offset = i * pointStep;
       if (offset + 8 <= data.length) {
         final x = byteData.getFloat32(offset, Endian.little);
         final y = byteData.getFloat32(offset + 4, Endian.little);
-        points.add(Offset(x, y));
+        if (x.isFinite && y.isFinite) {
+          points.add(Offset(x, y));
+        }
       }
     }
 
     setState(() {
+      _mapDataVersion++;
       if (isGlobal) {
         _globalMapPoints = points;
       } else {
@@ -105,19 +129,29 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _startListening() {
-    _subscription = widget.client.streamFastState(desiredHz: 5.0).listen((state) {
-      if (!mounted) return;
-      setState(() {
-        _currentPose = state.pose;
-        
-        // Calculate Yaw
-        final q = state.pose.orientation;
-        final siny_cosp = 2 * (q.w * q.z + q.x * q.y);
-        final cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
-        _currentYaw = math.atan2(siny_cosp, cosy_cosp);
+    final provider = context.read<RobotConnectionProvider>();
 
-        final point = Offset(state.pose.position.x, state.pose.position.y);
-        
+    _fastSub = provider.fastStateStream.listen((state) {
+      if (!mounted) return;
+
+      final now = DateTime.now();
+      if (now.difference(_lastPoseUpdate) < _poseUpdateInterval) return;
+      _lastPoseUpdate = now;
+
+      final newPose = state.pose;
+
+      // Calculate Yaw
+      final q = newPose.orientation;
+      final siny_cosp = 2 * (q.w * q.z + q.x * q.y);
+      final cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
+      final newYaw = math.atan2(siny_cosp, cosy_cosp);
+
+      final point = Offset(newPose.position.x, newPose.position.y);
+
+      setState(() {
+        _currentPose = newPose;
+        _currentYaw = newYaw;
+
         if (_path.isEmpty || (_path.last - point).distance > 0.05) {
           _path.add(point);
           if (_path.length > 5000) {
@@ -129,25 +163,28 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _clearPath() {
+    HapticFeedback.lightImpact();
     setState(() {
       _path.clear();
     });
   }
 
   void _recenter() {
+    HapticFeedback.lightImpact();
     if (_currentPose != null) {
-      // Simple recenter reset
-      // Ideally needs to calculate center of screen vs robot pos
+      final size = MediaQuery.of(context).size;
       final matrix = Matrix4.identity()
-      ..translate(200.0, 400.0) 
-      ..scale(20.0)
-      ..translate(-_currentPose!.position.x, -_currentPose!.position.y); 
+        ..translate(size.width / 2, size.height / 2)
+        ..scale(20.0)
+        ..translate(-_currentPose!.position.x, -_currentPose!.position.y);
       _transformController.value = matrix;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
+
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -155,14 +192,14 @@ class _MapScreenState extends State<MapScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
-           Padding(
-             padding: const EdgeInsets.only(right: 16.0),
-             child: IconButton(
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: IconButton(
               icon: const Icon(Icons.delete_outline, color: Colors.black54),
               onPressed: _clearPath,
               tooltip: 'Clear Path',
-             ),
-           ),
+            ),
+          ),
         ],
       ),
       body: Stack(
@@ -170,8 +207,10 @@ class _MapScreenState extends State<MapScreen> {
           // 3D Ground + Robot (full screen)
           if (_show3DModel)
             Positioned.fill(
-              child: RobotModelWidget(
-                currentPose: _currentPose,
+              child: RepaintBoundary(
+                child: RobotModelWidget(
+                  currentPose: _currentPose,
+                ),
               ),
             ),
 
@@ -180,7 +219,7 @@ class _MapScreenState extends State<MapScreen> {
             Positioned.fill(
               child: GridPaper(
                 color: Colors.black12,
-                interval: 100, // 100 pixels at scale 1.0 (5m at scale 20)
+                interval: 100,
                 divisions: 1,
                 subdivisions: 5,
                 child: InteractiveViewer(
@@ -188,40 +227,51 @@ class _MapScreenState extends State<MapScreen> {
                   boundaryMargin: const EdgeInsets.all(5000),
                   minScale: 0.1,
                   maxScale: 100.0,
-                  child: Container(
+                  child: SizedBox(
                     width: 10000,
                     height: 10000,
-                    child: CustomPaint(
-                      painter: TrajectoryPainter(
-                        path: _path,
-                        currentPose: _currentPose,
-                        globalPoints: _showGlobalMap ? _globalMapPoints : [],
-                        localPoints: _localCloudPoints,
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: TrajectoryPainter(
+                          path: _path,
+                          currentPose: _currentPose,
+                          globalPoints:
+                              _showGlobalMap ? _globalMapPoints : const [],
+                          localPoints: _localCloudPoints,
+                          dataVersion: _mapDataVersion,
+                        ),
+                        size: const Size(10000, 10000),
                       ),
-                      size: const Size(10000, 10000),
                     ),
                   ),
                 ),
               ),
             ),
-          
+
           // Top Left: Robot Name Panel
           Positioned(
             left: 16,
             top: MediaQuery.of(context).padding.top + 16,
             child: GlassCard(
               borderRadius: 12,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.green,
-                      shape: BoxShape.circle,
-                    ),
+                  // 使用 Selector 精确监听连接状态
+                  Selector<RobotConnectionProvider, bool>(
+                    selector: (_, p) => p.isConnected,
+                    builder: (_, isConnected, __) {
+                      return Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: isConnected ? Colors.green : Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(width: 8),
                   const Text(
@@ -252,9 +302,8 @@ class _MapScreenState extends State<MapScreen> {
                     tooltip: _show3DModel ? 'Switch to 2D' : 'Switch to 3D',
                     isSelected: true,
                     onPressed: () {
-                      setState(() {
-                        _show3DModel = !_show3DModel;
-                      });
+                      HapticFeedback.selectionClick();
+                      setState(() => _show3DModel = !_show3DModel);
                     },
                   ),
                   const SizedBox(height: 8),
@@ -263,9 +312,8 @@ class _MapScreenState extends State<MapScreen> {
                     tooltip: 'Toggle Map Layer',
                     isSelected: _showGlobalMap,
                     onPressed: () {
-                      setState(() {
-                        _showGlobalMap = !_showGlobalMap;
-                      });
+                      HapticFeedback.selectionClick();
+                      setState(() => _showGlobalMap = !_showGlobalMap);
                     },
                   ),
                   const SizedBox(height: 8),
@@ -278,28 +326,47 @@ class _MapScreenState extends State<MapScreen> {
                   _buildIconButton(
                     icon: Icons.settings,
                     tooltip: 'Settings',
-                    onPressed: () {
-                      _showSettingsDialog(context);
-                    },
+                    onPressed: () => _showSettingsDialog(context),
                   ),
                 ],
               ),
             ),
           ),
-          
-          // Bottom Left: Compass (Simplified)
+
+          // Bottom Left: Compass
           Positioned(
             left: 16,
-            bottom: 32,
+            bottom: 100,
             child: GlassCard(
               borderRadius: 30,
               padding: const EdgeInsets.all(12),
               child: Transform.rotate(
-                angle: -_currentYaw, 
-                child: const Icon(Icons.navigation, color: Color(0xFF007AFF), size: 28),
+                angle: -_currentYaw,
+                child: const Icon(Icons.navigation,
+                    color: Color(0xFF007AFF), size: 28),
               ),
             ),
           ),
+
+          // Bottom right: path info
+          if (_path.isNotEmpty)
+            Positioned(
+              right: 16,
+              bottom: 100,
+              child: GlassCard(
+                borderRadius: 12,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Text(
+                  '${_path.length} pts',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black.withOpacity(0.4),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -313,7 +380,9 @@ class _MapScreenState extends State<MapScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: isSelected ? const Color(0xFF007AFF).withOpacity(0.1) : Colors.transparent,
+        color: isSelected
+            ? const Color(0xFF007AFF).withOpacity(0.1)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
       ),
       child: IconButton(
@@ -345,10 +414,8 @@ class _MapScreenState extends State<MapScreen> {
                 children: [
                   const Text(
                     'Settings',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, size: 20),
@@ -359,7 +426,9 @@ class _MapScreenState extends State<MapScreen> {
                 ],
               ),
               const SizedBox(height: 20),
-              const Text('Theme', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              const Text('Theme',
+                  style:
+                      TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -371,7 +440,9 @@ class _MapScreenState extends State<MapScreen> {
                 ],
               ),
               const SizedBox(height: 20),
-              const Text('Visualization', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              const Text('Visualization',
+                  style:
+                      TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
               const SizedBox(height: 12),
               _buildSwitch('Show Grid', true),
               _buildSwitch('Show Shadows', true),
@@ -391,24 +462,30 @@ class _MapScreenState extends State<MapScreen> {
           color: isSelected ? Colors.white : Colors.grey.withOpacity(0.1),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected ? const Color(0xFF007AFF) : Colors.transparent,
+            color:
+                isSelected ? const Color(0xFF007AFF) : Colors.transparent,
             width: 1.5,
           ),
-          boxShadow: isSelected ? [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            )
-          ] : null,
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  )
+                ]
+              : null,
         ),
         child: Center(
           child: Text(
             label,
             style: TextStyle(
               fontSize: 12,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              color: isSelected ? const Color(0xFF007AFF) : Colors.black87,
+              fontWeight:
+                  isSelected ? FontWeight.w600 : FontWeight.normal,
+              color: isSelected
+                  ? const Color(0xFF007AFF)
+                  : Colors.black87,
             ),
           ),
         ),
@@ -439,13 +516,22 @@ class TrajectoryPainter extends CustomPainter {
   final Pose? currentPose;
   final List<Offset> globalPoints;
   final List<Offset> localPoints;
+  final int dataVersion;
+
+  // 缓存上次绘制参数，用于 shouldRepaint 优化
+  final int _pathLength;
+  final double? _poseX;
+  final double? _poseY;
 
   TrajectoryPainter({
-    required this.path, 
+    required this.path,
     this.currentPose,
     this.globalPoints = const [],
     this.localPoints = const [],
-  });
+    this.dataVersion = 0,
+  })  : _pathLength = path.length,
+        _poseX = currentPose?.position.x,
+        _poseY = currentPose?.position.y;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -458,7 +544,7 @@ class TrajectoryPainter extends CustomPainter {
         ..color = Colors.black12
         ..strokeWidth = 0.1
         ..strokeCap = StrokeCap.round;
-      
+
       canvas.drawPoints(ui.PointMode.points, globalPoints, mapPaint);
     }
 
@@ -468,18 +554,19 @@ class TrajectoryPainter extends CustomPainter {
         ..color = Colors.red.withOpacity(0.3)
         ..strokeWidth = 0.05
         ..strokeCap = StrokeCap.round;
-      
+
       canvas.drawPoints(ui.PointMode.points, localPoints, cloudPaint);
     }
 
-    final paint = Paint()
-      ..color = const Color(0xFF007AFF).withOpacity(0.6)
-      ..strokeWidth = 0.1
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
+    // Draw trajectory path
     if (path.isNotEmpty) {
+      final paint = Paint()
+        ..color = const Color(0xFF007AFF).withOpacity(0.6)
+        ..strokeWidth = 0.1
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+
       final pathObj = Path();
       pathObj.moveTo(path.first.dx, path.first.dy);
       for (var i = 1; i < path.length; i++) {
@@ -488,10 +575,11 @@ class TrajectoryPainter extends CustomPainter {
       canvas.drawPath(pathObj, paint);
     }
 
+    // Draw robot
     if (currentPose != null) {
       final p = currentPose!.position;
       final q = currentPose!.orientation;
-      
+
       final siny_cosp = 2 * (q.w * q.z + q.x * q.y);
       final cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
       final yaw = math.atan2(siny_cosp, cosy_cosp);
@@ -503,7 +591,7 @@ class TrajectoryPainter extends CustomPainter {
       final robotPaint = Paint()
         ..color = const Color(0xFFFF3B30)
         ..style = PaintingStyle.fill;
-      
+
       const double robotLen = 0.5;
       const double robotWidth = 0.3;
 
@@ -512,23 +600,34 @@ class TrajectoryPainter extends CustomPainter {
         ..lineTo(-robotLen / 2, robotWidth / 2)
         ..lineTo(-robotLen / 2, -robotWidth / 2)
         ..close();
-      
+
       canvas.drawPath(robotPath, robotPaint);
-      
-      // Draw simple heading line
-      canvas.drawLine(Offset.zero, const Offset(1.0, 0), Paint()..color = Colors.black.withOpacity(0.5)..strokeWidth=0.05);
+
+      // Heading line
+      canvas.drawLine(
+          Offset.zero,
+          const Offset(1.0, 0),
+          Paint()
+            ..color = Colors.black.withOpacity(0.5)
+            ..strokeWidth = 0.05);
 
       canvas.restore();
     }
-    
+
     // Origin
     final originPaint = Paint()..strokeWidth = 0.05;
-    canvas.drawLine(const Offset(-1, 0), const Offset(1, 0), originPaint..color = Colors.grey.withOpacity(0.5));
-    canvas.drawLine(const Offset(0, -1), const Offset(0, 1), originPaint..color = Colors.grey.withOpacity(0.5));
+    canvas.drawLine(const Offset(-1, 0), const Offset(1, 0),
+        originPaint..color = Colors.grey.withOpacity(0.5));
+    canvas.drawLine(const Offset(0, -1), const Offset(0, 1),
+        originPaint..color = Colors.grey.withOpacity(0.5));
   }
 
   @override
   bool shouldRepaint(covariant TrajectoryPainter oldDelegate) {
-    return true;
+    // 只在数据实际变化时重绘
+    return dataVersion != oldDelegate.dataVersion ||
+        _pathLength != oldDelegate._pathLength ||
+        _poseX != oldDelegate._poseX ||
+        _poseY != oldDelegate._poseY;
   }
 }

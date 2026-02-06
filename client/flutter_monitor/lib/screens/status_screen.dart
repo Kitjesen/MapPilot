@@ -1,37 +1,40 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math' as math;
-import '../services/robot_client_base.dart';
+import 'package:provider/provider.dart';
+import '../services/robot_connection_provider.dart';
 import '../generated/telemetry.pb.dart';
 import '../widgets/glass_widgets.dart';
 
 class StatusScreen extends StatefulWidget {
-  final RobotClientBase client;
-
-  const StatusScreen({super.key, required this.client});
+  const StatusScreen({super.key});
 
   @override
   State<StatusScreen> createState() => _StatusScreenState();
 }
 
 class _StatusScreenState extends State<StatusScreen>
-    with SingleTickerProviderStateMixin {
-  StreamSubscription<FastState>? _fastStateSubscription;
-  StreamSubscription<SlowState>? _slowStateSubscription;
+    with AutomaticKeepAliveClientMixin, SingleTickerProviderStateMixin {
 
+  // 本地缓存 — 只在 stream 回调中更新
   FastState? _latestFastState;
   SlowState? _latestSlowState;
-
-  int _updateCount = 0;
+  StreamSubscription<FastState>? _fastSub;
+  StreamSubscription<SlowState>? _slowSub;
 
   late AnimationController _breathingController;
   late Animation<double> _breathingAnimation;
 
+  // UI 刷新节流
+  DateTime _lastUiUpdate = DateTime(2000);
+  static const _uiThrottleInterval = Duration(milliseconds: 100); // 10 FPS max
+
+  @override
+  bool get wantKeepAlive => true;
+
   @override
   void initState() {
     super.initState();
-    _startStreaming();
-
     _breathingController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
@@ -40,48 +43,51 @@ class _StatusScreenState extends State<StatusScreen>
     _breathingAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
       CurvedAnimation(parent: _breathingController, curve: Curves.easeInOut),
     );
+
+    // 使用 Provider 的广播流
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _subscribeStreams();
+    });
   }
 
-  void _startStreaming() {
-    _fastStateSubscription =
-        widget.client.streamFastState(desiredHz: 10.0).listen(
-      (state) {
-        if (mounted) {
-          setState(() {
-            _latestFastState = state;
-            _updateCount++;
-          });
-        }
-      },
-      onError: (error) {
-        debugPrint('FastState error: $error');
-      },
-    );
+  void _subscribeStreams() {
+    final provider = context.read<RobotConnectionProvider>();
 
-    _slowStateSubscription = widget.client.streamSlowState().listen(
-      (state) {
-        if (mounted) {
-          setState(() {
-            _latestSlowState = state;
-          });
-        }
-      },
-      onError: (error) {
-        debugPrint('SlowState error: $error');
-      },
-    );
+    // 初始数据
+    _latestFastState = provider.latestFastState;
+    _latestSlowState = provider.latestSlowState;
+
+    _fastSub = provider.fastStateStream.listen((state) {
+      _latestFastState = state;
+      _throttledSetState();
+    });
+
+    _slowSub = provider.slowStateStream.listen((state) {
+      _latestSlowState = state;
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _throttledSetState() {
+    final now = DateTime.now();
+    if (now.difference(_lastUiUpdate) >= _uiThrottleInterval) {
+      _lastUiUpdate = now;
+      if (mounted) setState(() {});
+    }
   }
 
   @override
   void dispose() {
-    _fastStateSubscription?.cancel();
-    _slowStateSubscription?.cancel();
+    _fastSub?.cancel();
+    _slowSub?.cancel();
     _breathingController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
+
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -94,12 +100,13 @@ class _StatusScreenState extends State<StatusScreen>
         ],
       ),
       body: _latestFastState == null
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF007AFF)),
-            )
+          ? _buildLoadingSkeleton()
           : RefreshIndicator(
               onRefresh: () async {
-                setState(() => _updateCount = 0);
+                // 重新订阅流
+                _fastSub?.cancel();
+                _slowSub?.cancel();
+                _subscribeStreams();
               },
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -108,60 +115,102 @@ class _StatusScreenState extends State<StatusScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _buildRobotCard(),
+                    RepaintBoundary(child: _buildRobotCard()),
                     const SizedBox(height: 16),
                     Row(
                       children: [
-                        Expanded(child: _buildMetricCard(
-                          icon: Icons.battery_charging_full,
-                          iconColor: const Color(0xFF34C759),
-                          label: 'BATTERY',
-                          value: (_latestSlowState?.resources.batteryPercent ?? 0).toStringAsFixed(0),
-                          unit: '%',
-                          progress: (_latestSlowState?.resources.batteryPercent ?? 0) / 100,
-                          progressColor: const Color(0xFF34C759),
-                        )),
+                        Expanded(
+                          child: RepaintBoundary(
+                            child: _buildMetricCard(
+                              icon: Icons.battery_charging_full,
+                              iconColor: const Color(0xFF34C759),
+                              label: 'BATTERY',
+                              value:
+                                  (_latestSlowState?.resources.batteryPercent ??
+                                          0)
+                                      .toStringAsFixed(0),
+                              unit: '%',
+                              progress:
+                                  (_latestSlowState?.resources.batteryPercent ??
+                                          0) /
+                                      100,
+                              progressColor: _getBatteryColor(
+                                  _latestSlowState?.resources.batteryPercent ??
+                                      100),
+                            ),
+                          ),
+                        ),
                         const SizedBox(width: 12),
-                        Expanded(child: _buildMetricCard(
-                          icon: Icons.memory,
-                          iconColor: const Color(0xFF007AFF),
-                          label: 'CPU',
-                          value: (_latestSlowState?.resources.cpuPercent ?? 0).toStringAsFixed(0),
-                          unit: '%',
-                          progress: (_latestSlowState?.resources.cpuPercent ?? 0) / 100,
-                          progressColor: const Color(0xFF007AFF),
-                        )),
+                        Expanded(
+                          child: RepaintBoundary(
+                            child: _buildMetricCard(
+                              icon: Icons.memory,
+                              iconColor: const Color(0xFF007AFF),
+                              label: 'CPU',
+                              value:
+                                  (_latestSlowState?.resources.cpuPercent ?? 0)
+                                      .toStringAsFixed(0),
+                              unit: '%',
+                              progress:
+                                  (_latestSlowState?.resources.cpuPercent ?? 0) /
+                                      100,
+                              progressColor: const Color(0xFF007AFF),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        Expanded(child: _buildMetricCard(
-                          icon: Icons.thermostat,
-                          iconColor: const Color(0xFFFF9500),
-                          label: 'TEMP',
-                          value: (_latestSlowState?.resources.cpuTemp ?? 0).toStringAsFixed(1),
-                          unit: '°C',
-                          progress: math.min((_latestSlowState?.resources.cpuTemp ?? 0) / 80, 1.0),
-                          progressColor: const Color(0xFFFF9500),
-                        )),
+                        Expanded(
+                          child: RepaintBoundary(
+                            child: _buildMetricCard(
+                              icon: Icons.thermostat,
+                              iconColor: const Color(0xFFFF9500),
+                              label: 'TEMP',
+                              value:
+                                  (_latestSlowState?.resources.cpuTemp ?? 0)
+                                      .toStringAsFixed(1),
+                              unit: '°C',
+                              progress: math.min(
+                                  (_latestSlowState?.resources.cpuTemp ?? 0) /
+                                      80,
+                                  1.0),
+                              progressColor: _getTempColor(
+                                  _latestSlowState?.resources.cpuTemp ?? 0),
+                            ),
+                          ),
+                        ),
                         const SizedBox(width: 12),
-                        Expanded(child: _buildMetricCard(
-                          icon: Icons.bolt,
-                          iconColor: const Color(0xFFFFCC00),
-                          label: 'VOLTAGE',
-                          value: (_latestSlowState?.resources.batteryVoltage ?? 0).toStringAsFixed(1),
-                          unit: 'V',
-                          progress: math.min((_latestSlowState?.resources.batteryVoltage ?? 0) / 30, 1.0),
-                          progressColor: const Color(0xFFFFCC00),
-                        )),
+                        Expanded(
+                          child: RepaintBoundary(
+                            child: _buildMetricCard(
+                              icon: Icons.bolt,
+                              iconColor: const Color(0xFFFFCC00),
+                              label: 'VOLTAGE',
+                              value: (_latestSlowState
+                                          ?.resources.batteryVoltage ??
+                                      0)
+                                  .toStringAsFixed(1),
+                              unit: 'V',
+                              progress: math.min(
+                                  (_latestSlowState
+                                              ?.resources.batteryVoltage ??
+                                          0) /
+                                      30,
+                                  1.0),
+                              progressColor: const Color(0xFFFFCC00),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 16),
-                    _buildMotionCard(),
+                    RepaintBoundary(child: _buildMotionCard()),
                     if (_latestSlowState != null) ...[
                       const SizedBox(height: 16),
-                      _buildTopicRatesCard(),
+                      RepaintBoundary(child: _buildTopicRatesCard()),
                     ],
                   ],
                 ),
@@ -170,57 +219,134 @@ class _StatusScreenState extends State<StatusScreen>
     );
   }
 
-  Widget _buildStatusBadge() {
-    final isOnline = _latestFastState != null;
-    return GlassCard(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      borderRadius: 30,
-      blurSigma: 10,
-      color: isOnline
-          ? const Color(0xFF34C759).withOpacity(0.1)
-          : const Color(0xFFFF3B30).withOpacity(0.1),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+  /// 加载骨架屏
+  Widget _buildLoadingSkeleton() {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          16, MediaQuery.of(context).padding.top + 60, 16, 100),
+      child: Column(
         children: [
-          AnimatedBuilder(
-            animation: _breathingAnimation,
-            builder: (context, child) {
-              return Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: isOnline
-                      ? const Color(0xFF34C759)
-                      : const Color(0xFFFF3B30),
-                  shape: BoxShape.circle,
-                  boxShadow: isOnline
-                      ? [
-                          BoxShadow(
-                            color: const Color(0xFF34C759)
-                                .withOpacity(0.5 * _breathingAnimation.value),
-                            blurRadius: 6,
-                            spreadRadius: 1,
-                          ),
-                        ]
-                      : [],
-                ),
-              );
-            },
+          _buildSkeletonCard(height: 180),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: _buildSkeletonCard(height: 120)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildSkeletonCard(height: 120)),
+            ],
           ),
-          const SizedBox(width: 8),
-          Text(
-            isOnline ? 'ONLINE' : 'OFFLINE',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-              color: isOnline
-                  ? const Color(0xFF34C759)
-                  : const Color(0xFFFF3B30),
-            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _buildSkeletonCard(height: 120)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildSkeletonCard(height: 120)),
+            ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSkeletonCard({required double height}) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.6),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFF007AFF),
+          strokeWidth: 2,
+        ),
+      ),
+    );
+  }
+
+  /// 动态电池颜色
+  Color _getBatteryColor(double percent) {
+    if (percent > 60) return const Color(0xFF34C759);
+    if (percent > 30) return const Color(0xFFFF9500);
+    return const Color(0xFFFF3B30);
+  }
+
+  /// 动态温度颜色
+  Color _getTempColor(double temp) {
+    if (temp < 50) return const Color(0xFFFF9500);
+    if (temp < 70) return const Color(0xFFFF6B00);
+    return const Color(0xFFFF3B30);
+  }
+
+  Widget _buildStatusBadge() {
+    return Selector<RobotConnectionProvider, ConnectionStatus>(
+      selector: (_, p) => p.status,
+      builder: (context, status, _) {
+        final isOnline = status == ConnectionStatus.connected;
+        final isReconnecting = status == ConnectionStatus.reconnecting;
+
+        return GlassCard(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          borderRadius: 30,
+          blurSigma: 10,
+          color: isOnline
+              ? const Color(0xFF34C759).withOpacity(0.1)
+              : isReconnecting
+                  ? const Color(0xFFFF9500).withOpacity(0.1)
+                  : const Color(0xFFFF3B30).withOpacity(0.1),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedBuilder(
+                animation: _breathingAnimation,
+                builder: (context, child) {
+                  final dotColor = isOnline
+                      ? const Color(0xFF34C759)
+                      : isReconnecting
+                          ? const Color(0xFFFF9500)
+                          : const Color(0xFFFF3B30);
+                  return Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
+                      boxShadow: isOnline
+                          ? [
+                              BoxShadow(
+                                color: dotColor
+                                    .withOpacity(0.5 * _breathingAnimation.value),
+                                blurRadius: 6,
+                                spreadRadius: 1,
+                              ),
+                            ]
+                          : [],
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isOnline
+                    ? 'ONLINE'
+                    : isReconnecting
+                        ? 'RECONNECTING'
+                        : 'OFFLINE',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: isOnline
+                      ? const Color(0xFF34C759)
+                      : isReconnecting
+                          ? const Color(0xFFFF9500)
+                          : const Color(0xFFFF3B30),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -230,7 +356,6 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          // 简洁的机器人图标
           Container(
             width: 72,
             height: 72,
@@ -273,11 +398,14 @@ class _StatusScreenState extends State<StatusScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _buildPoseValue('X', pose.position.x.toStringAsFixed(2), 'm'),
+              _buildPoseValue(
+                  'X', pose.position.x.toStringAsFixed(2), 'm'),
               _buildDivider(),
-              _buildPoseValue('Y', pose.position.y.toStringAsFixed(2), 'm'),
+              _buildPoseValue(
+                  'Y', pose.position.y.toStringAsFixed(2), 'm'),
               _buildDivider(),
-              _buildPoseValue('YAW', _latestFastState!.rpyDeg.z.toStringAsFixed(1), '°'),
+              _buildPoseValue('YAW',
+                  _latestFastState!.rpyDeg.z.toStringAsFixed(1), '°'),
             ],
           ),
         ],
@@ -397,11 +525,18 @@ class _StatusScreenState extends State<StatusScreen>
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: progress.clamp(0.0, 1.0),
-              minHeight: 4,
-              backgroundColor: Colors.black.withOpacity(0.06),
-              valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: progress.clamp(0.0, 1.0)),
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, _) {
+                return LinearProgressIndicator(
+                  value: value,
+                  minHeight: 4,
+                  backgroundColor: Colors.black.withOpacity(0.06),
+                  valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                );
+              },
             ),
           ),
         ],
@@ -453,7 +588,10 @@ class _StatusScreenState extends State<StatusScreen>
                   const Color(0xFF007AFF),
                 ),
               ),
-              Container(width: 1, height: 48, color: Colors.black.withOpacity(0.06)),
+              Container(
+                  width: 1,
+                  height: 48,
+                  color: Colors.black.withOpacity(0.06)),
               Expanded(
                 child: _buildMotionValue(
                   Icons.rotate_right,
@@ -533,7 +671,8 @@ class _StatusScreenState extends State<StatusScreen>
                   color: const Color(0xFF5AC8FA).withOpacity(0.12),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.wifi, size: 18, color: Color(0xFF5AC8FA)),
+                child:
+                    const Icon(Icons.wifi, size: 18, color: Color(0xFF5AC8FA)),
               ),
               const SizedBox(width: 10),
               Text(
@@ -553,7 +692,8 @@ class _StatusScreenState extends State<StatusScreen>
             children: [
               _buildRateChip('Odom', rates.odomHz, const Color(0xFF007AFF)),
               _buildRateChip('Lidar', rates.lidarHz, const Color(0xFF34C759)),
-              _buildRateChip('Map', rates.terrainMapHz, const Color(0xFFFF9500)),
+              _buildRateChip(
+                  'Map', rates.terrainMapHz, const Color(0xFFFF9500)),
             ],
           ),
         ],

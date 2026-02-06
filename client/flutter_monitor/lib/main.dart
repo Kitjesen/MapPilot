@@ -1,11 +1,14 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'services/robot_client.dart';
 import 'services/mock_robot_client.dart';
+import 'services/robot_connection_provider.dart';
 import 'screens/home_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const RobotMonitorApp());
 }
 
@@ -14,31 +17,34 @@ class RobotMonitorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '大算机器人',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF2F2F7),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF007AFF),
-          surface: Colors.white,
-          brightness: Brightness.light,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          titleTextStyle: TextStyle(
-            color: Colors.black87,
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            letterSpacing: -0.5,
+    return ChangeNotifierProvider(
+      create: (_) => RobotConnectionProvider(),
+      child: MaterialApp(
+        title: '大算机器人',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          scaffoldBackgroundColor: const Color(0xFFF2F2F7),
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF007AFF),
+            surface: Colors.white,
+            brightness: Brightness.light,
           ),
-          iconTheme: IconThemeData(color: Colors.black87),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            centerTitle: true,
+            titleTextStyle: TextStyle(
+              color: Colors.black87,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.5,
+            ),
+            iconTheme: IconThemeData(color: Colors.black87),
+          ),
         ),
+        home: const ConnectionScreen(),
       ),
-      home: const ConnectionScreen(),
     );
   }
 }
@@ -59,9 +65,16 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
+  // 记住上次连接的地址
+  static String _lastHost = '192.168.66.190';
+  static String _lastPort = '50051';
+
   @override
   void initState() {
     super.initState();
+    _hostController.text = _lastHost;
+    _portController.text = _lastPort;
+
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -86,29 +99,56 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   }
 
   Future<void> _connect() async {
+    if (_isConnecting) return;
+
+    final host = _hostController.text.trim();
+    final portText = _portController.text.trim();
+
+    // 基本输入验证
+    if (host.isEmpty) {
+      setState(() => _errorMessage = '请输入机器人 IP 地址');
+      return;
+    }
+    final port = int.tryParse(portText);
+    if (port == null || port <= 0 || port > 65535) {
+      setState(() => _errorMessage = '端口号无效 (1-65535)');
+      return;
+    }
+
     setState(() {
       _isConnecting = true;
       _errorMessage = null;
     });
 
+    // 添加触觉反馈
+    HapticFeedback.lightImpact();
+
     try {
-      final host = _hostController.text.trim();
-      final port = int.parse(_portController.text.trim());
       final client = RobotClient(host: host, port: port);
-      final connected = await client.connect();
+      final provider = context.read<RobotConnectionProvider>();
+      final connected = await provider.connect(client);
       if (!mounted) return;
 
       if (connected) {
+        _lastHost = host;
+        _lastPort = portText;
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => HomeScreen(client: client)),
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) => const HomeScreen(),
+            transitionsBuilder: (_, a, __, child) {
+              return FadeTransition(opacity: a, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 400),
+          ),
         );
       } else {
         setState(() {
-          _errorMessage = '无法连接到机器人';
+          _errorMessage = provider.errorMessage ?? '无法连接到机器人';
           _isConnecting = false;
         });
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = '连接错误: $e';
         _isConnecting = false;
@@ -117,11 +157,20 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   }
 
   Future<void> _startMock() async {
+    HapticFeedback.lightImpact();
     final client = MockRobotClient();
-    await client.connect();
+    final provider = context.read<RobotConnectionProvider>();
+    await provider.connect(client);
     if (!mounted) return;
+
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => HomeScreen(client: client)),
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const HomeScreen(),
+        transitionsBuilder: (_, a, __, child) {
+          return FadeTransition(opacity: a, child: child);
+        },
+        transitionDuration: const Duration(milliseconds: 400),
+      ),
     );
   }
 
@@ -156,13 +205,16 @@ class _ConnectionScreenState extends State<ConnectionScreen>
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                             colors: [
-                              const Color(0xFF007AFF).withOpacity(_pulseAnimation.value),
-                              const Color(0xFF5856D6).withOpacity(_pulseAnimation.value),
+                              const Color(0xFF007AFF)
+                                  .withOpacity(_pulseAnimation.value),
+                              const Color(0xFF5856D6)
+                                  .withOpacity(_pulseAnimation.value),
                             ],
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF007AFF).withOpacity(0.3 * _pulseAnimation.value),
+                              color: const Color(0xFF007AFF)
+                                  .withOpacity(0.3 * _pulseAnimation.value),
                               blurRadius: 30,
                               spreadRadius: 5,
                             ),
@@ -222,52 +274,60 @@ class _ConnectionScreenState extends State<ConnectionScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            // IP 输入
                             _buildInputField(
                               controller: _hostController,
                               icon: Icons.wifi_tethering,
                               label: 'Robot IP',
                               keyboardType: TextInputType.text,
+                              onSubmitted: (_) => _connect(),
                             ),
                             const SizedBox(height: 12),
-                            // Port 输入
                             _buildInputField(
                               controller: _portController,
                               icon: Icons.tag,
                               label: 'Port',
                               keyboardType: TextInputType.number,
+                              onSubmitted: (_) => _connect(),
                             ),
 
                             // 错误信息
-                            if (_errorMessage != null) ...[
-                              const SizedBox(height: 16),
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFF3B30).withOpacity(0.08),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.error_outline, size: 18, color: Color(0xFFFF3B30)),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        _errorMessage!,
-                                        style: const TextStyle(
-                                          fontSize: 13,
-                                          color: Color(0xFFFF3B30),
+                            AnimatedSize(
+                              duration: const Duration(milliseconds: 200),
+                              child: _errorMessage != null
+                                  ? Padding(
+                                      padding: const EdgeInsets.only(top: 16),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFF3B30)
+                                              .withOpacity(0.08),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            const Icon(Icons.error_outline,
+                                                size: 18,
+                                                color: Color(0xFFFF3B30)),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                _errorMessage!,
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                  color: Color(0xFFFF3B30),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
 
                             const SizedBox(height: 24),
 
-                            // Connect 按钮
                             _buildPrimaryButton(
                               onPressed: _isConnecting ? null : _connect,
                               isLoading: _isConnecting,
@@ -277,7 +337,6 @@ class _ConnectionScreenState extends State<ConnectionScreen>
 
                             const SizedBox(height: 12),
 
-                            // Mock 按钮
                             _buildSecondaryButton(
                               onPressed: _isConnecting ? null : _startMock,
                               icon: Icons.science_outlined,
@@ -312,6 +371,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     required IconData icon,
     required String label,
     TextInputType keyboardType = TextInputType.text,
+    ValueChanged<String>? onSubmitted,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -321,6 +381,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
       child: TextField(
         controller: controller,
         keyboardType: keyboardType,
+        textInputAction: TextInputAction.next,
+        onSubmitted: onSubmitted,
         style: const TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w500,
@@ -334,7 +396,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
             fontWeight: FontWeight.w400,
           ),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         ),
       ),
     );
@@ -348,20 +411,25 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   }) {
     return GestureDetector(
       onTap: onPressed,
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
         height: 52,
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF007AFF), Color(0xFF5856D6)],
+          gradient: LinearGradient(
+            colors: onPressed != null
+                ? [const Color(0xFF007AFF), const Color(0xFF5856D6)]
+                : [Colors.grey.shade400, Colors.grey.shade500],
           ),
           borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF007AFF).withOpacity(0.3),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
+          boxShadow: onPressed != null
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF007AFF).withOpacity(0.3),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ]
+              : [],
         ),
         child: Center(
           child: isLoading

@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <mutex>
@@ -103,6 +104,34 @@ bool WaitForFile(const std::string &path, int timeout_ms) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   return false;
+}
+
+// 将 PointCloud2 序列化为 [header(20B) + data]
+// header 格式（小端）: width(4) height(4) point_step(4) row_step(4) num_fields(4)
+// 客户端可通过 header 还原点云结构
+std::string SerializePointCloud2WithMeta(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
+  if (!msg) return {};
+
+  const uint32_t width = msg->width;
+  const uint32_t height = msg->height;
+  const uint32_t point_step = msg->point_step;
+  const uint32_t row_step = msg->row_step;
+  const uint32_t num_fields = static_cast<uint32_t>(msg->fields.size());
+
+  // 20 字节元数据头 + 原始数据
+  std::string result;
+  result.resize(20 + msg->data.size());
+  char *p = result.data();
+
+  std::memcpy(p +  0, &width, 4);
+  std::memcpy(p +  4, &height, 4);
+  std::memcpy(p +  8, &point_step, 4);
+  std::memcpy(p + 12, &row_step, 4);
+  std::memcpy(p + 16, &num_fields, 4);
+  std::memcpy(p + 20, msg->data.data(), msg->data.size());
+
+  return result;
 }
 
 void AddDefaultProfiles(robot::v1::ResourceInfo *resource) {
@@ -345,9 +374,8 @@ DataServiceImpl::Subscribe(grpc::ServerContext *context,
           if (msg == nullptr || output == nullptr) {
             return false;
           }
-          output->assign(reinterpret_cast<const char *>(msg->data.data()),
-                         msg->data.size());
-          return true;
+          *output = SerializePointCloud2WithMeta(msg);
+          return !output->empty();
         },
         cancel_flag, context, writer);
   case robot::v1::RESOURCE_TYPE_POINTCLOUD:
@@ -358,9 +386,8 @@ DataServiceImpl::Subscribe(grpc::ServerContext *context,
           if (msg == nullptr || output == nullptr) {
             return false;
           }
-          output->assign(reinterpret_cast<const char *>(msg->data.data()),
-                         msg->data.size());
-          return true;
+          *output = SerializePointCloud2WithMeta(msg);
+          return !output->empty();
         },
         cancel_flag, context, writer);
   default:
@@ -402,8 +429,20 @@ DataServiceImpl::DownloadFile(grpc::ServerContext *context,
     return grpc::Status(grpc::INVALID_ARGUMENT, "file_path is required");
   }
 
-  std::string path = request->file_path();
-  if (!file_root_.empty() && !path.empty() && path.front() != '/') {
+  // 路径遍历防护：禁止 ".." 和绝对路径（当 file_root_ 已配置时）
+  const std::string &raw_path = request->file_path();
+  if (raw_path.find("..") != std::string::npos) {
+    return grpc::Status(grpc::PERMISSION_DENIED,
+                        "Path traversal not allowed (contains '..')");
+  }
+
+  std::string path = raw_path;
+  if (!file_root_.empty()) {
+    // 有 file_root_ 时，禁止绝对路径，强制拼接
+    if (!path.empty() && path.front() == '/') {
+      return grpc::Status(grpc::PERMISSION_DENIED,
+                          "Absolute paths not allowed when file_root is set");
+    }
     path = file_root_ + "/" + path;
   }
 
@@ -982,7 +1021,8 @@ grpc::Status DataServiceImpl::WebRTCSignaling(
   
   // 主循环：读取客户端发送的信令消息
   robot::v1::WebRTCSignal incoming;
-  while (!context->IsCancelled() && stream->Read(&incoming)) {
+  bool hangup_received = false;
+  while (!hangup_received && !context->IsCancelled() && stream->Read(&incoming)) {
     // 第一条消息确定 session_id
     if (session_id.empty()) {
       session_id = incoming.session_id();
@@ -1029,7 +1069,8 @@ grpc::Status DataServiceImpl::WebRTCSignaling(
           session->outgoing_signals.push(hangup_ack);
           session->cv.notify_one();
         }
-        goto cleanup;
+        hangup_received = true;
+        break;
         
       default:
         RCLCPP_WARN(node_->get_logger(),
@@ -1039,7 +1080,6 @@ grpc::Status DataServiceImpl::WebRTCSignaling(
     }
   }
   
-cleanup:
   // 清理
   writer_running.store(false);
   if (session) {
