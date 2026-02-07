@@ -9,7 +9,7 @@
   5. terrain_analysis + ext (地形分析)
   6. local_planner (局部规划 + 避障)
   7. pct_path_adapter (全局路径 → 航点适配)
-  8. robot_driver (底盘驱动)
+  8. han_dog_bridge (四足机器人 gRPC 桥接驱动)
   9. gRPC gateway (远程监控)
 
 注意: PCT 全局规划器 (Python) 需要单独启动:
@@ -18,6 +18,7 @@
 用法:
   ros2 launch navigation_run.launch.py
   ros2 launch navigation_run.launch.py maxSpeed:=1.0
+  ros2 launch navigation_run.launch.py dog_host:=192.168.4.100 dog_port:=13145
 
 启动后需要手动重定位:
   ros2 service call /relocalize interface/srv/Relocalize \\
@@ -46,6 +47,14 @@ def generate_launch_description():
     )
     grpc_port_arg = DeclareLaunchArgument(
         "grpc_port", default_value="50051", description="gRPC 端口"
+    )
+    dog_host_arg = DeclareLaunchArgument(
+        "dog_host", default_value="127.0.0.1",
+        description="Han Dog CMS gRPC 地址"
+    )
+    dog_port_arg = DeclareLaunchArgument(
+        "dog_port", default_value="13145",
+        description="Han Dog CMS gRPC 端口"
     )
 
     # ---- 配置文件路径 ----
@@ -146,15 +155,22 @@ def generate_launch_description():
         parameters=[pct_adapter_config],
     )
 
-    # ---- 8. Robot driver (底盘控制) ----
-    robot_driver_node = Node(
+    # ---- 8. Han Dog Bridge (四足机器人 gRPC 桥接) ----
+    han_dog_bridge_node = Node(
         package="robot_driver",
-        executable="driver_node.py",
-        name="robot_driver",
+        executable="han_dog_bridge.py",
+        name="han_dog_bridge",
         output="screen",
         parameters=[
+            {"dog_host": LaunchConfiguration("dog_host")},
+            {"dog_port": LaunchConfiguration("dog_port")},
+            {"max_linear_speed": 1.0},
+            {"max_angular_speed": 1.0},
             {"cmd_vel_timeout_ms": 200.0},
             {"control_rate": 50.0},
+            {"auto_enable": True},
+            {"auto_standup": True},
+            {"reconnect_interval": 3.0},
         ],
     )
 
@@ -173,6 +189,8 @@ def generate_launch_description():
             max_speed_arg,
             autonomy_speed_arg,
             grpc_port_arg,
+            dog_host_arg,
+            dog_port_arg,
             # 节点 (按依赖顺序)
             livox_launch,
             lio_node,
@@ -182,7 +200,7 @@ def generate_launch_description():
             terrain_ext_launch,
             local_planner_launch,
             pct_adapter_node,
-            robot_driver_node,
+            han_dog_bridge_node,
             grpc_gateway_node,
         ]
     )

@@ -31,7 +31,10 @@ class _ScanScreenState extends State<ScanScreen>
   // Manual entry
   final _hostController = TextEditingController(text: '192.168.66.190');
   final _portController = TextEditingController(text: '50051');
+  final _dogHostController = TextEditingController(text: '192.168.66.190');
+  final _dogPortController = TextEditingController(text: '13145');
   bool _isConnecting = false;
+  bool _isDogConnecting = false;
   String? _errorMessage;
 
   StreamSubscription? _resultsSub;
@@ -51,6 +54,8 @@ class _ScanScreenState extends State<ScanScreen>
     _networkScanner.dispose();
     _hostController.dispose();
     _portController.dispose();
+    _dogHostController.dispose();
+    _dogPortController.dispose();
     _resultsSub?.cancel();
     _progressSub?.cancel();
     super.dispose();
@@ -118,6 +123,46 @@ class _ScanScreenState extends State<ScanScreen>
       setState(() {
         _errorMessage = '连接错误: $e';
         _isConnecting = false;
+      });
+    }
+  }
+
+  /// 直连 Dog Board (han_dog CMS gRPC)
+  Future<void> _connectToDogDirect(String host, int port) async {
+    if (_isDogConnecting) return;
+    setState(() {
+      _isDogConnecting = true;
+      _errorMessage = null;
+    });
+    HapticFeedback.lightImpact();
+
+    try {
+      final provider = context.read<RobotConnectionProvider>();
+      final connected = await provider.connectDog(host: host, port: port);
+      if (!mounted) return;
+
+      if (connected) {
+        // 如果没有 Nav Board 连接, 也跳转到详情页
+        if (!provider.isConnected) {
+          Navigator.of(context).pushReplacementNamed('/robot-detail');
+        } else {
+          // 已有 Nav Board 连接, 仅提示成功
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Dog Board 已连接')),
+          );
+        }
+        setState(() => _isDogConnecting = false);
+      } else {
+        setState(() {
+          _errorMessage = provider.dogClient?.errorMessage ?? '无法连接到机器狗';
+          _isDogConnecting = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Dog Board 连接错误: $e';
+        _isDogConnecting = false;
       });
     }
   }
@@ -502,7 +547,96 @@ class _ScanScreenState extends State<ScanScreen>
             label: _isConnecting ? '连接中...' : '连接机器人',
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 32),
+
+          // ─── Dog Board 直连区域 ───
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.orange.withOpacity(0.08)
+                  : Colors.orange.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Colors.orange.withOpacity(0.2),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.pets, size: 18, color: Colors.orange.shade700),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Dog Board 直连',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.orange.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '绕过导航板，直接连接机器狗控制板 (CMS)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.subtitleColor,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _buildInputField(
+                  controller: _dogHostController,
+                  icon: Icons.pets,
+                  label: 'Dog IP',
+                ),
+                const SizedBox(height: 8),
+                _buildInputField(
+                  controller: _dogPortController,
+                  icon: Icons.tag,
+                  label: 'CMS Port',
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 44,
+                  child: OutlinedButton.icon(
+                    onPressed: _isDogConnecting
+                        ? null
+                        : () {
+                            final host = _dogHostController.text.trim();
+                            final port = int.tryParse(
+                                    _dogPortController.text.trim()) ??
+                                13145;
+                            _connectToDogDirect(host, port);
+                          },
+                    icon: Icon(
+                      _isDogConnecting
+                          ? Icons.hourglass_top
+                          : Icons.link,
+                      size: 16,
+                      color: Colors.orange.shade700,
+                    ),
+                    label: Text(
+                      _isDogConnecting ? '连接中...' : '直连 Dog Board',
+                      style: TextStyle(color: Colors.orange.shade700),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                          color: Colors.orange.withOpacity(0.4)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
 
           // Mock button
           SizedBox(

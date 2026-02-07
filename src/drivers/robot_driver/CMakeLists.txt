@@ -16,6 +16,7 @@ ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
   driver_node.py
+  han_dog_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

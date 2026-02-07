@@ -14,8 +14,11 @@
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>interface</depend>
   <depend>tf_transformations</depend>
   <exec_depend>python3-transforms3d</exec_depend>
+  <exec_depend>python3-grpcio</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

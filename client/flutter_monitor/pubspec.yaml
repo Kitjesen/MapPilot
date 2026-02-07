@@ -21,6 +21,13 @@ dependencies:
       path: dart
       ref: main
   
+  # Han Dog CMS proto (direct dog board communication)
+  han_dog_message:
+    git:
+      url: https://github.com/Kitjesen/han_dog_message.git
+      path: dart
+      ref: main
+  
   # State Management
   provider: ^6.1.0
   

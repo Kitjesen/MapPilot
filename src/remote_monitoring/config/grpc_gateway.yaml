@@ -71,3 +71,9 @@ grpc_gateway:
     max_speed: 1.0
     max_angular: 1.0
     tilt_limit_deg: 30.0
+
+    # ==================== Han Dog Bridge 配置 ====================
+    # 四足机器人 CMS gRPC 连接参数
+    # dog_host: "127.0.0.1"      # 本机 (dog 控制器运行在同一设备)
+    # dog_host: "192.168.4.100"  # 远程 (通过网络连接)
+    # dog_port: 13145            # CMS gRPC 默认端口

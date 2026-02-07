@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
+import 'package:flutter_monitor/core/grpc/dog_direct_client.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
 import 'package:robot_proto/robot_proto.dart';
 
@@ -15,10 +16,18 @@ enum ConnectionStatus {
 
 /// 集中式状态管理 Provider
 /// 统一管理连接状态、租约状态、数据流缓存
+///
+/// 支持双连接模式:
+///   - Primary: Nav Board (RobotClient, robot::v1 协议, :50051)
+///   - Secondary: Dog Board (DogDirectClient, han_dog CMS 协议, :13145)
+/// 两个连接完全独立，可同时使用或单独使用。
 class RobotConnectionProvider extends ChangeNotifier {
   RobotClientBase? _client;
   ConnectionStatus _status = ConnectionStatus.disconnected;
   String? _errorMessage;
+
+  // ─── Dog Board 直连 (secondary connection) ───
+  DogDirectClient? _dogClient;
 
   // — Lease state —
   bool _hasLease = false;
@@ -71,6 +80,10 @@ class RobotConnectionProvider extends ChangeNotifier {
   Stream<FastState> get fastStateStream => _fastStateBroadcast.stream;
   Stream<SlowState> get slowStateStream => _slowStateBroadcast.stream;
 
+  // ─── Dog Board 直连 getters ───
+  DogDirectClient? get dogClient => _dogClient;
+  bool get isDogConnected => _dogClient?.isConnected ?? false;
+
   // ============ Connection ============
 
   /// 设置客户端并连接
@@ -103,7 +116,7 @@ class RobotConnectionProvider extends ChangeNotifier {
     }
   }
 
-  /// 断开连接
+  /// 断开所有连接 (Nav Board + Dog Board)
   Future<void> disconnect() async {
     _stopCentralStreams();
     _stopHealthCheck();
@@ -119,6 +132,9 @@ class RobotConnectionProvider extends ChangeNotifier {
     try {
       await _client?.disconnect();
     } catch (_) {}
+
+    // 同时断开 Dog Board
+    await disconnectDog();
 
     _client = null;
     _status = ConnectionStatus.disconnected;
@@ -291,6 +307,37 @@ class RobotConnectionProvider extends ChangeNotifier {
     _healthCheckTimer = null;
   }
 
+  // ============ Dog Board Direct Connection ============
+
+  /// 连接到 Dog Board (可在 Nav Board 连接后调用, 也可独立使用)
+  Future<bool> connectDog({required String host, int port = 13145}) async {
+    // 断开已有连接
+    await disconnectDog();
+
+    _dogClient = DogDirectClient(host: host, port: port);
+    _dogClient!.addListener(_onDogChanged);
+
+    final success = await _dogClient!.connect();
+    if (!success) {
+      debugPrint('[Provider] Dog Board connection failed: ${_dogClient!.errorMessage}');
+    }
+    notifyListeners();
+    return success;
+  }
+
+  /// 断开 Dog Board 连接
+  Future<void> disconnectDog() async {
+    _dogClient?.removeListener(_onDogChanged);
+    await _dogClient?.disconnect();
+    _dogClient?.dispose();
+    _dogClient = null;
+    notifyListeners();
+  }
+
+  void _onDogChanged() {
+    notifyListeners();
+  }
+
   // ============ Cleanup ============
 
   @override
@@ -300,6 +347,8 @@ class RobotConnectionProvider extends ChangeNotifier {
     _cancelReconnect();
     _fastStateBroadcast.close();
     _slowStateBroadcast.close();
+    _dogClient?.removeListener(_onDogChanged);
+    _dogClient?.dispose();
     super.dispose();
   }
 }
