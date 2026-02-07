@@ -79,6 +79,7 @@ ros2 launch navigation_run.launch.py
 | **[PARAMETER_TUNING.md](docs/PARAMETER_TUNING.md)** | 规划器/地形分析/路径跟踪参数调优 | 调参工程师 |
 | **[SIMULATION_SETUP.md](docs/SIMULATION_SETUP.md)** | Gazebo/Isaac Sim 仿真环境搭建 | 测试工程师 |
 | **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | 编译错误、运行时故障、定位丢失排查 | 所有人 |
+| **[PRODUCT_REVIEW.md](docs/PRODUCT_REVIEW.md)** | 产品架构评审、进程拆分方案、执行路线图 | 产品/架构师 |
 | **[CHANGELOG.md](docs/CHANGELOG.md)** | 版本历史、升级记录、修复日志 | 所有人 |
 | **[AGENTS.md](AGENTS.md)** | AI Agent 指引（话题/服务/坐标系速查表） | AI 辅助开发 |
 
