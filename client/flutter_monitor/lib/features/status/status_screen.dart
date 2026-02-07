@@ -6,7 +6,6 @@ import 'package:shimmer/shimmer.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
-import 'package:flutter_monitor/shared/widgets/glass_widgets.dart';
 import 'package:flutter_monitor/core/grpc/dog_direct_client.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
@@ -112,7 +111,6 @@ class _StatusScreenState extends State<StatusScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final isDark = context.isDark;
 
     final provider = context.watch<RobotConnectionProvider>();
     final dogClient = provider.dogClient;
@@ -283,7 +281,6 @@ class _StatusScreenState extends State<StatusScreen>
   }
 
   Widget _buildLoadingSkeleton() {
-    final isDark = context.isDark;
     return Padding(
       padding: EdgeInsets.fromLTRB(
           16, MediaQuery.of(context).padding.top + 16, 16, 100),
@@ -406,19 +403,20 @@ class _StatusScreenState extends State<StatusScreen>
   Widget _buildRobotCard() {
     final isDark = context.isDark;
     final pose = _latestFastState!.pose;
+    final profile = context.watch<RobotProfileProvider>().current;
 
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.xxl),
+        border: isDark
+            ? Border.all(
+                color: Colors.white.withOpacity(0.04),
+                width: 1,
+              )
+            : null,
+        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         children: [
@@ -426,41 +424,44 @@ class _StatusScreenState extends State<StatusScreen>
             width: 72,
             height: 72,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [AppColors.primary, AppColors.secondary],
+                colors: [profile.themeColor, AppColors.secondary],
               ),
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withOpacity(0.3),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(AppRadius.xl),
+              boxShadow: [AppShadows.glow(profile.themeColor, blur: 20)],
             ),
-            child: const Icon(Icons.smart_toy, size: 36, color: Colors.white),
+            child: Icon(profile.icon, size: 36, color: Colors.white),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           Text(
-            context.watch<RobotProfileProvider>().current.name,
+            profile.name,
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
-              color: isDark ? Colors.white : Colors.black87,
+              color: context.titleColor,
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Mode: ${_latestSlowState?.currentMode ?? "IDLE"}',
-            style: TextStyle(
-              fontSize: 12,
-              color: context.subtitleColor,
-              letterSpacing: 0.5,
+          const SizedBox(height: AppSpacing.xs),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(isDark ? 0.12 : 0.08),
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+            ),
+            child: Text(
+              _latestSlowState?.currentMode ?? 'IDLE',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary,
+                letterSpacing: 0.8,
+              ),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: AppSpacing.xl),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -477,7 +478,6 @@ class _StatusScreenState extends State<StatusScreen>
   }
 
   Widget _buildPoseValue(String label, String value, String unit) {
-    final isDark = context.isDark;
     return Column(
       children: [
         Text(
@@ -498,7 +498,7 @@ class _StatusScreenState extends State<StatusScreen>
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w700,
-                  color: isDark ? Colors.white : Colors.black87,
+                  color: context.titleColor,
                   letterSpacing: -0.5,
                 ),
               ),
@@ -535,19 +535,17 @@ class _StatusScreenState extends State<StatusScreen>
     required Color progressColor,
   }) {
     final isDark = context.isDark;
+    final clampedProgress = progress.clamp(0.0, 1.0);
 
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(AppSpacing.lg + 2),
       decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: isDark
+            ? Border.all(color: Colors.white.withOpacity(0.04), width: 1)
+            : null,
+        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -555,11 +553,14 @@ class _StatusScreenState extends State<StatusScreen>
           Row(
             children: [
               Container(
-                width: 34,
-                height: 34,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
                   color: iconColor.withOpacity(isDark ? 0.18 : 0.1),
-                  borderRadius: BorderRadius.circular(11),
+                  borderRadius: BorderRadius.circular(AppRadius.icon),
+                  boxShadow: isDark
+                      ? [AppShadows.glow(iconColor, blur: 10)]
+                      : [],
                 ),
                 child: Icon(icon, size: 18, color: iconColor),
               ),
@@ -575,7 +576,7 @@ class _StatusScreenState extends State<StatusScreen>
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppSpacing.md + 2),
           RichText(
             text: TextSpan(
               children: [
@@ -584,7 +585,7 @@ class _StatusScreenState extends State<StatusScreen>
                   style: TextStyle(
                     fontSize: 26,
                     fontWeight: FontWeight.w700,
-                    color: isDark ? Colors.white : Colors.black87,
+                    color: context.titleColor,
                     letterSpacing: -0.5,
                   ),
                 ),
@@ -599,21 +600,53 @@ class _StatusScreenState extends State<StatusScreen>
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
+          // Gradient progress bar
           ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(AppRadius.sm),
             child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: progress.clamp(0.0, 1.0)),
-              duration: const Duration(milliseconds: 500),
+              tween: Tween(begin: 0, end: clampedProgress),
+              duration: AppDurations.slow,
               curve: Curves.easeOutCubic,
-              builder: (context, value, _) {
-                return LinearProgressIndicator(
-                  value: value,
-                  minHeight: 5,
-                  backgroundColor: isDark
-                      ? Colors.white.withOpacity(0.06)
-                      : Colors.black.withOpacity(0.05),
-                  valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+              builder: (context, animValue, _) {
+                return Stack(
+                  children: [
+                    // Track
+                    Container(
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? Colors.white.withOpacity(0.06)
+                            : Colors.black.withOpacity(0.04),
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                      ),
+                    ),
+                    // Fill — gradient bar
+                    FractionallySizedBox(
+                      widthFactor: animValue,
+                      child: Container(
+                        height: 6,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              progressColor.withOpacity(0.7),
+                              progressColor,
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          boxShadow: isDark
+                              ? [
+                                  BoxShadow(
+                                    color: progressColor.withOpacity(0.35),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ]
+                              : [],
+                        ),
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -629,17 +662,14 @@ class _StatusScreenState extends State<StatusScreen>
     final angular = _latestFastState!.velocity.angular.z;
 
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: isDark
+            ? Border.all(color: Colors.white.withOpacity(0.04), width: 1)
+            : null,
+        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -692,7 +722,6 @@ class _StatusScreenState extends State<StatusScreen>
 
   Widget _buildMotionValue(
       IconData icon, String label, String value, String unit, Color color) {
-    final isDark = context.isDark;
     return Column(
       children: [
         Icon(icon, size: 20, color: color.withOpacity(0.6)),
@@ -706,7 +735,7 @@ class _StatusScreenState extends State<StatusScreen>
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
-                  color: isDark ? Colors.white : Colors.black87,
+                  color: context.titleColor,
                 ),
               ),
               TextSpan(
@@ -738,17 +767,14 @@ class _StatusScreenState extends State<StatusScreen>
     final rates = _latestSlowState!.topicRates;
 
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: isDark
+            ? Border.all(color: Colors.white.withOpacity(0.04), width: 1)
+            : null,
+        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -831,17 +857,14 @@ class _StatusScreenState extends State<StatusScreen>
     final gyro = dogClient.imuGyroscope;
 
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: isDark
+            ? Border.all(color: Colors.white.withOpacity(0.04), width: 1)
+            : null,
+        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -936,7 +959,6 @@ class _StatusScreenState extends State<StatusScreen>
   }
 
   Widget _buildImuValue(String label, double? value, String unit) {
-    final isDark = context.isDark;
     return Column(
       children: [
         Text(
@@ -957,7 +979,7 @@ class _StatusScreenState extends State<StatusScreen>
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
-                  color: isDark ? Colors.white : Colors.black87,
+                  color: context.titleColor,
                   letterSpacing: -0.5,
                 ),
               ),
@@ -986,17 +1008,14 @@ class _StatusScreenState extends State<StatusScreen>
     const jointNames = ['Hip', 'Thigh', 'Calf'];
 
     return Container(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: isDark
+            ? Border.all(color: Colors.white.withOpacity(0.04), width: 1)
+            : null,
+        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

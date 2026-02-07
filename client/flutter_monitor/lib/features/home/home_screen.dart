@@ -48,23 +48,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: isDark
-                ? [
-                    const Color(0xFF0A0A0A),
-                    const Color(0xFF0E0E1A),
-                    const Color(0xFF0A0A0A),
-                  ]
-                : [
-                    const Color(0xFFF2F2F7),
-                    const Color(0xFFE8ECF4),
-                    const Color(0xFFF2F2F7),
-                  ],
-          ),
-        ),
+        decoration: BoxDecoration(gradient: context.bgGradient),
         child: SafeArea(
           child: CustomScrollView(
             physics: const BouncingScrollPhysics(),
@@ -77,35 +61,37 @@ class _HomeScreenState extends State<HomeScreen>
                     padding: const EdgeInsets.fromLTRB(24, 24, 24, 4),
                     child: Row(
                       children: [
-                        // Logo
-                        GestureDetector(
-                          onTap: () =>
-                              Navigator.of(context).pushNamed('/robot-select'),
-                          child: Container(
-                            width: 46,
-                            height: 46,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  profile.themeColor,
-                                  profile.themeColor.withOpacity(0.7),
+                        // Logo — tap navigates to model selector
+                        Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              Navigator.of(context).pushNamed('/robot-select');
+                            },
+                            child: Ink(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    profile.themeColor,
+                                    profile.themeColor.withOpacity(0.65),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(AppRadius.md),
+                                boxShadow: [
+                                  AppShadows.glow(profile.themeColor),
                                 ],
                               ),
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: profile.themeColor.withOpacity(0.25),
-                                  blurRadius: 16,
-                                  offset: const Offset(0, 6),
-                                ),
-                              ],
-                            ),
-                            child: Icon(
-                              profile.icon,
-                              color: Colors.white,
-                              size: 24,
+                              child: Icon(
+                                profile.icon,
+                                color: Colors.white,
+                                size: 24,
+                              ),
                             ),
                           ),
                         ),
@@ -125,8 +111,7 @@ class _HomeScreenState extends State<HomeScreen>
                                         fontSize: 22,
                                         fontWeight: FontWeight.w800,
                                         letterSpacing: -0.5,
-                                        color:
-                                            isDark ? Colors.white : Colors.black87,
+                                        color: context.titleColor,
                                       ),
                                     ),
                                     const SizedBox(width: 6),
@@ -149,23 +134,27 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                           ),
                         ),
-                        // Scan button
-                        GestureDetector(
-                          onTap: () {
-                            HapticFeedback.selectionClick();
-                            Navigator.of(context).pushNamed('/scan');
-                          },
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: context.inputFillColor,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              Icons.qr_code_scanner_rounded,
-                              size: 20,
-                              color: context.subtitleColor,
+                        // Scan button with ripple
+                        Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(AppRadius.icon),
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              Navigator.of(context).pushNamed('/scan');
+                            },
+                            child: Ink(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: context.inputFillColor,
+                                borderRadius: BorderRadius.circular(AppRadius.icon),
+                              ),
+                              child: Icon(
+                                Icons.qr_code_scanner_rounded,
+                                size: 20,
+                                color: context.subtitleColor,
+                              ),
                             ),
                           ),
                         ),
@@ -180,13 +169,14 @@ class _HomeScreenState extends State<HomeScreen>
                 child: _buildAnimatedChild(
                   1,
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 4),
+                    padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.xxl, AppSpacing.xl, AppSpacing.xxl, AppSpacing.xs),
                     child: Text(
                       isConnected ? '已连接设备' : '我的设备',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
-                        color: isDark ? Colors.white : Colors.black87,
+                        color: context.titleColor,
                         letterSpacing: -0.3,
                       ),
                     ),
@@ -226,63 +216,88 @@ class _HomeScreenState extends State<HomeScreen>
                   child: _buildAnimatedChild(
                     2,
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-                      child: GestureDetector(
-                        onTap: () =>
-                            Navigator.of(context).pushNamed('/scan'),
-                        child: Container(
-                          padding: const EdgeInsets.all(28),
-                          decoration: BoxDecoration(
-                            color: isDark ? AppColors.darkCard : Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: AppColors.primary.withOpacity(0.2),
-                              width: 1.5,
-                              strokeAlign: BorderSide.strokeAlignInside,
+                      padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.screenH, AppSpacing.md, AppSpacing.screenH, 0),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(AppRadius.card),
+                          onTap: () {
+                            HapticFeedback.lightImpact();
+                            Navigator.of(context).pushNamed('/scan');
+                          },
+                          child: Ink(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 32, horizontal: 24),
+                            decoration: BoxDecoration(
+                              color: context.cardColor,
+                              borderRadius: BorderRadius.circular(AppRadius.card),
+                              border: Border.all(
+                                color: AppColors.primary.withOpacity(
+                                    isDark ? 0.25 : 0.15),
+                                width: 1.5,
+                                strokeAlign: BorderSide.strokeAlignInside,
+                              ),
+                              boxShadow: [
+                                isDark
+                                    ? AppShadows.dark()
+                                    : AppShadows.light(),
+                              ],
                             ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: context.cardShadowColor,
-                                blurRadius: 20,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            children: [
-                              Container(
-                                width: 64,
-                                height: 64,
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary.withOpacity(
-                                      isDark ? 0.12 : 0.08),
-                                  shape: BoxShape.circle,
+                            child: Column(
+                              children: [
+                                // Pulsing icon container
+                                TweenAnimationBuilder<double>(
+                                  tween: Tween(begin: 0.85, end: 1.0),
+                                  duration: const Duration(seconds: 2),
+                                  curve: Curves.easeInOut,
+                                  builder: (context, scale, child) {
+                                    return Transform.scale(
+                                        scale: scale, child: child);
+                                  },
+                                  child: Container(
+                                    width: 68,
+                                    height: 68,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          AppColors.primary.withOpacity(
+                                              isDark ? 0.18 : 0.10),
+                                          AppColors.secondary.withOpacity(
+                                              isDark ? 0.12 : 0.06),
+                                        ],
+                                      ),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.add_rounded,
+                                      size: 32,
+                                      color: AppColors.primary
+                                          .withOpacity(isDark ? 0.9 : 0.7),
+                                    ),
+                                  ),
                                 ),
-                                child: Icon(
-                                  Icons.add_rounded,
-                                  size: 32,
-                                  color: AppColors.primary.withOpacity(0.7),
+                                const SizedBox(height: AppSpacing.lg),
+                                Text(
+                                  '连接机器人',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: context.titleColor,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 14),
-                              Text(
-                                '连接机器人',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color:
-                                      isDark ? Colors.white : Colors.black87,
+                                const SizedBox(height: AppSpacing.xs),
+                                Text(
+                                  '扫描网络或蓝牙发现设备',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: context.subtitleColor,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '扫描网络或蓝牙发现设备',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: context.subtitleColor,
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -295,13 +310,14 @@ class _HomeScreenState extends State<HomeScreen>
                 child: _buildAnimatedChild(
                   3,
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+                    padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.xxl, 28, AppSpacing.xxl, AppSpacing.md),
                     child: Text(
                       '快速操作',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
-                        color: isDark ? Colors.white : Colors.black87,
+                        color: context.titleColor,
                         letterSpacing: -0.3,
                       ),
                     ),
@@ -355,13 +371,14 @@ class _HomeScreenState extends State<HomeScreen>
                 child: _buildAnimatedChild(
                   5,
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
+                    padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.xxl, 28, AppSpacing.xxl, AppSpacing.md),
                     child: Text(
                       'APP 信息',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
-                        color: isDark ? Colors.white : Colors.black87,
+                        color: context.titleColor,
                         letterSpacing: -0.3,
                       ),
                     ),
@@ -373,20 +390,11 @@ class _HomeScreenState extends State<HomeScreen>
                 child: _buildAnimatedChild(
                   6,
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.screenH),
                     child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: isDark ? AppColors.darkCard : Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: context.cardShadowColor,
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      decoration: context.cardDecoration,
                       child: Column(
                         children: [
                           _InfoRow(
@@ -485,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen>
 
 // ==================== Quick Action Button ====================
 
-class _QuickActionButton extends StatelessWidget {
+class _QuickActionButton extends StatefulWidget {
   final IconData icon;
   final String label;
   final Color color;
@@ -499,48 +507,64 @@ class _QuickActionButton extends StatelessWidget {
   });
 
   @override
+  State<_QuickActionButton> createState() => _QuickActionButtonState();
+}
+
+class _QuickActionButtonState extends State<_QuickActionButton>
+    with SingleTickerProviderStateMixin {
+  double _scale = 1.0;
+
+  void _onTapDown(TapDownDetails _) => setState(() => _scale = 0.95);
+  void _onTapUp(TapUpDetails _) => setState(() => _scale = 1.0);
+  void _onTapCancel() => setState(() => _scale = 1.0);
+
+  @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
 
     return GestureDetector(
+      onTapDown: _onTapDown,
+      onTapUp: _onTapUp,
+      onTapCancel: _onTapCancel,
       onTap: () {
         HapticFeedback.selectionClick();
-        onTap?.call();
+        widget.onTap?.call();
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: context.cardShadowColor,
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color.withOpacity(isDark ? 0.18 : 0.1),
-                borderRadius: BorderRadius.circular(12),
+      child: AnimatedScale(
+        scale: _scale,
+        duration: AppDurations.fast,
+        curve: Curves.easeOut,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+          decoration: BoxDecoration(
+            color: context.cardColor,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            boxShadow: [
+              isDark ? AppShadows.dark() : AppShadows.light(),
+            ],
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: widget.color.withOpacity(isDark ? 0.18 : 0.1),
+                  borderRadius: BorderRadius.circular(AppRadius.icon),
+                ),
+                child: Icon(widget.icon, color: widget.color, size: 20),
               ),
-              child: Icon(icon, color: color, size: 20),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white70 : Colors.black87,
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -564,8 +588,6 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
-
     return Row(
       children: [
         Icon(icon, size: 18, color: context.subtitleColor),
@@ -583,7 +605,7 @@ class _InfoRow extends StatelessWidget {
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
-            color: valueColor ?? (isDark ? Colors.white : Colors.black87),
+            color: valueColor ?? context.titleColor,
           ),
         ),
       ],

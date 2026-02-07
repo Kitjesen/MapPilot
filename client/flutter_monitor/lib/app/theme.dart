@@ -3,6 +3,68 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ============================================================
+// Design tokens — spacing, radius, elevation
+// ============================================================
+
+class AppSpacing {
+  static const double xs = 4;
+  static const double sm = 8;
+  static const double md = 12;
+  static const double lg = 16;
+  static const double xl = 20;
+  static const double xxl = 24;
+  static const double xxxl = 32;
+
+  /// Standard screen horizontal padding.
+  static const double screenH = 20;
+}
+
+class AppRadius {
+  static const double sm = 8;
+  static const double md = 12;
+  static const double lg = 16;
+  static const double xl = 20;
+  static const double xxl = 24;
+
+  /// Default card radius.
+  static const double card = 20;
+  /// Icon container radius.
+  static const double icon = 12;
+  /// Pill / badge radius.
+  static const double pill = 30;
+}
+
+class AppShadows {
+  /// Subtle card shadow (light mode).
+  static BoxShadow light({Color? color}) => BoxShadow(
+        color: color ?? Colors.black.withOpacity(0.06),
+        blurRadius: 16,
+        offset: const Offset(0, 6),
+      );
+
+  /// Deeper card shadow (dark mode — subtle).
+  static BoxShadow dark({Color? color}) => BoxShadow(
+        color: color ?? Colors.black.withOpacity(0.35),
+        blurRadius: 20,
+        offset: const Offset(0, 8),
+      );
+
+  /// Colored glow (for accent icons / buttons).
+  static BoxShadow glow(Color color, {double blur = 16}) => BoxShadow(
+        color: color.withOpacity(0.30),
+        blurRadius: blur,
+        offset: const Offset(0, 4),
+      );
+}
+
+class AppDurations {
+  static const fast = Duration(milliseconds: 150);
+  static const normal = Duration(milliseconds: 250);
+  static const slow = Duration(milliseconds: 400);
+  static const stagger = Duration(milliseconds: 800);
+}
+
+// ============================================================
 // App color constants
 // ============================================================
 
@@ -23,17 +85,46 @@ class AppColors {
   static const lightSurface = Colors.white;
   static const lightCard = Color(0xFFFFFFFF);
 
-  // Dark surfaces
-  static const darkBackground = Color(0xFF000000);
-  static const darkSurface = Color(0xFF1C1C1E);
-  static const darkCard = Color(0xFF2C2C2E);
-  static const darkElevated = Color(0xFF3A3A3C);
+  // Dark surfaces — refined tech-dark palette (OLED-friendly)
+  static const darkBackground = Color(0xFF0A0A0F);
+  static const darkSurface = Color(0xFF141418);
+  static const darkCard = Color(0xFF1C1C24);
+  static const darkElevated = Color(0xFF26262E);
 
   // Glass
-  static Color glassLight = Colors.white.withOpacity(0.85);
-  static Color glassDark = const Color(0xFF1C1C1E).withOpacity(0.78);
-  static Color glassBorderLight = Colors.white.withOpacity(0.5);
-  static Color glassBorderDark = Colors.white.withOpacity(0.08);
+  static Color glassLight = Colors.white.withOpacity(0.82);
+  static Color glassDark = const Color(0xFF1C1C24).withOpacity(0.75);
+  static Color glassBorderLight = Colors.white.withOpacity(0.45);
+  static Color glassBorderDark = Colors.white.withOpacity(0.06);
+
+  // Gradients
+  static const brandGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [primary, secondary],
+  );
+
+  /// Background gradient for dark mode.
+  static const darkBgGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [
+      Color(0xFF08080E),
+      Color(0xFF0E0E18),
+      Color(0xFF08080E),
+    ],
+  );
+
+  /// Background gradient for light mode.
+  static const lightBgGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [
+      Color(0xFFF2F2F7),
+      Color(0xFFE8ECF4),
+      Color(0xFFF2F2F7),
+    ],
+  );
 }
 
 // ============================================================
@@ -112,7 +203,8 @@ final ThemeData lightTheme = ThemeData(
   cardTheme: CardThemeData(
     color: AppColors.lightCard,
     elevation: 0,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+    shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.card)),
     margin: EdgeInsets.zero,
   ),
   dividerTheme: DividerThemeData(
@@ -161,21 +253,22 @@ final ThemeData darkTheme = ThemeData(
       statusBarIconBrightness: Brightness.light,
     ),
     titleTextStyle: TextStyle(
-      color: Colors.white,
+      color: Color(0xFFF0F0F5),
       fontSize: 17,
       fontWeight: FontWeight.w600,
       letterSpacing: -0.5,
     ),
-    iconTheme: IconThemeData(color: Colors.white),
+    iconTheme: IconThemeData(color: Color(0xFFF0F0F5)),
   ),
   cardTheme: CardThemeData(
     color: AppColors.darkCard,
     elevation: 0,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+    shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.card)),
     margin: EdgeInsets.zero,
   ),
   dividerTheme: DividerThemeData(
-    color: Colors.white.withOpacity(0.08),
+    color: Colors.white.withOpacity(0.07),
     thickness: 0.5,
     space: 0,
   ),
@@ -203,16 +296,37 @@ final ThemeData darkTheme = ThemeData(
 
 extension ThemeContextExtension on BuildContext {
   bool get isDark => Theme.of(this).brightness == Brightness.dark;
+
+  // ── Surface colors ──
   Color get glassColor => isDark ? AppColors.glassDark : AppColors.glassLight;
   Color get glassBorder =>
       isDark ? AppColors.glassBorderDark : AppColors.glassBorderLight;
+  Color get cardColor => isDark ? AppColors.darkCard : Colors.white;
+
+  // ── Text colors ──
+  Color get titleColor =>
+      isDark ? const Color(0xFFF0F0F5) : const Color(0xFF1A1A1A);
   Color get subtitleColor =>
-      isDark ? Colors.white.withOpacity(0.5) : Colors.black.withOpacity(0.45);
+      isDark ? Colors.white.withOpacity(0.48) : Colors.black.withOpacity(0.42);
+
+  // ── Decorative ──
   Color get cardShadowColor => isDark
-      ? Colors.black.withOpacity(0.3)
-      : Colors.black.withOpacity(0.08);
+      ? Colors.black.withOpacity(0.35)
+      : Colors.black.withOpacity(0.06);
   Color get dividerColor =>
-      isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.06);
+      isDark ? Colors.white.withOpacity(0.07) : Colors.black.withOpacity(0.06);
   Color get inputFillColor =>
       isDark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.04);
+
+  // ── Convenience decorations ──
+  BoxDecoration get cardDecoration => BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [
+          isDark ? AppShadows.dark() : AppShadows.light(),
+        ],
+      );
+
+  LinearGradient get bgGradient =>
+      isDark ? AppColors.darkBgGradient : AppColors.lightBgGradient;
 }

@@ -73,8 +73,8 @@ class _MainShellScreenState extends State<MainShellScreen> {
             backgroundColor: Colors.transparent,
             surfaceTintColor: Colors.transparent,
             elevation: 0,
-            height: 68,
-            labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+            height: 60,
+            labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
             indicatorColor: AppColors.primary.withOpacity(isDark ? 0.15 : 0.1),
             indicatorShape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),

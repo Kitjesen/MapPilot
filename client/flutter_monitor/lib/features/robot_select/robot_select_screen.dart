@@ -39,30 +39,13 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
     final profileProvider = context.watch<RobotProfileProvider>();
     final profiles = profileProvider.allProfiles;
     final currentId = profileProvider.current.id;
 
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: isDark
-                ? [
-                    const Color(0xFF0A0A0A),
-                    const Color(0xFF0E0E1A),
-                    const Color(0xFF0A0A0A),
-                  ]
-                : [
-                    const Color(0xFFF2F2F7),
-                    const Color(0xFFE8ECF4),
-                    const Color(0xFFF2F2F7),
-                  ],
-          ),
-        ),
+        decoration: BoxDecoration(gradient: context.bgGradient),
         child: SafeArea(
           child: CustomScrollView(
             physics: const BouncingScrollPhysics(),
@@ -76,7 +59,7 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                       IconButton(
                         icon: Icon(Icons.arrow_back_ios_new,
                             size: 20,
-                            color: isDark ? Colors.white : Colors.black87),
+                            color: context.titleColor),
                         onPressed: () => Navigator.pop(context),
                       ),
                       const SizedBox(width: 8),
@@ -90,7 +73,7 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                                 fontSize: 22,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -0.5,
-                                color: isDark ? Colors.white : Colors.black87,
+                                color: context.titleColor,
                               ),
                             ),
                             Text(
@@ -224,8 +207,8 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
   }
 }
 
-/// 沙盒卡片 — 可展开的机器人型号卡片
-class _RobotSandboxCard extends StatelessWidget {
+/// 沙盒卡片 — 可展开的机器人型号卡片（带按压缩放）
+class _RobotSandboxCard extends StatefulWidget {
   final RobotProfile profile;
   final bool isSelected;
   final bool isExpanded;
@@ -241,34 +224,58 @@ class _RobotSandboxCard extends StatelessWidget {
   });
 
   @override
+  State<_RobotSandboxCard> createState() => _RobotSandboxCardState();
+}
+
+class _RobotSandboxCardState extends State<_RobotSandboxCard> {
+  double _scale = 1.0;
+
+  void _onTapDown(TapDownDetails _) => setState(() => _scale = 0.97);
+  void _onTapUp(TapUpDetails _) => setState(() => _scale = 1.0);
+  void _onTapCancel() => setState(() => _scale = 1.0);
+
+  // Forward getters for readability
+  RobotProfile get profile => widget.profile;
+  bool get isSelected => widget.isSelected;
+  bool get isExpanded => widget.isExpanded;
+
+  @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final color = profile.themeColor;
 
     return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeOutCubic,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
-          color: isDark ? AppColors.darkCard : Colors.white,
-          border: Border.all(
-            color: isSelected ? color.withOpacity(0.5) : Colors.transparent,
-            width: 2,
-          ),
-          boxShadow: [
-            BoxShadow(
+      onTapDown: _onTapDown,
+      onTapUp: _onTapUp,
+      onTapCancel: _onTapCancel,
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _scale,
+        duration: AppDurations.fast,
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            color: context.cardColor,
+            border: Border.all(
               color: isSelected
-                  ? color.withOpacity(isDark ? 0.25 : 0.15)
-                  : context.cardShadowColor,
-              blurRadius: isSelected ? 24 : 16,
-              offset: const Offset(0, 8),
+                  ? color.withOpacity(isDark ? 0.5 : 0.4)
+                  : (isDark
+                      ? Colors.white.withOpacity(0.04)
+                      : Colors.transparent),
+              width: isSelected ? 2 : 1,
             ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              if (isSelected)
+                AppShadows.glow(color, blur: 24)
+              else
+                isDark ? AppShadows.dark() : AppShadows.light(),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.card),
           child: Column(
             children: [
               // ─── Collapsed Header (always visible) ───
@@ -276,7 +283,7 @@ class _RobotSandboxCard extends StatelessWidget {
                 padding: const EdgeInsets.all(18),
                 child: Row(
                   children: [
-                    // Robot icon
+                    // Robot icon with glow
                     Container(
                       width: 52,
                       height: 52,
@@ -285,16 +292,14 @@ class _RobotSandboxCard extends StatelessWidget {
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                           colors: profile.available
-                              ? [color, color.withOpacity(0.7)]
+                              ? [color, color.withOpacity(0.65)]
                               : [Colors.grey.shade400, Colors.grey.shade500],
                         ),
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
                         boxShadow: [
-                          BoxShadow(
-                            color: color.withOpacity(0.3),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
+                          AppShadows.glow(
+                              profile.available ? color : Colors.grey,
+                              blur: 14),
                         ],
                       ),
                       child: Icon(profile.icon, color: Colors.white, size: 26),
@@ -312,7 +317,7 @@ class _RobotSandboxCard extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w700,
-                                  color: isDark ? Colors.white : Colors.black87,
+                                  color: context.titleColor,
                                   letterSpacing: -0.3,
                                 ),
                               ),
@@ -423,7 +428,8 @@ class _RobotSandboxCard extends StatelessWidget {
             ],
           ),
         ),
-      ),
+      ),  // AnimatedScale
+      ),  // GestureDetector
     );
   }
 
@@ -569,14 +575,14 @@ class _RobotSandboxCard extends StatelessWidget {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: profile.available ? onSelect : null,
+              onPressed: profile.available ? widget.onSelect : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: color,
                 foregroundColor: Colors.white,
                 disabledBackgroundColor: Colors.grey.withOpacity(0.3),
                 disabledForegroundColor: Colors.grey,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
                 elevation: 0,
               ),
@@ -661,7 +667,6 @@ class _DetailItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
     return Column(
       children: [
         Icon(icon, size: 18, color: context.subtitleColor),
@@ -671,7 +676,7 @@ class _DetailItem extends StatelessWidget {
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w700,
-            color: isDark ? Colors.white : Colors.black87,
+            color: context.titleColor,
           ),
         ),
         const SizedBox(height: 2),
