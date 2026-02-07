@@ -12,7 +12,7 @@ import 'package:robot_proto/src/system.pb.dart';
 import 'package:robot_proto/src/data.pb.dart';
 import 'package:robot_proto/src/data.pbgrpc.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
-import 'package:flutter_monitor/core/grpc/firmware_rpc_types.dart';
+
 
 class MockRobotClient implements RobotClientBase {
   bool _connected = false;
@@ -271,6 +271,8 @@ class MockRobotClient implements RobotClientBase {
     required String filename,
     String category = 'model',
     bool overwrite = true,
+    int resumeFromOffset = 0,
+    String sha256 = '',
     void Function(double progress)? onProgress,
   }) async {
     // 模拟分块上传进度
@@ -325,6 +327,98 @@ class MockRobotClient implements RobotClientBase {
       ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
       ..success = true
       ..message = 'Mock delete OK: $remotePath';
+  }
+
+  // ==================== OTA Mock ====================
+
+  @override
+  Future<ApplyUpdateResponse> applyUpdate({
+    required OtaArtifact artifact,
+    required String stagedPath,
+    bool force = false,
+  }) async {
+    await Future.delayed(const Duration(seconds: 1));
+    return ApplyUpdateResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..status = OtaUpdateStatus.OTA_UPDATE_STATUS_SUCCESS
+      ..message = 'Mock apply update OK: ${artifact.name} v${artifact.version}';
+  }
+
+  @override
+  Future<GetInstalledVersionsResponse> getInstalledVersions({
+    OtaCategory categoryFilter = OtaCategory.OTA_CATEGORY_UNSPECIFIED,
+  }) async {
+    return GetInstalledVersionsResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..installed.addAll([
+        InstalledArtifact()
+          ..name = 'navigation_firmware'
+          ..version = '1.0.0'
+          ..category = OtaCategory.OTA_CATEGORY_FIRMWARE
+          ..installedAt = DateTime.now().toIso8601String(),
+        InstalledArtifact()
+          ..name = 'yolov8n'
+          ..version = '8.0.1'
+          ..category = OtaCategory.OTA_CATEGORY_MODEL
+          ..installedAt = DateTime.now().toIso8601String(),
+      ]);
+  }
+
+  @override
+  Future<RollbackResponse> rollback({required String artifactName}) async {
+    await Future.delayed(const Duration(seconds: 1));
+    return RollbackResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..restoredVersion = '1.0.0'
+      ..message = 'Mock rollback OK: $artifactName';
+  }
+
+  @override
+  Stream<OtaProgress> downloadFromUrl({
+    required String url,
+    required String stagingPath,
+    String expectedSha256 = '',
+    int expectedSize = 0,
+    Map<String, String> headers = const {},
+  }) async* {
+    const steps = 10;
+    for (int i = 1; i <= steps; i++) {
+      await Future.delayed(const Duration(milliseconds: 200));
+      yield OtaProgress()
+        ..status = OtaUpdateStatus.OTA_UPDATE_STATUS_PENDING
+        ..progressPercent = (i * 100.0 / steps)
+        ..bytesCompleted = Int64(i * 1024 * 1024)
+        ..bytesTotal = Int64(steps * 1024 * 1024)
+        ..speedBytesPerSec = 5 * 1024 * 1024
+        ..message = 'Downloading... ${(i * 100 / steps).toInt()}%';
+    }
+    yield OtaProgress()
+      ..status = OtaUpdateStatus.OTA_UPDATE_STATUS_SUCCESS
+      ..progressPercent = 100.0
+      ..message = 'Mock download complete';
+  }
+
+  @override
+  Future<CheckUpdateReadinessResponse> checkUpdateReadiness({
+    required List<OtaArtifact> artifacts,
+  }) async {
+    return CheckUpdateReadinessResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..ready = true
+      ..checks.addAll([
+        ReadinessCheck()
+          ..checkName = 'disk_space'
+          ..passed = true
+          ..message = 'Sufficient disk space'
+          ..detail = 'free=8GB required=500MB',
+        ReadinessCheck()
+          ..checkName = 'battery'
+          ..passed = true
+          ..message = 'Battery level OK'
+          ..detail = 'level=85% required=20%',
+      ]);
   }
 
   @override

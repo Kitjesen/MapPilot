@@ -64,6 +64,10 @@ dependencies:
   shimmer: ^3.0.0
   animations: ^2.0.11
 
+dependency_overrides:
+  protobuf: ^6.0.0
+  grpc: ^5.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

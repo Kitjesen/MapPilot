@@ -468,6 +468,15 @@ class RobotClient implements RobotClientBase {
     return await _dataClient.checkUpdateReadiness(request);
   }
 
+  /// 应用固件（上传完成后触发刷写脚本）
+  @override
+  Future<ApplyFirmwareResponse> applyFirmware({required String firmwarePath}) async {
+    final request = ApplyFirmwareRequest()
+      ..base = _createRequestBase()
+      ..firmwarePath = firmwarePath;
+    return await _dataClient.applyFirmware(request);
+  }
+
   /// 断开连接
   Future<void> disconnect() async {
     _stopLeaseRenewal();

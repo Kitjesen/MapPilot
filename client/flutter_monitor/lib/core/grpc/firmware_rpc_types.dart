@@ -15,8 +15,11 @@ export 'package:robot_proto/src/data.pb.dart'
         CheckUpdateReadinessResponse,
         ReadinessCheck,
         OtaArtifact,
-        OtaCategory,
-        OtaApplyAction,
-        OtaUpdateStatus,
         InstalledArtifact,
         RollbackEntry;
+
+export 'package:robot_proto/src/data.pbenum.dart'
+    show
+        OtaCategory,
+        OtaApplyAction,
+        OtaUpdateStatus;

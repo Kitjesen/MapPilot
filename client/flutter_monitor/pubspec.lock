@@ -352,6 +352,15 @@ packages:
       url: "https://mirrors.tuna.tsinghua.edu.cn/dart-pub/"
     source: hosted
     version: "5.1.0"
+  han_dog_message:
+    dependency: "direct main"
+    description:
+      path: dart
+      ref: main
+      resolved-ref: "2813424e6251b0ba78de83b2025aba15216e8577"
+      url: "https://github.com/Kitjesen/han_dog_message.git"
+    source: git
+    version: "1.0.0"
   hooks:
     dependency: transitive
     description:
@@ -629,7 +638,7 @@ packages:
     description:
       path: dart
       ref: main
-      resolved-ref: "9bc4e1a55d96ec7f181633d468adfefa580f56fb"
+      resolved-ref: "6ccae7df572d0dda6b074c4b236a3aee2186e41d"
       url: "https://github.com/Kitjesen/Robot_Proto.git"
     source: git
     version: "1.0.0"

@@ -97,6 +97,9 @@ abstract class RobotClientBase {
     required List<OtaArtifact> artifacts,
   });
 
+  /// 应用固件（上传完成后触发刷写脚本）
+  Future<ApplyFirmwareResponse> applyFirmware({required String firmwarePath});
+
   Future<void> disconnect();
   bool get isConnected;
   
