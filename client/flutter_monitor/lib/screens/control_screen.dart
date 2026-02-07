@@ -9,6 +9,7 @@ import 'package:robot_proto/robot_proto.dart';
 import '../widgets/glass_widgets.dart';
 import '../widgets/camera_stream_widget.dart';
 import '../widgets/webrtc_video_widget.dart';
+import '../theme/app_theme.dart';
 
 class ControlScreen extends StatefulWidget {
   const ControlScreen({super.key});
@@ -25,9 +26,8 @@ class _ControlScreenState extends State<ControlScreen> {
   double _linearY = 0.0;
   double _angularZ = 0.0;
 
-  // 发送节流
   DateTime _lastTwistSend = DateTime(2000);
-  static const _twistSendInterval = Duration(milliseconds: 50); // 20Hz max
+  static const _twistSendInterval = Duration(milliseconds: 50);
 
   @override
   void initState() {
@@ -36,7 +36,6 @@ class _ControlScreenState extends State<ControlScreen> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    // 隐藏系统状态栏提升沉浸感
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
@@ -67,10 +66,7 @@ class _ControlScreenState extends State<ControlScreen> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('无法获取控制权'),
-              behavior: SnackBarBehavior.floating,
-            ),
+            const SnackBar(content: Text('无法获取控制权')),
           );
         }
       }
@@ -81,17 +77,12 @@ class _ControlScreenState extends State<ControlScreen> {
     try {
       final client = context.read<RobotConnectionProvider>().client;
       if (client == null) return;
-
       _teleopSubscription =
           client.streamTeleop(_velocityController.stream).listen(
-        (feedback) {
-          // Handle feedback (e.g., safety warnings)
-        },
+        (feedback) {},
         onError: (e) {
           debugPrint('Teleop stream error: $e');
-          if (mounted) {
-            context.read<RobotConnectionProvider>().releaseLease();
-          }
+          if (mounted) context.read<RobotConnectionProvider>().releaseLease();
         },
       );
     } catch (e) {
@@ -131,20 +122,18 @@ class _ControlScreenState extends State<ControlScreen> {
         ..y = _linearY)
       ..angular = (Vector3()..z = _angularZ);
     _velocityController.add(twist);
-    if (mounted) setState(() {}); // 更新显示
+    if (mounted) setState(() {});
   }
 
   Future<void> _setMode(RobotMode mode) async {
     HapticFeedback.lightImpact();
     final client = context.read<RobotConnectionProvider>().client;
     if (client == null) return;
-
     final success = await client.setMode(mode);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(success ? '模式已切换: $mode' : '模式切换失败'),
-          behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 1),
         ),
       );
@@ -155,14 +144,12 @@ class _ControlScreenState extends State<ControlScreen> {
     HapticFeedback.heavyImpact();
     final client = context.read<RobotConnectionProvider>().client;
     if (client == null) return;
-
     await client.emergencyStop(hardStop: false);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('紧急停止已触发'),
-          backgroundColor: Colors.red.shade700,
-          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppColors.error,
         ),
       );
     }
@@ -175,6 +162,7 @@ class _ControlScreenState extends State<ControlScreen> {
     final client = provider.client;
 
     return Scaffold(
+      backgroundColor: AppColors.bg,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -183,13 +171,12 @@ class _ControlScreenState extends State<ControlScreen> {
         title: GlassCard(
           borderRadius: 30,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          blurSigma: 10,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back_ios_new,
-                    size: 18, color: Colors.black87),
+                    size: 18, color: AppColors.textPrimary),
                 onPressed: () => Navigator.of(context).pop(),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
@@ -198,7 +185,7 @@ class _ControlScreenState extends State<ControlScreen> {
               const Text(
                 'Control Center',
                 style: TextStyle(
-                  color: Colors.black87,
+                  color: AppColors.textPrimary,
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
@@ -212,22 +199,14 @@ class _ControlScreenState extends State<ControlScreen> {
             padding: const EdgeInsets.only(right: 12.0),
             child: GlassCard(
               borderRadius: 20,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              blurSigma: 10,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.videocam, size: 14, color: Colors.blue[700]),
+                  Icon(Icons.videocam, size: 14, color: AppColors.info),
                   const SizedBox(width: 6),
-                  Text(
-                    'FPV',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.blue[800],
-                    ),
-                  ),
+                  const Text('FPV',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.info)),
                 ],
               ),
             ),
@@ -238,18 +217,16 @@ class _ControlScreenState extends State<ControlScreen> {
               onTap: _toggleLease,
               child: GlassCard(
                 borderRadius: 20,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 color: hasLease
-                    ? Colors.green.withOpacity(0.2)
-                    : Colors.grey.withOpacity(0.2),
+                    ? AppColors.lime.withOpacity(0.15)
+                    : AppColors.surfaceLight,
                 child: Row(
                   children: [
                     Icon(
                       hasLease ? Icons.lock_open : Icons.lock,
                       size: 16,
-                      color:
-                          hasLease ? Colors.green[700] : Colors.grey[700],
+                      color: hasLease ? AppColors.lime : AppColors.textTertiary,
                     ),
                     const SizedBox(width: 8),
                     Text(
@@ -257,9 +234,7 @@ class _ControlScreenState extends State<ControlScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: hasLease
-                            ? Colors.green[800]
-                            : Colors.grey[800],
+                        color: hasLease ? AppColors.lime : AppColors.textTertiary,
                       ),
                     ),
                   ],
@@ -271,7 +246,7 @@ class _ControlScreenState extends State<ControlScreen> {
       ),
       body: Stack(
         children: [
-          // Camera Background (FPV Style)
+          // Camera Background
           Positioned.fill(
             child: client?.dataServiceClient != null
                 ? WebRTCVideoWidget(
@@ -283,7 +258,7 @@ class _ControlScreenState extends State<ControlScreen> {
                   )
                 : client != null
                     ? CameraStreamWidget(client: client)
-                    : Container(color: Colors.black87),
+                    : Container(color: AppColors.bg),
           ),
 
           // Dark gradient overlay
@@ -294,9 +269,9 @@ class _ControlScreenState extends State<ControlScreen> {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withOpacity(0.3),
+                    Colors.black.withOpacity(0.4),
                     Colors.black.withOpacity(0.1),
-                    Colors.black.withOpacity(0.3),
+                    Colors.black.withOpacity(0.4),
                   ],
                 ),
               ),
@@ -307,9 +282,7 @@ class _ControlScreenState extends State<ControlScreen> {
           Padding(
             padding: EdgeInsets.only(
                 top: MediaQuery.of(context).padding.top + 60,
-                bottom: 20,
-                left: 40,
-                right: 40),
+                bottom: 20, left: 40, right: 40),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -319,8 +292,6 @@ class _ControlScreenState extends State<ControlScreen> {
                   listener: _onLeftJoystickChange,
                   mode: JoystickMode.all,
                 ),
-
-                // Center Controls
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24.0),
@@ -335,13 +306,11 @@ class _ControlScreenState extends State<ControlScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               _buildModeButton('IDLE',
-                                  RobotMode.ROBOT_MODE_IDLE, Colors.grey),
+                                  RobotMode.ROBOT_MODE_IDLE, AppColors.textTertiary),
                               _buildModeButton('MANUAL',
-                                  RobotMode.ROBOT_MODE_MANUAL, Colors.blue),
-                              _buildModeButton(
-                                  'AUTO',
-                                  RobotMode.ROBOT_MODE_AUTONOMOUS,
-                                  Colors.purple),
+                                  RobotMode.ROBOT_MODE_MANUAL, AppColors.info),
+                              _buildModeButton('AUTO',
+                                  RobotMode.ROBOT_MODE_AUTONOMOUS, AppColors.lime),
                             ],
                           ),
                         ),
@@ -354,17 +323,16 @@ class _ControlScreenState extends State<ControlScreen> {
                             width: 80,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: Colors.red.withOpacity(0.8),
+                              color: AppColors.error.withOpacity(0.85),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.red.withOpacity(0.4),
+                                  color: AppColors.error.withOpacity(0.4),
                                   blurRadius: 20,
                                   offset: const Offset(0, 8),
                                 ),
                               ],
                               border: Border.all(
-                                  color: Colors.white.withOpacity(0.5),
-                                  width: 2),
+                                  color: Colors.white.withOpacity(0.3), width: 2),
                             ),
                             child: const Center(
                               child: Text(
@@ -389,10 +357,8 @@ class _ControlScreenState extends State<ControlScreen> {
                             style: TextStyle(
                               fontSize: 12,
                               fontFamily: 'monospace',
-                              fontFeatures: const [
-                                FontFeature.tabularFigures()
-                              ],
-                              color: Colors.black.withOpacity(0.6),
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                              color: AppColors.textSecondary,
                             ),
                           ),
                         ),
@@ -400,7 +366,6 @@ class _ControlScreenState extends State<ControlScreen> {
                     ),
                   ),
                 ),
-
                 _buildJoystickSection(
                   label: 'ROTATION',
                   icon: Icons.rotate_right,
@@ -430,17 +395,15 @@ class _ControlScreenState extends State<ControlScreen> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: Colors.black54),
+              Icon(icon, size: 14, color: AppColors.textSecondary),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black54,
-                  letterSpacing: 0.5,
-                ),
-              ),
+              Text(label,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.5,
+                  )),
             ],
           ),
         ),
@@ -453,12 +416,11 @@ class _ControlScreenState extends State<ControlScreen> {
             height: 180,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.white.withOpacity(0.2),
-              border:
-                  Border.all(color: Colors.white.withOpacity(0.4), width: 1),
+              color: AppColors.surface.withOpacity(0.3),
+              border: Border.all(color: AppColors.border.withOpacity(0.4), width: 1),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withOpacity(0.15),
                   blurRadius: 10,
                   spreadRadius: 2,
                 ),
@@ -470,7 +432,7 @@ class _ControlScreenState extends State<ControlScreen> {
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.1),
+                    color: AppColors.surface.withOpacity(0.15),
                   ),
                 ),
               ),
@@ -481,12 +443,11 @@ class _ControlScreenState extends State<ControlScreen> {
             height: 60,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.white.withOpacity(0.4),
-              border:
-                  Border.all(color: Colors.white.withOpacity(0.6), width: 1),
+              color: AppColors.surfaceLight.withOpacity(0.6),
+              border: Border.all(color: AppColors.lime.withOpacity(0.3), width: 1),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
+                  color: Colors.black.withOpacity(0.2),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -498,26 +459,24 @@ class _ControlScreenState extends State<ControlScreen> {
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                    gradient: RadialGradient(
                       colors: [
-                        Colors.white.withOpacity(0.6),
-                        Colors.white.withOpacity(0.1),
+                        AppColors.lime.withOpacity(0.15),
+                        Colors.transparent,
                       ],
                     ),
                   ),
                   child: Center(
                     child: Container(
-                      width: 20,
-                      height: 20,
+                      width: 18,
+                      height: 18,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(0.8),
+                        color: AppColors.lime.withOpacity(0.6),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4,
+                            color: AppColors.lime.withOpacity(0.2),
+                            blurRadius: 8,
                           ),
                         ],
                       ),

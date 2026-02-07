@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../services/robot_connection_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 import '../widgets/glass_widgets.dart';
+import '../theme/app_theme.dart';
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -21,10 +22,8 @@ class _EventsScreenState extends State<EventsScreen>
   StreamSubscription? _subscription;
   bool _isStreaming = false;
 
-  // 事件数量上限
   static const int _maxEvents = 200;
 
-  // 重连退避
   int _retryCount = 0;
   Timer? _retryTimer;
 
@@ -34,9 +33,7 @@ class _EventsScreenState extends State<EventsScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startListening();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startListening());
   }
 
   @override
@@ -53,15 +50,12 @@ class _EventsScreenState extends State<EventsScreen>
 
     try {
       final lastId = _events.isNotEmpty ? _events.first.eventId : '';
-
       _subscription = client.streamEvents(lastEventId: lastId).listen(
         (event) {
           if (!mounted) return;
           setState(() {
-            // 去重
             if (!_events.any((e) => e.eventId == event.eventId)) {
               _events.insert(0, event);
-              // 限制最大数量，避免内存泄漏
               if (_events.length > _maxEvents) {
                 _events.removeRange(_maxEvents, _events.length);
               }
@@ -87,7 +81,6 @@ class _EventsScreenState extends State<EventsScreen>
   void _scheduleRetry() {
     _retryTimer?.cancel();
     _retryCount++;
-    // 指数退避: 3s, 6s, 12s, max 30s
     final delay = Duration(
       seconds: (3 * (1 << (_retryCount - 1).clamp(0, 3))).clamp(3, 30),
     );
@@ -99,17 +92,17 @@ class _EventsScreenState extends State<EventsScreen>
   Color _getSeverityColor(EventSeverity severity) {
     switch (severity) {
       case EventSeverity.EVENT_SEVERITY_DEBUG:
-        return Colors.grey;
+        return AppColors.textTertiary;
       case EventSeverity.EVENT_SEVERITY_INFO:
-        return const Color(0xFF007AFF);
+        return AppColors.info;
       case EventSeverity.EVENT_SEVERITY_WARNING:
-        return const Color(0xFFFF9500);
+        return AppColors.warning;
       case EventSeverity.EVENT_SEVERITY_ERROR:
-        return const Color(0xFFFF3B30);
+        return AppColors.error;
       case EventSeverity.EVENT_SEVERITY_CRITICAL:
-        return const Color(0xFFAF52DE);
+        return AppColors.lime;
       default:
-        return Colors.black;
+        return AppColors.textSecondary;
     }
   }
 
@@ -132,9 +125,10 @@ class _EventsScreenState extends State<EventsScreen>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required by AutomaticKeepAliveClientMixin
+    super.build(context);
 
     return Scaffold(
+      backgroundColor: AppColors.bg,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: Row(
@@ -147,7 +141,7 @@ class _EventsScreenState extends State<EventsScreen>
                 padding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF007AFF).withOpacity(0.1),
+                  color: AppColors.lime.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
@@ -155,7 +149,7 @@ class _EventsScreenState extends State<EventsScreen>
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFF007AFF),
+                    color: AppColors.lime,
                   ),
                 ),
               ),
@@ -164,7 +158,7 @@ class _EventsScreenState extends State<EventsScreen>
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh, color: AppColors.textSecondary),
             onPressed: () {
               HapticFeedback.lightImpact();
               _subscription?.cancel();
@@ -183,10 +177,11 @@ class _EventsScreenState extends State<EventsScreen>
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.history,
-                      size: 48, color: Colors.grey.withOpacity(0.3)),
+                      size: 48, color: AppColors.textTertiary.withOpacity(0.4)),
                   const SizedBox(height: 16),
                   Text('No events recorded',
-                      style: TextStyle(color: Colors.grey.withOpacity(0.5))),
+                      style: TextStyle(
+                          color: AppColors.textTertiary.withOpacity(0.6))),
                   if (!_isStreaming)
                     Padding(
                       padding: const EdgeInsets.only(top: 8.0),
@@ -198,7 +193,7 @@ class _EventsScreenState extends State<EventsScreen>
                             height: 12,
                             child: CircularProgressIndicator(
                               strokeWidth: 1.5,
-                              color: Colors.grey.withOpacity(0.4),
+                              color: AppColors.lime.withOpacity(0.5),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -207,7 +202,7 @@ class _EventsScreenState extends State<EventsScreen>
                                 ? 'Reconnecting (attempt $_retryCount)...'
                                 : 'Connecting...',
                             style: const TextStyle(
-                                color: Colors.grey, fontSize: 12),
+                                color: AppColors.textTertiary, fontSize: 12),
                           ),
                         ],
                       ),
@@ -217,22 +212,19 @@ class _EventsScreenState extends State<EventsScreen>
             )
           : Stack(
               children: [
-                // Vertical Timeline Line
                 Positioned(
                   left: 24,
                   top: 0,
                   bottom: 0,
                   child: Container(
                     width: 2,
-                    color: Colors.grey.withOpacity(0.2),
+                    color: AppColors.divider,
                   ),
                 ),
-                // Event List — 使用 ListView.builder 的虚拟滚动
                 ListView.builder(
                   padding: EdgeInsets.fromLTRB(
                       16, MediaQuery.of(context).padding.top + 60, 16, 100),
                   itemCount: _events.length,
-                  // 缓存区域限制，提升滚动性能
                   cacheExtent: 300,
                   itemBuilder: (context, index) {
                     return _EventListItem(
@@ -251,7 +243,6 @@ class _EventsScreenState extends State<EventsScreen>
                             const SnackBar(
                               content: Text('Event acknowledged'),
                               duration: Duration(milliseconds: 500),
-                              behavior: SnackBarBehavior.floating,
                             ),
                           );
                         }
@@ -265,7 +256,6 @@ class _EventsScreenState extends State<EventsScreen>
   }
 }
 
-/// 独立的事件列表项 Widget，减少不必要的重建
 class _EventListItem extends StatelessWidget {
   final Event event;
   final Color color;
@@ -289,7 +279,6 @@ class _EventListItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Timeline Dot
           Container(
             margin: const EdgeInsets.only(top: 6),
             width: 14,
@@ -297,7 +286,7 @@ class _EventListItem extends StatelessWidget {
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2.5),
+              border: Border.all(color: AppColors.bg, width: 2.5),
               boxShadow: [
                 BoxShadow(
                   color: color.withOpacity(0.4),
@@ -308,7 +297,6 @@ class _EventListItem extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          // Event Card
           Expanded(
             child: GlassCard(
               padding: const EdgeInsets.all(16),
@@ -318,7 +306,6 @@ class _EventListItem extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      // Severity badge
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 2),
@@ -339,10 +326,10 @@ class _EventListItem extends StatelessWidget {
                       const Spacer(),
                       Text(
                         timeStr,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 12,
-                          color: Colors.black.withOpacity(0.4),
-                          fontFeatures: const [FontFeature.tabularFigures()],
+                          color: AppColors.textTertiary,
+                          fontFeatures: [FontFeature.tabularFigures()],
                         ),
                       ),
                     ],
@@ -355,7 +342,7 @@ class _EventListItem extends StatelessWidget {
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+                      color: AppColors.textPrimary,
                     ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 2,
@@ -364,9 +351,9 @@ class _EventListItem extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       event.description,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 14,
-                        color: Colors.black.withOpacity(0.6),
+                        color: AppColors.textSecondary,
                         height: 1.4,
                       ),
                       maxLines: 3,
@@ -383,22 +370,21 @@ class _EventListItem extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.05),
+                          color: AppColors.surfaceLight,
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.check,
-                                size: 14,
-                                color: Colors.black.withOpacity(0.6)),
+                                size: 14, color: AppColors.textSecondary),
                             const SizedBox(width: 4),
-                            Text(
+                            const Text(
                               'ACK',
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.black.withOpacity(0.6),
+                                color: AppColors.textSecondary,
                               ),
                             ),
                           ],

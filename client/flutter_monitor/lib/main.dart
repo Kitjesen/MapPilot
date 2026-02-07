@@ -1,4 +1,4 @@
-import 'dart:ui';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +6,7 @@ import 'services/robot_client.dart';
 import 'services/mock_robot_client.dart';
 import 'services/robot_connection_provider.dart';
 import 'screens/home_screen.dart';
+import 'theme/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,27 +23,7 @@ class RobotMonitorApp extends StatelessWidget {
       child: MaterialApp(
         title: '大算机器人',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          scaffoldBackgroundColor: const Color(0xFFF2F2F7),
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF007AFF),
-            surface: Colors.white,
-            brightness: Brightness.light,
-          ),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            centerTitle: true,
-            titleTextStyle: TextStyle(
-              color: Colors.black87,
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.5,
-            ),
-            iconTheme: IconThemeData(color: Colors.black87),
-          ),
-        ),
+        theme: AppTheme.dark,
         home: const ConnectionScreen(),
       ),
     );
@@ -57,17 +38,28 @@ class ConnectionScreen extends StatefulWidget {
 }
 
 class _ConnectionScreenState extends State<ConnectionScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _hostController = TextEditingController(text: '192.168.66.190');
   final _portController = TextEditingController(text: '50051');
   bool _isConnecting = false;
   String? _errorMessage;
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
 
-  // 记住上次连接的地址
   static String _lastHost = '192.168.66.190';
   static String _lastPort = '50051';
+
+  // ── Animations ──
+  late AnimationController _entranceController;
+  late AnimationController _pulseController;
+  late AnimationController _floatController;
+
+  late Animation<double> _logoSlide;
+  late Animation<double> _logoFade;
+  late Animation<double> _titleSlide;
+  late Animation<double> _titleFade;
+  late Animation<double> _cardSlide;
+  late Animation<double> _cardFade;
+  late Animation<double> _pulse;
+  late Animation<double> _float;
 
   @override
   void initState() {
@@ -75,26 +67,67 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     _hostController.text = _lastHost;
     _portController.text = _lastPort;
 
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
-      ),
+    SystemChrome.setSystemUIOverlayStyle(AppTheme.systemOverlay);
+
+    // Stagger entrance
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
     );
+
+    _logoSlide = Tween<double>(begin: -40, end: 0).animate(CurvedAnimation(
+      parent: _entranceController,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOutCubic),
+    ));
+    _logoFade = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(
+      parent: _entranceController,
+      curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+    ));
+    _titleSlide = Tween<double>(begin: 30, end: 0).animate(CurvedAnimation(
+      parent: _entranceController,
+      curve: const Interval(0.2, 0.6, curve: Curves.easeOutCubic),
+    ));
+    _titleFade = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(
+      parent: _entranceController,
+      curve: const Interval(0.2, 0.55, curve: Curves.easeOut),
+    ));
+    _cardSlide = Tween<double>(begin: 50, end: 0).animate(CurvedAnimation(
+      parent: _entranceController,
+      curve: const Interval(0.35, 0.8, curve: Curves.easeOutCubic),
+    ));
+    _cardFade = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(
+      parent: _entranceController,
+      curve: const Interval(0.35, 0.75, curve: Curves.easeOut),
+    ));
+
+    // Glow pulse
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 0.6, end: 1.0).animate(
+    _pulse = Tween<double>(begin: 0.4, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+
+    // Floating bob
+    _floatController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    )..repeat(reverse: true);
+    _float = Tween<double>(begin: -6, end: 6).animate(
+      CurvedAnimation(parent: _floatController, curve: Curves.easeInOut),
+    );
+
+    _entranceController.forward();
   }
 
   @override
   void dispose() {
     _hostController.dispose();
     _portController.dispose();
+    _entranceController.dispose();
     _pulseController.dispose();
+    _floatController.dispose();
     super.dispose();
   }
 
@@ -104,7 +137,6 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     final host = _hostController.text.trim();
     final portText = _portController.text.trim();
 
-    // 基本输入验证
     if (host.isEmpty) {
       setState(() => _errorMessage = '请输入机器人 IP 地址');
       return;
@@ -120,7 +152,6 @@ class _ConnectionScreenState extends State<ConnectionScreen>
       _errorMessage = null;
     });
 
-    // 添加触觉反馈
     HapticFeedback.lightImpact();
 
     try {
@@ -135,10 +166,9 @@ class _ConnectionScreenState extends State<ConnectionScreen>
         Navigator.of(context).pushReplacement(
           PageRouteBuilder(
             pageBuilder: (_, __, ___) => const HomeScreen(),
-            transitionsBuilder: (_, a, __, child) {
-              return FadeTransition(opacity: a, child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 400),
+            transitionsBuilder: (_, a, __, child) =>
+                FadeTransition(opacity: a, child: child),
+            transitionDuration: const Duration(milliseconds: 500),
           ),
         );
       } else {
@@ -166,10 +196,9 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => const HomeScreen(),
-        transitionsBuilder: (_, a, __, child) {
-          return FadeTransition(opacity: a, child: child);
-        },
-        transitionDuration: const Duration(milliseconds: 400),
+        transitionsBuilder: (_, a, __, child) =>
+            FadeTransition(opacity: a, child: child),
+        transitionDuration: const Duration(milliseconds: 500),
       ),
     );
   }
@@ -179,189 +208,249 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFFF2F2F7), Color(0xFFE8ECF4), Color(0xFFF2F2F7)],
+          gradient: RadialGradient(
+            center: Alignment(0, -0.3),
+            radius: 1.4,
+            colors: [Color(0xFF1A1A1A), Color(0xFF0D0D0D)],
           ),
         ),
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Logo + Title
-                  AnimatedBuilder(
-                    animation: _pulseAnimation,
-                    builder: (context, child) {
-                      return Container(
-                        width: 100,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              const Color(0xFF007AFF)
-                                  .withOpacity(_pulseAnimation.value),
-                              const Color(0xFF5856D6)
-                                  .withOpacity(_pulseAnimation.value),
-                            ],
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF007AFF)
-                                  .withOpacity(0.3 * _pulseAnimation.value),
-                              blurRadius: 30,
-                              spreadRadius: 5,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.smart_toy_outlined,
-                          size: 48,
-                          color: Colors.white,
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    '大算机器人',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.5,
-                      color: Colors.black87,
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: AnimatedBuilder(
+                animation: Listenable.merge(
+                    [_entranceController, _pulseController, _floatController]),
+                builder: (context, _) => Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // ── Robot mascot ──
+                    Transform.translate(
+                      offset: Offset(0, _logoSlide.value + _float.value),
+                      child: Opacity(
+                        opacity: _logoFade.value,
+                        child: _buildRobotMascot(),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Remote Monitor & Control',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: Colors.black.withOpacity(0.4),
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 48),
+                    const SizedBox(height: 28),
 
-                  // Connection Card
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                      child: Container(
-                        padding: const EdgeInsets.all(24),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.85),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.5),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.08),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
+                    // ── Title ──
+                    Transform.translate(
+                      offset: Offset(0, _titleSlide.value),
+                      child: Opacity(
+                        opacity: _titleFade.value,
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _buildInputField(
-                              controller: _hostController,
-                              icon: Icons.wifi_tethering,
-                              label: 'Robot IP',
-                              keyboardType: TextInputType.text,
-                              onSubmitted: (_) => _connect(),
+                            const Text(
+                              '大算机器人',
+                              style: TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -1,
+                                color: AppColors.textPrimary,
+                              ),
                             ),
-                            const SizedBox(height: 12),
-                            _buildInputField(
-                              controller: _portController,
-                              icon: Icons.tag,
-                              label: 'Port',
-                              keyboardType: TextInputType.number,
-                              onSubmitted: (_) => _connect(),
-                            ),
-
-                            // 错误信息
-                            AnimatedSize(
-                              duration: const Duration(milliseconds: 200),
-                              child: _errorMessage != null
-                                  ? Padding(
-                                      padding: const EdgeInsets.only(top: 16),
-                                      child: Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFFF3B30)
-                                              .withOpacity(0.08),
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            const Icon(Icons.error_outline,
-                                                size: 18,
-                                                color: Color(0xFFFF3B30)),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: Text(
-                                                _errorMessage!,
-                                                style: const TextStyle(
-                                                  fontSize: 13,
-                                                  color: Color(0xFFFF3B30),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    )
-                                  : const SizedBox.shrink(),
-                            ),
-
-                            const SizedBox(height: 24),
-
-                            _buildPrimaryButton(
-                              onPressed: _isConnecting ? null : _connect,
-                              isLoading: _isConnecting,
-                              icon: Icons.link,
-                              label: _isConnecting ? '连接中...' : '连接机器人',
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            _buildSecondaryButton(
-                              onPressed: _isConnecting ? null : _startMock,
-                              icon: Icons.science_outlined,
-                              label: 'Mock 演示模式',
+                            const SizedBox(height: 6),
+                            Text(
+                              'Remote Monitor & Control',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: AppColors.textTertiary,
+                                letterSpacing: 0.8,
+                              ),
                             ),
                           ],
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 44),
 
-                  const SizedBox(height: 24),
-                  Text(
-                    'gRPC · WebRTC · ROS 2',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.black.withOpacity(0.25),
-                      letterSpacing: 1.5,
+                    // ── Connection card ──
+                    Transform.translate(
+                      offset: Offset(0, _cardSlide.value),
+                      child: Opacity(
+                        opacity: _cardFade.value,
+                        child: _buildConnectionCard(),
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 28),
+
+                    // ── Footer ──
+                    Opacity(
+                      opacity: _cardFade.value,
+                      child: Text(
+                        'gRPC · WebRTC · ROS 2',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textTertiary.withOpacity(0.5),
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildRobotMascot() {
+    return Container(
+      width: 110,
+      height: 110,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [
+            AppColors.lime.withOpacity(0.15 * _pulse.value),
+            Colors.transparent,
+          ],
+          radius: 1.2,
+        ),
+      ),
+      child: Center(
+        child: Container(
+          width: 90,
+          height: 90,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: AppColors.surface,
+            border: Border.all(
+              color: AppColors.lime.withOpacity(0.3 * _pulse.value),
+              width: 2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.lime.withOpacity(0.15 * _pulse.value),
+                blurRadius: 30,
+                spreadRadius: 4,
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.smart_toy_rounded,
+            size: 44,
+            color: AppColors.lime,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectionCard() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.border, width: 0.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 30,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildInputField(
+            controller: _hostController,
+            icon: Icons.wifi_tethering,
+            label: 'Robot IP',
+            onSubmitted: (_) => _connect(),
+          ),
+          const SizedBox(height: 12),
+          _buildInputField(
+            controller: _portController,
+            icon: Icons.tag,
+            label: 'Port',
+            keyboardType: TextInputType.number,
+            onSubmitted: (_) => _connect(),
+          ),
+
+          // Error
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: _errorMessage != null
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.error.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppColors.error.withOpacity(0.2),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline,
+                              size: 18, color: AppColors.error),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _errorMessage!,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: AppColors.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+          const SizedBox(height: 24),
+
+          // Connect button (lime)
+          _buildLimeButton(
+            onPressed: _isConnecting ? null : _connect,
+            isLoading: _isConnecting,
+            label: _isConnecting ? '连接中...' : '连接机器人',
+            icon: Icons.link,
+          ),
+          const SizedBox(height: 12),
+
+          // Mock button
+          GestureDetector(
+            onTap: _isConnecting ? null : _startMock,
+            child: Container(
+              height: 52,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceLight,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border, width: 0.5),
+              ),
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.science_outlined,
+                        size: 20, color: AppColors.textSecondary),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Mock 演示模式',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -375,8 +464,9 @@ class _ConnectionScreenState extends State<ConnectionScreen>
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.04),
+        color: AppColors.bgElevated,
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border, width: 0.5),
       ),
       child: TextField(
         controller: controller,
@@ -386,13 +476,13 @@ class _ConnectionScreenState extends State<ConnectionScreen>
         style: const TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w500,
-          color: Colors.black87,
+          color: AppColors.textPrimary,
         ),
         decoration: InputDecoration(
-          prefixIcon: Icon(icon, size: 20, color: const Color(0xFF007AFF)),
+          prefixIcon: Icon(icon, size: 20, color: AppColors.lime),
           hintText: label,
           hintStyle: TextStyle(
-            color: Colors.black.withOpacity(0.3),
+            color: AppColors.textTertiary,
             fontWeight: FontWeight.w400,
           ),
           border: InputBorder.none,
@@ -403,30 +493,28 @@ class _ConnectionScreenState extends State<ConnectionScreen>
     );
   }
 
-  Widget _buildPrimaryButton({
+  Widget _buildLimeButton({
     required VoidCallback? onPressed,
     required bool isLoading,
-    required IconData icon,
     required String label,
+    required IconData icon,
   }) {
     return GestureDetector(
       onTap: onPressed,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        height: 52,
+        height: 54,
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: onPressed != null
-                ? [const Color(0xFF007AFF), const Color(0xFF5856D6)]
-                : [Colors.grey.shade400, Colors.grey.shade500],
-          ),
-          borderRadius: BorderRadius.circular(14),
+          color: onPressed != null
+              ? AppColors.lime
+              : AppColors.lime.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: onPressed != null
               ? [
                   BoxShadow(
-                    color: const Color(0xFF007AFF).withOpacity(0.3),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
+                    color: AppColors.lime.withOpacity(0.25),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
                   ),
                 ]
               : [],
@@ -438,59 +526,25 @@ class _ConnectionScreenState extends State<ConnectionScreen>
                   height: 22,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    color: Colors.white,
+                    color: Colors.black,
                   ),
                 )
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(icon, size: 20, color: Colors.white),
+                    Icon(icon, size: 20, color: Colors.black),
                     const SizedBox(width: 8),
                     Text(
                       label,
                       style: const TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black,
                         letterSpacing: 0.3,
                       ),
                     ),
                   ],
                 ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSecondaryButton({
-    required VoidCallback? onPressed,
-    required IconData icon,
-    required String label,
-  }) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        height: 52,
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Center(
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 20, color: Colors.black54),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black54,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );

@@ -1,8 +1,8 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/robot_connection_provider.dart';
+import '../theme/app_theme.dart';
 import 'status_screen.dart';
 import 'control_screen.dart';
 import 'map_screen.dart';
@@ -17,8 +17,12 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   int _currentIndex = 0;
+
+  late AnimationController _navAnimController;
+  late Animation<double> _navSlide;
 
   @override
   void initState() {
@@ -27,11 +31,26 @@ class _HomeScreenState extends State<HomeScreen> {
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
     ]);
+    SystemChrome.setSystemUIOverlayStyle(AppTheme.systemOverlay);
+
+    // Nav bar entrance animation
+    _navAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _navSlide = Tween<double>(begin: 100, end: 0).animate(
+      CurvedAnimation(parent: _navAnimController, curve: Curves.easeOutCubic),
+    );
+    _navAnimController.forward();
   }
 
-  // 非 Control 的 tab 对应 IndexedStack 的映射
+  @override
+  void dispose() {
+    _navAnimController.dispose();
+    super.dispose();
+  }
+
   // index: 0=Status, 1=Control(push), 2=Map, 3=Events, 4=Settings
-  // IndexedStack: [Status, Map, Events, Settings]
   int _indexedStackIndex() {
     if (_currentIndex == 0) return 0;
     if (_currentIndex == 2) return 1;
@@ -42,18 +61,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onTabSelected(int index) {
     if (index == 1) {
-      // Control 页面以独立路由打开
       HapticFeedback.selectionClick();
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => const ControlScreen(),
-        ),
+        MaterialPageRoute(builder: (context) => const ControlScreen()),
       );
     } else {
       HapticFeedback.selectionClick();
-      setState(() {
-        _currentIndex = index;
-      });
+      setState(() => _currentIndex = index);
     }
   }
 
@@ -63,7 +77,6 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => AlertDialog(
         title: const Text('断开连接'),
         content: const Text('确定要断开与机器人的连接吗？'),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -71,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
             child: const Text('断开'),
           ),
         ],
@@ -96,7 +109,6 @@ class _HomeScreenState extends State<HomeScreen> {
       extendBody: true,
       body: Stack(
         children: [
-          // 使用 IndexedStack 保持屏幕状态
           IndexedStack(
             index: _indexedStackIndex(),
             children: const [
@@ -106,18 +118,13 @@ class _HomeScreenState extends State<HomeScreen> {
               SettingsScreen(),
             ],
           ),
-
-          // 连接状态横幅（重连中时显示）
           _buildConnectionBanner(),
-
-          // 浮动导航栏
           _buildFloatingNavBar(context),
         ],
       ),
     );
   }
 
-  /// 连接状态横幅
   Widget _buildConnectionBanner() {
     return Selector<RobotConnectionProvider, ConnectionStatus>(
       selector: (_, p) => p.status,
@@ -131,15 +138,16 @@ class _HomeScreenState extends State<HomeScreen> {
         IconData icon;
         switch (status) {
           case ConnectionStatus.reconnecting:
-            bgColor = const Color(0xFFFF9500);
+            bgColor = AppColors.warning;
             text = '正在重新连接...';
             icon = Icons.sync;
           case ConnectionStatus.error:
-            bgColor = const Color(0xFFFF3B30);
-            text = context.read<RobotConnectionProvider>().errorMessage ?? '连接错误';
+            bgColor = AppColors.error;
+            text = context.read<RobotConnectionProvider>().errorMessage ??
+                '连接错误';
             icon = Icons.error_outline;
           default:
-            bgColor = Colors.grey;
+            bgColor = AppColors.textTertiary;
             text = '未连接';
             icon = Icons.cloud_off;
         }
@@ -152,10 +160,11 @@ class _HomeScreenState extends State<HomeScreen> {
             color: Colors.transparent,
             child: Container(
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
                 color: bgColor.withOpacity(0.9),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 boxShadow: [
                   BoxShadow(
                     color: bgColor.withOpacity(0.3),
@@ -197,47 +206,45 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFloatingNavBar(BuildContext context) {
-    return Positioned(
-      left: 24,
-      right: 24,
-      bottom: MediaQuery.of(context).padding.bottom + 12,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(
-            height: 64,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.82),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.4),
-                width: 0.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.12),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+    return AnimatedBuilder(
+      animation: _navSlide,
+      builder: (context, child) => Positioned(
+        left: 24,
+        right: 24,
+        bottom: MediaQuery.of(context).padding.bottom + 12 + _navSlide.value,
+        child: Opacity(
+          opacity: (1 - _navSlide.value / 100).clamp(0, 1),
+          child: child!,
+        ),
+      ),
+      child: Container(
+        height: 68,
+        decoration: BoxDecoration(
+          color: AppColors.surface.withOpacity(0.95),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: AppColors.border.withOpacity(0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildNavItem(
-                    0, Icons.dashboard_outlined, Icons.dashboard, 'Status'),
-                _buildNavItem(
-                    1, Icons.gamepad_outlined, Icons.gamepad, 'Control'),
-                _buildNavItem(2, Icons.map_outlined, Icons.map, 'Map'),
-                _buildNavItem(3, Icons.notifications_outlined,
-                    Icons.notifications, 'Events'),
-                _buildNavItem(4, Icons.settings_outlined, Icons.settings, 'Settings'),
-                // 断开连接按钮
-                _buildDisconnectButton(),
-              ],
-            ),
-          ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildNavItem(
+                0, Icons.dashboard_outlined, Icons.dashboard, 'Status'),
+            _buildNavItem(
+                1, Icons.gamepad_outlined, Icons.gamepad, 'Control'),
+            _buildNavItem(2, Icons.map_outlined, Icons.map, 'Map'),
+            _buildNavItem(
+                3, Icons.notifications_outlined, Icons.notifications, 'Events'),
+            _buildNavItem(
+                4, Icons.settings_outlined, Icons.settings, 'Settings'),
+            _buildDisconnectButton(),
+          ],
         ),
       ),
     );
@@ -245,7 +252,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildNavItem(
       int index, IconData icon, IconData activeIcon, String label) {
-    // Control tab 永远不会 "selected"
     final isSelected = index != 1 && _currentIndex == index;
     final isControl = index == 1;
 
@@ -257,7 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: isSelected
             ? BoxDecoration(
-                color: const Color(0xFF007AFF).withOpacity(0.12),
+                color: AppColors.lime.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(16),
               )
             : null,
@@ -268,10 +274,10 @@ class _HomeScreenState extends State<HomeScreen> {
               isSelected ? activeIcon : icon,
               size: 22,
               color: isSelected
-                  ? const Color(0xFF007AFF)
+                  ? AppColors.lime
                   : isControl
-                      ? const Color(0xFFAF52DE)
-                      : Colors.black.withOpacity(0.35),
+                      ? AppColors.lime.withOpacity(0.6)
+                      : AppColors.textTertiary,
             ),
             if (isSelected) ...[
               const SizedBox(height: 2),
@@ -279,7 +285,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 width: 4,
                 height: 4,
                 decoration: const BoxDecoration(
-                  color: Color(0xFF007AFF),
+                  color: AppColors.lime,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -296,15 +302,10 @@ class _HomeScreenState extends State<HomeScreen> {
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.power_settings_new,
-              size: 22,
-              color: Colors.red.withOpacity(0.6),
-            ),
-          ],
+        child: Icon(
+          Icons.power_settings_new,
+          size: 22,
+          color: AppColors.error.withOpacity(0.6),
         ),
       ),
     );

@@ -1,12 +1,13 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
+/// Dark glass card — the primary container for all content.
 class GlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
   final EdgeInsetsGeometry? margin;
   final double borderRadius;
-  final double blurSigma;
   final Color? color;
   final Border? border;
   final List<BoxShadow>? boxShadow;
@@ -16,8 +17,7 @@ class GlassCard extends StatelessWidget {
     required this.child,
     this.padding,
     this.margin,
-    this.borderRadius = 16.0,
-    this.blurSigma = 20.0,
+    this.borderRadius = 20.0,
     this.color,
     this.border,
     this.boxShadow,
@@ -27,35 +27,55 @@ class GlassCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: margin,
+      padding: padding,
       decoration: BoxDecoration(
+        color: color ?? AppColors.surface,
         borderRadius: BorderRadius.circular(borderRadius),
-        boxShadow: boxShadow ?? [
+        border: border ??
+            Border.all(color: AppColors.border.withOpacity(0.4), width: 0.5),
+        boxShadow: boxShadow ??
+            [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Lime accent card variant.
+class LimeCard extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry? padding;
+  final double borderRadius;
+
+  const LimeCard({
+    super.key,
+    required this.child,
+    this.padding,
+    this.borderRadius = 20.0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: AppColors.lime,
+        borderRadius: BorderRadius.circular(borderRadius),
+        boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-            spreadRadius: 0,
+            color: AppColors.lime.withOpacity(0.15),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(borderRadius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-          child: Container(
-            padding: padding,
-            decoration: BoxDecoration(
-              color: color ?? Colors.white.withOpacity(0.85), // More opaque, white default
-              borderRadius: BorderRadius.circular(borderRadius),
-              border: border ?? Border.all(
-                color: Colors.white.withOpacity(0.5),
-                width: 1.0,
-              ),
-            ),
-            child: child,
-          ),
-        ),
-      ),
+      child: child,
     );
   }
 }
@@ -78,47 +98,39 @@ class GlassButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: (backgroundColor ?? Theme.of(context).primaryColor).withOpacity(0.2),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: TextButton(
-            onPressed: onPressed,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              backgroundColor: (backgroundColor ?? Theme.of(context).primaryColor).withOpacity(0.8),
-              foregroundColor: foregroundColor ?? Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+    final bgColor = backgroundColor ?? AppColors.lime;
+    final fgColor = foregroundColor ?? Colors.black;
+
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: bgColor.withOpacity(0.25),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconTheme(data: IconThemeData(color: fgColor), child: icon),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: fgColor,
+                letterSpacing: 0.3,
               ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                icon,
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -152,10 +164,10 @@ class ValueDisplay extends StatelessWidget {
         ],
         Text(
           label.toUpperCase(),
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w600,
-            color: Colors.black.withOpacity(0.4),
+            color: AppColors.textTertiary,
             letterSpacing: 1.0,
           ),
         ),
@@ -171,17 +183,17 @@ class ValueDisplay extends StatelessWidget {
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
                 letterSpacing: -0.5,
-                color: Colors.black87,
+                color: AppColors.textPrimary,
               ),
             ),
             if (unit.isNotEmpty) ...[
               const SizedBox(width: 4),
               Text(
                 unit,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: Colors.black.withOpacity(0.5),
+                  color: AppColors.textSecondary,
                 ),
               ),
             ],
