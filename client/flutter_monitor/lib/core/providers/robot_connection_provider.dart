@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
 import 'package:flutter_monitor/core/grpc/dog_direct_client.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 
 /// 连接状态枚举
@@ -54,7 +55,9 @@ class RobotConnectionProvider extends ChangeNotifier {
 
   // — Settings reference (optional, injected after construction) —
   SettingsPreferences? _settingsPrefs;
+  RobotProfileProvider? _profileProvider;
   void bindSettings(SettingsPreferences prefs) => _settingsPrefs = prefs;
+  void bindProfileProvider(RobotProfileProvider p) => _profileProvider = p;
 
   // — Connection health —
   DateTime? _lastFastStateTime;
@@ -320,6 +323,13 @@ class RobotConnectionProvider extends ChangeNotifier {
     final success = await _dogClient!.connect();
     if (!success) {
       debugPrint('[Provider] Dog Board connection failed: ${_dogClient!.errorMessage}');
+    } else {
+      // Auto-detect robot profile from GetParams response
+      final params = _dogClient!.robotParams;
+      if (params != null && _profileProvider != null) {
+        final typeName = params.robot.type.name;
+        _profileProvider!.autoDetect(typeName);
+      }
     }
     notifyListeners();
     return success;

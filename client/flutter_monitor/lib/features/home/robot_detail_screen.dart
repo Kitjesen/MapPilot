@@ -10,6 +10,7 @@ import 'package:flutter_monitor/features/control/control_screen.dart';
 import 'package:flutter_monitor/features/map/map_screen.dart';
 import 'package:flutter_monitor/features/events/events_screen.dart';
 import 'package:flutter_monitor/features/settings/app_settings_screen.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
 class RobotDetailScreen extends StatefulWidget {
   const RobotDetailScreen({super.key});
@@ -68,6 +69,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
           final fastState = provider.latestFastState;
           final slowState = provider.latestSlowState;
           final isConnected = provider.isConnected;
+          final profile = context.watch<RobotProfileProvider>().current;
 
           return CustomScrollView(
             physics: const BouncingScrollPhysics(),
@@ -97,7 +99,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '大算机器人',
+                        profile.name,
                         style: TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w700,

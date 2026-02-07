@@ -7,6 +7,8 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/shared/widgets/glass_widgets.dart';
+import 'package:flutter_monitor/core/grpc/dog_direct_client.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
 class StatusScreen extends StatefulWidget {
   const StatusScreen({super.key});
@@ -23,6 +25,10 @@ class _StatusScreenState extends State<StatusScreen>
   SlowState? _latestSlowState;
   StreamSubscription<FastState>? _fastSub;
   StreamSubscription<SlowState>? _slowSub;
+
+  // Dog direct sensor subscriptions
+  StreamSubscription? _dogImuSub;
+  StreamSubscription? _dogJointSub;
 
   late AnimationController _breathingController;
   late Animation<double> _breathingAnimation;
@@ -68,6 +74,21 @@ class _StatusScreenState extends State<StatusScreen>
       _latestSlowState = state;
       if (mounted) setState(() {});
     });
+
+    // Dog direct sensor streams
+    _subscribeDogStreams(provider);
+  }
+
+  void _subscribeDogStreams(RobotConnectionProvider provider) {
+    _dogImuSub?.cancel();
+    _dogJointSub?.cancel();
+    final dogClient = provider.dogClient;
+    if (dogClient == null) return;
+
+    _dogImuSub = dogClient.imuStream.listen((_) => _throttledSetState());
+    _dogJointSub = dogClient.jointStream.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _throttledSetState() {
@@ -82,6 +103,8 @@ class _StatusScreenState extends State<StatusScreen>
   void dispose() {
     _fastSub?.cancel();
     _slowSub?.cancel();
+    _dogImuSub?.cancel();
+    _dogJointSub?.cancel();
     _breathingController.dispose();
     super.dispose();
   }
@@ -90,6 +113,11 @@ class _StatusScreenState extends State<StatusScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final isDark = context.isDark;
+
+    final provider = context.watch<RobotConnectionProvider>();
+    final dogClient = provider.dogClient;
+    final isDogConnected = provider.isDogConnected;
+    final hasAnyData = _latestFastState != null || isDogConnected;
 
     return Scaffold(
       appBar: AppBar(
@@ -101,13 +129,48 @@ class _StatusScreenState extends State<StatusScreen>
               )
             : null,
         actions: [
+          // Dog connection badge
+          if (isDogConnected)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: AppColors.warning,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'DOG',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.warning,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
             child: _buildStatusBadge(),
           ),
         ],
       ),
-      body: _latestFastState == null
+      body: !hasAnyData
           ? _buildLoadingSkeleton()
           : RefreshIndicator(
               onRefresh: () async {
@@ -122,6 +185,7 @@ class _StatusScreenState extends State<StatusScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (_latestFastState != null) ...[
                     RepaintBoundary(child: _buildRobotCard()),
                     const SizedBox(height: 14),
                     Row(
@@ -200,6 +264,16 @@ class _StatusScreenState extends State<StatusScreen>
                     if (_latestSlowState != null) ...[
                       const SizedBox(height: 14),
                       RepaintBoundary(child: _buildTopicRatesCard()),
+                    ],
+                    ], // end _latestFastState != null
+                    // ─── Dog Direct Sensor Data ───
+                    if (isDogConnected && dogClient != null) ...[
+                      const SizedBox(height: 14),
+                      RepaintBoundary(
+                          child: _buildDogImuCard(dogClient)),
+                      const SizedBox(height: 14),
+                      RepaintBoundary(
+                          child: _buildDogJointCard(dogClient)),
                     ],
                   ],
                 ),
@@ -370,7 +444,7 @@ class _StatusScreenState extends State<StatusScreen>
           ),
           const SizedBox(height: 16),
           Text(
-            '大算机器人',
+            context.watch<RobotProfileProvider>().current.name,
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
@@ -746,4 +820,343 @@ class _StatusScreenState extends State<StatusScreen>
       ],
     );
   }
+
+  // ═══════════════════════════════════════════════
+  //  Dog Direct Sensor Cards
+  // ═══════════════════════════════════════════════
+
+  Widget _buildDogImuCard(DogDirectClient dogClient) {
+    final isDark = context.isDark;
+    final rpy = dogClient.rpyDegrees;
+    final gyro = dogClient.imuGyroscope;
+
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: context.cardShadowColor,
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(isDark ? 0.18 : 0.1),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(Icons.explore, size: 18,
+                    color: AppColors.warning),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'DOG IMU',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              if (dogClient.isConnected)
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: AppColors.success,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Roll / Pitch / Yaw
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildImuValue('ROLL', rpy?[0], '°'),
+              Container(width: 1, height: 36, color: context.dividerColor),
+              _buildImuValue('PITCH', rpy?[1], '°'),
+              Container(width: 1, height: 36, color: context.dividerColor),
+              _buildImuValue('YAW', rpy?[2], '°'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Gyroscope
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withOpacity(0.04)
+                  : Colors.black.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.rotate_right, size: 14,
+                    color: context.subtitleColor),
+                const SizedBox(width: 8),
+                Text(
+                  'GYRO',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: context.subtitleColor,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  gyro != null
+                      ? 'X: ${gyro[0].toStringAsFixed(2)}  Y: ${gyro[1].toStringAsFixed(2)}  Z: ${gyro[2].toStringAsFixed(2)}'
+                      : '-- -- --',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    color: isDark ? Colors.white70 : Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImuValue(String label, double? value, String unit) {
+    final isDark = context.isDark;
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: context.subtitleColor,
+            letterSpacing: 1.0,
+          ),
+        ),
+        const SizedBox(height: 4),
+        RichText(
+          text: TextSpan(
+            children: [
+              TextSpan(
+                text: value?.toStringAsFixed(1) ?? '--',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? Colors.white : Colors.black87,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              TextSpan(
+                text: unit,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: context.subtitleColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDogJointCard(DogDirectClient dogClient) {
+    final isDark = context.isDark;
+    final positions = dogClient.jointPositions;
+    final torques = dogClient.jointTorques;
+
+    // Joint names (first 12 = leg joints)
+    const legNames = ['FR', 'FL', 'RR', 'RL'];
+    const jointNames = ['Hip', 'Thigh', 'Calf'];
+
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: context.cardShadowColor,
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.secondary.withOpacity(isDark ? 0.18 : 0.1),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(Icons.precision_manufacturing, size: 18,
+                    color: AppColors.secondary),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'DOG JOINTS',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                positions != null ? '${positions.length} joints' : 'N/A',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: context.subtitleColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // 4 legs x 3 joints grid
+          if (positions != null && positions.length >= 12)
+            Table(
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              columnWidths: const {
+                0: FixedColumnWidth(36),
+                1: FlexColumnWidth(1),
+                2: FlexColumnWidth(1),
+                3: FlexColumnWidth(1),
+              },
+              children: [
+                // Header
+                TableRow(
+                  children: [
+                    const SizedBox(),
+                    ...jointNames.map((name) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            name,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: context.subtitleColor,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        )),
+                  ],
+                ),
+                // Data rows
+                for (var leg = 0; leg < 4; leg++)
+                  TableRow(
+                    decoration: BoxDecoration(
+                      color: leg.isEven
+                          ? (isDark
+                              ? Colors.white.withOpacity(0.02)
+                              : Colors.black.withOpacity(0.02))
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Text(
+                          legNames[leg],
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: isDark ? Colors.white70 : Colors.black87,
+                          ),
+                        ),
+                      ),
+                      for (var joint = 0; joint < 3; joint++)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            _radToDeg(positions[leg * 3 + joint])
+                                .toStringAsFixed(1),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'monospace',
+                              color: isDark ? Colors.white : Colors.black87,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            )
+          else
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  '等待关节数据...',
+                  style: TextStyle(color: context.subtitleColor),
+                ),
+              ),
+            ),
+          // Torque summary
+          if (torques != null && torques.length >= 12) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.white.withOpacity(0.04)
+                    : Colors.black.withOpacity(0.03),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.bolt, size: 14, color: context.subtitleColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    'TORQUE',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: context.subtitleColor,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    'Max: ${torques.take(12).map((t) => t.abs()).reduce(math.max).toStringAsFixed(2)} N·m',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      color: isDark ? Colors.white70 : Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  double _radToDeg(double rad) => rad * 180 / math.pi;
 }

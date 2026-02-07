@@ -6,6 +6,7 @@ import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/grpc/mock_robot_client.dart';
 import 'package:flutter_monitor/shared/widgets/robot_card.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -41,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final provider = context.watch<RobotConnectionProvider>();
+    final profileProvider = context.watch<RobotProfileProvider>();
+    final profile = profileProvider.current;
     final isConnected = provider.isConnected;
 
     return Scaffold(
@@ -75,53 +78,75 @@ class _HomeScreenState extends State<HomeScreen>
                     child: Row(
                       children: [
                         // Logo
-                        Container(
-                          width: 46,
-                          height: 46,
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [AppColors.primary, AppColors.secondary],
-                            ),
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.primary.withOpacity(0.25),
-                                blurRadius: 16,
-                                offset: const Offset(0, 6),
+                        GestureDetector(
+                          onTap: () =>
+                              Navigator.of(context).pushNamed('/robot-select'),
+                          child: Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  profile.themeColor,
+                                  profile.themeColor.withOpacity(0.7),
+                                ],
                               ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.smart_toy_outlined,
-                            color: Colors.white,
-                            size: 24,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: profile.themeColor.withOpacity(0.25),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              profile.icon,
+                              color: Colors.white,
+                              size: 24,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 14),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '大算机器人',
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -0.5,
-                                  color: isDark ? Colors.white : Colors.black87,
+                          child: GestureDetector(
+                            onTap: () =>
+                                Navigator.of(context).pushNamed('/robot-select'),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      profile.name,
+                                      style: TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: -0.5,
+                                        color:
+                                            isDark ? Colors.white : Colors.black87,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Icon(
+                                      Icons.unfold_more,
+                                      size: 18,
+                                      color: context.subtitleColor,
+                                    ),
+                                  ],
                                 ),
-                              ),
-                              Text(
-                                'Robot Monitor & Control',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: context.subtitleColor,
-                                  letterSpacing: 0.3,
+                                Text(
+                                  profile.subtitle,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: context.subtitleColor,
+                                    letterSpacing: 0.3,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                         // Scan button
@@ -177,7 +202,7 @@ class _HomeScreenState extends State<HomeScreen>
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                       child: RobotCard(
-                        name: '大算机器人',
+                        name: profile.name,
                         address: _getAddress(provider),
                         connectionStatus: provider.status,
                         batteryPercent: provider
@@ -303,11 +328,11 @@ class _HomeScreenState extends State<HomeScreen>
                         const SizedBox(width: 12),
                         Expanded(
                           child: _QuickActionButton(
-                            icon: Icons.bluetooth_searching,
-                            label: '蓝牙连接',
-                            color: AppColors.secondary,
+                            icon: Icons.pets,
+                            label: '选择型号',
+                            color: profile.themeColor,
                             onTap: () =>
-                                Navigator.of(context).pushNamed('/scan'),
+                                Navigator.of(context).pushNamed('/robot-select'),
                           ),
                         ),
                         const SizedBox(width: 12),

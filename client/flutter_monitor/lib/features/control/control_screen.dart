@@ -10,6 +10,8 @@ import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/shared/widgets/glass_widgets.dart';
 import 'package:flutter_monitor/features/control/camera_stream_widget.dart';
 import 'package:flutter_monitor/features/control/webrtc_video_widget.dart';
+import 'package:flutter_monitor/core/grpc/dog_direct_client.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
 class ControlScreen extends StatefulWidget {
   const ControlScreen({super.key});
@@ -25,6 +27,7 @@ class _ControlScreenState extends State<ControlScreen> {
   double _linearX = 0.0;
   double _linearY = 0.0;
   double _angularZ = 0.0;
+  bool _useDogDirect = false;
 
   // 发送节流
   DateTime _lastTwistSend = DateTime(2000);
@@ -39,6 +42,14 @@ class _ControlScreenState extends State<ControlScreen> {
     ]);
     // 隐藏系统状态栏提升沉浸感
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+    // Auto-select dog direct mode when only dog board is connected
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = context.read<RobotConnectionProvider>();
+      if (provider.isDogConnected && !provider.isConnected) {
+        setState(() => _useDogDirect = true);
+      }
+    });
   }
 
   @override
@@ -101,28 +112,47 @@ class _ControlScreenState extends State<ControlScreen> {
   }
 
   void _onLeftJoystickChange(StickDragDetails details) {
-    final provider = context.read<RobotConnectionProvider>();
-    if (!provider.hasLease) return;
-    const double maxLinearSpeed = 1.0;
-    _linearX = -details.y * maxLinearSpeed;
-    _linearY = details.x * maxLinearSpeed;
-    _throttledSendTwist();
+    if (_useDogDirect) {
+      _linearX = -details.y; // normalized [-1, 1]
+      _linearY = details.x;
+    } else {
+      final provider = context.read<RobotConnectionProvider>();
+      if (!provider.hasLease) return;
+      final profile = context.read<RobotProfileProvider>().current;
+      _linearX = -details.y * profile.maxLinearSpeed;
+      _linearY = details.x * profile.maxLinearSpeed;
+    }
+    _throttledSendCommand();
   }
 
   void _onRightJoystickChange(StickDragDetails details) {
-    final provider = context.read<RobotConnectionProvider>();
-    if (!provider.hasLease) return;
-    const double maxAngularSpeed = 1.5;
-    _angularZ = -details.x * maxAngularSpeed;
-    _throttledSendTwist();
+    if (_useDogDirect) {
+      _angularZ = -details.x;
+    } else {
+      final provider = context.read<RobotConnectionProvider>();
+      if (!provider.hasLease) return;
+      final profile = context.read<RobotProfileProvider>().current;
+      _angularZ = -details.x * profile.maxAngularSpeed;
+    }
+    _throttledSendCommand();
   }
 
-  void _throttledSendTwist() {
+  void _throttledSendCommand() {
     final now = DateTime.now();
     if (now.difference(_lastTwistSend) >= _twistSendInterval) {
       _lastTwistSend = now;
-      _sendTwist();
+      if (_useDogDirect) {
+        _sendDogWalk();
+      } else {
+        _sendTwist();
+      }
     }
+  }
+
+  void _sendDogWalk() {
+    final dogClient = context.read<RobotConnectionProvider>().dogClient;
+    dogClient?.walk(_linearX, _linearY, _angularZ);
+    if (mounted) setState(() {});
   }
 
   void _sendTwist() {
@@ -132,7 +162,51 @@ class _ControlScreenState extends State<ControlScreen> {
         ..y = _linearY)
       ..angular = (Vector3()..z = _angularZ);
     _velocityController.add(twist);
-    if (mounted) setState(() {}); // 更新显示
+    if (mounted) setState(() {});
+  }
+
+  // ─── Dog Direct Control ───
+
+  Future<void> _dogEnable() async {
+    HapticFeedback.mediumImpact();
+    final dogClient = context.read<RobotConnectionProvider>().dogClient;
+    if (dogClient == null) return;
+    final ok = await dogClient.enable();
+    if (mounted && !ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('使能失败: ${dogClient.errorMessage}'),
+            behavior: SnackBarBehavior.floating),
+      );
+    }
+  }
+
+  Future<void> _dogDisable() async {
+    HapticFeedback.mediumImpact();
+    final dogClient = context.read<RobotConnectionProvider>().dogClient;
+    if (dogClient == null) return;
+    await dogClient.disable();
+  }
+
+  Future<void> _dogStandUp() async {
+    HapticFeedback.mediumImpact();
+    final dogClient = context.read<RobotConnectionProvider>().dogClient;
+    if (dogClient == null) return;
+    final ok = await dogClient.standUp();
+    if (mounted && !ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('站立失败: ${dogClient.errorMessage}'),
+            behavior: SnackBarBehavior.floating),
+      );
+    }
+  }
+
+  Future<void> _dogSitDown() async {
+    HapticFeedback.mediumImpact();
+    final dogClient = context.read<RobotConnectionProvider>().dogClient;
+    if (dogClient == null) return;
+    await dogClient.sitDown();
   }
 
   Future<void> _setMode(RobotMode mode) async {
@@ -154,11 +228,24 @@ class _ControlScreenState extends State<ControlScreen> {
 
   Future<void> _emergencyStop() async {
     HapticFeedback.heavyImpact();
-    final client = context.read<RobotConnectionProvider>().client;
-    if (client == null) return;
+    _linearX = 0;
+    _linearY = 0;
+    _angularZ = 0;
 
-    await client.emergencyStop(hardStop: false);
+    final provider = context.read<RobotConnectionProvider>();
+
+    // Stop dog if connected
+    if (provider.isDogConnected) {
+      await provider.dogClient!.emergencyStop();
+    }
+
+    // Stop nav board if connected
+    if (provider.isConnected && provider.client != null) {
+      await provider.client!.emergencyStop(hardStop: false);
+    }
+
     if (mounted) {
+      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('紧急停止已触发'),
@@ -174,6 +261,8 @@ class _ControlScreenState extends State<ControlScreen> {
     final provider = context.watch<RobotConnectionProvider>();
     final hasLease = provider.hasLease;
     final client = provider.client;
+    final isDogConnected = provider.isDogConnected;
+    final dogClient = provider.dogClient;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -234,6 +323,48 @@ class _ControlScreenState extends State<ControlScreen> {
               ),
             ),
           ),
+          // Dog Direct mode toggle
+          if (isDogConnected)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: GestureDetector(
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  setState(() => _useDogDirect = !_useDogDirect);
+                },
+                child: GlassCard(
+                  borderRadius: 20,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  blurSigma: 10,
+                  color: _useDogDirect
+                      ? AppColors.warning.withOpacity(0.2)
+                      : Colors.grey.withOpacity(0.1),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.pets,
+                        size: 14,
+                        color:
+                            _useDogDirect ? AppColors.warning : Colors.grey,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _useDogDirect ? 'DOG' : 'NAV',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: _useDogDirect
+                              ? AppColors.warning
+                              : Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 24.0),
             child: GestureDetector(
@@ -326,24 +457,27 @@ class _ControlScreenState extends State<ControlScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Mode Selection
-                        GlassCard(
-                          padding: const EdgeInsets.all(4),
-                          borderRadius: 22,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildModeButton('IDLE',
-                                  RobotMode.ROBOT_MODE_IDLE, Colors.grey),
-                              _buildModeButton('MANUAL',
-                                  RobotMode.ROBOT_MODE_MANUAL, Colors.blue),
-                              _buildModeButton(
-                                  'AUTO',
-                                  RobotMode.ROBOT_MODE_AUTONOMOUS,
-                                  Colors.purple),
-                            ],
+                        // Mode Selection / Dog Control
+                        if (_useDogDirect)
+                          _buildDogControlButtons(dogClient)
+                        else
+                          GlassCard(
+                            padding: const EdgeInsets.all(4),
+                            borderRadius: 22,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _buildModeButton('IDLE',
+                                    RobotMode.ROBOT_MODE_IDLE, Colors.grey),
+                                _buildModeButton('MANUAL',
+                                    RobotMode.ROBOT_MODE_MANUAL, Colors.blue),
+                                _buildModeButton(
+                                    'AUTO',
+                                    RobotMode.ROBOT_MODE_AUTONOMOUS,
+                                    Colors.purple),
+                              ],
+                            ),
                           ),
-                        ),
                         const Spacer(),
                         // E-Stop
                         GestureDetector(
@@ -384,7 +518,9 @@ class _ControlScreenState extends State<ControlScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 8),
                           child: Text(
-                            'Vx: ${_linearX.toStringAsFixed(2)}  Vy: ${_linearY.toStringAsFixed(2)}  Wz: ${_angularZ.toStringAsFixed(2)}',
+                            _useDogDirect
+                                ? 'X: ${_linearX.toStringAsFixed(2)}  Y: ${_linearY.toStringAsFixed(2)}  Z: ${_angularZ.toStringAsFixed(2)}'
+                                : 'Vx: ${_linearX.toStringAsFixed(2)}  Vy: ${_linearY.toStringAsFixed(2)}  Wz: ${_angularZ.toStringAsFixed(2)}',
                             style: TextStyle(
                               fontSize: 12,
                               fontFamily: 'monospace',
@@ -549,6 +685,102 @@ class _ControlScreenState extends State<ControlScreen> {
               fontWeight: FontWeight.w600,
               color: color,
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─── Dog Direct Control Panel ───
+
+  Widget _buildDogControlButtons(DogDirectClient? dogClient) {
+    final isStanding = dogClient?.isStanding ?? false;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Motor Enable / Disable
+        GlassCard(
+          padding: const EdgeInsets.all(4),
+          borderRadius: 22,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildDogButton(
+                label: 'ENABLE',
+                icon: Icons.power,
+                color: AppColors.success,
+                onTap: _dogEnable,
+              ),
+              _buildDogButton(
+                label: 'DISABLE',
+                icon: Icons.power_off,
+                color: AppColors.error,
+                onTap: _dogDisable,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Stand / Sit
+        GlassCard(
+          padding: const EdgeInsets.all(4),
+          borderRadius: 22,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildDogButton(
+                label: 'STAND',
+                icon: Icons.arrow_upward,
+                color: AppColors.primary,
+                onTap: _dogStandUp,
+                isActive: isStanding,
+              ),
+              _buildDogButton(
+                label: 'SIT',
+                icon: Icons.arrow_downward,
+                color: AppColors.warning,
+                onTap: _dogSitDown,
+                isActive: !isStanding,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDogButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+    bool isActive = false,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: isActive ? color.withOpacity(0.15) : Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
           ),
         ),
       ),

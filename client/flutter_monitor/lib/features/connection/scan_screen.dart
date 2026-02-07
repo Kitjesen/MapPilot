@@ -12,6 +12,7 @@ import 'package:flutter_monitor/core/grpc/mock_robot_client.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
 import 'package:flutter_monitor/features/connection/ble_control_screen.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -44,6 +45,14 @@ class _ScanScreenState extends State<ScanScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+
+    // Set defaults from selected robot profile
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final profile = context.read<RobotProfileProvider>().current;
+      _dogHostController.text = profile.defaultHost;
+      _dogPortController.text = profile.defaultPort.toString();
+    });
+
     // Start network scan automatically
     _startNetworkScan();
   }
@@ -106,7 +115,7 @@ class _ScanScreenState extends State<ScanScreen>
       if (connected) {
         // Save device to history
         context.read<SettingsPreferences>().addOrUpdateDevice(SavedDevice(
-          name: '大算机器人',
+          name: context.read<RobotProfileProvider>().current.name,
           host: host,
           port: port,
           lastConnected: DateTime.now(),

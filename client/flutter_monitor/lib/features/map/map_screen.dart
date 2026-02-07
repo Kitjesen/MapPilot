@@ -10,6 +10,7 @@ import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/shared/widgets/glass_widgets.dart';
 import 'package:flutter_monitor/features/map/robot_model_widget.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -29,6 +30,7 @@ class _MapScreenState extends State<MapScreen>
   StreamSubscription<FastState>? _fastSub;
   StreamSubscription? _mapSubscription;
   StreamSubscription? _pclSubscription;
+  StreamSubscription? _dogJointSub;
 
   final TransformationController _transformController =
       TransformationController();
@@ -66,6 +68,7 @@ class _MapScreenState extends State<MapScreen>
     _fastSub?.cancel();
     _mapSubscription?.cancel();
     _pclSubscription?.cancel();
+    _dogJointSub?.cancel();
     _transformController.dispose();
     super.dispose();
   }
@@ -132,6 +135,18 @@ class _MapScreenState extends State<MapScreen>
   void _startListening() {
     final provider = context.read<RobotConnectionProvider>();
 
+    // Dog board joint stream → update robot model joint angles
+    final dogClient = provider.dogClient;
+    if (dogClient != null && dogClient.isConnected) {
+      _dogJointSub = dogClient.jointStream.listen((_) {
+        if (!mounted) return;
+        final angles = dogClient.jointPositions;
+        if (angles != null) {
+          setState(() => _currentJointAngles = angles);
+        }
+      });
+    }
+
     _fastSub = provider.fastStateStream.listen((state) {
       if (!mounted) return;
 
@@ -149,21 +164,24 @@ class _MapScreenState extends State<MapScreen>
 
       final point = Offset(newPose.position.x, newPose.position.y);
 
-      // 提取关节角度（需要 FastState proto 添加 repeated float joint_angles 字段）
-      // TODO: 当 telemetry.proto 添加 joint_angles 字段后，取消下方注释
-      // final angles = state.jointAngles.isNotEmpty
-      //     ? state.jointAngles.map((a) => a.toDouble()).toList()
-      //     : null;
+      // 关节角度: 优先从 Dog Board 直连获取, 否则尝试 FastState proto
       List<double>? angles;
-      try {
-        // 尝试访问 joint_angles 字段（可能尚未在 proto 中定义）
-        final dynamic dynState = state;
-        final rawAngles = dynState.jointAngles as List?;
-        if (rawAngles != null && rawAngles.isNotEmpty) {
-          angles = rawAngles.map<double>((a) => (a as num).toDouble()).toList();
+      final dogClient =
+          context.read<RobotConnectionProvider>().dogClient;
+      if (dogClient != null && dogClient.isConnected) {
+        angles = dogClient.jointPositions;
+      }
+      if (angles == null) {
+        try {
+          final dynamic dynState = state;
+          final rawAngles = dynState.jointAngles as List?;
+          if (rawAngles != null && rawAngles.isNotEmpty) {
+            angles =
+                rawAngles.map<double>((a) => (a as num).toDouble()).toList();
+          }
+        } catch (_) {
+          // Proto 尚未包含 joint_angles 字段，使用 idle 动画
         }
-      } catch (_) {
-        // Proto 尚未包含 joint_angles 字段，使用 idle 动画
       }
 
       setState(() {
@@ -295,7 +313,7 @@ class _MapScreenState extends State<MapScreen>
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '大算机器人',
+                    context.watch<RobotProfileProvider>().current.name,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,

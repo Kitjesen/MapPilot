@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:grpc/grpc.dart';
 import 'package:han_dog_message/han_dog_message.dart' as dog;
@@ -260,6 +261,73 @@ class DogDirectClient extends ChangeNotifier {
     _jointSub = null;
     _historySub?.cancel();
     _historySub = null;
+  }
+
+  // ============ Convenience Getters for UI ============
+
+  /// Joint positions (rad), up to 16 values
+  List<double>? get jointPositions {
+    if (_latestJoint == null) return null;
+    if (_latestJoint!.hasAllJoints()) {
+      return _latestJoint!.allJoints.position.values
+          .map((v) => v.toDouble())
+          .toList();
+    }
+    return null;
+  }
+
+  /// Joint velocities (rad/s)
+  List<double>? get jointVelocities {
+    if (_latestJoint == null) return null;
+    if (_latestJoint!.hasAllJoints()) {
+      return _latestJoint!.allJoints.velocity.values
+          .map((v) => v.toDouble())
+          .toList();
+    }
+    return null;
+  }
+
+  /// Joint torques (N·m)
+  List<double>? get jointTorques {
+    if (_latestJoint == null) return null;
+    if (_latestJoint!.hasAllJoints()) {
+      return _latestJoint!.allJoints.torque.values
+          .map((v) => v.toDouble())
+          .toList();
+    }
+    return null;
+  }
+
+  /// IMU quaternion as [w, x, y, z]
+  List<double>? get imuQuaternion {
+    if (_latestImu == null) return null;
+    final q = _latestImu!.quaternion;
+    return [q.w, q.x, q.y, q.z];
+  }
+
+  /// IMU gyroscope as [x, y, z] (rad/s)
+  List<double>? get imuGyroscope {
+    if (_latestImu == null) return null;
+    final g = _latestImu!.gyroscope;
+    return [g.x, g.y, g.z];
+  }
+
+  /// Roll, Pitch, Yaw in degrees (from IMU quaternion)
+  List<double>? get rpyDegrees {
+    if (_latestImu == null) return null;
+    final q = _latestImu!.quaternion;
+    final roll = math.atan2(
+        2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x * q.x + q.y * q.y));
+    final sinp = 2 * (q.w * q.y - q.z * q.x);
+    final pitch =
+        sinp.abs() >= 1 ? math.pi / 2 * sinp.sign : math.asin(sinp);
+    final yaw = math.atan2(
+        2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+    return [
+      roll * 180 / math.pi,
+      pitch * 180 / math.pi,
+      yaw * 180 / math.pi,
+    ];
   }
 
   // ============ Cleanup ============

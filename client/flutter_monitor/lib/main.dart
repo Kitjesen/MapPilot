@@ -14,6 +14,8 @@ import 'package:flutter_monitor/features/connection/scan_screen.dart';
 import 'package:flutter_monitor/features/home/robot_detail_screen.dart';
 import 'package:flutter_monitor/features/settings/app_settings_screen.dart';
 import 'package:flutter_monitor/features/control/control_screen.dart';
+import 'package:flutter_monitor/features/robot_select/robot_select_screen.dart';
+import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
 import 'package:flutter_monitor/core/services/notification_service.dart';
 
@@ -41,6 +43,7 @@ class RobotMonitorApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => RobotConnectionProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => SettingsPreferences()),
+        ChangeNotifierProvider(create: (_) => RobotProfileProvider()),
         ChangeNotifierProvider(create: (_) => AlertMonitorService()),
         ChangeNotifierProvider(create: (_) => StateLoggerService()),
       ],
@@ -72,7 +75,9 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
       final alertService = context.read<AlertMonitorService>();
       final stateLogger = context.read<StateLoggerService>();
 
+      final profileProvider = context.read<RobotProfileProvider>();
       connProvider.bindSettings(settingsPrefs);
+      connProvider.bindProfileProvider(profileProvider);
       alertService.bind(
         connProvider: connProvider,
         settingsPrefs: settingsPrefs,
@@ -185,6 +190,8 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
         page = const AppSettingsScreen();
       case '/control':
         page = const ControlScreen();
+      case '/robot-select':
+        page = const RobotSelectScreen();
       default:
         page = const MainShellScreen();
     }

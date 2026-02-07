@@ -41,7 +41,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
-    final isConnected = context.watch<RobotConnectionProvider>().isConnected;
+    final provider = context.watch<RobotConnectionProvider>();
+    final isConnected = provider.isConnected;
+    final isDogConnected = provider.isDogConnected;
 
     return Scaffold(
       body: IndexedStack(
@@ -85,15 +87,17 @@ class _MainShellScreenState extends State<MainShellScreen> {
               ),
               NavigationDestination(
                 icon: Badge(
-                  isLabelVisible: isConnected,
+                  isLabelVisible: isConnected || isDogConnected,
                   smallSize: 8,
-                  backgroundColor: AppColors.success,
+                  backgroundColor:
+                      isConnected ? AppColors.success : AppColors.warning,
                   child: const Icon(Icons.dashboard_outlined),
                 ),
                 selectedIcon: Badge(
-                  isLabelVisible: isConnected,
+                  isLabelVisible: isConnected || isDogConnected,
                   smallSize: 8,
-                  backgroundColor: AppColors.success,
+                  backgroundColor:
+                      isConnected ? AppColors.success : AppColors.warning,
                   child: const Icon(Icons.dashboard_rounded),
                 ),
                 label: '状态',
