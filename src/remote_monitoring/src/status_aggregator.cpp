@@ -1,4 +1,6 @@
 #include "remote_monitoring/status_aggregator.hpp"
+#include "remote_monitoring/core/geofence_monitor.hpp"
+#include "remote_monitoring/core/health_monitor.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -208,6 +210,47 @@ void StatusAggregator::update_slow_state() {
   rates->set_terrain_map_hz(terrain_rate_.rate_hz());
   rates->set_path_hz(path_rate_.rate_hz());
   rates->set_lidar_hz(lidar_rate_.rate_hz());
+
+  // 健康状态
+  if (health_monitor_) {
+    auto robot_health = health_monitor_->GetHealth();
+    auto *health_status = state.mutable_health();
+
+    const char *level_names[] = {"OK", "DEGRADED", "CRITICAL", "FAULT"};
+    health_status->set_overall_level(
+        level_names[static_cast<int>(robot_health.overall)]);
+
+    for (const auto &sub : robot_health.subsystems) {
+      auto *proto_sub = health_status->add_subsystems();
+      proto_sub->set_name(sub.name);
+      proto_sub->set_level(level_names[static_cast<int>(sub.level)]);
+      proto_sub->set_message(sub.message);
+      proto_sub->set_expected_hz(sub.expected_hz);
+      proto_sub->set_actual_hz(sub.actual_hz);
+    }
+  }
+
+  // 围栏状态
+  if (geofence_monitor_) {
+    auto *geofence = state.mutable_geofence();
+    geofence->set_has_fence(geofence_monitor_->HasFence());
+    geofence->set_margin_distance(geofence_monitor_->GetMarginDistance());
+
+    switch (geofence_monitor_->GetState()) {
+    case core::GeofenceState::NO_FENCE:
+      geofence->set_state("NO_FENCE");
+      break;
+    case core::GeofenceState::SAFE:
+      geofence->set_state("SAFE");
+      break;
+    case core::GeofenceState::WARNING:
+      geofence->set_state("WARNING");
+      break;
+    case core::GeofenceState::VIOLATION:
+      geofence->set_state("VIOLATION");
+      break;
+    }
+  }
   
   std::lock_guard<std::mutex> lock(slow_mutex_);
   latest_slow_state_ = state;

@@ -10,6 +10,7 @@ import 'package:robot_proto/robot_proto.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_widgets.dart';
 import '../widgets/robot_model_widget.dart';
+import '../theme/app_theme.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -35,11 +36,9 @@ class _MapScreenState extends State<MapScreen>
   bool _showGlobalMap = true;
   bool _show3DModel = true;
 
-  // 节流：地图位姿更新限制在 5Hz
   DateTime _lastPoseUpdate = DateTime(2000);
   static const _poseUpdateInterval = Duration(milliseconds: 200);
 
-  // 地图点数据版本号，用于优化 shouldRepaint
   int _mapDataVersion = 0;
 
   @override
@@ -53,7 +52,6 @@ class _MapScreenState extends State<MapScreen>
       _subscribeToMaps();
     });
 
-    // Initial view
     final matrix = Matrix4.identity()
       ..translate(200.0, 300.0)
       ..scale(20.0);
@@ -73,7 +71,6 @@ class _MapScreenState extends State<MapScreen>
     final client = context.read<RobotConnectionProvider>().client;
     if (client == null) return;
 
-    // Subscribe to Global Map
     _mapSubscription = client
         .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_MAP)
         .listen((chunk) {
@@ -83,7 +80,6 @@ class _MapScreenState extends State<MapScreen>
       debugPrint('[MapScreen] Map subscription error: $e');
     });
 
-    // Subscribe to Local Cloud
     _pclSubscription = client
         .subscribeToResource(
             ResourceId()..type = ResourceType.RESOURCE_TYPE_POINTCLOUD)
@@ -97,14 +93,10 @@ class _MapScreenState extends State<MapScreen>
 
   void _parseAndSetPoints(List<int> data, {required bool isGlobal}) {
     if (data.isEmpty) return;
-
     final pointStep = isGlobal ? 12 : 16;
     final points = <Offset>[];
-
     final byteData = Uint8List.fromList(data).buffer.asByteData();
     final count = data.length ~/ pointStep;
-
-    // Downsample for performance
     final stride = isGlobal ? 10 : 2;
 
     for (var i = 0; i < count; i += stride) {
@@ -112,9 +104,7 @@ class _MapScreenState extends State<MapScreen>
       if (offset + 8 <= data.length) {
         final x = byteData.getFloat32(offset, Endian.little);
         final y = byteData.getFloat32(offset + 4, Endian.little);
-        if (x.isFinite && y.isFinite) {
-          points.add(Offset(x, y));
-        }
+        if (x.isFinite && y.isFinite) points.add(Offset(x, y));
       }
     }
 
@@ -130,33 +120,25 @@ class _MapScreenState extends State<MapScreen>
 
   void _startListening() {
     final provider = context.read<RobotConnectionProvider>();
-
     _fastSub = provider.fastStateStream.listen((state) {
       if (!mounted) return;
-
       final now = DateTime.now();
       if (now.difference(_lastPoseUpdate) < _poseUpdateInterval) return;
       _lastPoseUpdate = now;
 
       final newPose = state.pose;
-
-      // Calculate Yaw
       final q = newPose.orientation;
       final siny_cosp = 2 * (q.w * q.z + q.x * q.y);
       final cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
       final newYaw = math.atan2(siny_cosp, cosy_cosp);
-
       final point = Offset(newPose.position.x, newPose.position.y);
 
       setState(() {
         _currentPose = newPose;
         _currentYaw = newYaw;
-
         if (_path.isEmpty || (_path.last - point).distance > 0.05) {
           _path.add(point);
-          if (_path.length > 5000) {
-            _path.removeRange(0, 1000);
-          }
+          if (_path.length > 5000) _path.removeRange(0, 1000);
         }
       });
     });
@@ -164,9 +146,7 @@ class _MapScreenState extends State<MapScreen>
 
   void _clearPath() {
     HapticFeedback.lightImpact();
-    setState(() {
-      _path.clear();
-    });
+    setState(() => _path.clear());
   }
 
   void _recenter() {
@@ -183,9 +163,10 @@ class _MapScreenState extends State<MapScreen>
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required by AutomaticKeepAliveClientMixin
+    super.build(context);
 
     return Scaffold(
+      backgroundColor: AppColors.bg,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('轨迹地图'),
@@ -205,24 +186,19 @@ class _MapScreenState extends State<MapScreen>
       ),
       body: Stack(
         children: [
-          // 3D Ground + Robot (full screen)
+          // 3D Ground + Robot
           if (_show3DModel)
             Positioned.fill(
               child: RepaintBoundary(
-                child: RobotModelWidget(
-                  currentPose: _currentPose,
-                ),
+                child: RobotModelWidget(currentPose: _currentPose),
               ),
             ),
 
-          // 2D Map Background (fallback)
+          // 2D Map
           if (!_show3DModel)
             Positioned.fill(
-              child: GridPaper(
-                color: Colors.black12,
-                interval: 100,
-                divisions: 1,
-                subdivisions: 5,
+              child: Container(
+                color: AppColors.bg,
                 child: InteractiveViewer(
                   transformationController: _transformController,
                   boundaryMargin: const EdgeInsets.all(5000),
@@ -282,12 +258,19 @@ class _MapScreenState extends State<MapScreen>
                       color: context.isDark ? Colors.white : Colors.black87,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  const Text('my_robot',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      )),
                 ],
               ),
             ),
           ),
 
-          // Top Right: Scene Options Panel
+          // Top Right: Scene Options
           Positioned(
             right: 16,
             top: MediaQuery.of(context).padding.top + 16,
@@ -322,12 +305,6 @@ class _MapScreenState extends State<MapScreen>
                     tooltip: 'Recenter',
                     onPressed: _recenter,
                   ),
-                  const SizedBox(height: 8),
-                  _buildIconButton(
-                    icon: Icons.settings,
-                    tooltip: 'Settings',
-                    onPressed: () => _showSettingsDialog(context),
-                  ),
                 ],
               ),
             ),
@@ -343,7 +320,7 @@ class _MapScreenState extends State<MapScreen>
               child: Transform.rotate(
                 angle: -_currentYaw,
                 child: const Icon(Icons.navigation,
-                    color: Color(0xFF007AFF), size: 28),
+                    color: AppColors.lime, size: 28),
               ),
             ),
           ),
@@ -359,7 +336,7 @@ class _MapScreenState extends State<MapScreen>
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 child: Text(
                   '${_path.length} pts',
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: context.subtitleColor,
@@ -522,7 +499,6 @@ class TrajectoryPainter extends CustomPainter {
   final List<Offset> localPoints;
   final int dataVersion;
 
-  // 缓存上次绘制参数，用于 shouldRepaint 优化
   final int _pathLength;
   final double? _poseX;
   final double? _poseY;
@@ -542,30 +518,28 @@ class TrajectoryPainter extends CustomPainter {
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(1.0, -1.0);
 
-    // Draw Global Map
+    // Global Map
     if (globalPoints.isNotEmpty) {
       final mapPaint = Paint()
-        ..color = Colors.black12
+        ..color = AppColors.textTertiary.withOpacity(0.3)
         ..strokeWidth = 0.1
         ..strokeCap = StrokeCap.round;
-
       canvas.drawPoints(ui.PointMode.points, globalPoints, mapPaint);
     }
 
-    // Draw Local Cloud
+    // Local Cloud
     if (localPoints.isNotEmpty) {
       final cloudPaint = Paint()
-        ..color = Colors.red.withOpacity(0.3)
+        ..color = AppColors.lime.withOpacity(0.25)
         ..strokeWidth = 0.05
         ..strokeCap = StrokeCap.round;
-
       canvas.drawPoints(ui.PointMode.points, localPoints, cloudPaint);
     }
 
-    // Draw trajectory path
+    // Trajectory path
     if (path.isNotEmpty) {
       final paint = Paint()
-        ..color = const Color(0xFF007AFF).withOpacity(0.6)
+        ..color = AppColors.lime.withOpacity(0.6)
         ..strokeWidth = 0.1
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round
@@ -579,11 +553,10 @@ class TrajectoryPainter extends CustomPainter {
       canvas.drawPath(pathObj, paint);
     }
 
-    // Draw robot
+    // Robot
     if (currentPose != null) {
       final p = currentPose!.position;
       final q = currentPose!.orientation;
-
       final siny_cosp = 2 * (q.w * q.z + q.x * q.y);
       final cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
       final yaw = math.atan2(siny_cosp, cosy_cosp);
@@ -593,7 +566,7 @@ class TrajectoryPainter extends CustomPainter {
       canvas.rotate(yaw);
 
       final robotPaint = Paint()
-        ..color = const Color(0xFFFF3B30)
+        ..color = AppColors.lime
         ..style = PaintingStyle.fill;
 
       const double robotLen = 0.5;
@@ -612,7 +585,7 @@ class TrajectoryPainter extends CustomPainter {
           Offset.zero,
           const Offset(1.0, 0),
           Paint()
-            ..color = Colors.black.withOpacity(0.5)
+            ..color = AppColors.textTertiary.withOpacity(0.5)
             ..strokeWidth = 0.05);
 
       canvas.restore();
@@ -621,14 +594,13 @@ class TrajectoryPainter extends CustomPainter {
     // Origin
     final originPaint = Paint()..strokeWidth = 0.05;
     canvas.drawLine(const Offset(-1, 0), const Offset(1, 0),
-        originPaint..color = Colors.grey.withOpacity(0.5));
+        originPaint..color = AppColors.textTertiary.withOpacity(0.3));
     canvas.drawLine(const Offset(0, -1), const Offset(0, 1),
-        originPaint..color = Colors.grey.withOpacity(0.5));
+        originPaint..color = AppColors.textTertiary.withOpacity(0.3));
   }
 
   @override
   bool shouldRepaint(covariant TrajectoryPainter oldDelegate) {
-    // 只在数据实际变化时重绘
     return dataVersion != oldDelegate.dataVersion ||
         _pathLength != oldDelegate._pathLength ||
         _poseX != oldDelegate._poseX ||

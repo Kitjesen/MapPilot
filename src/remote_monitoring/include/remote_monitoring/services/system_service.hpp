@@ -7,6 +7,9 @@
 #include "rclcpp/rclcpp.hpp"
 #include "system.grpc.pb.h"
 
+#include "interface/srv/relocalize.hpp"
+#include "interface/srv/save_maps.hpp"
+
 namespace remote_monitoring {
 namespace services {
 
@@ -45,10 +48,25 @@ public:
                        const robot::v1::SaveMapRequest *request,
                        robot::v1::SaveMapResponse *response) override;
 
+  /// 返回自上次心跳以来的秒数 (供 GrpcGateway 检查断联)
+  double SecondsSinceLastHeartbeat() const;
+
 private:
   rclcpp::Node *node_;
   std::string robot_id_;
   std::string firmware_version_;
+
+  // ROS 2 Service Clients
+  rclcpp::Client<interface::srv::Relocalize>::SharedPtr relocalize_client_;
+  rclcpp::Client<interface::srv::SaveMaps>::SharedPtr save_map_client_;
+
+  // 心跳时间追踪 (用于断联检测)
+  mutable std::mutex heartbeat_mutex_;
+  std::chrono::steady_clock::time_point last_heartbeat_{
+      std::chrono::steady_clock::now()};
+  bool heartbeat_received_{false};
+
+  static constexpr std::chrono::seconds kServiceTimeout{10};
 };
 
 }  // namespace services

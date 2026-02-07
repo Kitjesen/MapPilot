@@ -32,6 +32,11 @@ private:
 // 模式查询回调类型
 using ModeProvider = std::function<robot::v1::RobotMode()>;
 
+namespace core {
+class HealthMonitor;
+class GeofenceMonitor;
+}  // namespace core
+
 class StatusAggregator {
 public:
   explicit StatusAggregator(rclcpp::Node *node);
@@ -45,6 +50,14 @@ public:
 
   // 设置模式提供者（由 GrpcGateway 注入，从 ControlService 读取真实模式）
   void SetModeProvider(ModeProvider provider);
+
+  // 设置健康和围栏监控（由 GrpcGateway 注入，供 SlowState 填充）
+  void SetHealthMonitor(std::shared_ptr<core::HealthMonitor> monitor) {
+    health_monitor_ = std::move(monitor);
+  }
+  void SetGeofenceMonitor(std::shared_ptr<core::GeofenceMonitor> monitor) {
+    geofence_monitor_ = std::move(monitor);
+  }
 
 private:
   void OdomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
@@ -103,6 +116,10 @@ private:
 
   // 模式提供者
   ModeProvider mode_provider_;
+
+  // 健康和围栏监控 (用于 SlowState 扩展)
+  std::shared_ptr<core::HealthMonitor> health_monitor_;
+  std::shared_ptr<core::GeofenceMonitor> geofence_monitor_;
 
   // CPU 使用率计算所需的上一次采样值
   mutable uint64_t prev_cpu_total_{0};

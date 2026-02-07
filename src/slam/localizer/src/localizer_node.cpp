@@ -11,6 +11,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <std_msgs/msg/float32.hpp>
 
 #include "localizers/commons.h"
 #include "localizers/icp_localizer.h"
@@ -75,6 +76,7 @@ public:
         m_reloc_check_srv = this->create_service<interface::srv::IsValid>("relocalize_check", std::bind(&LocalizerNode::relocCheckCB, this, std::placeholders::_1, std::placeholders::_2));
 
         m_map_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("map_cloud", 10);
+        m_quality_pub = this->create_publisher<std_msgs::msg::Float32>("/localization_quality", 10);
 
         m_timer = this->create_wall_timer(10ms, std::bind(&LocalizerNode::timerCB, this));
 
@@ -213,6 +215,14 @@ public:
                 m_state.service_received = false;
             }
         }
+
+        // Publish ICP fitness score (lower = better, higher = localization degraded)
+        {
+            std_msgs::msg::Float32 quality_msg;
+            quality_msg.data = static_cast<float>(m_localizer->getLastFitnessScore());
+            m_quality_pub->publish(quality_msg);
+        }
+
         sendBroadCastTF(current_time);
         publishMapCloud(current_time);
     }
@@ -335,6 +345,7 @@ private:
     rclcpp::Service<interface::srv::Relocalize>::SharedPtr m_reloc_srv;
     rclcpp::Service<interface::srv::IsValid>::SharedPtr m_reloc_check_srv;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr m_map_cloud_pub;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr m_quality_pub;
 };
 int main(int argc, char **argv)
 {

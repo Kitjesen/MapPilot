@@ -77,6 +77,14 @@ bool LeaseManager::ValidateLease(const std::string &lease_token) {
   return expires_at_ > now;
 }
 
+bool LeaseManager::HasActiveLease() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (current_token_.empty()) {
+    return false;
+  }
+  return expires_at_ > std::chrono::system_clock::now();
+}
+
 void LeaseManager::CheckTimeout() {
   std::lock_guard<std::mutex> lock(mutex_);
   

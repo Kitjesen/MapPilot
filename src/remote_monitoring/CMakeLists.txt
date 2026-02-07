@@ -47,6 +47,9 @@ set(GATEWAY_SOURCES
   src/core/event_buffer.cpp
   src/core/safety_gate.cpp
   src/core/mode_manager.cpp
+  src/core/geofence_monitor.cpp
+  src/core/health_monitor.cpp
+  src/core/task_manager.cpp
   src/services/system_service.cpp
   src/services/control_service.cpp
   src/services/telemetry_service.cpp

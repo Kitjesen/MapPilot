@@ -32,9 +32,7 @@ class _EventsScreenState extends State<EventsScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startListening();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startListening());
   }
 
   @override
@@ -51,7 +49,6 @@ class _EventsScreenState extends State<EventsScreen>
 
     try {
       final lastId = _events.isNotEmpty ? _events.first.eventId : '';
-
       _subscription = client.streamEvents(lastEventId: lastId).listen(
         (event) {
           if (!mounted) return;
@@ -94,7 +91,7 @@ class _EventsScreenState extends State<EventsScreen>
   Color _getSeverityColor(EventSeverity severity) {
     switch (severity) {
       case EventSeverity.EVENT_SEVERITY_DEBUG:
-        return Colors.grey;
+        return AppColors.textTertiary;
       case EventSeverity.EVENT_SEVERITY_INFO:
         return AppColors.primary;
       case EventSeverity.EVENT_SEVERITY_WARNING:
@@ -164,7 +161,7 @@ class _EventsScreenState extends State<EventsScreen>
             : null,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh, color: AppColors.textSecondary),
             onPressed: () {
               HapticFeedback.lightImpact();
               _subscription?.cancel();
@@ -224,7 +221,6 @@ class _EventsScreenState extends State<EventsScreen>
             )
           : Stack(
               children: [
-                // Vertical Timeline Line
                 Positioned(
                   left: 24,
                   top: 0,
@@ -295,7 +291,6 @@ class _EventListItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Timeline Dot
           Container(
             margin: const EdgeInsets.only(top: 8),
             width: 14,
@@ -317,7 +312,6 @@ class _EventListItem extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          // Event Card
           Expanded(
             child: Container(
               padding: const EdgeInsets.all(18),
@@ -337,7 +331,6 @@ class _EventListItem extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      // Severity badge
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 9, vertical: 3),
@@ -358,7 +351,7 @@ class _EventListItem extends StatelessWidget {
                       const Spacer(),
                       Text(
                         timeStr,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 12,
                           color: context.subtitleColor,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -383,7 +376,7 @@ class _EventListItem extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       event.description,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 14,
                         color: context.subtitleColor,
                         height: 1.4,
@@ -413,7 +406,7 @@ class _EventListItem extends StatelessWidget {
                             Icon(Icons.check,
                                 size: 14, color: context.subtitleColor),
                             const SizedBox(width: 4),
-                            Text(
+                            const Text(
                               'ACK',
                               style: TextStyle(
                                 fontSize: 10,

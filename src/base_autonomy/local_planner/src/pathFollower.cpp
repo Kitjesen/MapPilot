@@ -199,6 +199,7 @@ private:
   float joyManualLeft_ = 0;
   float joyManualYaw_ = 0;
   int safetyStop_ = 0;
+  int stopClearCount_ = 0;  // 连续收到 stop=0 的计数, 防止单发布者误清除
   int slowDown_ = 0;
 
   float vehicleX_ = 0;
@@ -334,7 +335,21 @@ private:
 
   void stopHandler(const std_msgs::msg::Int8::ConstSharedPtr stop)
   {
-    safetyStop_ = stop->data;
+    // 多发布者优先级: 取当前值和新值的 max
+    // 只有收到 0 时才允许降级 (清除需要所有发布者都发 0)
+    int val = stop->data;
+    if (val > safetyStop_) {
+      safetyStop_ = val;  // 升级立即生效
+    } else if (val == 0) {
+      stopClearCount_++;
+      // 连续收到 3 个 0 才清除 (防止单个发布者误清除)
+      if (stopClearCount_ >= 3) {
+        safetyStop_ = 0;
+        stopClearCount_ = 0;
+      }
+    } else {
+      stopClearCount_ = 0;
+    }
   }
 
   void slowDownHandler(const std_msgs::msg::Int8::ConstSharedPtr slow)
@@ -395,8 +410,7 @@ private:
       float pathDir = atan2(disY, disX);
 
       float dirDiff = vehicleYaw_ - vehicleYawRec_ - pathDir;
-      if (dirDiff > PI) dirDiff -= 2 * PI;
-      else if (dirDiff < -PI) dirDiff += 2 * PI;
+      // 一次归一化到 (-π, π] 即可 (两个 [-π,π] 量之差在 [-2π, 2π] 内)
       if (dirDiff > PI) dirDiff -= 2 * PI;
       else if (dirDiff < -PI) dirDiff += 2 * PI;
 

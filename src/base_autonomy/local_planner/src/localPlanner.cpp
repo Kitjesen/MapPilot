@@ -152,6 +152,9 @@ public:
     // Subscribe to terrain map (odom frame) when using terrain analysis
     subTerrainCloud_ = create_subscription<sensor_msgs::msg::PointCloud2>(
         "/terrain_map", 5, std::bind(&LocalPlanner::terrainCloudHandler, this, std::placeholders::_1));
+    // Subscribe to extended terrain map (connectivity + time-decayed accumulation)
+    subTerrainCloudExt_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/terrain_map_ext", 5, std::bind(&LocalPlanner::terrainCloudExtHandler, this, std::placeholders::_1));
     subJoystick_ = create_subscription<sensor_msgs::msg::Joy>(
         "/joy", 5, std::bind(&LocalPlanner::joystickHandler, this, std::placeholders::_1));
     subGoal_ = create_subscription<geometry_msgs::msg::PointStamped>(
@@ -166,6 +169,7 @@ public:
         "/check_obstacle", 5, std::bind(&LocalPlanner::checkObstacleHandler, this, std::placeholders::_1));
 
     pubSlowDown_ = create_publisher<std_msgs::msg::Int8>("/slow_down", 5);
+    pubStop_ = create_publisher<std_msgs::msg::Int8>("/stop", 5);
     pubPath_ = create_publisher<nav_msgs::msg::Path>("/path", 5);
 
     #if PLOTPATHSET == 1
@@ -180,6 +184,8 @@ public:
     terrainCloud_.reset(new pcl::PointCloud<pcl::PointXYZI>());
     terrainCloudCrop_.reset(new pcl::PointCloud<pcl::PointXYZI>());
     terrainCloudDwz_.reset(new pcl::PointCloud<pcl::PointXYZI>());
+    terrainCloudExt_.reset(new pcl::PointCloud<pcl::PointXYZI>());
+    terrainCloudExtCrop_.reset(new pcl::PointCloud<pcl::PointXYZI>());
     plannerCloud_.reset(new pcl::PointCloud<pcl::PointXYZI>());
     plannerCloudCrop_.reset(new pcl::PointCloud<pcl::PointXYZI>());
     boundaryCloud_.reset(new pcl::PointCloud<pcl::PointXYZI>());
@@ -276,6 +282,8 @@ private:
   double goalBehindRange_ = 0.8;
   double goalX_ = 0;
   double goalY_ = 0;
+  double nearFieldStopDis_ = 0.5;  // Near-field emergency stop distance (m)
+  bool nearFieldStopped_ = false;   // Track near-field stop state
 
   // Grid Constants
   static const int pathNum_ = 343;
@@ -302,6 +310,7 @@ private:
 
   bool newLaserCloud_ = false;
   bool newTerrainCloud_ = false;
+  bool newTerrainCloudExt_ = false;
 
   // Arrays
   int pathList_[pathNum_] = {0};
@@ -320,6 +329,8 @@ private:
   pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloud_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudCrop_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz_;
+  pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudExt_;
+  pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudExtCrop_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloud_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudCrop_;
   pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud_;
@@ -339,6 +350,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subOdometry_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserCloud_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subTerrainCloud_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subTerrainCloudExt_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr subJoystick_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr subGoal_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr subSpeed_;
@@ -346,6 +358,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subAddedObstacles_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr subCheckObstacle_;
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pubSlowDown_;
+  rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pubStop_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath_;
   #if PLOTPATHSET == 1
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubFreePaths_;
@@ -432,6 +445,30 @@ private:
       terrainDwzFilter_.filter(*terrainCloudDwz_);
 
       newTerrainCloud_ = true;
+    }
+  }
+
+  void terrainCloudExtHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr terrainCloudExt2)
+  {
+    if (useTerrainAnalysis_) {
+      terrainCloudExt_->clear();
+      pcl::fromROSMsg(*terrainCloudExt2, *terrainCloudExt_);
+
+      pcl::PointXYZI point;
+      terrainCloudExtCrop_->clear();
+      int cloudSize = terrainCloudExt_->points.size();
+      for (int i = 0; i < cloudSize; i++) {
+        point = terrainCloudExt_->points[i];
+        float dis = sqrt((point.x - vehicleX_) * (point.x - vehicleX_) +
+                         (point.y - vehicleY_) * (point.y - vehicleY_));
+        if (dis < adjacentRange_ &&
+            (point.intensity > obstacleHeightThre_ ||
+             (point.intensity > groundHeightThre_ && useCost_))) {
+          terrainCloudExtCrop_->push_back(point);
+        }
+      }
+
+      newTerrainCloudExt_ = true;
     }
   }
 
@@ -731,7 +768,7 @@ private:
       else if (joySpeed_ > 1.0) joySpeed_ = 1.0;
     }
 
-    if (newLaserCloud_ || newTerrainCloud_) {
+    if (newLaserCloud_ || newTerrainCloud_ || newTerrainCloudExt_) {
       if (newLaserCloud_) {
         newLaserCloud_ = false;
 
@@ -750,6 +787,12 @@ private:
 
         plannerCloud_->clear();
         *plannerCloud_ = *terrainCloudDwz_;
+      }
+
+      // Merge extended terrain map (connectivity + time-decayed obstacles)
+      if (newTerrainCloudExt_) {
+        newTerrainCloudExt_ = false;
+        *plannerCloud_ += *terrainCloudExtCrop_;
       }
 
       float sinVehicleYaw = sin(vehicleYaw_);
@@ -801,6 +844,40 @@ private:
         float dis = sqrt(point.x * point.x + point.y * point.y);
         if (dis < adjacentRange_) {
           plannerCloudCrop_->push_back(point);
+        }
+      }
+
+      // Near-field emergency stop: if any obstacle is within nearFieldStopDis_
+      // and above obstacleHeightThre_, immediately publish /stop
+      if (checkObstacle_) {
+        bool nearFieldObstacle = false;
+        int plannerCloudCropSizeNF = plannerCloudCrop_->points.size();
+        for (int i = 0; i < plannerCloudCropSizeNF; i++) {
+          float px = plannerCloudCrop_->points[i].x;
+          float py = plannerCloudCrop_->points[i].y;
+          float h = plannerCloudCrop_->points[i].intensity;
+          // Only check obstacles in front of the robot (positive x in body frame)
+          // and within vehicle width
+          if (px > 0 && px < nearFieldStopDis_ &&
+              fabs(py) < vehicleWidth_ / 2.0 + 0.1 &&
+              (h > obstacleHeightThre_ || !useTerrainAnalysis_)) {
+            nearFieldObstacle = true;
+            break;
+          }
+        }
+
+        if (nearFieldObstacle && !nearFieldStopped_) {
+          std_msgs::msg::Int8 stopMsg;
+          stopMsg.data = 2;  // Level 2: full stop
+          pubStop_->publish(stopMsg);
+          nearFieldStopped_ = true;
+          RCLCPP_WARN(get_logger(),
+                      "NEAR-FIELD ESTOP: obstacle within %.2fm!", nearFieldStopDis_);
+        } else if (!nearFieldObstacle && nearFieldStopped_) {
+          std_msgs::msg::Int8 stopMsg;
+          stopMsg.data = 0;  // Clear stop
+          pubStop_->publish(stopMsg);
+          nearFieldStopped_ = false;
         }
       }
 
@@ -952,8 +1029,9 @@ private:
             if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
             else rotDirW = fabs(fabs(rotDir - 27) + 1);
             float groupDirW = 4  - fabs(pathList_[i % pathNum_] - 3);
-            float score = (1 - sqrt(sqrt(dirWeight_ * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW;
-            if (relativeGoalDis < omniDirGoalThre_) score = (1 - sqrt(sqrt(dirWeight_ * dirDiff))) * groupDirW * groupDirW;
+            float dw = std::fabs(dirWeight_ * dirDiff);  // 防御负参数导致 NaN
+            float score = (1 - std::sqrt(std::sqrt(dw))) * rotDirW * rotDirW * rotDirW * rotDirW;
+            if (relativeGoalDis < omniDirGoalThre_) score = (1 - std::sqrt(std::sqrt(dw))) * groupDirW * groupDirW;
             if (score > 0) {
               clearPathPerGroupScore_[groupNum_ * rotDir + pathList_[i % pathNum_]] += score;
               clearPathPerGroupNum_[groupNum_ * rotDir + pathList_[i % pathNum_]]++;

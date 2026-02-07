@@ -47,6 +47,20 @@ class _AppWithBindings extends StatefulWidget {
 class _AppWithBindingsState extends State<_AppWithBindings> {
   bool _bound = false;
 
+  // ── Animations ──
+  late AnimationController _entranceController;
+  late AnimationController _pulseController;
+  late AnimationController _floatController;
+
+  late Animation<double> _logoSlide;
+  late Animation<double> _logoFade;
+  late Animation<double> _titleSlide;
+  late Animation<double> _titleFade;
+  late Animation<double> _cardSlide;
+  late Animation<double> _cardFade;
+  late Animation<double> _pulse;
+  late Animation<double> _float;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();

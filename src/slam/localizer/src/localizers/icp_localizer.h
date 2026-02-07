@@ -32,6 +32,8 @@ public:
     CloudType::Ptr roughMap() { return m_rough_tgt; }
     CloudType::Ptr refineMap() { return m_refine_tgt; }
 
+    /// Last ICP fitness score (lower = better alignment, 0 = perfect)
+    double getLastFitnessScore() const { return m_last_fitness_score; }
 
 private:
     ICPConfig m_config;
@@ -43,4 +45,5 @@ private:
     CloudType::Ptr m_refine_tgt;
     CloudType::Ptr m_rough_tgt;
     std::string m_pcd_path;
+    double m_last_fitness_score{-1.0};  // -1 = not yet computed
 };

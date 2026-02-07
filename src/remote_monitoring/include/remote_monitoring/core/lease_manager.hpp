@@ -26,6 +26,9 @@ public:
   
   // 验证租约
   bool ValidateLease(const std::string &lease_token);
+
+  // 检查是否有任何活跃租约（未过期）
+  bool HasActiveLease();
   
   // 检查超时（定期调用）
   void CheckTimeout();

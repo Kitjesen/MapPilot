@@ -96,13 +96,15 @@ void IESKF::update()
         M21D J = M21D::Identity();
         J.block<3, 3>(0, 0) = JrInv(delta.segment<3>(0));
         J.block<3, 3>(6, 6) = JrInv(delta.segment<3>(6));
-        H += J.transpose() * m_P.inverse() * J;
-        b += J.transpose() * m_P.inverse() * delta;
+        // P^{-1} 只需解一次, 用 LDLT 代替显式求逆 (数值稳定 + 快 2-3x)
+        auto P_ldlt = m_P.ldlt();
+        H += J.transpose() * P_ldlt.solve(J);
+        b += J.transpose() * P_ldlt.solve(delta);
 
         H.block<12, 12>(0, 0) += shared_data.H;
         b.block<12, 1>(0, 0) += shared_data.b;
 
-        delta = -H.inverse() * b;
+        delta = -H.ldlt().solve(b);
 
         m_x += delta;
         shared_data.iter_num += 1;
@@ -116,5 +118,5 @@ void IESKF::update()
     // L.block<3, 3>(6, 6) = JrInv(delta.segment<3>(6));
     L.block<3, 3>(0, 0) = Jr(delta.segment<3>(0));
     L.block<3, 3>(6, 6) = Jr(delta.segment<3>(6));
-    m_P = L * H.inverse() * L.transpose();
+    m_P = L * H.ldlt().solve(L.transpose());  // P = L * H^{-1} * L^T
 }

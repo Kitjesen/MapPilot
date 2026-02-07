@@ -14,10 +14,13 @@ bool esti_plane(PointVec &points, const double &thresh, V4D &out)
     }
     V3D normvec = A.colPivHouseholderQr().solve(b);
     double norm = normvec.norm();
-    out[0] = normvec(0) / norm;
-    out[1] = normvec(1) / norm;
-    out[2] = normvec(2) / norm;
-    out[3] = 1.0 / norm;
+    if (norm < 1e-12)   // 共线点退化: 法向量零 → 无法拟合平面
+        return false;
+    double inv_norm = 1.0 / norm;
+    out[0] = normvec(0) * inv_norm;
+    out[1] = normvec(1) * inv_norm;
+    out[2] = normvec(2) * inv_norm;
+    out[3] = inv_norm;
     for (size_t j = 0; j < points.size(); j++)
     {
         if (std::fabs(out(0) * points[j].x + out(1) * points[j].y + out(2) * points[j].z + out(3)) > thresh)

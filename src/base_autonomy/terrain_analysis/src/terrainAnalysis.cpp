@@ -204,6 +204,18 @@ private:
     sinVehicleYaw_ = sin(vehicleYaw_);
     cosVehicleYaw_ = cos(vehicleYaw_);
 
+    // 预计算 R = R_yaw * R_pitch * R_roll (ZYX 欧拉序), 供障碍物体坐标变换用
+    // 替代逐点三步旋转, 9 次乘法/点 vs 18 次
+    vehicleRotBody_[0][0] =  cosVehicleYaw_ * cosVehiclePitch_;
+    vehicleRotBody_[0][1] =  cosVehicleYaw_ * sinVehiclePitch_ * sinVehicleRoll_ - sinVehicleYaw_ * cosVehicleRoll_;
+    vehicleRotBody_[0][2] =  cosVehicleYaw_ * sinVehiclePitch_ * cosVehicleRoll_ + sinVehicleYaw_ * sinVehicleRoll_;
+    vehicleRotBody_[1][0] =  sinVehicleYaw_ * cosVehiclePitch_;
+    vehicleRotBody_[1][1] =  sinVehicleYaw_ * sinVehiclePitch_ * sinVehicleRoll_ + cosVehicleYaw_ * cosVehicleRoll_;
+    vehicleRotBody_[1][2] =  sinVehicleYaw_ * sinVehiclePitch_ * cosVehicleRoll_ - cosVehicleYaw_ * sinVehicleRoll_;
+    vehicleRotBody_[2][0] = -sinVehiclePitch_;
+    vehicleRotBody_[2][1] =  cosVehiclePitch_ * sinVehicleRoll_;
+    vehicleRotBody_[2][2] =  cosVehiclePitch_ * cosVehicleRoll_;
+
     // Initialize previous position for distance check if this is the first data
     if (noDataInited_ == 0) {
       vehicleRecX_ = vehicleX_;
@@ -526,17 +538,10 @@ private:
             if (dis1 > minDyObsDis_) {
             float h1 = point.z - planarVoxelElev_[planarVoxelWidth_ * indX + indY];
             if (h1 > obstacleHeightThre_) {
-              float pointX2 = pointX1 * cosVehicleYaw_ + pointY1 * sinVehicleYaw_;
-              float pointY2 = -pointX1 * sinVehicleYaw_ + pointY1 * cosVehicleYaw_;
-              float pointZ2 = pointZ1;
-
-              float pointX3 = pointX2 * cosVehiclePitch_ - pointZ2 * sinVehiclePitch_;
-              float pointY3 = pointY2;
-              float pointZ3 = pointX2 * sinVehiclePitch_ + pointZ2 * cosVehiclePitch_;
-
-              float pointX4 = pointX3;
-              float pointY4 = pointY3 * cosVehicleRoll_ + pointZ3 * sinVehicleRoll_;
-              float pointZ4 = -pointY3 * sinVehicleRoll_ + pointZ3 * cosVehicleRoll_;
+              // odom→body 旋转 (预计算的 R = R_yaw * R_pitch * R_roll)
+              float pointX4 = vehicleRotBody_[0][0] * pointX1 + vehicleRotBody_[0][1] * pointY1 + vehicleRotBody_[0][2] * pointZ1;
+              float pointY4 = vehicleRotBody_[1][0] * pointX1 + vehicleRotBody_[1][1] * pointY1 + vehicleRotBody_[1][2] * pointZ1;
+              float pointZ4 = vehicleRotBody_[2][0] * pointX1 + vehicleRotBody_[2][1] * pointY1 + vehicleRotBody_[2][2] * pointZ1;
 
               float dis4 = sqrt(pointX4 * pointX4 + pointY4 * pointY4);
               float angle4 = atan2(pointZ4, dis4) * 180.0 / PI;
@@ -723,6 +728,7 @@ private:
   double sinVehicleRoll_ = 0, cosVehicleRoll_ = 0;
   double sinVehiclePitch_ = 0, cosVehiclePitch_ = 0;
   double sinVehicleYaw_ = 0, cosVehicleYaw_ = 0;
+  double vehicleRotBody_[3][3] = {};  // 预计算 ZYX 欧拉旋转矩阵
   double vehicleRecX_ = 0, vehicleRecY_ = 0;
   
   // System State
