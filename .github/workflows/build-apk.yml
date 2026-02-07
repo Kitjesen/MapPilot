@@ -22,6 +22,8 @@ jobs:
   build-apk:
     name: Build Android APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 创建 Release 需要
     defaults:
       run:
         working-directory: client/flutter_monitor
