@@ -11,6 +11,7 @@ import 'package:flutter_monitor/core/grpc/robot_client.dart';
 import 'package:flutter_monitor/core/grpc/mock_robot_client.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
+import 'package:flutter_monitor/features/connection/ble_control_screen.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -355,12 +356,19 @@ class _ScanScreenState extends State<ScanScreen>
                             iconColor: AppColors.secondary,
                             title: device.displayName,
                             subtitle:
-                                'RSSI: ${device.rssi} dBm',
+                                'RSSI: ${device.rssi} dBm${device.hasRobotService ? ' · 机器人服务' : ''}',
                             trailing: _buildSignalBars(
                                 device.signalQuality),
                             onTap: () async {
                               HapticFeedback.lightImpact();
-                              await ble.connectDevice(device);
+                              final connected = await ble.connectDevice(device);
+                              if (connected && mounted) {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => BleControlScreen(bleService: ble),
+                                  ),
+                                );
+                              }
                             },
                           );
                         },

@@ -4,6 +4,7 @@ import 'package:robot_proto/src/telemetry.pb.dart';
 import 'package:robot_proto/src/system.pb.dart';
 import 'package:robot_proto/src/data.pb.dart';
 import 'package:robot_proto/src/data.pbgrpc.dart';
+import 'package:flutter_monitor/core/grpc/firmware_rpc_types.dart';
 
 abstract class RobotClientBase {
   Future<bool> connect();
@@ -61,6 +62,9 @@ abstract class RobotClientBase {
 
   /// 删除远程文件
   Future<DeleteRemoteFileResponse> deleteRemoteFile({required String remotePath});
+
+  /// 应用固件更新（触发机器人端刷写脚本）
+  Future<ApplyFirmwareResponse> applyFirmware({required String firmwarePath});
 
   Future<void> disconnect();
   bool get isConnected;

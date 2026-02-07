@@ -11,6 +11,8 @@ find_package(std_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/BatteryState.msg"
+  "msg/RobotState.msg"
   "srv/SaveMaps.srv"
   "srv/Relocalize.srv"
   "srv/IsValid.srv"
@@ -19,7 +21,18 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES std_msgs
 )
 
+# ---- 数据采集节点: Unitree SDK -> interface::msg::RobotState ----
+find_package(rclcpp QUIET)
+if(rclcpp_FOUND)
+  add_executable(robot_state_publisher src/robot_state_publisher.cpp)
+  ament_target_dependencies(robot_state_publisher rclcpp)
+  rosidl_get_typesupport_target(typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+  target_link_libraries(robot_state_publisher "${typesupport_target}")
 
+  install(TARGETS robot_state_publisher
+    DESTINATION lib/${PROJECT_NAME}
+  )
+endif()
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

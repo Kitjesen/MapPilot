@@ -249,6 +249,8 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   node_->declare_parameter<std::string>("data_terrain_topic",
                                         "/terrain_map_ext");
   node_->declare_parameter<std::string>("data_file_root", "");
+  node_->declare_parameter<std::string>("apply_firmware_script",
+                                        "/usr/local/bin/apply_firmware.sh");
   node_->declare_parameter<bool>("webrtc_enabled", false);
   node_->declare_parameter<int>("webrtc_offer_timeout_ms", 3000);
   node_->declare_parameter<std::string>("webrtc_start_command", "");
@@ -265,6 +267,8 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   pointcloud_topic_ = node_->get_parameter("data_pointcloud_topic").as_string();
   terrain_topic_ = node_->get_parameter("data_terrain_topic").as_string();
   file_root_ = node_->get_parameter("data_file_root").as_string();
+  apply_firmware_script_ =
+      node_->get_parameter("apply_firmware_script").as_string();
   webrtc_enabled_ = node_->get_parameter("webrtc_enabled").as_bool();
   webrtc_offer_timeout_ms_ =
       node_->get_parameter("webrtc_offer_timeout_ms").as_int();
@@ -776,6 +780,90 @@ DataServiceImpl::DeleteRemoteFile(
   response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
   response->set_success(true);
   response->set_message("File deleted: " + path);
+  return grpc::Status::OK;
+}
+
+// ==========================================================================
+// ApplyFirmware - 触发固件刷写（fork 外部脚本）
+// ==========================================================================
+grpc::Status
+DataServiceImpl::ApplyFirmware(
+    grpc::ServerContext * /*context*/,
+    const robot::v1::ApplyFirmwareRequest *request,
+    robot::v1::ApplyFirmwareResponse *response) {
+
+  const std::string firmware_path = request->firmware_path();
+
+  // 1. 路径安全检查
+  if (firmware_path.empty()) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INVALID_REQUEST);
+    response->set_success(false);
+    response->set_message("firmware_path is required");
+    return grpc::Status::OK;
+  }
+  if (firmware_path.find("..") != std::string::npos) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INVALID_REQUEST);
+    response->set_success(false);
+    response->set_message("Path traversal not allowed");
+    return grpc::Status::OK;
+  }
+
+  // 2. 检查固件文件是否存在
+  {
+    std::ifstream probe(firmware_path);
+    if (!probe.good()) {
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_NOT_FOUND);
+      response->set_success(false);
+      response->set_message("Firmware file not found: " + firmware_path);
+      return grpc::Status::OK;
+    }
+  }
+
+  // 3. 检查刷写脚本是否存在
+  if (apply_firmware_script_.empty()) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+    response->set_success(false);
+    response->set_message("apply_firmware_script parameter not configured");
+    return grpc::Status::OK;
+  }
+  {
+    std::ifstream probe(apply_firmware_script_);
+    if (!probe.good()) {
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+      response->set_success(false);
+      response->set_message("Apply script not found: " +
+                            apply_firmware_script_);
+      return grpc::Status::OK;
+    }
+  }
+
+  RCLCPP_INFO(node_->get_logger(),
+              "ApplyFirmware: path=%s script=%s",
+              firmware_path.c_str(),
+              apply_firmware_script_.c_str());
+
+  // 4. Fork 脚本执行（非阻塞）
+  //    脚本接收参数: $1 = firmware_path
+  //    脚本负责: 校验 -> 刷写 -> 重启
+  const std::string command =
+      "nohup " + apply_firmware_script_ + " '" + firmware_path +
+      "' >> /tmp/apply_firmware.log 2>&1 &";
+
+  std::thread([command, logger = node_->get_logger()]() {
+    RCLCPP_INFO(logger, "ApplyFirmware: executing script in background");
+    int ret = std::system(command.c_str());
+    RCLCPP_INFO(logger, "ApplyFirmware: script launch returned %d", ret);
+  }).detach();
+
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  response->set_success(true);
+  response->set_message(
+      "Firmware apply started. The robot may reboot shortly.");
   return grpc::Status::OK;
 }
 

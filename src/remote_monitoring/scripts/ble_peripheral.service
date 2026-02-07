@@ -1,0 +1,17 @@
+[Unit]
+Description=Robot BLE Peripheral Service (GATT Server)
+After=bluetooth.target
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/robot/scripts/ble_peripheral.py
+Restart=on-failure
+RestartSec=5
+User=root
+WorkingDirectory=/opt/robot/scripts
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

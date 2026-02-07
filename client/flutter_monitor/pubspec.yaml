@@ -46,8 +46,12 @@ dependencies:
   # Bluetooth
   flutter_blue_plus: ^1.35.2
 
-  # Storage
+  # Storage & Sharing
   path_provider: ^2.1.0
+  share_plus: ^10.0.0
+
+  # Local notifications (OS-level push)
+  flutter_local_notifications: ^18.0.1
 
   # UI Enhancements
   shimmer: ^3.0.0

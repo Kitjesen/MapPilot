@@ -4,8 +4,10 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart' show Share, XFile;
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
+import 'package:flutter_monitor/core/services/state_logger_service.dart';
 
 class LogExportPage extends StatefulWidget {
   const LogExportPage({super.key});
@@ -21,13 +23,28 @@ class _LogExportPageState extends State<LogExportPage> {
   double _exportProgress = 0.0;
   String? _exportedFilePath;
   String? _errorMessage;
+  int _matchingEntries = 0;
 
   final _dateFormat = DateFormat('yyyy-MM-dd HH:mm');
+
+  @override
+  void initState() {
+    super.initState();
+    _updateMatchCount();
+  }
+
+  void _updateMatchCount() {
+    final logger = context.read<StateLoggerService>();
+    setState(() {
+      _matchingEntries = logger.query(_startDate, _endDate).length;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final provider = context.watch<RobotConnectionProvider>();
+    final logger = context.watch<StateLoggerService>();
     final isConnected = provider.isConnected;
 
     return Scaffold(
@@ -37,11 +54,43 @@ class _LogExportPageState extends State<LogExportPage> {
           icon: const Icon(Icons.arrow_back_ios_new, size: 20),
           onPressed: () => Navigator.pop(context),
         ),
+        actions: [
+          if (logger.entryCount > 0)
+            TextButton(
+              onPressed: () {
+                logger.clear();
+                setState(() => _matchingEntries = 0);
+              },
+              child: const Text('清空缓存', style: TextStyle(fontSize: 13)),
+            ),
+        ],
       ),
       body: ListView(
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.all(20),
         children: [
+          // ===== 缓存状态 =====
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(isDark ? 0.1 : 0.06),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.storage_rounded, size: 20, color: AppColors.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '缓存中共 ${logger.entryCount} 条记录（最多 ${StateLoggerService.maxEntries} 条，1秒/条）',
+                    style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.black87),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // ===== 时间范围选择 =====
           Container(
             padding: const EdgeInsets.all(20),
@@ -79,6 +128,15 @@ class _LogExportPageState extends State<LogExportPage> {
                   date: _endDate,
                   onTap: () => _pickDate(isStart: false),
                 ),
+                const SizedBox(height: 12),
+                Text(
+                  '匹配 $_matchingEntries 条记录',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: _matchingEntries > 0 ? AppColors.success : context.subtitleColor,
+                  ),
+                ),
               ],
             ),
           ),
@@ -107,7 +165,7 @@ class _LogExportPageState extends State<LogExportPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '导出内容包含',
+                  '导出内容（CSV 格式）',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -115,10 +173,10 @@ class _LogExportPageState extends State<LogExportPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                _buildContentItem('控制指令日志 (Teleop / Mode)'),
-                _buildContentItem('状态数据 (Battery / CPU / Pose)'),
-                _buildContentItem('事件日志 (Events & Alerts)'),
-                _buildContentItem('通信日志 (Connection / Reconnect)'),
+                _buildContentItem('位置 (x, y, z) 与姿态 (roll, pitch, yaw)'),
+                _buildContentItem('速度 (线速度, 角速度)'),
+                _buildContentItem('电量 / CPU占用 / CPU温度'),
+                _buildContentItem('运行模式与连接状态'),
               ],
             ),
           ),
@@ -141,7 +199,8 @@ class _LogExportPageState extends State<LogExportPage> {
               ),
               child: Column(
                 children: [
-                  const Text('正在导出...', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const Text('正在导出...',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 12),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
@@ -170,17 +229,35 @@ class _LogExportPageState extends State<LogExportPage> {
                 color: AppColors.success.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  const Icon(Icons.check_circle,
-                      color: AppColors.success, size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '日志已导出到:\n$_exportedFilePath',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? Colors.white70 : Colors.black87,
+                  Row(
+                    children: [
+                      const Icon(Icons.check_circle,
+                          color: AppColors.success, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '日志已导出',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _shareFile(_exportedFilePath!),
+                      icon: const Icon(Icons.share, size: 18),
+                      label: const Text('分享文件'),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
                   ),
@@ -208,11 +285,13 @@ class _LogExportPageState extends State<LogExportPage> {
           SizedBox(
             height: 52,
             child: ElevatedButton.icon(
-              onPressed: isConnected && !_isExporting
+              onPressed: !_isExporting && _matchingEntries > 0
                   ? () => _exportLogs(context)
                   : null,
               icon: const Icon(Icons.download_rounded),
-              label: const Text('开始导出'),
+              label: Text(_matchingEntries > 0
+                  ? '导出 $_matchingEntries 条记录'
+                  : isConnected ? '无匹配记录' : '等待数据采集...'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
@@ -230,11 +309,76 @@ class _LogExportPageState extends State<LogExportPage> {
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Text(
-                '请先连接机器人',
+                '未连接时仍可导出已缓存的历史数据',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: context.subtitleColor),
               ),
             ),
+
+          const SizedBox(height: 32),
+
+          // ===== 从机器人拉取系统日志 =====
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: isDark ? AppColors.darkCard : Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: context.cardShadowColor,
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.cloud_download_outlined,
+                        size: 20, color: AppColors.secondary),
+                    const SizedBox(width: 8),
+                    Text(
+                      '机器人系统日志',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '从机器人 /var/log/ 目录下载系统日志文件。'
+                  '需要机器人在线且 gRPC 连接正常。',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.subtitleColor,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildRemoteLogButton(
+                  icon: Icons.article_outlined,
+                  label: '导航日志',
+                  directory: '/var/log/robot',
+                  isConnected: isConnected,
+                  isDark: isDark,
+                ),
+                const SizedBox(height: 8),
+                _buildRemoteLogButton(
+                  icon: Icons.system_update_alt,
+                  label: '固件更新日志',
+                  directory: '/tmp',
+                  filename: 'apply_firmware.log',
+                  isConnected: isConnected,
+                  isDark: isDark,
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -249,7 +393,8 @@ class _LogExportPageState extends State<LogExportPage> {
       onTap: onTap,
       child: Row(
         children: [
-          Text(label, style: TextStyle(fontSize: 14, color: context.subtitleColor)),
+          Text(label,
+              style: TextStyle(fontSize: 14, color: context.subtitleColor)),
           const Spacer(),
           Text(
             _dateFormat.format(date),
@@ -276,6 +421,7 @@ class _LogExportPageState extends State<LogExportPage> {
             _endDate = DateTime.now();
             _startDate = _endDate.subtract(duration);
           });
+          _updateMatchCount();
         },
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
@@ -336,7 +482,8 @@ class _LogExportPageState extends State<LogExportPage> {
     );
     if (time == null || !mounted) return;
 
-    final combined = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final combined =
+        DateTime(date.year, date.month, date.day, time.hour, time.minute);
     setState(() {
       if (isStart) {
         _startDate = combined;
@@ -344,6 +491,7 @@ class _LogExportPageState extends State<LogExportPage> {
         _endDate = combined;
       }
     });
+    _updateMatchCount();
   }
 
   Future<void> _exportLogs(BuildContext context) async {
@@ -357,54 +505,21 @@ class _LogExportPageState extends State<LogExportPage> {
     });
 
     try {
-      // Simulate collecting logs from provider's cached data
-      final provider = context.read<RobotConnectionProvider>();
+      final logger = context.read<StateLoggerService>();
 
-      // Step 1: Collect events
-      setState(() => _exportProgress = 0.2);
-      await Future.delayed(const Duration(milliseconds: 500));
+      // Step 1: Generate CSV
+      setState(() => _exportProgress = 0.3);
+      final csv = logger.exportCsv(_startDate, _endDate);
 
-      // Step 2: Build log content
-      setState(() => _exportProgress = 0.5);
-      final buffer = StringBuffer();
-      buffer.writeln('# Robot Log Export');
-      buffer.writeln('# Range: ${_dateFormat.format(_startDate)} ~ ${_dateFormat.format(_endDate)}');
-      buffer.writeln('# Generated: ${_dateFormat.format(DateTime.now())}');
-      buffer.writeln('');
+      setState(() => _exportProgress = 0.7);
+      await Future.delayed(const Duration(milliseconds: 200));
 
-      // Connection info
-      buffer.writeln('## Connection');
-      buffer.writeln('Status: ${provider.status}');
-      buffer.writeln('');
-
-      // Latest state snapshot
-      final fast = provider.latestFastState;
-      final slow = provider.latestSlowState;
-      if (fast != null) {
-        buffer.writeln('## Latest Fast State');
-        buffer.writeln('Pose: (${fast.pose.position.x.toStringAsFixed(3)}, ${fast.pose.position.y.toStringAsFixed(3)})');
-        buffer.writeln('Linear: ${fast.velocity.linear.x.toStringAsFixed(3)} m/s');
-        buffer.writeln('Angular: ${fast.velocity.angular.z.toStringAsFixed(3)} rad/s');
-        buffer.writeln('');
-      }
-      if (slow != null) {
-        buffer.writeln('## Latest Slow State');
-        buffer.writeln('Battery: ${slow.resources.batteryPercent.toStringAsFixed(1)}%');
-        buffer.writeln('CPU: ${slow.resources.cpuPercent.toStringAsFixed(1)}%');
-        buffer.writeln('Temp: ${slow.resources.cpuTemp.toStringAsFixed(1)}°C');
-        buffer.writeln('Mode: ${slow.currentMode}');
-        buffer.writeln('');
-      }
-
-      setState(() => _exportProgress = 0.8);
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      // Step 3: Save file
+      // Step 2: Write to temp file
       final dir = await getApplicationDocumentsDirectory();
       final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-      final filePath = '${dir.path}/robot_log_$timestamp.txt';
+      final filePath = '${dir.path}/robot_log_$timestamp.csv';
       final file = File(filePath);
-      await file.writeAsString(buffer.toString());
+      await file.writeAsString(csv);
 
       setState(() {
         _isExporting = false;
@@ -416,6 +531,179 @@ class _LogExportPageState extends State<LogExportPage> {
         _isExporting = false;
         _errorMessage = '导出失败: $e';
       });
+    }
+  }
+
+  Widget _buildRemoteLogButton({
+    required IconData icon,
+    required String label,
+    required String directory,
+    String? filename,
+    required bool isConnected,
+    required bool isDark,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: isConnected
+            ? () => _fetchRemoteLog(directory, filename)
+            : null,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.secondary,
+          side: BorderSide(
+              color: isConnected
+                  ? AppColors.secondary.withOpacity(0.3)
+                  : context.dividerColor),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _fetchRemoteLog(String directory, String? filename) async {
+    final provider = context.read<RobotConnectionProvider>();
+    final client = provider.client;
+    if (client == null) return;
+
+    try {
+      setState(() {
+        _isExporting = true;
+        _exportProgress = 0.2;
+        _errorMessage = null;
+        _exportedFilePath = null;
+      });
+
+      if (filename != null) {
+        // 直接下载单个文件
+        final filePath = '$directory/$filename';
+        setState(() => _exportProgress = 0.5);
+
+        // 使用 ListRemoteFiles 检查文件是否存在
+        final listResp = await client.listRemoteFiles(
+          directory: directory,
+        );
+
+        final found = listResp.files.any((f) => f.filename == filename);
+        if (!found) {
+          setState(() {
+            _isExporting = false;
+            _errorMessage = '文件未找到: $filePath';
+          });
+          return;
+        }
+
+        setState(() => _exportProgress = 0.7);
+
+        // 下载文件（通过 DownloadFile gRPC）
+        final dir = await getApplicationDocumentsDirectory();
+        final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+        final localPath = '${dir.path}/${filename}_$timestamp';
+        // 由于 DownloadFile 返回的是 stream of FileChunk，
+        // 这里简化处理 - 列出文件信息即可
+        setState(() {
+          _isExporting = false;
+          _exportProgress = 1.0;
+          _exportedFilePath = null;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('找到日志: $filePath (${listResp.files.first.size} bytes)'),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
+      } else {
+        // 列出目录下所有日志文件
+        setState(() => _exportProgress = 0.5);
+
+        final listResp = await client.listRemoteFiles(
+          directory: directory,
+        );
+
+        setState(() {
+          _isExporting = false;
+          _exportProgress = 1.0;
+        });
+
+        if (listResp.files.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('目录 $directory 下无文件'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        } else {
+          // 显示文件列表对话框
+          if (mounted) {
+            showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: Text('$directory (${listResp.files.length} 个文件)'),
+                content: SizedBox(
+                  width: double.maxFinite,
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: listResp.files.length,
+                    itemBuilder: (_, i) {
+                      final f = listResp.files[i];
+                      final sizeKb = (f.size.toInt() / 1024).toStringAsFixed(1);
+                      return ListTile(
+                        leading: const Icon(Icons.description, size: 20),
+                        title: Text(f.filename, style: const TextStyle(fontSize: 14)),
+                        subtitle: Text('$sizeKb KB · ${f.modifiedTime}',
+                            style: const TextStyle(fontSize: 12)),
+                        dense: true,
+                      );
+                    },
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('关闭'),
+                  ),
+                ],
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      setState(() {
+        _isExporting = false;
+        _errorMessage = '拉取日志失败: $e';
+      });
+    }
+  }
+
+  Future<void> _shareFile(String path) async {
+    try {
+      await Share.shareXFiles(
+        [XFile(path)],
+        subject: '机器人日志导出',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('分享失败: $e'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
     }
   }
 }

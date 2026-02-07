@@ -45,6 +45,13 @@ grpc_gateway:
     data_pointcloud_topic: "/cloud_registered"
     data_terrain_topic: "/terrain_map_ext"
     data_file_root: ""
+    
+    # 允许客户端访问的日志目录列表（用于从机器人拉取日志）
+    # DownloadFile 和 ListRemoteFiles 可读取这些目录中的文件
+    log_directories: ["/var/log/robot", "/var/log/syslog", "/tmp/apply_firmware.log"]
+    
+    # 固件刷写脚本路径
+    apply_firmware_script: "/usr/local/bin/apply_firmware.sh"
 
     # ==================== WebRTC 配置 ====================
     webrtc_enabled: false

@@ -144,9 +144,13 @@ private:
   // 向所有活动 peer 广播帧
   void BroadcastFrame(const uint8_t *data, size_t size, uint64_t timestamp_us);
 
-  // 简单的 JPEG -> H.264 转换（后续可替换为硬件编码）
-  // 注：libdatachannel 支持直接发送编码后的帧
+  // H.264 编码 (raw RGB/BGR -> H.264 NAL)
+  // 需要 libx264 支持，否则返回空
   std::vector<uint8_t> EncodeFrame(const uint8_t *data, size_t size, int width, int height);
+
+  // x264 编码器初始化/清理
+  bool InitEncoder(int width, int height);
+  void DestroyEncoder();
 
   rclcpp::Node *node_;
   rtc::Configuration rtc_config_;
@@ -166,6 +170,12 @@ private:
   OnIceGatheringDoneCallback on_ice_gathering_done_;
 
   std::atomic<bool> initialized_{false};
+
+  // x264 编码器状态
+  struct x264_t *encoder_{nullptr};
+  int encoder_width_{0};
+  int encoder_height_{0};
+  int64_t frame_count_{0};
 };
 
 }  // namespace remote_monitoring

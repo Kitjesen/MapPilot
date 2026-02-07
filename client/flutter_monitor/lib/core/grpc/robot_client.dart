@@ -11,6 +11,7 @@ import 'package:protobuf/well_known_types/google/protobuf/empty.pb.dart';
 import 'package:protobuf/well_known_types/google/protobuf/timestamp.pb.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
+import 'package:flutter_monitor/core/grpc/firmware_rpc_types.dart';
 
 class RobotClient implements RobotClientBase {
   final String host;
@@ -386,6 +387,31 @@ class RobotClient implements RobotClientBase {
       ..base = _createRequestBase()
       ..remotePath = remotePath;
     return await _dataClient.deleteRemoteFile(request);
+  }
+
+  /// 应用固件更新（触发机器人端刷写脚本）
+  /// TODO: 当 data.proto 添加 ApplyFirmware RPC 后，替换为真正的 gRPC 调用
+  @override
+  Future<ApplyFirmwareResponse> applyFirmware({required String firmwarePath}) async {
+    // 临时方案：上传一个触发文件来通知后端
+    // 正式方案需要 proto 添加 ApplyFirmware RPC
+    final triggerContent = 'APPLY:$firmwarePath\nTIMESTAMP:${DateTime.now().toIso8601String()}\n';
+    try {
+      await uploadFile(
+        localBytes: triggerContent.codeUnits,
+        remotePath: '/firmware/.apply_trigger',
+        filename: '.apply_trigger',
+        category: 'firmware',
+        overwrite: true,
+      );
+      return ApplyFirmwareResponse()
+        ..success = true
+        ..message = 'Apply trigger sent for: $firmwarePath';
+    } catch (e) {
+      return ApplyFirmwareResponse()
+        ..success = false
+        ..message = 'Failed to send apply trigger: $e';
+    }
   }
 
   /// 断开连接

@@ -13,6 +13,9 @@
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 
+// 自定义机器人状态消息 (关节角度 + 电池 + IMU)
+#include "interface/msg/robot_state.hpp"
+
 #include "control.pb.h"
 #include "telemetry.pb.h"
 
@@ -64,6 +67,7 @@ private:
   void TerrainCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void PathCallback(const nav_msgs::msg::Path::ConstSharedPtr msg);
   void SlowDownCallback(const std_msgs::msg::Int8::ConstSharedPtr msg);
+  void RobotStateCallback(const interface::msg::RobotState::ConstSharedPtr msg);
   
   void update_rates();
   void update_fast_state();
@@ -95,6 +99,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_terrain_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_path_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_slow_down_;
+  rclcpp::Subscription<interface::msg::RobotState>::SharedPtr sub_robot_state_;
   
   rclcpp::TimerBase::SharedPtr rate_timer_;
   rclcpp::TimerBase::SharedPtr fast_state_timer_;
@@ -110,6 +115,15 @@ private:
   
   // 缓存最新 odom
   nav_msgs::msg::Odometry::ConstSharedPtr latest_odom_;
+
+  // 缓存 RobotState (关节角度 + 电池 + IMU)
+  interface::msg::RobotState::ConstSharedPtr latest_robot_state_;
+  std::mutex robot_state_mutex_;
+
+  // 模拟电池（当 RobotState 不可用时使用）
+  bool use_simulated_battery_{true};
+  double simulated_battery_{85.0};
+  std::chrono::steady_clock::time_point battery_sim_start_;
 
   // 缓存 slow_down 值
   std::atomic<int8_t> slow_down_level_{0};

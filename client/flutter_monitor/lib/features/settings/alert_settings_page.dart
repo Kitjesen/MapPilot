@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
+import 'package:flutter_monitor/core/services/alert_monitor_service.dart';
+import 'package:flutter_monitor/features/settings/alert_history_page.dart';
 import 'package:flutter_monitor/shared/widgets/feature_card.dart';
 
 class AlertSettingsPage extends StatelessWidget {
@@ -83,6 +85,27 @@ class AlertSettingsPage extends StatelessWidget {
                   value: prefs.alertCommLost,
                   onChanged: (v) => prefs.setAlertCommLost(v),
                 ),
+              ),
+            ],
+          ),
+
+          // ===== 历史记录 =====
+          SettingsSection(
+            title: '历史记录',
+            children: [
+              SettingsTile(
+                icon: Icons.history,
+                iconColor: AppColors.info,
+                title: '告警历史',
+                subtitle: '${context.watch<AlertMonitorService>().history.length} 条记录',
+                trailing: const Icon(Icons.chevron_right, size: 20),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const AlertHistoryPage()),
+                  );
+                },
               ),
             ],
           ),

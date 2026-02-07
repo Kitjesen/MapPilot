@@ -12,6 +12,7 @@ import 'package:robot_proto/src/system.pb.dart';
 import 'package:robot_proto/src/data.pb.dart';
 import 'package:robot_proto/src/data.pbgrpc.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
+import 'package:flutter_monitor/core/grpc/firmware_rpc_types.dart';
 
 class MockRobotClient implements RobotClientBase {
   bool _connected = false;
@@ -324,6 +325,15 @@ class MockRobotClient implements RobotClientBase {
       ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
       ..success = true
       ..message = 'Mock delete OK: $remotePath';
+  }
+
+  @override
+  Future<ApplyFirmwareResponse> applyFirmware({required String firmwarePath}) async {
+    await Future.delayed(const Duration(seconds: 1));
+    return ApplyFirmwareResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..message = 'Mock apply firmware OK: $firmwarePath';
   }
 
   @override

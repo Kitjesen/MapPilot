@@ -376,7 +376,51 @@ ros2 launch remote_monitoring grpc_gateway.launch.py
 ros2 run remote_monitoring grpc_gateway
 ```
 
-### 6.4 验证
+### 6.4 WebRTC + H.264 编码部署
+
+机器人端需要安装 `libx264-dev` 并以 `-DX264_ENABLED=ON` 重新编译来启用 H.264 软编码器。
+
+```bash
+# 1. 安装 x264 开发库
+sudo apt-get update
+sudo apt-get install -y libx264-dev
+
+# 2. 安装 libdatachannel (WebRTC)
+sudo apt-get install -y libdatachannel-dev
+# 如果包管理器没有，从源码编译:
+# git clone https://github.com/nickhub/libdatachannel.git
+# cd libdatachannel && cmake -B build && cmake --build build && sudo cmake --install build
+
+# 3. 重新编译 remote_monitoring（启用 x264 + WebRTC）
+cd /home/sunrise/data/SLAM/navigation
+colcon build --packages-select remote_monitoring \
+  --cmake-args -DX264_ENABLED=ON
+
+# 4. 验证编译结果
+source install/setup.bash
+ros2 run remote_monitoring grpc_gateway --ros-args -p webrtc_enabled:=true
+# 查看日志确认:
+#   [INFO] Found x264: ...
+#   [INFO] Found libdatachannel ...
+#   [INFO] WebRTC Bridge initialized successfully
+```
+
+**编码参数说明** (在 `webrtc_bridge.cpp` 中配置):
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| Preset | ultrafast | x264 编码预设（CPU 友好） |
+| Tune | zerolatency | 零延迟调优（适合实时传输） |
+| Profile | baseline | H.264 Profile（兼容性最好） |
+| Bitrate | 1500 kbps | 目标码率 |
+| 分辨率 | 跟随输入 | 跟随 ROS 话题图像分辨率 |
+
+**Jetson 硬件编码**（待实现）：
+
+Jetson 平台可替换 x264 为 NVENC 硬件编码器以大幅降低 CPU 占用。
+需修改 `webrtc_bridge.cpp` 中的编码器初始化，使用 `nvv4l2h264enc` 或 GStreamer pipeline。
+
+### 6.5 验证
 
 ```bash
 # 检查端口

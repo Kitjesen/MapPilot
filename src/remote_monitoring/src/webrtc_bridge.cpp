@@ -3,7 +3,14 @@
 #include "remote_monitoring/webrtc_bridge.hpp"
 
 #include <chrono>
+#include <cstring>
 #include <sstream>
+
+#ifdef X264_ENABLED
+extern "C" {
+#include <x264.h>
+}
+#endif
 
 namespace remote_monitoring {
 
@@ -219,6 +226,7 @@ WebRTCBridge::WebRTCBridge(rclcpp::Node *node)
 
 WebRTCBridge::~WebRTCBridge() {
   UnsubscribeCameraTopic();
+  DestroyEncoder();
   
   // 关闭所有 peer 连接
   std::lock_guard<std::mutex> lock(peers_mutex_);
@@ -474,13 +482,16 @@ void WebRTCBridge::OnCompressedImageReceived(const sensor_msgs::msg::CompressedI
     return;
   }
   
-  // 将时间戳转换为微秒
   uint64_t timestamp_us = static_cast<uint64_t>(msg->header.stamp.sec) * 1000000ULL +
                           static_cast<uint64_t>(msg->header.stamp.nanosec) / 1000ULL;
   
-  // 检查格式（JPEG 可直接传输，后续需要 H.264 编码）
-  // 注：实际部署时应使用 H.264 编码器（如 OpenH264 或硬件编码）
-  // 这里暂时直接传输压缩数据用于测试
+  // 注意：压缩图像（JPEG）无法直接作为 H.264 NAL 发送。
+  // 正确的做法是订阅 raw image topic 并用 x264 编码。
+  // 这里将 JPEG 数据直接发送仅供调试；
+  // 实际部署应切换到 raw image topic + EncodeFrame()。
+  RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 10000,
+      "Sending JPEG frames directly to WebRTC track. "
+      "For proper H.264 playback, use raw image topic instead.");
   
   BroadcastFrame(msg->data.data(), msg->data.size(), timestamp_us);
 }
@@ -513,19 +524,164 @@ void WebRTCBridge::BroadcastFrame(const uint8_t *data, size_t size, uint64_t tim
   }
 }
 
-std::vector<uint8_t> WebRTCBridge::EncodeFrame(const uint8_t * /*data*/, size_t /*size*/, 
-                                                int /*width*/, int /*height*/) {
-  // TODO: 集成 OpenH264 编码器
-  // 当前返回空，表示跳过原始帧
-  // 实际部署需要：
-  // 1. 初始化 OpenH264 编码器 (ISVCEncoder)
-  // 2. 将 RGB/BGR/YUV 帧编码为 H.264 NAL 单元
-  // 3. 返回编码后的数据
-  
+bool WebRTCBridge::InitEncoder(int width, int height) {
+#ifdef X264_ENABLED
+  DestroyEncoder();
+
+  x264_param_t param;
+  x264_param_default_preset(&param, "ultrafast", "zerolatency");
+
+  param.i_csp = X264_CSP_I420;
+  param.i_width = width;
+  param.i_height = height;
+  param.i_fps_num = 15;
+  param.i_fps_den = 1;
+  param.i_threads = 2;
+  param.i_keyint_max = 30;       // keyframe every 2s at 15fps
+  param.i_keyint_min = 15;
+  param.b_repeat_headers = 1;    // include SPS/PPS with each keyframe
+  param.b_annexb = 1;            // Annex-B format (start codes)
+
+  // Bitrate control
+  param.rc.i_rc_method = X264_RC_ABR;
+  param.rc.i_bitrate = 1500;     // kbps
+  param.rc.i_vbv_max_bitrate = 2000;
+  param.rc.i_vbv_buffer_size = 2000;
+
+  x264_param_apply_profile(&param, "baseline");
+
+  encoder_ = x264_encoder_open(&param);
+  if (!encoder_) {
+    RCLCPP_ERROR(node_->get_logger(), "Failed to open x264 encoder");
+    return false;
+  }
+
+  encoder_width_ = width;
+  encoder_height_ = height;
+  frame_count_ = 0;
+
+  RCLCPP_INFO(node_->get_logger(),
+              "x264 encoder initialized: %dx%d, 15fps, 1500kbps, ultrafast/zerolatency",
+              width, height);
+  return true;
+#else
+  (void)width;
+  (void)height;
+  RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 10000,
+                       "x264 not available at compile time. "
+                       "Install libx264-dev and rebuild with -DX264_ENABLED=ON");
+  return false;
+#endif
+}
+
+void WebRTCBridge::DestroyEncoder() {
+#ifdef X264_ENABLED
+  if (encoder_) {
+    x264_encoder_close(encoder_);
+    encoder_ = nullptr;
+    RCLCPP_INFO(node_->get_logger(), "x264 encoder destroyed");
+  }
+#endif
+}
+
+std::vector<uint8_t> WebRTCBridge::EncodeFrame(const uint8_t *data, size_t size,
+                                                int width, int height) {
+#ifdef X264_ENABLED
+  if (!data || size == 0 || width <= 0 || height <= 0) {
+    return {};
+  }
+
+  // 重新初始化编码器（如果分辨率改变）
+  if (!encoder_ || encoder_width_ != width || encoder_height_ != height) {
+    if (!InitEncoder(width, height)) {
+      return {};
+    }
+  }
+
+  // 将 RGB/BGR 数据转换为 I420 (YUV 4:2:0)
+  const int y_size = width * height;
+  const int uv_size = y_size / 4;
+  std::vector<uint8_t> yuv_buf(y_size + uv_size * 2);
+
+  uint8_t *y_plane = yuv_buf.data();
+  uint8_t *u_plane = y_plane + y_size;
+  uint8_t *v_plane = u_plane + uv_size;
+
+  // 判断输入格式：ROS 常用 rgb8(3ch) 或 bgr8(3ch)
+  // 这里假设 BGR8 (OpenCV default)
+  const int channels = static_cast<int>(size) / (width * height);
+  if (channels < 3) {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+                         "Unsupported image format: expected 3+ channels, got %d", channels);
+    return {};
+  }
+
+  // BGR -> I420 (简化版本，每 2x2 block 取均值)
+  for (int j = 0; j < height; j++) {
+    for (int i = 0; i < width; i++) {
+      const int idx = (j * width + i) * channels;
+      const uint8_t b = data[idx];
+      const uint8_t g = data[idx + 1];
+      const uint8_t r = data[idx + 2];
+
+      // BT.601 RGB -> YUV
+      const int y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+      y_plane[j * width + i] = static_cast<uint8_t>(std::min(std::max(y, 0), 255));
+
+      if ((j % 2 == 0) && (i % 2 == 0)) {
+        const int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+        const int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+        u_plane[(j / 2) * (width / 2) + (i / 2)] =
+            static_cast<uint8_t>(std::min(std::max(u, 0), 255));
+        v_plane[(j / 2) * (width / 2) + (i / 2)] =
+            static_cast<uint8_t>(std::min(std::max(v, 0), 255));
+      }
+    }
+  }
+
+  // 设置 x264 图片
+  x264_picture_t pic_in, pic_out;
+  x264_picture_init(&pic_in);
+  pic_in.i_type = X264_TYPE_AUTO;
+  pic_in.i_pts = frame_count_++;
+  pic_in.img.i_csp = X264_CSP_I420;
+  pic_in.img.i_plane = 3;
+  pic_in.img.plane[0] = y_plane;
+  pic_in.img.plane[1] = u_plane;
+  pic_in.img.plane[2] = v_plane;
+  pic_in.img.i_stride[0] = width;
+  pic_in.img.i_stride[1] = width / 2;
+  pic_in.img.i_stride[2] = width / 2;
+
+  // 编码
+  x264_nal_t *nals = nullptr;
+  int nal_count = 0;
+  int frame_size = x264_encoder_encode(encoder_, &nals, &nal_count, &pic_in, &pic_out);
+
+  if (frame_size <= 0 || nal_count <= 0) {
+    return {};
+  }
+
+  // 合并所有 NAL 单元
+  std::vector<uint8_t> encoded;
+  encoded.reserve(static_cast<size_t>(frame_size));
+  for (int i = 0; i < nal_count; i++) {
+    encoded.insert(encoded.end(), nals[i].p_payload, nals[i].p_payload + nals[i].i_payload);
+  }
+
+  return encoded;
+
+#else
+  (void)data;
+  (void)size;
+  (void)width;
+  (void)height;
+
   RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
-                       "Raw image encoding not implemented yet, skipping frame");
-  
+                       "x264 not available - raw image encoding skipped. "
+                       "Build with -DX264_ENABLED=ON and libx264-dev installed.");
   return {};
+#endif
 }
 
 }  // namespace remote_monitoring

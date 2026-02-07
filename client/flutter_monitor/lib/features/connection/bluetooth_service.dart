@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter_monitor/core/ble/ble_protocol.dart';
+import 'package:flutter_monitor/core/ble/ble_robot_client.dart';
 
 /// BLE connection states
 enum BleConnectionState {
   disconnected,
   scanning,
   connecting,
+  discovering,
   connected,
   error,
 }
@@ -17,38 +20,49 @@ class BleRobotDevice {
   final String name;
   final int rssi;
   final DateTime discoveredAt;
+  final bool hasRobotService;
 
   BleRobotDevice({
     required this.device,
     required this.name,
     required this.rssi,
+    this.hasRobotService = false,
     DateTime? discoveredAt,
   }) : discoveredAt = discoveredAt ?? DateTime.now();
 
   String get id => device.remoteId.str;
-  String get displayName => name.isNotEmpty ? name : 'Unknown (${id.substring(0, 8)})';
+  String get displayName =>
+      name.isNotEmpty ? name : 'Unknown (${id.substring(0, 8)})';
 
   /// Signal quality: 0.0 to 1.0
   double get signalQuality {
-    // RSSI typically ranges from -100 (worst) to -30 (best)
     final clamped = rssi.clamp(-100, -30);
     return (clamped + 100) / 70.0;
   }
 }
 
-/// Manages Bluetooth Low Energy connections for robot communication
+/// Manages Bluetooth Low Energy connections for robot communication.
+///
+/// 使用 [BleRobotClient] 进行通信，支持：
+/// - 设备扫描 & 连接
+/// - 紧急停止 / 模式切换
+/// - WiFi 配置
+/// - 状态查询
 class BluetoothService extends ChangeNotifier {
-  // Robot-specific BLE service UUID (customize for your robot)
-  static const String robotServiceUuid = '12345678-1234-5678-1234-56789abcdef0';
-
   BleConnectionState _state = BleConnectionState.disconnected;
   BleConnectionState get state => _state;
 
   final List<BleRobotDevice> _discoveredDevices = [];
-  List<BleRobotDevice> get discoveredDevices => List.unmodifiable(_discoveredDevices);
+  List<BleRobotDevice> get discoveredDevices =>
+      List.unmodifiable(_discoveredDevices);
 
   BluetoothDevice? _connectedDevice;
   BluetoothDevice? get connectedDevice => _connectedDevice;
+
+  /// BLE 机器人通信客户端（连接后可用）
+  final BleRobotClient _robotClient = BleRobotClient();
+  BleRobotClient get robotClient => _robotClient;
+  bool get isRobotReady => _robotClient.isReady;
 
   StreamSubscription? _scanSubscription;
   StreamSubscription? _connectionSubscription;
@@ -69,7 +83,8 @@ class BluetoothService extends ChangeNotifier {
   }
 
   /// Start scanning for BLE robot devices
-  Future<void> startScan({Duration timeout = const Duration(seconds: 10)}) async {
+  Future<void> startScan(
+      {Duration timeout = const Duration(seconds: 10)}) async {
     if (_state == BleConnectionState.scanning) return;
 
     _discoveredDevices.clear();
@@ -78,7 +93,6 @@ class BluetoothService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Check Bluetooth state
       final available = await isAvailable;
       if (!available) {
         _state = BleConnectionState.error;
@@ -95,8 +109,11 @@ class BluetoothService extends ChangeNotifier {
       _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
         for (final r in results) {
           final name = r.device.platformName;
-          // Accept devices with a name (filter empty/unknown)
           if (name.isNotEmpty) {
+            // 检查是否包含机器人 BLE 服务 UUID
+            final hasRobotSvc = r.advertisementData.serviceUuids
+                .any((u) => u.toString().toLowerCase() == BleProtocol.serviceUuid);
+
             final existing = _discoveredDevices.indexWhere(
               (d) => d.id == r.device.remoteId.str,
             );
@@ -104,6 +121,7 @@ class BluetoothService extends ChangeNotifier {
               device: r.device,
               name: name,
               rssi: r.rssi,
+              hasRobotService: hasRobotSvc,
             );
             if (existing >= 0) {
               _discoveredDevices[existing] = device;
@@ -112,12 +130,16 @@ class BluetoothService extends ChangeNotifier {
             }
           }
         }
-        // Sort by signal strength
-        _discoveredDevices.sort((a, b) => b.rssi.compareTo(a.rssi));
+        // 优先显示包含机器人服务的设备，然后按信号强度排序
+        _discoveredDevices.sort((a, b) {
+          if (a.hasRobotService != b.hasRobotService) {
+            return a.hasRobotService ? -1 : 1;
+          }
+          return b.rssi.compareTo(a.rssi);
+        });
         notifyListeners();
       });
 
-      // After timeout, stop
       Future.delayed(timeout, () {
         if (_state == BleConnectionState.scanning) {
           stopScan();
@@ -142,7 +164,7 @@ class BluetoothService extends ChangeNotifier {
     }
   }
 
-  /// Connect to a BLE device
+  /// Connect to a BLE device and discover robot services
   Future<bool> connectDevice(BleRobotDevice robot) async {
     _state = BleConnectionState.connecting;
     _errorMessage = null;
@@ -155,11 +177,27 @@ class BluetoothService extends ChangeNotifier {
       );
 
       _connectedDevice = robot.device;
-      _state = BleConnectionState.connected;
+      _state = BleConnectionState.discovering;
+      notifyListeners();
+
+      // 发现服务并绑定特征
+      debugPrint('[BLE] Connected to ${robot.displayName}, discovering services...');
+      final success = await _robotClient.discoverAndBind(robot.device);
+
+      if (success) {
+        _state = BleConnectionState.connected;
+        _robotClient.startStatusPolling();
+        debugPrint('[BLE] Robot BLE service bound successfully');
+      } else {
+        _state = BleConnectionState.connected;
+        debugPrint('[BLE] Connected but robot service not found (basic BLE only)');
+      }
 
       // Listen for disconnection
-      _connectionSubscription = robot.device.connectionState.listen((state) {
-        if (state == BluetoothConnectionState.disconnected) {
+      _connectionSubscription =
+          robot.device.connectionState.listen((connState) {
+        if (connState == BluetoothConnectionState.disconnected) {
+          _robotClient.unbind();
           _connectedDevice = null;
           _state = BleConnectionState.disconnected;
           notifyListeners();
@@ -167,7 +205,6 @@ class BluetoothService extends ChangeNotifier {
       });
 
       notifyListeners();
-      debugPrint('[BLE] Connected to ${robot.displayName}');
       return true;
     } catch (e) {
       debugPrint('[BLE] Connection failed: $e');
@@ -180,6 +217,7 @@ class BluetoothService extends ChangeNotifier {
 
   /// Disconnect from the current device
   Future<void> disconnectDevice() async {
+    _robotClient.unbind();
     try {
       await _connectedDevice?.disconnect();
     } catch (_) {}
@@ -193,6 +231,7 @@ class BluetoothService extends ChangeNotifier {
   @override
   void dispose() {
     stopScan();
+    _robotClient.dispose();
     disconnectDevice();
     super.dispose();
   }

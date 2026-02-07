@@ -22,6 +22,16 @@ find_package(robot_proto REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GRPC REQUIRED grpc++)
 
+# ---- x264 H.264 encoder (optional) ----
+pkg_check_modules(X264 x264)
+if(X264_FOUND)
+  message(STATUS "Found x264: ${X264_LIBRARIES}")
+  add_definitions(-DX264_ENABLED)
+else()
+  message(WARNING "libx264 not found - H.264 encoding will be disabled. "
+                  "Install libx264-dev to enable.")
+endif()
+
 # ---- WebRTC (optional) ----
 find_package(LibDataChannel QUIET)
 if(LibDataChannel_FOUND)
@@ -79,6 +89,12 @@ if(LibDataChannel_FOUND)
 elseif(DATACHANNEL_FOUND)
   target_include_directories(grpc_gateway PRIVATE ${DATACHANNEL_INCLUDE_DIRS})
   target_link_libraries(grpc_gateway ${DATACHANNEL_LIBRARIES})
+endif()
+
+# Link x264 if available
+if(X264_FOUND)
+  target_include_directories(grpc_gateway PRIVATE ${X264_INCLUDE_DIRS})
+  target_link_libraries(grpc_gateway ${X264_LIBRARIES})
 endif()
 
 ament_target_dependencies(grpc_gateway

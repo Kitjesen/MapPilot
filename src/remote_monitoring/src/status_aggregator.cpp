@@ -62,6 +62,19 @@ StatusAggregator::StatusAggregator(rclcpp::Node *node)
     node_->get_parameter("slow_down_topic").as_string(), 5,
     std::bind(&StatusAggregator::SlowDownCallback, this, std::placeholders::_1));
 
+  // RobotState: 关节角度 + 电池 + IMU
+  node_->declare_parameter<std::string>("robot_state_topic", "/robot_state");
+  const auto robot_state_topic = node_->get_parameter("robot_state_topic").as_string();
+  sub_robot_state_ = node_->create_subscription<interface::msg::RobotState>(
+    robot_state_topic, 10,
+    std::bind(&StatusAggregator::RobotStateCallback, this, std::placeholders::_1));
+  RCLCPP_INFO(node_->get_logger(),
+              "Subscribed to RobotState on '%s' for joint angles + battery",
+              robot_state_topic.c_str());
+
+  // 模拟电池初始化
+  battery_sim_start_ = std::chrono::steady_clock::now();
+
   rate_timer_ = node_->create_wall_timer(
     std::chrono::duration<double>(window_sec_), [this]() { update_rates(); });
   fast_state_timer_ = node_->create_wall_timer(
@@ -90,6 +103,18 @@ void StatusAggregator::PathCallback(const nav_msgs::msg::Path::ConstSharedPtr) {
 void StatusAggregator::SlowDownCallback(const std_msgs::msg::Int8::ConstSharedPtr msg) {
   if (msg) {
     slow_down_level_.store(msg->data);
+  }
+}
+
+void StatusAggregator::RobotStateCallback(
+    const interface::msg::RobotState::ConstSharedPtr msg) {
+  std::lock_guard<std::mutex> lock(robot_state_mutex_);
+  latest_robot_state_ = msg;
+  // 有真实 RobotState 数据时，不再使用模拟电池
+  if (use_simulated_battery_) {
+    use_simulated_battery_ = false;
+    RCLCPP_INFO(node_->get_logger(),
+                "RobotState received, switching to real battery data");
   }
 }
 
@@ -166,7 +191,24 @@ void StatusAggregator::update_fast_state() {
   const bool tf_ok = check_tf(tf_map_frame_, tf_odom_frame_) &&
                      check_tf(tf_odom_frame_, tf_body_frame_);
   state.set_tf_ok(tf_ok);
-  
+
+  // 关节角度（从 interface::msg::RobotState.joint_positions[0..11]）
+  // 顺序: FR(hip,thigh,calf) FL(hip,thigh,calf) RR(hip,thigh,calf) RL(hip,thigh,calf)
+  // 转换为 16 个角度 (每条腿 4 个: hip,thigh,calf,foot)，foot 关节填 0
+  {
+    std::lock_guard<std::mutex> rs_lock(robot_state_mutex_);
+    if (latest_robot_state_) {
+      state.clear_joint_angles();
+      // 12 DOF -> 16 个值 (每条腿增加一个 foot=0)
+      for (int leg = 0; leg < 4; ++leg) {
+        state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 0]); // hip
+        state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 1]); // thigh
+        state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 2]); // calf
+        state.add_joint_angles(0.0f); // foot (no physical joint)
+      }
+    }
+  }
+
   std::lock_guard<std::mutex> lock(fast_mutex_);
   latest_fast_state_ = state;
 }
@@ -202,7 +244,35 @@ void StatusAggregator::update_slow_state() {
   resources->set_cpu_percent(ReadCpuUsage());
   resources->set_mem_percent(ReadMemUsage());
   resources->set_cpu_temp(ReadCpuTemp());
-  // battery_percent / battery_voltage 需要外部话题或驱动，暂留 0
+
+  // 电池电量：优先使用 RobotState.battery，否则使用模拟值
+  {
+    std::lock_guard<std::mutex> rs_lock(robot_state_mutex_);
+    if (!use_simulated_battery_ && latest_robot_state_) {
+      // 真实电池数据 from interface::msg::BatteryState
+      resources->set_battery_percent(
+          static_cast<double>(latest_robot_state_->battery.percentage));
+      resources->set_battery_voltage(
+          static_cast<double>(latest_robot_state_->battery.voltage));
+    } else {
+      // 模拟电池：从 85% 以 0.01%/s 匀速下降
+      const auto elapsed =
+          std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - battery_sim_start_)
+              .count();
+      simulated_battery_ = std::max(0.0, 85.0 - elapsed * 0.01);
+      resources->set_battery_percent(simulated_battery_);
+      resources->set_battery_voltage(24.0 + simulated_battery_ * 0.04);
+      // 每 60 秒打一次日志提醒
+      static int sim_log_counter = 0;
+      if (sim_log_counter++ % 60 == 0) {
+        RCLCPP_WARN(node_->get_logger(),
+                    "[SIMULATED] Battery: %.1f%% (no RobotState received, "
+                    "using simulated drain)",
+                    simulated_battery_);
+      }
+    }
+  }
   
   // 话题频率
   auto *rates = state.mutable_topic_rates();

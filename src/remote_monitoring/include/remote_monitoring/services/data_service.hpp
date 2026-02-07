@@ -62,6 +62,12 @@ public:
                    const robot::v1::DeleteRemoteFileRequest *request,
                    robot::v1::DeleteRemoteFileResponse *response) override;
 
+  // 应用固件更新 (上传完成后调用)
+  grpc::Status
+  ApplyFirmware(grpc::ServerContext *context,
+                const robot::v1::ApplyFirmwareRequest *request,
+                robot::v1::ApplyFirmwareResponse *response) override;
+
   grpc::Status StartCamera(grpc::ServerContext *context,
                            const robot::v1::StartCameraRequest *request,
                            robot::v1::StartCameraResponse *response) override;
@@ -109,6 +115,7 @@ private:
   };
 
   rclcpp::Node *node_;
+  std::string apply_firmware_script_;
   std::string camera_topic_;
   std::string camera_fallback_topic_;
   std::string map_topic_;

@@ -25,6 +25,7 @@ class _MapScreenState extends State<MapScreen>
   List<Offset> _localCloudPoints = [];
 
   Pose? _currentPose;
+  List<double>? _currentJointAngles;
   StreamSubscription<FastState>? _fastSub;
   StreamSubscription? _mapSubscription;
   StreamSubscription? _pclSubscription;
@@ -148,9 +149,27 @@ class _MapScreenState extends State<MapScreen>
 
       final point = Offset(newPose.position.x, newPose.position.y);
 
+      // 提取关节角度（需要 FastState proto 添加 repeated float joint_angles 字段）
+      // TODO: 当 telemetry.proto 添加 joint_angles 字段后，取消下方注释
+      // final angles = state.jointAngles.isNotEmpty
+      //     ? state.jointAngles.map((a) => a.toDouble()).toList()
+      //     : null;
+      List<double>? angles;
+      try {
+        // 尝试访问 joint_angles 字段（可能尚未在 proto 中定义）
+        final dynamic dynState = state;
+        final rawAngles = dynState.jointAngles as List?;
+        if (rawAngles != null && rawAngles.isNotEmpty) {
+          angles = rawAngles.map<double>((a) => (a as num).toDouble()).toList();
+        }
+      } catch (_) {
+        // Proto 尚未包含 joint_angles 字段，使用 idle 动画
+      }
+
       setState(() {
         _currentPose = newPose;
         _currentYaw = newYaw;
+        _currentJointAngles = angles;
 
         if (_path.isEmpty || (_path.last - point).distance > 0.05) {
           _path.add(point);
@@ -211,6 +230,7 @@ class _MapScreenState extends State<MapScreen>
               child: RepaintBoundary(
                 child: RobotModelWidget(
                   currentPose: _currentPose,
+                  jointAngles: _currentJointAngles,
                 ),
               ),
             ),
