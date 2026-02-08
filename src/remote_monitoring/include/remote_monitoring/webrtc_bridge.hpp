@@ -48,6 +48,9 @@ public:
   void SetRemoteDescription(const std::string &sdp, const std::string &type);
   void CreateAnswer();
   
+  // 创建 DataChannel + Track（必须在 SetRemoteDescription 之后调用，避免 SDP glare）
+  void SetupMedia();
+  
   // ICE 候选处理
   void AddRemoteCandidate(const std::string &candidate, const std::string &mid);
 

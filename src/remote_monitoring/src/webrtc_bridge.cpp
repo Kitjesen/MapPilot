@@ -36,7 +36,10 @@ bool WebRTCPeer::Initialize(const rtc::Configuration &config) {
   try {
     peer_connection_ = std::make_shared<rtc::PeerConnection>(config);
     
-    // 设置回调
+    // 设置回调 — 注意：不在这里创建 DataChannel/Track，
+    // 避免 libdatachannel 自动生成 offer 导致 SDP glare。
+    // DataChannel/Track 在 SetupMedia() 中创建（收到远端 offer 之后）。
+    
     peer_connection_->onLocalDescription([this](rtc::Description description) {
       std::string sdp = std::string(description);
       std::string type = description.typeString();
@@ -81,7 +84,29 @@ bool WebRTCPeer::Initialize(const rtc::Configuration &config) {
       }
     });
     
+    RCLCPP_INFO(rclcpp::get_logger("WebRTCPeer"),
+                "WebRTC peer initialized (callbacks set, awaiting offer before media setup)");
+    return true;
+    
+  } catch (const std::exception &e) {
+    RCLCPP_ERROR(rclcpp::get_logger("WebRTCPeer"),
+                 "Failed to initialize peer connection: %s", e.what());
+    return false;
+  }
+}
+
+void WebRTCPeer::SetupMedia() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  
+  if (!peer_connection_) {
+    RCLCPP_ERROR(rclcpp::get_logger("WebRTCPeer"),
+                 "Cannot setup media: peer connection not initialized");
+    return;
+  }
+  
+  try {
     // 创建 DataChannel 用于传输 JPEG 帧 (unreliable + unordered 以降低延迟)
+    // 此时远端 offer 已设置，libdatachannel 不会自动生成新 offer
     rtc::DataChannelInit dc_init;
     dc_init.reliability.unordered = true;          // 不保序，降低延迟
     dc_init.reliability.maxRetransmits = 0;        // 不重传，丢帧优于延迟
@@ -105,21 +130,13 @@ bool WebRTCPeer::Initialize(const rtc::Configuration &config) {
                   "DataChannel error: %s (session: %s)", error.c_str(), session_id_.c_str());
     });
     
-    // 保留 video track 用于 SDP 协商 (让客户端知道有视频能力)
-    rtc::Description::Video video_desc("video", rtc::Description::Direction::SendOnly);
-    video_desc.addH264Codec(96);  // H.264 payload type 96
-    video_desc.addSSRC(1, "video-stream");
-    
-    video_track_ = peer_connection_->addTrack(video_desc);
-    
     RCLCPP_INFO(rclcpp::get_logger("WebRTCPeer"),
-                "WebRTC peer initialized successfully (DataChannel + video track)");
-    return true;
-    
+                "Media setup complete: DataChannel 'video-jpeg' created for session: %s",
+                session_id_.c_str());
+                
   } catch (const std::exception &e) {
     RCLCPP_ERROR(rclcpp::get_logger("WebRTCPeer"),
-                 "Failed to initialize peer connection: %s", e.what());
-    return false;
+                 "Failed to setup media: %s", e.what());
   }
 }
 
@@ -421,7 +438,10 @@ void WebRTCBridge::HandleOffer(const std::string &session_id, const std::string 
     }
   }
   
+  // 顺序很重要：先设置远端 offer，再创建 DataChannel/Track，最后 answer。
+  // 这样 libdatachannel 不会因为提前创建 DC 而自动生成 offer（SDP glare）。
   peer->SetRemoteDescription(sdp, "offer");
+  peer->SetupMedia();
   peer->CreateAnswer();
 }
 
