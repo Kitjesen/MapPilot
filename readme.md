@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Kitjesen/3d_NAV">
-    <img src="https://img.shields.io/badge/GitHub-3d__NAV-blue?logo=github" alt="GitHub"/>
+  <a href="https://github.com/Kitjesen/MapPilot">
+    <img src="https://img.shields.io/badge/GitHub-MapPilot-blue?logo=github" alt="GitHub"/>
   </a>
   <img src="https://img.shields.io/badge/ROS2-Humble-green?logo=ros" alt="ROS2 Humble"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License"/>
@@ -58,8 +58,8 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/Kitjesen/3d_NAV.git
-cd 3d_NAV
+git clone https://github.com/Kitjesen/MapPilot.git
+cd MapPilot
 
 # 2. 编译工作空间
 colcon build --symlink-install
@@ -331,7 +331,7 @@ GitHub Releases (云端)
 
 **方式一：GitHub Release (推荐)**
 
-从 [Releases](https://github.com/Kitjesen/3d_NAV/releases/latest) 页面下载最新 `MapPilot-*.apk`。
+从 [Releases](https://github.com/Kitjesen/MapPilot/releases/latest) 页面下载最新 `MapPilot-*.apk`。
 
 **方式二：本地编译**
 

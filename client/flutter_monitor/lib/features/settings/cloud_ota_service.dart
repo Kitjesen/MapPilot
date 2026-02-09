@@ -238,7 +238,7 @@ class CloudOtaService {
 
   // 默认 GitHub 仓库
   static const defaultOwner = 'Kitjesen';
-  static const defaultRepo = '3d_NAV';
+  static const defaultRepo = 'MapPilot';
 
   String _owner = defaultOwner;
   String _repo = defaultRepo;

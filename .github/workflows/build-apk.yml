@@ -92,7 +92,7 @@ jobs:
             3. 连接机器人 IP:50051
 
             **OTA 更新:**
-            手机访问 `https://github.com/Kitjesen/3d_NAV/releases/latest` 下载最新版本。
+            手机访问 `https://github.com/Kitjesen/MapPilot/releases/latest` 下载最新版本。
           files: client/flutter_monitor/build/app/outputs/flutter-apk/MapPilot-*.apk
           draft: false
           prerelease: false

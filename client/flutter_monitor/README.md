@@ -63,7 +63,7 @@ flutter build apk --release
 
 **方式一：GitHub Release (推荐)**
 
-从 [Releases](https://github.com/Kitjesen/3d_NAV/releases/latest) 下载最新 `MapPilot-*.apk`。
+从 [Releases](https://github.com/Kitjesen/MapPilot/releases/latest) 下载最新 `MapPilot-*.apk`。
 
 **方式二：App 内云端更新**
 
@@ -163,7 +163,7 @@ MapPilot App (手机)
 | FastState Hz | `10.0` | 快速状态流频率 |
 | Max Path Points | `5000` | 轨迹最大点数 |
 | Max Events | `200` | 事件列表最大条数 |
-| Cloud Source | `Kitjesen/3d_NAV` | 云端更新 GitHub 仓库 |
+| Cloud Source | `Kitjesen/MapPilot` | 云端更新 GitHub 仓库 |
 
 ---
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Han Dog gRPC Bridge — 将 3d_NAV 导航栈接入四足机器人
+Han Dog gRPC Bridge — 将 MapPilot 导航栈接入四足机器人
 =====================================================
 
 功能:
@@ -13,7 +13,7 @@ Han Dog gRPC Bridge — 将 3d_NAV 导航栈接入四足机器人
 架构:
   Flutter App
       ↓ gRPC :50051
-  GrpcGateway (3d_NAV)
+  GrpcGateway (MapPilot)
       ↓ ROS2 /cmd_vel
   ★ han_dog_bridge (本节点) ★
       ↓ gRPC :13145

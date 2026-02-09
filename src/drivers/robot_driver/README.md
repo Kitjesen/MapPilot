@@ -6,7 +6,7 @@ This package contains two driver implementations:
 Generic template driver with watchdog protection. Requires hardware-specific `send_to_motors()` implementation.
 
 ### 2. `han_dog_bridge.py` — Han Dog gRPC Bridge (四足机器人)
-Bridges the 3d_NAV navigation stack to the Han Dog quadruped robot via `han_dog_message` gRPC.
+Bridges the MapPilot navigation stack to the Han Dog quadruped robot via `han_dog_message` gRPC.
 
 #### Architecture
 
@@ -14,7 +14,7 @@ Bridges the 3d_NAV navigation stack to the Han Dog quadruped robot via `han_dog_
 Flutter App (remote control)
     │ gRPC :50051
     ▼
-GrpcGateway (3d_NAV remote_monitoring)
+GrpcGateway (MapPilot remote_monitoring)
     │ ROS2 /cmd_vel (TwistStamped)
     ▼
 ★ han_dog_bridge ★
@@ -72,7 +72,7 @@ pip3 install han_dog_message   # or: pip3 install -e dog/han_dog_message/python
 pip3 install grpcio grpcio-tools
 
 # ROS2 interface package (for RobotState msg)
-# Built as part of the 3d_NAV workspace
+# Built as part of the MapPilot workspace
 ```
 
 #### Walk Command Normalization
