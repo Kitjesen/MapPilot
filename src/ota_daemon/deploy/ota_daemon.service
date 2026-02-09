@@ -30,7 +30,7 @@ StartLimitIntervalSec=60
 # 安全加固
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/robot /tmp
+ReadWritePaths=/opt/robot /home/sunrise/models /home/sunrise/data/SLAM/navigation/install /home/sunrise/data/SLAM/navigation/maps /home/sunrise/data/SLAM/navigation/src/global_planning
 ProtectHome=true
 PrivateTmp=true
 

@@ -1,44 +1,57 @@
-# ──────────────── OTA Daemon 配置 ────────────────
-# 独立守护进程, 不依赖 ROS2
-# systemd: ota_daemon.service
-# 端口: 50052
+# ══════════════════════════════════════════════════════════
+# OTA Daemon 配置 — 独立守护进程, 不依赖 ROS2
+# systemd: ota_daemon.service | 端口: 50052
+# ══════════════════════════════════════════════════════════
 
-# 网络
+# ── 网络 ──
 grpc_port: 50052
 bind_address: "0.0.0.0"
 
-# 设备标识
+# ── 设备标识 ──
 robot_id: "robot_001"
 hw_id: "dog_v2"
 
-# OTA 状态文件
+# ── OTA 状态文件 (daemon 专用目录, 与导航栈分离) ──
 ota_manifest_path: "/opt/robot/ota/installed_manifest.json"
 ota_backup_dir: "/opt/robot/ota/backup"
 ota_history_path: "/opt/robot/ota/upgrade_history.jsonl"
 system_version_path: "/opt/robot/ota/system_version.json"
 
-# Ed25519 公钥 (设备端验签, 留空=跳过验签)
+# ── 下载暂存 (替代 /tmp, 受 systemd ReadWritePaths 保护) ──
+staging_dir: "/opt/robot/ota/staging"
+
+# ── Ed25519 公钥 (设备端验签, 留空=跳过) ──
 ota_public_key_path: ""
 
-# TLS (留空=明文)
+# ── TLS (留空=明文) ──
 tls_cert_path: ""
 tls_key_path: ""
 
-# 监控的 systemd 服务列表
+# ── systemd 服务管理 ──
 managed_services:
   - "navigation.service"
 
-# 健康检查: 安装后等待导航服务恢复的超时 (秒)
+# ── 健康检查超时 (秒) ──
 health_check_timeout_sec: 30
 
-# 日志级别: DEBUG, INFO, WARN, ERROR
+# ── 日志级别: DEBUG, INFO, WARN, ERROR ──
 log_level: "INFO"
 
-# 允许上传/下载的目录白名单
+# ── 目录白名单 (仅允许上传/安装到以下路径) ──
+# 对齐实际机器人文件布局, 不再使用虚假的 /opt/robot/models
 allowed_directories:
-  - "/opt/robot/models"
+  # 模型 (步态/感知/规划)
+  - "/home/sunrise/models"
+  # 导航栈 (colcon install 输出)
+  - "/home/sunrise/data/SLAM/navigation/install"
+  - "/home/sunrise/data/SLAM/navigation/maps"
+  - "/home/sunrise/data/SLAM/navigation/src/global_planning"
+  # 固件 (deb/bin 等需要 root 安装的)
   - "/opt/robot/firmware"
-  - "/opt/robot/config"
-  - "/opt/robot/maps"
-  - "/opt/robot/navigation"
-  - "/tmp"
+  # OTA 暂存
+  - "/opt/robot/ota/staging"
+
+# ── 制品路径映射 ──
+# 详见 artifact_paths.yaml (同目录, 自动加载)
+# 接收方在 artifact_paths.yaml 中定义每个制品的实际安装路径
+# manifest 中的 target_path 仅作为兜底, 优先级最低

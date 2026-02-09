@@ -1,11 +1,12 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "release_version": "v0.0.0",
   "release_date": "2026-01-01T00:00:00Z",
   "channel": "stable",
   "min_system_version": "1.0.0",
   "signature": "",
   "public_key_id": "ota-signing-key-01",
+  "note": "target_path 仅为建议值, 机器人端 artifact_paths.yaml 优先",
   "artifacts": [
     {
       "name": "navigation",
@@ -13,11 +14,10 @@
       "version": "0.0.0",
       "filename": "navigation-0.0.0-aarch64.tar.gz",
       "sha256": "",
-      "target_path": "/opt/robot/navigation/",
+      "target_path": "",
       "target_board": "nav",
       "hw_compat": ["*"],
       "apply_action": "install_script",
-      "install_script": "/opt/robot/navigation/install_nav.sh",
       "requires_reboot": false,
       "min_battery_percent": 30,
       "changelog": "",
@@ -32,7 +32,7 @@
       "version": "0.0.0",
       "filename": "policy_walk_v0.0.0.onnx",
       "sha256": "",
-      "target_path": "/opt/robot/models/policy_walk.onnx",
+      "target_path": "",
       "target_board": "dog",
       "hw_compat": ["dog_v2", "dog_v3"],
       "apply_action": "reload_model",
@@ -42,12 +42,7 @@
       "rollback_safe": true,
       "safety_level": "warm",
       "owner_module": "brain",
-      "dependencies": [
-        {
-          "artifact_name": "nav_firmware",
-          "min_version": "1.0.0"
-        }
-      ]
+      "dependencies": []
     },
     {
       "name": "nav_firmware",
@@ -55,7 +50,7 @@
       "version": "0.0.0",
       "filename": "nav_board_v0.0.0.deb",
       "sha256": "",
-      "target_path": "/opt/robot/firmware/nav_board.deb",
+      "target_path": "",
       "target_board": "nav",
       "hw_compat": ["*"],
       "apply_action": "install_deb",

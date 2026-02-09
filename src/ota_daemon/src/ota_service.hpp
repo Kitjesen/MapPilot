@@ -12,6 +12,12 @@ namespace ota {
 
 // ──────────────── 配置 ────────────────
 
+// 单个制品的本地路径映射
+struct ArtifactPathEntry {
+  std::string install_path;
+  std::string description;
+};
+
 struct OtaDaemonConfig {
   int grpc_port = 50052;
   std::string bind_address = "0.0.0.0";
@@ -25,6 +31,9 @@ struct OtaDaemonConfig {
   std::string system_version_path = "/opt/robot/ota/system_version.json";
   std::string ota_public_key_path;
 
+  // 下载暂存目录 (替代 /tmp, 受 systemd 保护)
+  std::string staging_dir = "/opt/robot/ota/staging";
+
   std::string tls_cert_path;
   std::string tls_key_path;
 
@@ -32,6 +41,12 @@ struct OtaDaemonConfig {
   int health_check_timeout_sec = 30;
   std::string log_level = "INFO";
   std::vector<std::string> allowed_directories;
+
+  // ── 制品路径映射 (接收方决定安装位置) ──
+  // category → 默认目录
+  std::unordered_map<std::string, std::string> category_defaults;
+  // artifact name → 精确安装路径
+  std::unordered_map<std::string, ArtifactPathEntry> artifact_paths;
 };
 
 OtaDaemonConfig LoadConfig(const std::string &yaml_path);
@@ -130,6 +145,9 @@ private:
                             const std::string &health_check);
 
   bool IsPathAllowed(const std::string &path) const;
+
+  // 解析制品实际安装路径 (本地映射 > category 默认 > manifest target_path)
+  std::string ResolveTargetPath(const robot::v1::OtaArtifact &artifact) const;
 
   // 配置
   OtaDaemonConfig config_;

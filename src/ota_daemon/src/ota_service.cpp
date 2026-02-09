@@ -43,6 +43,8 @@ OtaDaemonConfig LoadConfig(const std::string &yaml_path) {
     if (root["health_check_timeout_sec"]) cfg.health_check_timeout_sec = root["health_check_timeout_sec"].as<int>();
     if (root["log_level"]) cfg.log_level = root["log_level"].as<std::string>();
 
+    if (root["staging_dir"]) cfg.staging_dir = root["staging_dir"].as<std::string>();
+
     if (root["managed_services"]) {
       cfg.managed_services.clear();
       for (const auto &s : root["managed_services"])
@@ -56,6 +58,49 @@ OtaDaemonConfig LoadConfig(const std::string &yaml_path) {
   } catch (const std::exception &e) {
     LOG_ERROR("Failed to parse config %s: %s", yaml_path.c_str(), e.what());
   }
+
+  // ── 加载制品路径映射 (artifact_paths.yaml) ──
+  // 查找: 同目录下的 artifact_paths.yaml
+  std::string paths_yaml = yaml_path;
+  auto slash = paths_yaml.rfind('/');
+  if (slash != std::string::npos) {
+    paths_yaml = paths_yaml.substr(0, slash) + "/artifact_paths.yaml";
+  } else {
+    paths_yaml = "artifact_paths.yaml";
+  }
+
+  try {
+    if (FileExists(paths_yaml)) {
+      YAML::Node paths_root = YAML::LoadFile(paths_yaml);
+
+      if (paths_root["category_defaults"]) {
+        for (const auto &kv : paths_root["category_defaults"]) {
+          cfg.category_defaults[kv.first.as<std::string>()] =
+              kv.second.as<std::string>();
+        }
+      }
+
+      if (paths_root["artifacts"]) {
+        for (const auto &kv : paths_root["artifacts"]) {
+          ArtifactPathEntry entry;
+          if (kv.second["install_path"])
+            entry.install_path = kv.second["install_path"].as<std::string>();
+          if (kv.second["description"])
+            entry.description = kv.second["description"].as<std::string>();
+          cfg.artifact_paths[kv.first.as<std::string>()] = entry;
+        }
+      }
+
+      LOG_INFO("Loaded artifact paths: %zu exact, %zu category defaults",
+               cfg.artifact_paths.size(), cfg.category_defaults.size());
+    } else {
+      LOG_WARN("artifact_paths.yaml not found at %s, using manifest target_path as fallback",
+               paths_yaml.c_str());
+    }
+  } catch (const std::exception &e) {
+    LOG_ERROR("Failed to parse %s: %s", paths_yaml.c_str(), e.what());
+  }
+
   return cfg;
 }
 
@@ -65,6 +110,7 @@ OtaServiceImpl::OtaServiceImpl(const OtaDaemonConfig &config)
     : config_(config), system_version_("1.0.0") {
   // 确保目录存在
   MakeDirs(config_.ota_backup_dir);
+  MakeDirs(config_.staging_dir);
   auto parent = [](const std::string &p) {
     auto pos = p.rfind('/');
     return pos != std::string::npos ? p.substr(0, pos) : ".";
@@ -88,6 +134,54 @@ bool OtaServiceImpl::IsPathAllowed(const std::string &path) const {
     if (path.find(dir) == 0) return true;
   }
   return false;
+}
+
+// ──────────────── 路径解析 (接收方优先) ────────────────
+
+std::string OtaServiceImpl::ResolveTargetPath(
+    const robot::v1::OtaArtifact &artifact) const {
+
+  // 1. 精确匹配: artifact name → install_path
+  auto it = config_.artifact_paths.find(artifact.name());
+  if (it != config_.artifact_paths.end() && !it->second.install_path.empty()) {
+    LOG_INFO("ResolveTargetPath: %s → %s (exact match from artifact_paths.yaml)",
+             artifact.name().c_str(), it->second.install_path.c_str());
+    return it->second.install_path;
+  }
+
+  // 2. 分类默认: category → default_dir/filename
+  std::string cat_key;
+  switch (artifact.category()) {
+    case robot::v1::OTA_CATEGORY_MODEL:    cat_key = "model"; break;
+    case robot::v1::OTA_CATEGORY_CONFIG:   cat_key = "config"; break;
+    case robot::v1::OTA_CATEGORY_MAP:      cat_key = "map"; break;
+    case robot::v1::OTA_CATEGORY_FIRMWARE: cat_key = "firmware"; break;
+    default: break;
+  }
+  if (!cat_key.empty()) {
+    auto cat_it = config_.category_defaults.find(cat_key);
+    if (cat_it != config_.category_defaults.end()) {
+      std::string filename = artifact.filename();
+      if (filename.empty()) filename = artifact.name();
+      std::string path = cat_it->second + "/" + filename;
+      LOG_INFO("ResolveTargetPath: %s → %s (category default: %s)",
+               artifact.name().c_str(), path.c_str(), cat_key.c_str());
+      return path;
+    }
+  }
+
+  // 3. Fallback: manifest 中的 target_path (不推荐, 仅兜底)
+  if (!artifact.target_path().empty()) {
+    LOG_WARN("ResolveTargetPath: %s → %s (FALLBACK: manifest target_path, "
+             "consider adding to artifact_paths.yaml)",
+             artifact.name().c_str(), artifact.target_path().c_str());
+    return artifact.target_path();
+  }
+
+  // 4. 无法解析
+  LOG_ERROR("ResolveTargetPath: %s → EMPTY (no mapping, no category default, no manifest path)",
+            artifact.name().c_str());
+  return "";
 }
 
 // ──────────────── Manifest I/O ────────────────
@@ -737,19 +831,23 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
   const auto &artifact = request->artifact();
   const std::string &staged_path = request->staged_path();
 
-  LOG_INFO("ApplyUpdate: name=%s version=%s category=%d target=%s",
+  // ── 关键: 接收方路径解析 (本地映射 > manifest target_path) ──
+  const std::string target_path = ResolveTargetPath(artifact);
+
+  LOG_INFO("ApplyUpdate: name=%s version=%s category=%d resolved_target=%s",
            artifact.name().c_str(), artifact.version().c_str(),
-           static_cast<int>(artifact.category()), artifact.target_path().c_str());
+           static_cast<int>(artifact.category()), target_path.c_str());
 
   // 1. Path validation
-  if (staged_path.empty() || artifact.target_path().empty()) {
+  if (staged_path.empty() || target_path.empty()) {
     response->set_success(false);
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
-    response->set_message("staged_path and target_path are required");
+    response->set_message("staged_path is empty or target_path could not be resolved "
+                          "(check artifact_paths.yaml for artifact: " + artifact.name() + ")");
     return grpc::Status::OK;
   }
   if (staged_path.find("..") != std::string::npos ||
-      artifact.target_path().find("..") != std::string::npos) {
+      target_path.find("..") != std::string::npos) {
     response->set_success(false);
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
     response->set_message("Path traversal not allowed");
@@ -832,9 +930,9 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
     if (it != installed_artifacts_.end()) previous_version = it->second.version();
   }
 
-  if (artifact.rollback_safe() && FileExists(artifact.target_path())) {
+  if (artifact.rollback_safe() && FileExists(target_path)) {
     std::string backup_path;
-    if (BackupArtifact(artifact.name(), artifact.target_path(), &backup_path)) {
+    if (BackupArtifact(artifact.name(), target_path, &backup_path)) {
       std::lock_guard<std::mutex> lock(ota_mutex_);
       robot::v1::RollbackEntry entry;
       entry.set_name(artifact.name());
@@ -852,13 +950,13 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
   switch (artifact.apply_action()) {
     case robot::v1::OTA_APPLY_ACTION_COPY_ONLY:
     case robot::v1::OTA_APPLY_ACTION_RELOAD_MODEL: {
-      auto dir = artifact.target_path().substr(0, artifact.target_path().rfind('/'));
+      auto dir = target_path.substr(0, target_path.rfind('/'));
       std::filesystem::create_directories(dir);
       try {
-        std::filesystem::copy_file(staged_path, artifact.target_path(),
+        std::filesystem::copy_file(staged_path, target_path,
                                    std::filesystem::copy_options::overwrite_existing);
         install_ok = true;
-        install_msg = "Copied to " + artifact.target_path();
+        install_msg = "Copied to " + target_path;
       } catch (const std::exception &e) {
         install_msg = std::string("Copy failed: ") + e.what();
       }
@@ -892,10 +990,10 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
         install_msg = "Install script returned " + std::to_string(r);
       } else {
         // Fallback: copy
-        auto tdir = artifact.target_path().substr(0, artifact.target_path().rfind('/'));
+        auto tdir = target_path.substr(0, target_path.rfind('/'));
         std::filesystem::create_directories(tdir);
         try {
-          std::filesystem::copy_file(staged_path, artifact.target_path(),
+          std::filesystem::copy_file(staged_path, target_path,
                                      std::filesystem::copy_options::overwrite_existing);
           install_ok = true;
           install_msg = "Copied (no install.sh)";
@@ -906,13 +1004,13 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       break;
     }
     default: {
-      auto tdir = artifact.target_path().substr(0, artifact.target_path().rfind('/'));
+      auto tdir = target_path.substr(0, target_path.rfind('/'));
       std::filesystem::create_directories(tdir);
       try {
-        std::filesystem::copy_file(staged_path, artifact.target_path(),
+        std::filesystem::copy_file(staged_path, target_path,
                                    std::filesystem::copy_options::overwrite_existing);
         install_ok = true;
-        install_msg = "Copied to " + artifact.target_path();
+        install_msg = "Copied to " + target_path;
       } catch (const std::exception &e) {
         install_msg = std::string("Copy failed: ") + e.what();
       }
@@ -948,7 +1046,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       auto rb_it = rollback_entries_.find(artifact.name());
       if (rb_it != rollback_entries_.end() && FileExists(rb_it->second.backup_path())) {
         try {
-          std::filesystem::copy_file(rb_it->second.backup_path(), artifact.target_path(),
+          std::filesystem::copy_file(rb_it->second.backup_path(), target_path,
                                      std::filesystem::copy_options::overwrite_existing);
           rb_ok = true;
         } catch (...) {}
@@ -974,7 +1072,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
     inst.set_name(artifact.name());
     inst.set_category(artifact.category());
     inst.set_version(artifact.version());
-    inst.set_path(artifact.target_path());
+    inst.set_path(target_path);
     inst.set_sha256(artifact.sha256());
     inst.set_installed_at(NowISO8601());
     installed_artifacts_[artifact.name()] = inst;
@@ -996,13 +1094,13 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
   }
 
   LOG_INFO("ApplyUpdate SUCCESS: %s v%s -> %s", artifact.name().c_str(),
-           artifact.version().c_str(), artifact.target_path().c_str());
+           artifact.version().c_str(), target_path.c_str());
 
   response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
   response->set_success(true);
   response->set_status(robot::v1::OTA_UPDATE_STATUS_SUCCESS);
   response->set_message(install_msg);
-  response->set_installed_path(artifact.target_path());
+  response->set_installed_path(target_path);
   response->set_previous_version(previous_version);
   response->set_failure_code(robot::v1::OTA_FAILURE_NONE);
   return grpc::Status::OK;

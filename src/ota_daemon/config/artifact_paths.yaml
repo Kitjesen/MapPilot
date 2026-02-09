@@ -1,0 +1,77 @@
+# ════════════════════════════════════════════════════════════════
+# artifact_paths.yaml — 机器人端制品路径映射 (接收方决定安装位置)
+# ════════════════════════════════════════════════════════════════
+#
+# 设计原则:
+#   manifest.json 中的 target_path 是发布方的"建议路径"
+#   本配置是接收方的"实际路径" — 优先级最高
+#
+# 查找顺序:
+#   1. artifact_paths.yaml 中的 name 精确匹配 → 用 install_path
+#   2. artifact_paths.yaml 中的 category 默认路径 → 用 {default_dir}/{filename}
+#   3. manifest 中的 target_path (仅当上述都未命中时使用, 且必须在白名单内)
+#
+# 每台机器人自行维护此文件, 不随 OTA 更新, 不随 manifest 变化
+# ════════════════════════════════════════════════════════════════
+
+# ── 分类默认目录 ──
+# 当制品 name 没有精确匹配时, 按 category 放到对应目录
+category_defaults:
+  model:    "/home/sunrise/models"
+  config:   "/home/sunrise/data/SLAM/navigation/install"
+  map:      "/home/sunrise/data/SLAM/navigation/maps"
+  firmware: "/opt/robot/firmware"
+
+# ── 制品精确映射 ──
+# key = artifact name (与 manifest 中的 name 字段匹配)
+# install_path = 文件最终安装位置 (覆盖 manifest 的 target_path)
+artifacts:
+
+  # ---- 模型 ----
+  policy_walk:
+    install_path: "/home/sunrise/models/policy_walk.onnx"
+    description: "步态策略模型 (Dog Board 热加载)"
+
+  policy_stand:
+    install_path: "/home/sunrise/models/policy_stand.onnx"
+    description: "站立策略模型"
+
+  yolo_terrain:
+    install_path: "/home/sunrise/models/yolo_terrain.pt"
+    description: "地形分类模型 (terrain_analysis)"
+
+  neupan_checkpoint:
+    install_path: "/home/sunrise/data/SLAM/navigation/src/global_planning/NeuPAN/example/dune_train/model/go2/model_5000.pth"
+    description: "NeuPAN 全局规划检查点"
+
+  # ---- 导航包 ----
+  navigation:
+    install_path: "/home/sunrise/data/SLAM/navigation/install"
+    description: "导航栈 colcon install 目录 (COLD 更新)"
+
+  # ---- 地图 ----
+  site_map:
+    install_path: "/home/sunrise/data/SLAM/navigation/maps/site.pcd"
+    description: "场地点云地图"
+
+  tomogram:
+    install_path: "/home/sunrise/data/SLAM/navigation/src/global_planning/PCT_planner/rsc/tomogram/Common.pickle"
+    description: "PCT 全局规划层析图"
+
+  # ---- 配置 ----
+  lio_config:
+    install_path: "/home/sunrise/data/SLAM/navigation/install/fastlio2/share/fastlio2/config/lio.yaml"
+    description: "Fast-LIO2 配置"
+
+  local_planner_config:
+    install_path: "/home/sunrise/data/SLAM/navigation/install/local_planner/share/local_planner/config/standard.yaml"
+    description: "局部规划器配置"
+
+  # ---- 固件 ----
+  nav_firmware:
+    install_path: "/opt/robot/firmware/nav_board.deb"
+    description: "导航板固件 (deb 安装)"
+
+  mcu_firmware:
+    install_path: "/opt/robot/firmware/mcu.bin"
+    description: "MCU 固件 (串口刷写)"
