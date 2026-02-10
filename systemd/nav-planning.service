@@ -14,6 +14,7 @@ RestartSec=5
 TimeoutStopSec=15
 KillMode=mixed
 KillSignal=SIGINT
+SuccessExitStatus=130 SIGINT
 
 # 地图和初始位姿可通过 EnvironmentFile 覆盖
 # 创建 /etc/nav/planning.env:
