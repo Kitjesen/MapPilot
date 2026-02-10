@@ -6,12 +6,18 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/gateway/file_gateway.dart';
+import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/shared/widgets/status_placeholder.dart';
 import 'package:robot_proto/src/data.pb.dart';
 
 /// Remote file browser for the robot's filesystem.
+///
+/// When [embedded] is true the screen is used as a tab inside MainShell
+/// — no back button, and a disconnected / OTA-unavailable placeholder
+/// is shown instead of the file list.
 class FileBrowserScreen extends StatefulWidget {
-  const FileBrowserScreen({super.key});
+  final bool embedded;
+  const FileBrowserScreen({super.key, this.embedded = false});
 
   @override
   State<FileBrowserScreen> createState() => _FileBrowserScreenState();
@@ -22,7 +28,10 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<FileGateway>().listFiles('/');
+      final connProvider = context.read<RobotConnectionProvider>();
+      if (connProvider.isConnected && connProvider.otaAvailable) {
+        context.read<FileGateway>().listFiles('/');
+      }
     });
   }
 
@@ -136,16 +145,32 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
+    final connProvider = context.watch<RobotConnectionProvider>();
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('文件管理'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: widget.embedded
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new, size: 20),
+                onPressed: () => Navigator.pop(context),
+              ),
+        automaticallyImplyLeading: !widget.embedded,
+        actions: widget.embedded && connProvider.isConnected
+            ? [
+                IconButton(
+                  icon: Icon(Icons.refresh_rounded, size: 20, color: context.subtitleColor),
+                  onPressed: () => context.read<FileGateway>().listFiles(),
+                ),
+              ]
+            : null,
       ),
-      body: Consumer<FileGateway>(
+      body: !connProvider.isConnected
+          ? _buildDisconnectedPlaceholder(context)
+          : !connProvider.otaAvailable
+              ? _buildOtaUnavailablePlaceholder(context)
+              : Consumer<FileGateway>(
         builder: (context, gw, _) {
           return Column(
             children: [
@@ -290,10 +315,107 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _pickAndUpload,
-        backgroundColor: AppColors.primary,
-        child: const Icon(Icons.upload_file, color: Colors.white),
+      floatingActionButton: connProvider.isConnected && connProvider.otaAvailable
+          ? FloatingActionButton(
+              onPressed: _pickAndUpload,
+              backgroundColor: AppColors.primary,
+              child: const Icon(Icons.upload_file, color: Colors.white),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildDisconnectedPlaceholder(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(Icons.folder_off_outlined, size: 36, color: AppColors.primary),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              '未连接机器人',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: context.titleColor,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '连接机器人后可在此管理远程文件',
+              style: TextStyle(
+                fontSize: 14,
+                color: context.subtitleColor,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.of(context).pushNamed('/scan'),
+              icon: const Icon(Icons.wifi_find_rounded, size: 18),
+              label: const Text('扫描设备'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOtaUnavailablePlaceholder(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(Icons.warning_amber_rounded, size: 36, color: AppColors.warning),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'OTA 服务不可用',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: context.titleColor,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '文件管理需要 OTA daemon (端口 50052)\n请确认机器人上的 ota_daemon 服务已启动',
+              style: TextStyle(
+                fontSize: 14,
+                color: context.subtitleColor,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            OutlinedButton.icon(
+              onPressed: () {
+                // Try refreshing files to re-test OTA connection
+                context.read<FileGateway>().listFiles('/');
+              },
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('重试'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -504,7 +626,7 @@ class _FileListTile extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppRadius.card),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(

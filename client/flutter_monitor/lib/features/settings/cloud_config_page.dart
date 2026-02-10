@@ -89,8 +89,8 @@ class _CloudConfigPageState extends State<CloudConfigPage> {
           Container(
             decoration: BoxDecoration(
               color: cardColor,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: borderColor),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
             ),
             child: SwitchListTile(
               title: const Text('使用自定义 URL'),
@@ -191,8 +191,8 @@ class _CloudConfigPageState extends State<CloudConfigPage> {
     return Container(
       decoration: BoxDecoration(
         color: cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: TextField(

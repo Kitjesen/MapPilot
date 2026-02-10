@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -29,7 +28,7 @@ class _ScanScreenState extends State<ScanScreen>
   double _scanProgress = 0.0;
   bool _isNetworkScanning = false;
 
-  // Manual entry — defaults loaded from settings/profile in initState
+  // Manual entry
   final _hostController = TextEditingController();
   final _portController = TextEditingController(text: '50051');
   final _dogHostController = TextEditingController();
@@ -46,12 +45,10 @@ class _ScanScreenState extends State<ScanScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
 
-    // Set defaults from saved devices / robot profile
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final prefs = context.read<SettingsPreferences>();
       final profile = context.read<RobotProfileProvider>().current;
 
-      // Pre-fill from last connected device, or leave empty for scan discovery
       final defaultDevice = prefs.defaultDevice;
       if (defaultDevice != null && defaultDevice.host.isNotEmpty) {
         _hostController.text = defaultDevice.host;
@@ -61,7 +58,6 @@ class _ScanScreenState extends State<ScanScreen>
       _dogPortController.text = profile.defaultPort.toString();
     });
 
-    // Start network scan automatically
     _startNetworkScan();
   }
 
@@ -114,7 +110,6 @@ class _ScanScreenState extends State<ScanScreen>
     });
     HapticFeedback.lightImpact();
 
-    // Show connecting overlay
     _showConnectingOverlay(context, host, port);
 
     try {
@@ -124,14 +119,12 @@ class _ScanScreenState extends State<ScanScreen>
       if (!mounted) return;
 
       if (connected) {
-        // Save device to history
         context.read<SettingsPreferences>().addOrUpdateDevice(SavedDevice(
           name: context.read<RobotProfileProvider>().current.name,
           host: host,
           port: port,
           lastConnected: DateTime.now(),
         ));
-        // Dismiss overlay then navigate
         if (Navigator.canPop(context)) Navigator.pop(context);
         await Future.delayed(const Duration(milliseconds: 150));
         if (!mounted) return;
@@ -154,25 +147,18 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   void _showConnectingOverlay(BuildContext ctx, String host, int port) {
-    final isDark = Theme.of(ctx).brightness == Brightness.dark;
     showDialog(
       context: ctx,
       barrierDismissible: false,
-      barrierColor: Colors.black54,
+      barrierColor: Colors.black38,
       builder: (_) => Center(
         child: Container(
-          width: 260,
-          padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+          width: 280,
+          padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 28),
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
-                blurRadius: 20,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            color: ctx.cardColor,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+            boxShadow: AppShadows.elevated(isDark: ctx.isDark),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -183,18 +169,16 @@ class _ScanScreenState extends State<ScanScreen>
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
                   color: AppColors.primary,
-                  backgroundColor: isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : Colors.black.withValues(alpha: 0.06),
+                  backgroundColor: AppColors.primary.withValues(alpha: 0.1),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
               Text(
                 '正在连接...',
                 style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.white : Colors.black87,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: ctx.titleColor,
                 ),
               ),
               const SizedBox(height: 6),
@@ -202,7 +186,7 @@ class _ScanScreenState extends State<ScanScreen>
                 '$host:$port',
                 style: TextStyle(
                   fontSize: 13,
-                  color: isDark ? Colors.white54 : Colors.black45,
+                  color: ctx.subtitleColor,
                   fontFamily: 'monospace',
                 ),
               ),
@@ -213,7 +197,6 @@ class _ScanScreenState extends State<ScanScreen>
     );
   }
 
-  /// 直连 Dog Board (han_dog CMS gRPC)
   Future<void> _connectToDogDirect(String host, int port) async {
     if (_isDogConnecting) return;
     setState(() {
@@ -228,11 +211,9 @@ class _ScanScreenState extends State<ScanScreen>
       if (!mounted) return;
 
       if (connected) {
-        // 如果没有 Nav Board 连接, 也跳转到详情页
         if (!provider.isConnected) {
           Navigator.of(context).pushReplacementNamed('/robot-detail');
         } else {
-          // 已有 Nav Board 连接, 仅提示成功
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Dog Board 已连接')),
           );
@@ -264,57 +245,142 @@ class _ScanScreenState extends State<ScanScreen>
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('发现设备'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-          onPressed: () => Navigator.pop(context),
+      body: Container(
+        decoration: BoxDecoration(gradient: context.bgGradient),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Header
+              _buildHeader(context),
+              // Title section
+              _buildTitle(context),
+              // Tab bar
+              _buildTabBar(context),
+              // Tab content
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildNetworkTab(),
+                    _buildBluetoothTab(),
+                    _buildManualTab(),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      body: Column(
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+      child: Row(
         children: [
-          // Tab bar
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.06)
-                  : Colors.black.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: TabBar(
-              controller: _tabController,
-              labelColor: context.titleColor,
-              unselectedLabelColor: context.subtitleColor,
-              indicatorSize: TabBarIndicatorSize.tab,
-              dividerHeight: 0,
-              indicator: BoxDecoration(
-                color: isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(8),
+          IconButton(
+            icon: const Icon(Icons.arrow_back_rounded, size: 22),
+            color: context.titleColor,
+            onPressed: () => Navigator.pop(context),
+          ),
+          const Spacer(),
+          // Close button
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: context.cardColor,
+                shape: BoxShape.circle,
+                boxShadow: [AppShadows.light()],
               ),
-              labelStyle: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600),
-              unselectedLabelStyle: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w400),
-              tabs: const [
-                Tab(text: '网络扫描'),
-                Tab(text: '蓝牙'),
-                Tab(text: '手动输入'),
+              child: Icon(Icons.close_rounded, size: 18, color: context.subtitleColor),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTitle(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+      child: Column(
+        children: [
+          Text(
+            'Connect Robot',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: context.titleColor,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Select a connection method to pair a new unit',
+            style: TextStyle(
+              fontSize: 14,
+              color: context.subtitleColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabBar(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24),
+      decoration: BoxDecoration(
+        color: context.surfaceColor,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: TabBar(
+        controller: _tabController,
+        labelColor: AppColors.primary,
+        unselectedLabelColor: context.subtitleColor,
+        indicatorSize: TabBarIndicatorSize.tab,
+        dividerHeight: 0,
+        indicator: BoxDecoration(
+          color: context.cardColor,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          boxShadow: [AppShadows.light()],
+        ),
+        indicatorPadding: const EdgeInsets.all(4),
+        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400),
+        tabs: const [
+          Tab(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.wifi_rounded, size: 16),
+                SizedBox(width: 6),
+                Text('Network Scan'),
               ],
             ),
           ),
-
-          // Tab content
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
+          Tab(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildNetworkTab(),
-                _buildBluetoothTab(),
-                _buildManualTab(),
+                Icon(Icons.bluetooth_rounded, size: 16),
+                SizedBox(width: 6),
+                Text('Bluetooth'),
+              ],
+            ),
+          ),
+          Tab(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.edit_rounded, size: 16),
+                SizedBox(width: 6),
+                Text('Manual'),
               ],
             ),
           ),
@@ -326,37 +392,60 @@ class _ScanScreenState extends State<ScanScreen>
   // ==================== Network Tab ====================
 
   Widget _buildNetworkTab() {
-    final isDark = context.isDark;
-
     return Column(
       children: [
-        // Scan progress
+        const SizedBox(height: 16),
+        // Scanning status bar
         if (_isNetworkScanning)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: _scanProgress,
-                    backgroundColor: isDark
-                        ? Colors.white.withValues(alpha: 0.06)
-                        : Colors.black.withValues(alpha: 0.05),
-                    valueColor:
-                        AlwaysStoppedAnimation(context.subtitleColor),
-                    minHeight: 3,
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: AppColors.success,
+                    shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(width: 8),
                 Text(
-                  '扫描中... ${(_scanProgress * 100).toInt()}%',
+                  'SCANNING LOCAL NETWORK...',
                   style: TextStyle(
-                    fontSize: 12,
-                    color: context.subtitleColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.success,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: _startNetworkScan,
+                  child: Text(
+                    'Refresh',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
               ],
+            ),
+          ),
+
+        if (_isNetworkScanning)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _scanProgress,
+                backgroundColor: AppColors.primary.withValues(alpha: 0.08),
+                valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                minHeight: 3,
+              ),
             ),
           ),
 
@@ -364,50 +453,45 @@ class _ScanScreenState extends State<ScanScreen>
         Expanded(
           child: _networkDevices.isEmpty && !_isNetworkScanning
               ? _buildEmptyState(
-                  Icons.wifi_find,
+                  Icons.wifi_find_rounded,
                   '未发现设备',
                   '请确保机器人在同一网络',
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(24),
                   itemCount: _networkDevices.length +
-                      (_isNetworkScanning ? 3 : 0),
+                      (_isNetworkScanning ? 2 : 0),
                   itemBuilder: (context, index) {
                     if (index >= _networkDevices.length) {
                       return _buildShimmerItem();
                     }
                     final robot = _networkDevices[index];
-                    return _buildDeviceItem(
-                      icon: Icons.wifi,
-                      iconColor: context.subtitleColor,
+                    return _buildDeviceCard(
+                      icon: Icons.smart_toy_rounded,
+                      iconColor: AppColors.primary,
                       title: robot.displayName,
                       subtitle: robot.address,
-                      onTap: () =>
+                      signalLabel: 'Strong Signal',
+                      signalColor: AppColors.success,
+                      onConnect: () =>
                           _connectToRobot(robot.ip, robot.port),
                     );
                   },
                 ),
         ),
 
-        // Rescan button
+        // Troubleshoot link
         Padding(
-          padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: OutlinedButton.icon(
-              onPressed: _isNetworkScanning ? null : _startNetworkScan,
-              icon: Icon(
-                _isNetworkScanning ? Icons.hourglass_top : Icons.refresh,
-                size: 16,
-              ),
-              label: Text(_isNetworkScanning ? '扫描中...' : '重新扫描'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: context.titleColor,
-                side: BorderSide(color: context.borderColor),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+          padding: const EdgeInsets.only(bottom: 16),
+          child: TextButton.icon(
+            onPressed: () {},
+            icon: Icon(Icons.help_outline_rounded, size: 16, color: AppColors.primary),
+            label: Text(
+              'Troubleshoot connection issues',
+              style: TextStyle(
+                fontSize: 13,
+                color: AppColors.primary,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ),
@@ -425,44 +509,76 @@ class _ScanScreenState extends State<ScanScreen>
         builder: (context, ble, _) {
           return Column(
             children: [
+              const SizedBox(height: 16),
               // Scanning indicator
               if (ble.state == BleConnectionState.scanning)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
                     children: [
-                      const LinearProgressIndicator(minHeight: 3),
-                      const SizedBox(height: 6),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: AppColors.success,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
                       Text(
-                        '正在搜索蓝牙设备...',
+                        'Scanning Active',
                         style: TextStyle(
                           fontSize: 12,
-                          color: context.subtitleColor,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.success,
+                        ),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => ble.startScan(),
+                        child: Text(
+                          'Rescan',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primary,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
 
-              // Error message
+              if (ble.state == BleConnectionState.scanning)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      backgroundColor: AppColors.primary.withValues(alpha: 0.08),
+                      valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                      minHeight: 3,
+                    ),
+                  ),
+                ),
+
+              // Error
               if (ble.errorMessage != null)
                 Container(
-                  margin: const EdgeInsets.all(16),
-                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: AppColors.error.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(12),
+                    color: AppColors.errorLight,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline,
-                          size: 18, color: AppColors.error),
-                      const SizedBox(width: 8),
+                      const Icon(Icons.error_outline, size: 18, color: AppColors.error),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           ble.errorMessage!,
-                          style: const TextStyle(
-                              fontSize: 13, color: AppColors.error),
+                          style: const TextStyle(fontSize: 13, color: AppColors.error),
                         ),
                       ),
                     ],
@@ -474,24 +590,26 @@ class _ScanScreenState extends State<ScanScreen>
                 child: ble.discoveredDevices.isEmpty &&
                         ble.state != BleConnectionState.scanning
                     ? _buildEmptyState(
-                        Icons.bluetooth_searching,
+                        Icons.bluetooth_searching_rounded,
                         '未发现蓝牙设备',
                         '请确保机器人蓝牙已开启',
                       )
                     : ListView.builder(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(24),
                         itemCount: ble.discoveredDevices.length,
                         itemBuilder: (context, index) {
                           final device = ble.discoveredDevices[index];
-                          return _buildDeviceItem(
-                            icon: Icons.bluetooth,
+                          final isStrong = device.signalQuality > 0.7;
+                          final isWeak = device.signalQuality < 0.3;
+                          return _buildDeviceCard(
+                            icon: Icons.bluetooth_rounded,
                             iconColor: AppColors.secondary,
                             title: device.displayName,
                             subtitle:
-                                'RSSI: ${device.rssi} dBm${device.hasRobotService ? ' · 机器人服务' : ''}',
-                            trailing: _buildSignalBars(
-                                device.signalQuality),
-                            onTap: () async {
+                                '${device.id}${device.hasRobotService ? ' · Robot Service' : ''}',
+                            signalLabel: isStrong ? 'STRONG SIGNAL' : isWeak ? 'WEAK SIGNAL' : 'MEDIUM',
+                            signalColor: isStrong ? AppColors.success : isWeak ? AppColors.error : AppColors.warning,
+                            onConnect: () async {
                               HapticFeedback.lightImpact();
                               final connected = await ble.connectDevice(device);
                               if (connected && mounted) {
@@ -507,32 +625,25 @@ class _ScanScreenState extends State<ScanScreen>
                       ),
               ),
 
-              // Scan button
+              // Search button
               Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
                 child: SizedBox(
                   width: double.infinity,
                   height: 48,
-                  child: OutlinedButton.icon(
+                  child: ElevatedButton.icon(
                     onPressed: ble.state == BleConnectionState.scanning
                         ? null
                         : () => ble.startScan(),
                     icon: Icon(
                       ble.state == BleConnectionState.scanning
-                          ? Icons.hourglass_top
-                          : Icons.bluetooth_searching,
+                          ? Icons.hourglass_top_rounded
+                          : Icons.bluetooth_searching_rounded,
                       size: 18,
                     ),
                     label: Text(ble.state == BleConnectionState.scanning
                         ? '搜索中...'
                         : '搜索蓝牙'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: context.titleColor,
-                      side: BorderSide(color: context.borderColor),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
                   ),
                 ),
               ),
@@ -546,27 +657,31 @@ class _ScanScreenState extends State<ScanScreen>
   // ==================== Manual Tab ====================
 
   Widget _buildManualTab() {
-    final isDark = context.isDark;
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: 16),
-          Icon(
-            Icons.link,
-            size: 36,
-            color: context.subtitleColor,
+          // Icon
+          Container(
+            width: 64,
+            height: 64,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.08),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.link_rounded, size: 32, color: AppColors.primary),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           Text(
             '手动输入机器人地址',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              color: isDark ? Colors.white : Colors.black87,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: context.titleColor,
             ),
           ),
           const SizedBox(height: 32),
@@ -574,7 +689,7 @@ class _ScanScreenState extends State<ScanScreen>
           // IP field
           _buildInputField(
             controller: _hostController,
-            icon: Icons.wifi_tethering,
+            icon: Icons.wifi_tethering_rounded,
             label: 'Robot IP',
           ),
           const SizedBox(height: 12),
@@ -582,7 +697,7 @@ class _ScanScreenState extends State<ScanScreen>
           // Port field
           _buildInputField(
             controller: _portController,
-            icon: Icons.tag,
+            icon: Icons.tag_rounded,
             label: 'Port',
             keyboardType: TextInputType.number,
           ),
@@ -593,21 +708,19 @@ class _ScanScreenState extends State<ScanScreen>
             child: _errorMessage != null
                 ? Container(
                     margin: const EdgeInsets.only(top: 16),
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: AppColors.error.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(12),
+                      color: AppColors.errorLight,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline,
-                            size: 18, color: AppColors.error),
-                        const SizedBox(width: 8),
+                        const Icon(Icons.error_outline, size: 18, color: AppColors.error),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: Text(
                             _errorMessage!,
-                            style: const TextStyle(
-                                fontSize: 13, color: AppColors.error),
+                            style: const TextStyle(fontSize: 13, color: AppColors.error),
                           ),
                         ),
                       ],
@@ -619,73 +732,91 @@ class _ScanScreenState extends State<ScanScreen>
           const SizedBox(height: 24),
 
           // Connect button
-          _buildGradientButton(
-            onPressed: _isConnecting
-                ? null
-                : () {
-                    final host = _hostController.text.trim();
-                    final port =
-                        int.tryParse(_portController.text.trim()) ?? 50051;
-                    _connectToRobot(host, port);
-                  },
-            isLoading: _isConnecting,
-            icon: Icons.link,
-            label: _isConnecting ? '连接中...' : '连接机器人',
+          SizedBox(
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _isConnecting
+                  ? null
+                  : () {
+                      final host = _hostController.text.trim();
+                      final port =
+                          int.tryParse(_portController.text.trim()) ?? 50051;
+                      _connectToRobot(host, port);
+                    },
+              icon: _isConnecting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.link_rounded, size: 18),
+              label: Text(_isConnecting ? '连接中...' : '连接机器人'),
+            ),
           ),
 
           const SizedBox(height: 32),
 
-          // ─── Dog Board 直连区域 ───
+          // ─── Dog Board 直连 ───
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.orange.withValues(alpha: 0.08)
-                  : Colors.orange.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: Colors.orange.withValues(alpha: 0.2),
-              ),
+              color: AppColors.warningLight,
+              borderRadius: BorderRadius.circular(AppRadius.card),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
                   children: [
-                    Icon(Icons.pets, size: 18, color: Colors.orange.shade700),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Dog Board 直连',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.orange.shade700,
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
                       ),
+                      child: Icon(Icons.pets_rounded, size: 18, color: AppColors.warning),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Dog Board 直连',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          '绕过导航板直接连接 CMS',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '绕过导航板，直接连接机器狗控制板 (CMS)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: context.subtitleColor,
-                  ),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 _buildInputField(
                   controller: _dogHostController,
-                  icon: Icons.pets,
+                  icon: Icons.pets_rounded,
                   label: 'Dog IP',
                 ),
                 const SizedBox(height: 8),
                 _buildInputField(
                   controller: _dogPortController,
-                  icon: Icons.tag,
+                  icon: Icons.tag_rounded,
                   label: 'CMS Port',
                   keyboardType: TextInputType.number,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 SizedBox(
                   height: 44,
                   child: OutlinedButton.icon(
@@ -700,20 +831,18 @@ class _ScanScreenState extends State<ScanScreen>
                           },
                     icon: Icon(
                       _isDogConnecting
-                          ? Icons.hourglass_top
-                          : Icons.link,
+                          ? Icons.hourglass_top_rounded
+                          : Icons.link_rounded,
                       size: 16,
-                      color: Colors.orange.shade700,
                     ),
                     label: Text(
                       _isDogConnecting ? '连接中...' : '直连 Dog Board',
-                      style: TextStyle(color: Colors.orange.shade700),
                     ),
                     style: OutlinedButton.styleFrom(
-                      side: BorderSide(
-                          color: Colors.orange.withValues(alpha: 0.4)),
+                      foregroundColor: AppColors.warning,
+                      side: BorderSide(color: AppColors.warning.withValues(alpha: 0.5)),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
                       ),
                     ),
                   ),
@@ -726,18 +855,11 @@ class _ScanScreenState extends State<ScanScreen>
 
           // Mock button
           SizedBox(
-            height: 50,
+            height: 48,
             child: OutlinedButton.icon(
               onPressed: _isConnecting ? null : _startMock,
               icon: const Icon(Icons.science_outlined, size: 18),
               label: const Text('Mock 演示模式'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: context.subtitleColor,
-                side: BorderSide(color: context.dividerColor),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
             ),
           ),
         ],
@@ -747,42 +869,88 @@ class _ScanScreenState extends State<ScanScreen>
 
   // ==================== Shared Widgets ====================
 
-  Widget _buildDeviceItem({
+  Widget _buildDeviceCard({
     required IconData icon,
     required Color iconColor,
     required String title,
     required String subtitle,
-    Widget? trailing,
-    VoidCallback? onTap,
+    String? signalLabel,
+    Color? signalColor,
+    VoidCallback? onConnect,
   }) {
-    final isDark = context.isDark;
-
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
-      ),
-      child: ListTile(
-        onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        leading: Icon(icon, color: context.subtitleColor, size: 18),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: context.titleColor,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: context.cardDecoration,
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: iconColor, size: 22),
           ),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: TextStyle(fontSize: 12, color: context.subtitleColor),
-        ),
-        trailing: trailing ??
-            Icon(Icons.chevron_right, size: 16, color: context.subtitleColor),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: context.titleColor,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        subtitle,
+                        style: TextStyle(fontSize: 12, color: context.subtitleColor),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (signalLabel != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        '· ',
+                        style: TextStyle(color: context.subtitleColor, fontSize: 12),
+                      ),
+                      Text(
+                        signalLabel,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: signalColor ?? AppColors.success,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            height: 36,
+            child: ElevatedButton(
+              onPressed: onConnect,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+              ),
+              child: const Text('Connect', style: TextStyle(fontSize: 13)),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -790,15 +958,14 @@ class _ScanScreenState extends State<ScanScreen>
   Widget _buildShimmerItem() {
     final isDark = context.isDark;
     return Shimmer.fromColors(
-      baseColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
-      highlightColor:
-          isDark ? Colors.white.withValues(alpha: 0.12) : Colors.grey.shade100,
+      baseColor: isDark ? Colors.white.withValues(alpha: 0.06) : const Color(0xFFEEEBFF),
+      highlightColor: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFF8F6FF),
       child: Container(
-        height: 70,
-        margin: const EdgeInsets.only(bottom: 10),
+        height: 76,
+        margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.card),
         ),
       ),
     );
@@ -809,42 +976,31 @@ class _ScanScreenState extends State<ScanScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 56, color: context.subtitleColor),
-          const SizedBox(height: 16),
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.06),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 40, color: AppColors.primary.withValues(alpha: 0.4)),
+          ),
+          const SizedBox(height: 20),
           Text(
             title,
             style: TextStyle(
               fontSize: 17,
-              fontWeight: FontWeight.w600,
-              color: context.isDark ? Colors.white70 : Colors.black54,
+              fontWeight: FontWeight.w700,
+              color: context.titleColor,
             ),
           ),
           const SizedBox(height: 6),
           Text(
             subtitle,
-            style: TextStyle(fontSize: 13, color: context.subtitleColor),
+            style: TextStyle(fontSize: 14, color: context.subtitleColor),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildSignalBars(double quality) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: List.generate(4, (i) {
-        final threshold = (i + 1) / 4.0;
-        final active = quality >= threshold;
-        return Container(
-          width: 4,
-          height: 6.0 + i * 4.0,
-          margin: const EdgeInsets.only(right: 2),
-          decoration: BoxDecoration(
-            color: active ? context.titleColor : Colors.grey.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(2),
-          ),
-        );
-      }),
     );
   }
 
@@ -854,61 +1010,19 @@ class _ScanScreenState extends State<ScanScreen>
     required String label,
     TextInputType keyboardType = TextInputType.text,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: context.inputFillColor,
-        borderRadius: BorderRadius.circular(14),
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      textInputAction: TextInputAction.next,
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w500,
+        color: context.titleColor,
       ),
-      child: TextField(
-        controller: controller,
-        keyboardType: keyboardType,
-        textInputAction: TextInputAction.next,
-        style: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-          color: context.isDark ? Colors.white : Colors.black87,
-        ),
-        decoration: InputDecoration(
-          prefixIcon: Icon(icon, size: 18, color: context.subtitleColor),
-          hintText: label,
-          hintStyle: TextStyle(color: context.subtitleColor),
-          border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGradientButton({
-    required VoidCallback? onPressed,
-    required bool isLoading,
-    required IconData icon,
-    required String label,
-  }) {
-    return SizedBox(
-      height: 44,
-      width: double.infinity,
-      child: TextButton(
-        onPressed: onPressed,
-        style: TextButton.styleFrom(
-          foregroundColor: context.titleColor,
-          backgroundColor: context.isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.04),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(color: context.borderColor),
-          ),
-        ),
-        child: isLoading
-            ? SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: context.subtitleColor,
-                ),
-              )
-            : Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+      decoration: InputDecoration(
+        prefixIcon: Icon(icon, size: 18, color: context.subtitleColor),
+        hintText: label,
+        hintStyle: TextStyle(color: context.hintColor),
       ),
     );
   }

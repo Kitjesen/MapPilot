@@ -1,6 +1,8 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
@@ -19,6 +21,7 @@ class _CameraScreenState extends State<CameraScreen>
     with SingleTickerProviderStateMixin {
   int _activeCameraIndex = 0;
   bool _showOverlay = true;
+  bool _isFullscreen = false;
 
   late final AnimationController _overlayAnim;
   late final Animation<double> _overlayOpacity;
@@ -55,8 +58,32 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   void dispose() {
     _overlayAnim.dispose();
+    // 退出时恢复窗口状态
+    if (_isFullscreen) {
+      _setFullscreen(false);
+    }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
+  }
+
+  Future<void> _toggleFullscreen() async {
+    HapticFeedback.lightImpact();
+    final goFull = !_isFullscreen;
+    await _setFullscreen(goFull);
+    if (mounted) setState(() => _isFullscreen = goFull);
+  }
+
+  Future<void> _setFullscreen(bool fullscreen) async {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      await windowManager.setFullScreen(fullscreen);
+    } else {
+      // Mobile
+      if (fullscreen) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
+    }
   }
 
   void _toggleCamera() {
@@ -97,46 +124,46 @@ class _CameraScreenState extends State<CameraScreen>
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: _toggleOverlay,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Video feed
-            if (isConnected)
-              _CameraView(
-                key: ValueKey('camera_$_activeCameraId'),
-                client: client,
-                cameraId: _activeCameraId,
-              )
-            else
-              _buildDisconnectedView(),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Video feed — tap here to toggle overlay
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleOverlay,
+            child: isConnected
+                ? _CameraView(
+                    key: ValueKey('camera_$_activeCameraId'),
+                    client: client,
+                    cameraId: _activeCameraId,
+                  )
+                : _buildDisconnectedView(),
+          ),
 
-            // Overlay controls with fade animation
-            if (_showOverlay)
-              FadeTransition(
-                opacity: _overlayOpacity,
-                child: Stack(
-                  children: [
-                    // Top gradient + bar
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: _buildTopBar(context, isConnected),
-                    ),
-                    // Bottom gradient + controls
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: _buildBottomBar(context, isConnected),
-                    ),
-                  ],
-                ),
+          // Overlay controls with fade animation
+          if (_showOverlay)
+            FadeTransition(
+              opacity: _overlayOpacity,
+              child: Stack(
+                children: [
+                  // Top gradient + bar
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _buildTopBar(context, isConnected),
+                  ),
+                  // Bottom gradient + controls
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: _buildBottomBar(context, isConnected),
+                  ),
+                ],
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -235,14 +262,9 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               // Fullscreen
               _ControlButton(
-                icon: _showOverlay ? Icons.fullscreen : Icons.fullscreen_exit,
-                label: '全屏',
-                onTap: () {
-                  HapticFeedback.lightImpact();
-                  SystemChrome.setEnabledSystemUIMode(
-                    SystemUiMode.immersiveSticky,
-                  );
-                },
+                icon: _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                label: _isFullscreen ? '退出全屏' : '全屏',
+                onTap: _toggleFullscreen,
               ),
             ],
           ),

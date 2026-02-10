@@ -28,11 +28,11 @@ class FeatureCard extends StatelessWidget {
   Color _iconAccent() {
     const palette = [
       AppColors.primary,
-      Color(0xFF5856D6),
+      AppColors.secondary,
       AppColors.success,
       AppColors.warning,
-      Color(0xFF5AC8FA),
-      Color(0xFFAF52DE),
+      AppColors.info,
+      AppColors.accent,
     ];
     return color ?? palette[icon.codePoint % palette.length];
   }
@@ -52,17 +52,8 @@ class FeatureCard extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: context.borderColor),
-          boxShadow: isDark
-              ? null
-              : [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -157,11 +148,11 @@ class SettingsSection extends StatelessWidget {
           Container(
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: context.borderColor),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(AppRadius.card),
               child: Column(
                 children: _insertDividers(context, children),
               ),

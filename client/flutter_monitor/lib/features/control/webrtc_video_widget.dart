@@ -18,9 +18,9 @@ import 'package:robot_proto/src/data.pb.dart';
 /// Camera video widget with WebRTC + gRPC Subscribe fallback.
 ///
 /// Strategy:
-///   1. Try WebRTC DataChannel (low-latency, peer-to-peer)
-///   2. If no frame arrives within [_webrtcTimeoutSec], automatically
-///      switch to gRPC Subscribe (reliable, works across NAT)
+///   1. Start gRPC Subscribe immediately (reliable, works across NAT)
+///   2. Try WebRTC DataChannel in parallel (low-latency, peer-to-peer)
+///   3. If WebRTC delivers frames, switch to WebRTC and stop gRPC
 class WebRTCVideoWidget extends StatefulWidget {
   final RobotClientBase client;
   final String cameraId;
@@ -61,11 +61,8 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
   Uint8List? _latestJpegFrame;
   String? _errorMessage;
   _VideoMode _mode = _VideoMode.none;
-  bool _useDataChannelVideo = false;
   Timer? _webrtcTimeout;
-
-  /// Seconds to wait for first WebRTC frame before falling back to gRPC.
-  static const int _webrtcTimeoutSec = 6;
+  int _grpcFrameCount = 0;
 
   @override
   void initState() {
@@ -106,6 +103,7 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
       _mode = _VideoMode.connecting;
       _errorMessage = null;
       _latestJpegFrame = null;
+      _grpcFrameCount = 0;
     });
 
     // 直接启动 gRPC Subscribe（可靠路径），同时尝试 WebRTC
@@ -153,7 +151,6 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
         }
         setState(() {
           _latestJpegFrame = frameData;
-          _useDataChannelVideo = true;
           _mode = _VideoMode.webrtc;
         });
       }
@@ -194,7 +191,6 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
     _webrtcClient?.dispose();
     _webrtcClient = null;
     _renderer = null;
-    _useDataChannelVideo = false;
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -207,16 +203,23 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
     debugPrint('VideoWidget: Starting gRPC Subscribe for '
         'camera "${widget.cameraId}"');
 
-    final topicName = _cameraIdToTopic(widget.cameraId);
-
+    // 使用简洁的 camera name（如 'front'），让服务端解析实际 topic
+    // 与 test/data/camera.dart 测试工具保持一致
     final resourceId = ResourceId()
       ..type = ResourceType.RESOURCE_TYPE_CAMERA
-      ..name = topicName;
+      ..name = widget.cameraId;
 
     try {
       _grpcSubscription = widget.client.subscribeToResource(resourceId).listen(
         (chunk) {
           if (mounted && chunk.data.isNotEmpty) {
+            _grpcFrameCount++;
+            if (_grpcFrameCount == 1) {
+              final isJpeg = chunk.data.length > 2 &&
+                  chunk.data[0] == 0xFF && chunk.data[1] == 0xD8;
+              debugPrint('VideoWidget: gRPC first frame! '
+                  '${chunk.data.length} bytes, JPEG=$isJpeg');
+            }
             setState(() {
               _latestJpegFrame = Uint8List.fromList(chunk.data);
               _mode = _VideoMode.grpcFallback;
@@ -224,19 +227,26 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
           }
         },
         onError: (error) {
-          debugPrint('VideoWidget: gRPC camera stream error: $error');
+          debugPrint('VideoWidget: gRPC camera error: $error');
+          _grpcSubscription = null;
+          // 自动重连，不直接标记 failed
           if (mounted) {
-            setState(() {
-              _errorMessage = 'Camera stream error: $error';
-              _mode = _VideoMode.failed;
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted && _grpcSubscription == null) {
+                debugPrint('VideoWidget: gRPC auto-reconnecting...');
+                _startGrpcFallback();
+              }
             });
           }
         },
         onDone: () {
           debugPrint('VideoWidget: gRPC stream ended');
-          if (mounted && _mode == _VideoMode.grpcFallback) {
+          _grpcSubscription = null;
+          if (mounted) {
             Future.delayed(const Duration(seconds: 1), () {
-              if (mounted) _startGrpcFallback();
+              if (mounted && _grpcSubscription == null) {
+                _startGrpcFallback();
+              }
             });
           }
         },
@@ -249,18 +259,6 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
           _mode = _VideoMode.failed;
         });
       }
-    }
-  }
-
-  String _cameraIdToTopic(String cameraId) {
-    switch (cameraId) {
-      case 'front':
-        return '/camera/color/image_raw/compressed';
-      case 'rear':
-        return '/camera/rear/image_raw/compressed';
-      default:
-        if (cameraId.startsWith('/')) return cameraId;
-        return '/camera/color/image_raw/compressed';
     }
   }
 

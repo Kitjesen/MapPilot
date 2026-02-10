@@ -122,16 +122,20 @@ class _FullScreenErrorWidget extends StatelessWidget {
                 color: AppColors.warning,
               ),
               const SizedBox(height: 24),
-              const Text(
+              Text(
                 '出了点问题',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: context.titleColor,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
                 '应用遇到了意外错误，您可以尝试重试。',
                 style: TextStyle(
                   fontSize: 14,
-                  color: Colors.grey[600],
+                  color: context.subtitleColor,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -140,15 +144,17 @@ class _FullScreenErrorWidget extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
+                    color: context.isDark ? AppColors.darkCard : AppColors.lightSurface,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    border: context.isDark ? Border.all(color: AppColors.borderDark) : null,
+                    boxShadow: context.isDark ? null : [AppShadows.light()],
                   ),
                   child: Text(
                     details!.exceptionAsString(),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       fontFamily: 'monospace',
-                      color: Colors.black54,
+                      color: context.subtitleColor,
                     ),
                     maxLines: 4,
                     overflow: TextOverflow.ellipsis,
@@ -166,7 +172,7 @@ class _FullScreenErrorWidget extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 32, vertical: 14),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
                 ),
               ),

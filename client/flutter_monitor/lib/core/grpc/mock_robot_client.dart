@@ -664,6 +664,9 @@ class MockRobotClient implements RobotClientBase {
   bool get isConnected => _connected;
 
   @override
+  bool get otaAvailable => _connected; // Mock mode: always available when connected
+
+  @override
   DataServiceClient? get dataServiceClient => null;
 
   Header _header() {

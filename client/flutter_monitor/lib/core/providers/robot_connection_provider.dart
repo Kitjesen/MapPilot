@@ -107,6 +107,9 @@ class RobotConnectionProvider extends ChangeNotifier {
   /// Latest measured RTT in milliseconds (null if no heartbeat yet).
   double? get connectionRttMs => _lastRttMs;
 
+  /// OTA daemon (port 50052) 是否可用
+  bool get otaAvailable => _client?.otaAvailable ?? false;
+
   /// Robot capabilities (null until fetched).
   CapabilitiesResponse? get capabilities => _capabilities;
 

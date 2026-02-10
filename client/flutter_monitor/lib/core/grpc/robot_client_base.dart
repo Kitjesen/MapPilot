@@ -174,6 +174,9 @@ abstract class RobotClientBase {
 
   Future<void> disconnect();
   bool get isConnected;
+
+  /// OTA daemon (port 50052) 是否可用
+  bool get otaAvailable => false;
   
   /// DataServiceClient for WebRTC signaling (null if mock/unsupported)
   DataServiceClient? get dataServiceClient => null;

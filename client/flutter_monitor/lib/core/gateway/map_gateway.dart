@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
 import 'package:robot_proto/src/common.pb.dart';
-import 'package:robot_proto/src/control.pb.dart';
 import 'package:robot_proto/src/system.pb.dart';
 
 /// 地图管理网关：封装地图 CRUD + relocalize 业务逻辑。
@@ -186,36 +185,6 @@ class MapGateway extends ChangeNotifier {
       _downloadProgress = 0.0;
       notifyListeners();
       return null;
-    }
-  }
-
-  /// 启动导航到指定目标点
-  Future<(bool, String)> startNavigation(double goalX, double goalY) async {
-    final client = _client;
-    if (client == null) return (false, '未连接');
-
-    try {
-      final goal = NavigationGoal()
-        ..position = (Vector3()
-          ..x = goalX
-          ..y = goalY
-          ..z = 0)
-        ..arrivalRadius = 1.0;
-
-      final params = NavigationParams()..waypoints.add(goal);
-
-      final resp = await client.startTask(
-        taskType: TaskType.TASK_TYPE_NAVIGATION,
-        navigationParams: params,
-      );
-
-      if (resp.base.errorCode == ErrorCode.ERROR_CODE_OK) {
-        return (true, '导航已启动 → (${goalX.toStringAsFixed(1)}, ${goalY.toStringAsFixed(1)})');
-      } else {
-        return (false, '启动失败: ${resp.base.errorMessage}');
-      }
-    } catch (e) {
-      return (false, '导航错误: $e');
     }
   }
 }

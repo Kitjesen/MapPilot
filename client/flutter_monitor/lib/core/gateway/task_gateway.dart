@@ -67,6 +67,50 @@ class TaskGateway extends ChangeNotifier {
   // 业务方法
   // ================================================================
 
+  /// 启动导航任务（统一入口）
+  ///
+  /// 所有导航任务应优先通过该方法发起，避免页面重复拼装参数。
+  Future<bool> startNavigationTask(
+    List<NavigationGoal> waypoints, {
+    bool loop = false,
+  }) async {
+    if (waypoints.isEmpty) {
+      _statusMessage = '请先设置导航目标';
+      notifyListeners();
+      return false;
+    }
+    final params = NavigationParams()
+      ..waypoints.addAll(waypoints)
+      ..loop = loop;
+    return startTask(
+      TaskType.TASK_TYPE_NAVIGATION,
+      navigationParams: params,
+    );
+  }
+
+  /// 启动单目标点导航。
+  Future<bool> startSingleGoalNavigation({
+    required double x,
+    required double y,
+    double z = 0,
+    double yaw = 0,
+    double arrivalRadius = 1.0,
+    String label = '',
+  }) async {
+    final goal = NavigationGoal()
+      ..position = (Vector3()
+        ..x = x
+        ..y = y
+        ..z = z)
+      ..yaw = yaw
+      ..arrivalRadius = arrivalRadius
+      ..label = label;
+    return startNavigationTask([goal]);
+  }
+
+  /// Whether current task execution should block cold OTA actions.
+  bool get blocksColdOta => _isRunning;
+
   /// 启动任务
   Future<bool> startTask(
     TaskType type, {
@@ -101,7 +145,7 @@ class TaskGateway extends ChangeNotifier {
         _isPaused = false;
         _progress = 0.0;
         _taskStatus = TaskStatus.TASK_STATUS_RUNNING;
-        _statusMessage = '任务已启动';
+        _statusMessage = '${_taskTypeLabel(type)}任务已启动';
         _startPolling();
         notifyListeners();
         return true;
@@ -213,6 +257,23 @@ class TaskGateway extends ChangeNotifier {
   void _stopPolling() {
     _statusTimer?.cancel();
     _statusTimer = null;
+  }
+
+  String _taskTypeLabel(TaskType type) {
+    switch (type) {
+      case TaskType.TASK_TYPE_NAVIGATION:
+        return '导航';
+      case TaskType.TASK_TYPE_MAPPING:
+        return '建图';
+      case TaskType.TASK_TYPE_INSPECTION:
+        return '巡检';
+      case TaskType.TASK_TYPE_RETURN_HOME:
+        return '回家';
+      case TaskType.TASK_TYPE_FOLLOW_PATH:
+        return '循迹';
+      default:
+        return '';
+    }
   }
 
   @override

@@ -62,8 +62,8 @@ class SupportPage extends StatelessWidget {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: context.borderColor),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -165,8 +165,8 @@ class _SupportCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Row(
         children: [

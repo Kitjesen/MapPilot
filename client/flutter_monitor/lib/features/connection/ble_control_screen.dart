@@ -176,8 +176,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Row(
         children: [
@@ -231,8 +231,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -262,7 +262,7 @@ class _BleControlScreenState extends State<BleControlScreen> {
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: AppColors.error.withValues(alpha:0.08),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(AppRadius.card),
               ),
               child: Row(
                 children: [
@@ -342,8 +342,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -401,8 +401,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

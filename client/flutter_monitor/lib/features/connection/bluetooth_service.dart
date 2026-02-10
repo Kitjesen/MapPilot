@@ -231,8 +231,10 @@ class BluetoothService extends ChangeNotifier {
   @override
   void dispose() {
     stopScan();
-    _robotClient.dispose();
+    // 必须先 disconnect（会调 unbind → notifyListeners），
+    // 再 dispose robotClient，否则 dispose 后 notifyListeners 会崩
     disconnectDevice();
+    _robotClient.dispose();
     super.dispose();
   }
 }

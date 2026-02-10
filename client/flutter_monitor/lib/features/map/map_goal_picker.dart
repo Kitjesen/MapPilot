@@ -204,8 +204,8 @@ class _MapGoalPickerState extends State<MapGoalPicker> {
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
                 decoration: BoxDecoration(
                   color: context.isDark ? AppColors.darkCard : Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: context.borderColor),
+                  borderRadius: BorderRadius.circular(AppRadius.card),
+                  boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
                 ),
                 child: Text(
                   _selectedPoint == null
@@ -236,7 +236,7 @@ class _MapGoalPickerState extends State<MapGoalPicker> {
                   style: TextButton.styleFrom(
                     foregroundColor: context.titleColor,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(AppRadius.card),
                       side: BorderSide(color: context.borderColor),
                     ),
                     backgroundColor: context.isDark

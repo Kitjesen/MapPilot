@@ -200,12 +200,11 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             decoration: BoxDecoration(
               color: isDark
-                  ? const Color(0xFF1C1C1E).withValues(alpha: 0.92)
+                  ? AppColors.darkCard.withValues(alpha: 0.92)
                   : Colors.white.withValues(alpha: 0.92),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isDark ? AppColors.borderDark : AppColors.borderLight,
-              ),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              border: isDark ? Border.all(color: AppColors.borderDark) : null,
+              boxShadow: isDark ? null : [AppShadows.light()],
             ),
             child: DraggableScrollableSheet(
               initialChildSize: 0.52,
@@ -442,10 +441,9 @@ class _RobotCard extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isDark ? AppColors.borderDark : AppColors.borderLight,
-          ),
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          border: isDark ? Border.all(color: AppColors.borderDark) : null,
+          boxShadow: isDark ? null : [AppShadows.light()],
         ),
         clipBehavior: Clip.antiAlias,
         child: Stack(
@@ -586,12 +584,9 @@ class _ShimmerCardState extends State<_ShimmerCard>
         return Container(
           decoration: BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: widget.isDark
-                  ? AppColors.borderDark
-                  : AppColors.borderLight,
-            ),
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            border: widget.isDark ? Border.all(color: AppColors.borderDark) : null,
+            boxShadow: widget.isDark ? null : [AppShadows.light()],
           ),
           padding: const EdgeInsets.all(14),
           child: Column(

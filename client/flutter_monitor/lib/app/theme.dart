@@ -20,41 +20,62 @@ class AppSpacing {
 }
 
 class AppRadius {
-  static const double sm = 6;
-  static const double md = 8;
-  static const double lg = 12;
-  static const double xl = 16;
-  static const double xxl = 20;
+  static const double sm = 8;
+  static const double md = 12;
+  static const double lg = 16;
+  static const double xl = 20;
+  static const double xxl = 24;
 
   /// Default card radius.
-  static const double card = 12;
+  static const double card = 16;
   /// Icon container radius.
-  static const double icon = 8;
+  static const double icon = 12;
   /// Pill / badge radius.
   static const double pill = 20;
 }
 
 class AppShadows {
-  /// Barely visible shadow (light mode) — Cursor/Apple style.
+  /// Soft card shadow (light mode).
   static BoxShadow light({Color? color}) => BoxShadow(
-        color: color ?? Colors.black.withValues(alpha: 0.04),
-        blurRadius: 6,
-        offset: const Offset(0, 1),
+        color: color ?? const Color(0xFF6C63FF).withValues(alpha: 0.06),
+        blurRadius: 24,
+        spreadRadius: 0,
+        offset: const Offset(0, 4),
       );
 
   /// Subtle shadow (dark mode).
   static BoxShadow dark({Color? color}) => BoxShadow(
-        color: color ?? Colors.black.withValues(alpha: 0.40),
-        blurRadius: 8,
+        color: color ?? Colors.black.withValues(alpha: 0.30),
+        blurRadius: 16,
+        offset: const Offset(0, 4),
+      );
+
+  /// Colored glow — soft purple.
+  static BoxShadow glow(Color color, {double blur = 16}) => BoxShadow(
+        color: color.withValues(alpha: 0.18),
+        blurRadius: blur,
         offset: const Offset(0, 2),
       );
 
-  /// Colored glow — very subtle.
-  static BoxShadow glow(Color color, {double blur = 10}) => BoxShadow(
-        color: color.withValues(alpha: 0.15),
-        blurRadius: blur,
-        offset: const Offset(0, 1),
-      );
+  /// Elevated card shadow.
+  static List<BoxShadow> elevated({bool isDark = false}) => [
+        BoxShadow(
+          color: isDark
+              ? Colors.black.withValues(alpha: 0.4)
+              : const Color(0xFF6C63FF).withValues(alpha: 0.08),
+          blurRadius: 32,
+          spreadRadius: 0,
+          offset: const Offset(0, 8),
+        ),
+        BoxShadow(
+          color: isDark
+              ? Colors.black.withValues(alpha: 0.2)
+              : const Color(0xFF6C63FF).withValues(alpha: 0.04),
+          blurRadius: 12,
+          spreadRadius: 0,
+          offset: const Offset(0, 2),
+        ),
+      ];
 }
 
 class AppDurations {
@@ -65,68 +86,96 @@ class AppDurations {
 }
 
 // ============================================================
-// App color constants
+// App color constants — Purple/Indigo Design System
 // ============================================================
 
 class AppColors {
-  // Brand
-  static const primary = Color(0xFF007AFF);
-  static const secondary = Color(0xFF5856D6);
-  static const accent = Color(0xFFAF52DE);
+  // Brand — Purple / Indigo
+  static const primary = Color(0xFF6C63FF);
+  static const primaryLight = Color(0xFF8B83FF);
+  static const primaryDark = Color(0xFF5046E5);
+  static const secondary = Color(0xFF8B5CF6);
+  static const accent = Color(0xFFA78BFA);
 
   // Semantic
-  static const success = Color(0xFF34C759);
-  static const warning = Color(0xFFFF9500);
-  static const error = Color(0xFFFF3B30);
-  static const info = Color(0xFF5AC8FA);
+  static const success = Color(0xFF22C55E);
+  static const successLight = Color(0xFFDCFCE7);
+  static const warning = Color(0xFFF59E0B);
+  static const warningLight = Color(0xFFFEF3C7);
+  static const error = Color(0xFFEF4444);
+  static const errorLight = Color(0xFFFEE2E2);
+  static const info = Color(0xFF3B82F6);
+  static const infoLight = Color(0xFFDBEAFE);
 
-  // Light surfaces
-  static const lightBackground = Color(0xFFF2F2F7);
-  static const lightSurface = Colors.white;
+  // Light surfaces — soft lavender tones
+  static const lightBackground = Color(0xFFF5F3FF);
+  static const lightSurface = Color(0xFFFAF9FF);
   static const lightCard = Color(0xFFFFFFFF);
+  static const lightSidebar = Color(0xFFF0EDFF);
 
-  // Dark surfaces — Apple/URDF-Studio style
-  static const darkBackground = Color(0xFF000000);
-  static const darkSurface = Color(0xFF1C1C1E);
-  static const darkCard = Color(0xFF1C1C1E);
-  static const darkElevated = Color(0xFF2C2C2E);
+  // Dark surfaces — deep purple-tinted
+  static const darkBackground = Color(0xFF0F0E1A);
+  static const darkSurface = Color(0xFF1A1830);
+  static const darkCard = Color(0xFF221F3A);
+  static const darkElevated = Color(0xFF2D2950);
 
-  // Borders — clean & subtle
-  static Color borderLight = const Color(0xFFE5E5E5);
-  static Color borderDark = const Color(0xFF38383A);
+  // Borders — subtle, barely visible
+  static Color borderLight = const Color(0xFFE8E5F5);
+  static Color borderDark = const Color(0xFF2D2950);
 
-  // Glass — now cleaner, less frosted
-  static Color glassLight = Colors.white.withValues(alpha: 0.95);
-  static Color glassDark = const Color(0xFF1C1C1E).withValues(alpha: 0.92);
-  static Color glassBorderLight = const Color(0xFFE5E5E5);
-  static Color glassBorderDark = const Color(0xFF38383A);
+  // Text colors
+  static const textPrimary = Color(0xFF1E1B4B);
+  static const textSecondary = Color(0xFF6B7280);
+  static const textTertiary = Color(0xFF9CA3AF);
+
+  static const textPrimaryDark = Color(0xFFE8E5F5);
+  static const textSecondaryDark = Color(0xFF9CA3AF);
+  static const textTertiaryDark = Color(0xFF6B7280);
+
+  // Glass — now with purple tint
+  static Color glassLight = Colors.white.withValues(alpha: 0.92);
+  static Color glassDark = const Color(0xFF1A1830).withValues(alpha: 0.90);
+  static Color glassBorderLight = const Color(0xFFE8E5F5);
+  static Color glassBorderDark = const Color(0xFF2D2950);
 
   // Gradients
   static const brandGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [primary, secondary],
+    colors: [Color(0xFF6C63FF), Color(0xFF8B5CF6)],
   );
 
-  /// Background gradient for dark mode — flat, no gradient noise.
+  static const cardGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Color(0xFFFFFFFF), Color(0xFFFAF9FF)],
+  );
+
+  /// Background gradient for light mode — soft lavender.
+  static const lightBgGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [
+      Color(0xFFF5F3FF),
+      Color(0xFFEEF2FF),
+      Color(0xFFF0F0FF),
+    ],
+  );
+
+  /// Background gradient for dark mode — deep purple.
   static const darkBgGradient = LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
     colors: [
-      Color(0xFF000000),
-      Color(0xFF000000),
+      Color(0xFF0F0E1A),
+      Color(0xFF131127),
     ],
   );
 
-  /// Background gradient for light mode — clean flat.
-  static const lightBgGradient = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [
-      Color(0xFFF2F2F7),
-      Color(0xFFF2F2F7),
-    ],
-  );
+  /// Status badge colors
+  static const online = Color(0xFF22C55E);
+  static const offline = Color(0xFFEF4444);
+  static const connecting = Color(0xFFF59E0B);
 }
 
 // ============================================================
@@ -180,8 +229,10 @@ final ThemeData lightTheme = ThemeData(
   useMaterial3: true,
   brightness: Brightness.light,
   scaffoldBackgroundColor: AppColors.lightBackground,
+  fontFamily: 'Inter',
   colorScheme: ColorScheme.fromSeed(
     seedColor: AppColors.primary,
+    primary: AppColors.primary,
     surface: AppColors.lightSurface,
     brightness: Brightness.light,
   ),
@@ -189,36 +240,81 @@ final ThemeData lightTheme = ThemeData(
     backgroundColor: Colors.transparent,
     elevation: 0,
     scrolledUnderElevation: 0,
-    centerTitle: true,
+    centerTitle: false,
     systemOverlayStyle: SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.dark,
     ),
     titleTextStyle: TextStyle(
-      color: Colors.black87,
-      fontSize: 17,
-      fontWeight: FontWeight.w600,
-      letterSpacing: -0.5,
+      color: AppColors.textPrimary,
+      fontSize: 18,
+      fontWeight: FontWeight.w700,
+      letterSpacing: -0.3,
     ),
-    iconTheme: IconThemeData(color: Colors.black87),
+    iconTheme: IconThemeData(color: AppColors.textPrimary),
   ),
   cardTheme: CardThemeData(
     color: AppColors.lightCard,
     elevation: 0,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(AppRadius.card),
-      side: BorderSide(color: AppColors.borderLight),
     ),
     margin: EdgeInsets.zero,
   ),
   dividerTheme: DividerThemeData(
-    color: Colors.black.withValues(alpha: 0.05),
-    thickness: 0.5,
+    color: AppColors.borderLight,
+    thickness: 1,
     space: 0,
   ),
   listTileTheme: const ListTileThemeData(
     contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 2),
     minLeadingWidth: 24,
+  ),
+  elevatedButtonTheme: ElevatedButtonThemeData(
+    style: ElevatedButton.styleFrom(
+      backgroundColor: AppColors.primary,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      textStyle: const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+  ),
+  outlinedButtonTheme: OutlinedButtonThemeData(
+    style: OutlinedButton.styleFrom(
+      foregroundColor: AppColors.primary,
+      side: const BorderSide(color: AppColors.primary, width: 1.5),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      textStyle: const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+  ),
+  inputDecorationTheme: InputDecorationTheme(
+    filled: true,
+    fillColor: Colors.white,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      borderSide: BorderSide(color: AppColors.borderLight),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      borderSide: BorderSide(color: AppColors.borderLight),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+    ),
   ),
   switchTheme: SwitchThemeData(
     thumbColor: WidgetStateProperty.resolveWith((states) {
@@ -229,8 +325,23 @@ final ThemeData lightTheme = ThemeData(
       if (states.contains(WidgetState.selected)) {
         return AppColors.primary;
       }
-      return const Color(0xFFE9E9EA);
+      return const Color(0xFFE5E7EB);
     }),
+  ),
+  tabBarTheme: TabBarThemeData(
+    labelColor: AppColors.primary,
+    unselectedLabelColor: AppColors.textSecondary,
+    indicatorColor: AppColors.primary,
+    labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    unselectedLabelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
+  ),
+  chipTheme: ChipThemeData(
+    backgroundColor: AppColors.lightSurface,
+    labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(AppRadius.pill),
+    ),
+    side: BorderSide.none,
   ),
 );
 
@@ -242,8 +353,10 @@ final ThemeData darkTheme = ThemeData(
   useMaterial3: true,
   brightness: Brightness.dark,
   scaffoldBackgroundColor: AppColors.darkBackground,
+  fontFamily: 'Inter',
   colorScheme: ColorScheme.fromSeed(
     seedColor: AppColors.primary,
+    primary: AppColors.primaryLight,
     surface: AppColors.darkSurface,
     brightness: Brightness.dark,
   ),
@@ -251,36 +364,73 @@ final ThemeData darkTheme = ThemeData(
     backgroundColor: Colors.transparent,
     elevation: 0,
     scrolledUnderElevation: 0,
-    centerTitle: true,
+    centerTitle: false,
     systemOverlayStyle: SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
     ),
     titleTextStyle: TextStyle(
-      color: Color(0xFFF0F0F5),
-      fontSize: 17,
-      fontWeight: FontWeight.w600,
-      letterSpacing: -0.5,
+      color: AppColors.textPrimaryDark,
+      fontSize: 18,
+      fontWeight: FontWeight.w700,
+      letterSpacing: -0.3,
     ),
-    iconTheme: IconThemeData(color: Color(0xFFF0F0F5)),
+    iconTheme: IconThemeData(color: AppColors.textPrimaryDark),
   ),
   cardTheme: CardThemeData(
     color: AppColors.darkCard,
     elevation: 0,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(AppRadius.card),
-      side: BorderSide(color: AppColors.borderDark),
     ),
     margin: EdgeInsets.zero,
   ),
   dividerTheme: DividerThemeData(
-    color: Colors.white.withValues(alpha: 0.06),
-    thickness: 0.5,
+    color: AppColors.borderDark,
+    thickness: 1,
     space: 0,
   ),
   listTileTheme: const ListTileThemeData(
     contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 2),
     minLeadingWidth: 24,
+  ),
+  elevatedButtonTheme: ElevatedButtonThemeData(
+    style: ElevatedButton.styleFrom(
+      backgroundColor: AppColors.primaryLight,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+    ),
+  ),
+  outlinedButtonTheme: OutlinedButtonThemeData(
+    style: OutlinedButton.styleFrom(
+      foregroundColor: AppColors.primaryLight,
+      side: const BorderSide(color: AppColors.primaryLight, width: 1.5),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+    ),
+  ),
+  inputDecorationTheme: InputDecorationTheme(
+    filled: true,
+    fillColor: AppColors.darkElevated,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      borderSide: BorderSide(color: AppColors.borderDark),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      borderSide: BorderSide(color: AppColors.borderDark),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      borderSide: const BorderSide(color: AppColors.primaryLight, width: 1.5),
+    ),
   ),
   switchTheme: SwitchThemeData(
     thumbColor: WidgetStateProperty.resolveWith((states) {
@@ -289,10 +439,25 @@ final ThemeData darkTheme = ThemeData(
     }),
     trackColor: WidgetStateProperty.resolveWith((states) {
       if (states.contains(WidgetState.selected)) {
-        return const Color(0xFF0A84FF); // iOS dark blue
+        return AppColors.primaryLight;
       }
-      return const Color(0xFF1C1C1E);
+      return AppColors.darkElevated;
     }),
+  ),
+  tabBarTheme: TabBarThemeData(
+    labelColor: AppColors.primaryLight,
+    unselectedLabelColor: AppColors.textSecondaryDark,
+    indicatorColor: AppColors.primaryLight,
+    labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+    unselectedLabelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
+  ),
+  chipTheme: ChipThemeData(
+    backgroundColor: AppColors.darkElevated,
+    labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(AppRadius.pill),
+    ),
+    side: BorderSide.none,
   ),
 );
 
@@ -308,6 +473,8 @@ extension ThemeContextExtension on BuildContext {
   Color get glassBorder =>
       isDark ? AppColors.glassBorderDark : AppColors.glassBorderLight;
   Color get cardColor => isDark ? AppColors.darkCard : Colors.white;
+  Color get surfaceColor =>
+      isDark ? AppColors.darkSurface : AppColors.lightSurface;
 
   // ── Border color ──
   Color get borderColor =>
@@ -315,27 +482,37 @@ extension ThemeContextExtension on BuildContext {
 
   // ── Text colors ──
   Color get titleColor =>
-      isDark ? const Color(0xFFE5E5E5) : const Color(0xFF1A1A1A);
+      isDark ? AppColors.textPrimaryDark : AppColors.textPrimary;
   Color get subtitleColor =>
-      isDark ? const Color(0xFF86868B) : const Color(0xFF86868B);
+      isDark ? AppColors.textSecondaryDark : AppColors.textSecondary;
+  Color get hintColor =>
+      isDark ? AppColors.textTertiaryDark : AppColors.textTertiary;
 
   // ── Decorative ──
   Color get cardShadowColor => isDark
-      ? Colors.black.withValues(alpha: 0.50)
-      : Colors.black.withValues(alpha: 0.08);
+      ? Colors.black.withValues(alpha: 0.40)
+      : const Color(0xFF6C63FF).withValues(alpha: 0.06);
   Color get dividerColor =>
-      isDark ? const Color(0xFF38383A) : const Color(0xFFE5E5E5);
+      isDark ? AppColors.borderDark : AppColors.borderLight;
   Color get inputFillColor =>
-      isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.04);
+      isDark ? AppColors.darkElevated : Colors.white;
 
-  // ── Convenience decorations — clean card with border ──
+  // ── Card decoration — clean with soft shadow, NO border in light mode ──
   BoxDecoration get cardDecoration => BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(color: borderColor),
+        border: isDark ? Border.all(color: borderColor) : null,
         boxShadow: [
           isDark ? AppShadows.dark() : AppShadows.light(),
         ],
+      );
+
+  /// Elevated card decoration with stronger shadow.
+  BoxDecoration get elevatedCardDecoration => BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: isDark ? Border.all(color: borderColor) : null,
+        boxShadow: AppShadows.elevated(isDark: isDark),
       );
 
   LinearGradient get bgGradient =>

@@ -3,15 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 
-/// A hero card representing a saved or connected robot on the dashboard.
-/// Clean card with subtle border — no glass morphism.
+/// Dashboard-style robot card with soft shadow and purple accents.
 class RobotCard extends StatelessWidget {
   final String name;
   final String address;
   final ConnectionStatus connectionStatus;
   final double? batteryPercent;
   final double? cpuPercent;
-  final String connectionType; // 'wifi' or 'ble'
+  final String connectionType;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final String? heroTag;
@@ -39,28 +38,27 @@ class RobotCard extends StatelessWidget {
       case ConnectionStatus.error:
         return AppColors.error;
       case ConnectionStatus.disconnected:
-        return Colors.grey;
+        return AppColors.textTertiary;
     }
   }
 
   String _statusText() {
     switch (connectionStatus) {
       case ConnectionStatus.connected:
-        return '已连接';
+        return 'Online';
       case ConnectionStatus.connecting:
-        return '连接中...';
+        return 'Connecting...';
       case ConnectionStatus.reconnecting:
-        return '重连中...';
+        return 'Reconnecting...';
       case ConnectionStatus.error:
-        return '连接错误';
+        return 'Error';
       case ConnectionStatus.disconnected:
-        return '未连接';
+        return 'Offline';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
     final isConnected = connectionStatus == ConnectionStatus.connected;
     final statusColor = _statusColor();
 
@@ -71,33 +69,78 @@ class RobotCard extends StatelessWidget {
       },
       onLongPress: onLongPress,
       child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: context.cardColor,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: context.borderColor),
-        ),
+        padding: const EdgeInsets.all(20),
+        decoration: context.elevatedCardDecoration,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row: name + status
+            // Header row
             Row(
               children: [
-                // Name + address
+                // Robot icon
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    gradient: AppColors.brandGradient,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.smart_toy, color: Colors.white, size: 22),
+                ),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: context.titleColor,
-                          letterSpacing: -0.3,
-                        ),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              name,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: context.titleColor,
+                                letterSpacing: -0.3,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Status badge
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: statusColor.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(AppRadius.pill),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: statusColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  _statusText(),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: statusColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(
                         address,
                         style: TextStyle(
@@ -108,67 +151,47 @@ class RobotCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                // Status badge — minimal dot + text
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: isDark ? 0.15 : 0.08),
-                    borderRadius: BorderRadius.circular(AppRadius.pill),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: statusColor,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        _statusText(),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: statusColor,
-                        ),
-                      ),
-                    ],
-                  ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 22,
+                  color: context.hintColor,
                 ),
               ],
             ),
 
-            // Quick metrics (only when connected)
+            // Quick metrics
             if (isConnected &&
                 (batteryPercent != null || cpuPercent != null)) ...[
-              const SizedBox(height: 14),
-              Divider(height: 1, color: context.dividerColor),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  if (batteryPercent != null)
-                    _MetricChip(
-                      label: '电量 ${batteryPercent!.toStringAsFixed(0)}%',
-                      color: _batteryColor(batteryPercent!),
-                    ),
-                  if (batteryPercent != null && cpuPercent != null)
-                    const SizedBox(width: 10),
-                  if (cpuPercent != null)
-                    _MetricChip(
-                      label: 'CPU ${cpuPercent!.toStringAsFixed(0)}%',
-                      color: _cpuColor(cpuPercent!),
-                    ),
-                  const Spacer(),
-                  Icon(
-                    Icons.chevron_right,
-                    size: 18,
-                    color: context.subtitleColor,
-                  ),
-                ],
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: context.surfaceColor,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: Row(
+                  children: [
+                    if (batteryPercent != null)
+                      _MetricChip(
+                        icon: Icons.battery_charging_full_rounded,
+                        label: '${batteryPercent!.toStringAsFixed(0)}%',
+                        color: _batteryColor(batteryPercent!),
+                      ),
+                    if (batteryPercent != null && cpuPercent != null)
+                      Container(
+                        width: 1,
+                        height: 24,
+                        margin: const EdgeInsets.symmetric(horizontal: 16),
+                        color: context.borderColor,
+                      ),
+                    if (cpuPercent != null)
+                      _MetricChip(
+                        icon: Icons.memory_rounded,
+                        label: '${cpuPercent!.toStringAsFixed(0)}%',
+                        color: _cpuColor(cpuPercent!),
+                      ),
+                  ],
+                ),
               ),
             ],
           ],
@@ -196,23 +219,32 @@ class RobotCard extends StatelessWidget {
 }
 
 class _MetricChip extends StatelessWidget {
+  final IconData icon;
   final String label;
   final Color color;
 
   const _MetricChip({
+    required this.icon,
     required this.label,
     required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      label,
-      style: TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w600,
-        color: color,
-      ),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ],
     );
   }
 }

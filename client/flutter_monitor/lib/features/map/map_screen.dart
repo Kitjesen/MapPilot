@@ -7,11 +7,13 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
+import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/shared/widgets/glass_widgets.dart';
 import 'package:flutter_monitor/features/map/robot_model_widget.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
+import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -520,17 +522,32 @@ class _MapScreenState extends State<MapScreen>
 
   Future<void> _startNavigation() async {
     if (_navGoalPoint == null) return;
+    final taskGateway = context.read<TaskGateway>();
+    if (taskGateway.isRunning) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('已有任务执行中，请先取消或等待完成'),
+            backgroundColor: AppColors.warning,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        );
+      }
+      return;
+    }
 
     HapticFeedback.mediumImpact();
-    final (ok, msg) = await context.read<MapGateway>().startNavigation(
-      _navGoalPoint!.dx,
-      _navGoalPoint!.dy,
+    final ok = await taskGateway.startSingleGoalNavigation(
+      x: _navGoalPoint!.dx,
+      y: _navGoalPoint!.dy,
     );
+    final msg = ok ? '导航任务已启动' : (taskGateway.statusMessage ?? '启动失败');
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(msg),
+          content: Text(ok ? msg : UiErrorMapper.fromMessage(msg)),
           backgroundColor: ok ? AppColors.success : AppColors.error,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -546,7 +563,7 @@ class _MapScreenState extends State<MapScreen>
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(ok ? '地图已保存: $name.pcd' : msg),
+          content: Text(ok ? '地图已保存: $name.pcd' : UiErrorMapper.fromMessage(msg)),
           backgroundColor: ok ? AppColors.success : AppColors.error,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

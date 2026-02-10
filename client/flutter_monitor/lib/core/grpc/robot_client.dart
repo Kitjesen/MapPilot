@@ -73,7 +73,7 @@ class RobotClient implements RobotClientBase {
       _controlClient = ControlServiceClient(_channel);
       _dataClient = DataServiceClient(_channel);
 
-      // OTA Daemon 独立通道 (:50052)
+      // OTA Daemon 独立通道 (:50052) — 同一 host, 不同端口
       _otaChannel = ClientChannel(
         host,
         port: otaPort,
@@ -81,13 +81,26 @@ class RobotClient implements RobotClientBase {
       );
       _otaClient = OtaServiceClient(_otaChannel);
 
-      // 测试连接
+      // 测试主连接 (50051)
       final info = await _systemClient.getRobotInfo(
         Empty(),
         options: CallOptions(timeout: const Duration(seconds: 3)),
       );
+      print('Connected to robot: ${info.robotId} ($host:$port)');
 
-      print('Connected to robot: ${info.robotId}');
+      // 测试 OTA 连接 (50052) — 非阻塞, 失败不影响主连接
+      try {
+        await _otaClient.getDeviceInfo(
+          Empty(),
+          options: CallOptions(timeout: const Duration(seconds: 2)),
+        );
+        _otaAvailable = true;
+        print('OTA daemon available ($host:$otaPort)');
+      } catch (e) {
+        _otaAvailable = false;
+        print('OTA daemon not available ($host:$otaPort): $e');
+      }
+
       _isConnected = true;
       return true;
     } catch (e) {
@@ -96,6 +109,10 @@ class RobotClient implements RobotClientBase {
       return false;
     }
   }
+
+  /// OTA daemon 是否可用
+  bool _otaAvailable = false;
+  bool get otaAvailable => _otaAvailable;
 
   /// 订阅快速状态流（位姿、速度、IMU）
   Stream<FastState> streamFastState({double desiredHz = 10.0}) {
@@ -151,7 +168,7 @@ class RobotClient implements RobotClientBase {
     final request = SubscribeRequest()
       ..base = _createRequestBase()
       ..resourceId = resourceId
-      ..profile = SubscribeProfile(); // Default profile
+      ..profile = (SubscribeProfile()..frequency = 30.0);
 
     return _dataClient.subscribe(request);
   }

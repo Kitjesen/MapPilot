@@ -7,6 +7,8 @@ import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
 import 'package:flutter_monitor/core/gateway/cloud_ota_client.dart';
+import 'package:flutter_monitor/core/gateway/task_gateway.dart';
+import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 
 class FirmwareOtaPage extends StatelessWidget {
   const FirmwareOtaPage({super.key});
@@ -16,6 +18,7 @@ class FirmwareOtaPage extends StatelessWidget {
     final isDark = context.isDark;
     final provider = context.watch<RobotConnectionProvider>();
     final ota = context.watch<OtaGateway>();
+    final taskGw = context.watch<TaskGateway>();
     final isConnected = provider.isConnected;
     final slowState = provider.latestSlowState;
     final currentVersion = slowState?.currentMode ?? '未知';
@@ -46,9 +49,13 @@ class FirmwareOtaPage extends StatelessWidget {
           if (!isConnected) const _Notice(text: '请先连接机器人', type: NoticeType.warning),
           if (isConnected && battery < 30)
             const _Notice(text: '电量低于 30%，建议充电后再升级', type: NoticeType.error),
+          if (taskGw.isRunning)
+            const _Notice(text: '当前有任务执行中，暂不可执行固件部署', type: NoticeType.warning),
           if (ota.statusMessage != null && ota.activeDeployment == null)
             _Notice(
-              text: ota.statusMessage!,
+              text: ota.statusMessage!.contains('失败')
+                  ? UiErrorMapper.fromMessage(ota.statusMessage)
+                  : ota.statusMessage!,
               type: ota.statusMessage!.contains('成功')
                   ? NoticeType.success
                   : ota.statusMessage!.contains('失败')
@@ -76,6 +83,7 @@ class FirmwareOtaPage extends StatelessWidget {
             isConnected: isConnected,
             battery: battery,
             ota: ota,
+            taskGw: taskGw,
           ),
           const SizedBox(height: 28),
 
@@ -87,6 +95,7 @@ class FirmwareOtaPage extends StatelessWidget {
             isConnected: isConnected,
             battery: battery,
             ota: ota,
+            taskGw: taskGw,
           ),
           const SizedBox(height: 28),
 
@@ -137,8 +146,8 @@ class _DeviceStatusSection extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Row(
         children: [
@@ -185,12 +194,14 @@ class _LocalFirmwareSection extends StatelessWidget {
   final bool isConnected;
   final double battery;
   final OtaGateway ota;
+  final TaskGateway taskGw;
 
   const _LocalFirmwareSection({
     required this.isDark,
     required this.isConnected,
     required this.battery,
     required this.ota,
+    required this.taskGw,
   });
 
   Future<void> _selectAndUpload(BuildContext context) async {
@@ -216,7 +227,7 @@ class _LocalFirmwareSection extends StatelessWidget {
   void _showError(BuildContext context, String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
+        content: Text(UiErrorMapper.fromMessage(msg)),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
@@ -228,14 +239,17 @@ class _LocalFirmwareSection extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         children: [
           InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: isConnected && ota.activeDeployment?.isBusy != true && battery >= 30
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            onTap: isConnected &&
+                    ota.activeDeployment?.isBusy != true &&
+                    battery >= 30 &&
+                    !taskGw.blocksColdOta
                 ? () => _selectAndUpload(context)
                 : null,
             child: Padding(
@@ -250,7 +264,9 @@ class _LocalFirmwareSection extends StatelessWidget {
                             style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: isConnected && battery >= 30
+                                color: isConnected &&
+                                        battery >= 30 &&
+                                        !taskGw.blocksColdOta
                                     ? context.titleColor
                                     : context.subtitleColor)),
                         const SizedBox(height: 2),
@@ -312,12 +328,14 @@ class _CloudSection extends StatelessWidget {
   final bool isConnected;
   final double battery;
   final OtaGateway ota;
+  final TaskGateway taskGw;
 
   const _CloudSection({
     required this.isDark,
     required this.isConnected,
     required this.battery,
     required this.ota,
+    required this.taskGw,
   });
 
   @override
@@ -328,7 +346,7 @@ class _CloudSection extends StatelessWidget {
         Container(
           decoration: BoxDecoration(
             color: isDark ? AppColors.darkCard : Colors.white,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(AppRadius.card),
             border:
                 Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
           ),
@@ -393,7 +411,11 @@ class _CloudSection extends StatelessWidget {
         if (ota.latestRelease != null) ...[
           const SizedBox(height: 16),
           _ReleaseCard(
-              isDark: isDark, isConnected: isConnected, battery: battery, ota: ota),
+              isDark: isDark,
+              isConnected: isConnected,
+              battery: battery,
+              ota: ota,
+              taskGw: taskGw),
         ],
       ],
     );
@@ -405,12 +427,14 @@ class _ReleaseCard extends StatelessWidget {
   final bool isConnected;
   final double battery;
   final OtaGateway ota;
+  final TaskGateway taskGw;
 
   const _ReleaseCard({
     required this.isDark,
     required this.isConnected,
     required this.battery,
     required this.ota,
+    required this.taskGw,
   });
 
   @override
@@ -422,8 +446,8 @@ class _ReleaseCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -509,7 +533,8 @@ class _ReleaseCard extends StatelessWidget {
                 asset: asset,
                 isDark: isDark,
                 canUpload: isConnected && battery >= 30,
-                ota: ota)),
+                ota: ota,
+                taskGw: taskGw)),
             const SizedBox(height: 8),
           ],
           if (release.deployableAssets.length > firmwareAssets.length) ...[
@@ -531,7 +556,8 @@ class _ReleaseCard extends StatelessWidget {
                     asset: asset,
                     isDark: isDark,
                     canUpload: isConnected,
-                    ota: ota)),
+                    ota: ota,
+                    taskGw: taskGw)),
             const SizedBox(height: 8),
           ],
         ],
@@ -545,12 +571,14 @@ class _AssetRow extends StatelessWidget {
   final bool isDark;
   final bool canUpload;
   final OtaGateway ota;
+  final TaskGateway taskGw;
 
   const _AssetRow({
     required this.asset,
     required this.isDark,
     required this.canUpload,
     required this.ota,
+    required this.taskGw,
   });
 
   @override
@@ -558,6 +586,9 @@ class _AssetRow extends StatelessWidget {
     final isThisDeploying = ota.activeDeployment?.isBusy == true &&
         ota.activeDeployment?.cloudAsset?.name == asset.name;
     final anyBusy = ota.activeDeployment?.isBusy == true;
+    final firmwareBlockedByTask =
+        asset.category == 'firmware' && taskGw.blocksColdOta;
+    final canDeploy = canUpload && !anyBusy && !firmwareBlockedByTask;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -589,7 +620,7 @@ class _AssetRow extends StatelessWidget {
           SizedBox(
             height: 28,
             child: TextButton(
-              onPressed: canUpload && !anyBusy
+              onPressed: canDeploy
                   ? () {
                       HapticFeedback.mediumImpact();
                       _showDeployMethodDialog(context, ota, asset);
@@ -612,7 +643,7 @@ class _AssetRow extends StatelessWidget {
                       height: 12,
                       child: CircularProgressIndicator(
                           strokeWidth: 1.5, color: AppColors.primary))
-                  : const Text('部署'),
+                  : Text(firmwareBlockedByTask ? '需空闲' : '部署'),
             ),
           ),
         ],
@@ -970,7 +1001,7 @@ class _Notice extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.card),
           border:
               Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
         ),
@@ -1506,8 +1537,8 @@ class _InfoSection extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         children: items.asMap().entries.map((entry) {

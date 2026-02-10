@@ -35,10 +35,10 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
 
   void _subscribeToCamera() {
     try {
+      // 使用简洁 name，让服务端解析 topic（与 test/data/camera.dart 一致）
       final resourceId = ResourceId()
         ..type = ResourceType.RESOURCE_TYPE_CAMERA
-        // Use Orbbec color compressed topic directly; backend still supports parameter fallback.
-        ..name = '/camera/color/image_raw/compressed';
+        ..name = 'front';
 
       _cameraSubscription = widget.client.subscribeToResource(resourceId).listen(
         (chunk) {
@@ -51,10 +51,23 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
           }
         },
         onError: (error) {
-          setState(() {
-            _hasError = true;
-            _errorMessage = 'Stream Error: $error';
-          });
+          debugPrint('CameraStream: error=$error, auto-reconnecting...');
+          _cameraSubscription?.cancel();
+          _cameraSubscription = null;
+          if (mounted) {
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted && _cameraSubscription == null) _subscribeToCamera();
+            });
+          }
+        },
+        onDone: () {
+          debugPrint('CameraStream: stream ended, auto-reconnecting...');
+          _cameraSubscription = null;
+          if (mounted) {
+            Future.delayed(const Duration(seconds: 1), () {
+              if (mounted && _cameraSubscription == null) _subscribeToCamera();
+            });
+          }
         },
       );
     } catch (e) {

@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:math' as math;
 import 'package:fixnum/fixnum.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
 import 'package:flutter_monitor/app/theme.dart';
+import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:robot_proto/src/system.pb.dart';
 
 /// 地图管理 — 极简 Cursor 风格
@@ -36,15 +38,23 @@ class _MapManagerPageState extends State<MapManagerPage> {
 
   Future<void> _save() async {
     final name = await _inputDialog('保存地图', '名称', 'my_map');
-    if (name == null || name.isEmpty) return;
+    if (name == null) return;
+    final saveName = _normalizeMapSaveName(name);
+    if (saveName == null) return;
     HapticFeedback.lightImpact();
-    final (ok, msg) = await context.read<MapGateway>().saveMap('/maps/$name.pcd');
-    _snack(ok ? '已保存 $name.pcd' : msg, err: !ok);
+    final (ok, msg) =
+        await context.read<MapGateway>().saveMap('/maps/$saveName');
+    _snack(ok ? '已保存 $saveName' : msg, err: !ok);
   }
 
   Future<void> _loadMap(MapInfo m) async {
     final ok = await _relocalizeDialog(m);
     if (ok != true) return;
+    final validationError = _validateRelocalizeInputs();
+    if (validationError != null) {
+      _snack(validationError, err: true);
+      return;
+    }
     HapticFeedback.lightImpact();
     final (success, msg) = await context.read<MapGateway>().relocalize(
       m.path,
@@ -72,9 +82,11 @@ class _MapManagerPageState extends State<MapManagerPage> {
 
   Future<void> _rename(MapInfo m) async {
     final n = await _inputDialog('重命名', '新名称', m.name.replaceAll(RegExp(r'\.[^.]+$'), ''));
-    if (n == null || n.isEmpty) return;
+    if (n == null) return;
+    final normalized = _normalizeMapNameInput(n);
+    if (normalized == null) return;
     final ext = m.name.contains('.') ? '.${m.name.split('.').last}' : '';
-    final full = n.endsWith(ext) ? n : '$n$ext';
+    final full = normalized.endsWith(ext) ? normalized : '$normalized$ext';
     final (success, msg) = await context.read<MapGateway>().renameMap(m.path, full);
     _snack(msg, err: !success);
   }
@@ -123,7 +135,17 @@ class _MapManagerPageState extends State<MapManagerPage> {
     ]),
     actions: [
       TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-      TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('加载')),
+      TextButton(
+        onPressed: () {
+          final validationError = _validateRelocalizeInputs();
+          if (validationError != null) {
+            _snack(validationError, err: true);
+            return;
+          }
+          Navigator.pop(ctx, true);
+        },
+        child: const Text('加载'),
+      ),
     ],
   ));
 
@@ -135,11 +157,65 @@ class _MapManagerPageState extends State<MapManagerPage> {
   void _snack(String msg, {bool err = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontSize: 13)),
+      content: Text(
+        err ? UiErrorMapper.fromMessage(msg) : msg,
+        style: const TextStyle(fontSize: 13),
+      ),
       backgroundColor: err ? AppColors.error : AppColors.success,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ));
+  }
+
+  String? _normalizeMapNameInput(String raw) {
+    final name = raw.trim();
+    if (name.isEmpty) {
+      _snack('地图名称不能为空', err: true);
+      return null;
+    }
+    if (name.contains('/') || name.contains('\\')) {
+      _snack('地图名称不能包含路径分隔符', err: true);
+      return null;
+    }
+    if (name.contains('..')) {
+      _snack('地图名称不能包含 ".."', err: true);
+      return null;
+    }
+    if (RegExp(r'[<>:"|?*]').hasMatch(name)) {
+      _snack('地图名称包含非法字符', err: true);
+      return null;
+    }
+    return name;
+  }
+
+  String? _normalizeMapSaveName(String raw) {
+    final name = _normalizeMapNameInput(raw);
+    if (name == null) return null;
+    final withoutExt = name.toLowerCase().endsWith('.pcd')
+        ? name.substring(0, name.length - 4)
+        : name;
+    if (withoutExt.trim().isEmpty) {
+      _snack('地图名称不能为空', err: true);
+      return null;
+    }
+    return '$withoutExt.pcd';
+  }
+
+  String? _validateRelocalizeInputs() {
+    final x = double.tryParse(_xC.text);
+    final y = double.tryParse(_yC.text);
+    final z = double.tryParse(_zC.text);
+    final yaw = double.tryParse(_yawC.text);
+    if (x == null || y == null || z == null || yaw == null) {
+      return '参数错误，请检查输入';
+    }
+    if (!x.isFinite || !y.isFinite || !z.isFinite || !yaw.isFinite) {
+      return '参数错误，请检查输入';
+    }
+    if (yaw < -math.pi || yaw > math.pi) {
+      return 'Yaw 超出范围，请输入 -pi 到 pi';
+    }
+    return null;
   }
 
   // ── Build ──
@@ -223,13 +299,13 @@ class _MapManagerPageState extends State<MapManagerPage> {
     return Container(
       decoration: BoxDecoration(
         color: context.isDark ? AppColors.darkCard : Colors.white,
-        border: Border.all(color: context.borderColor),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       margin: const EdgeInsets.only(bottom: 8),
       child: InkWell(
         onTap: () => _loadMap(m),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppRadius.card),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(

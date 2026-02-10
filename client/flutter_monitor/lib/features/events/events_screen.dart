@@ -273,11 +273,11 @@ class _EventListItem extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: context.borderColor),
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.card),
           child: IntrinsicHeight(
             child: Row(
               children: [

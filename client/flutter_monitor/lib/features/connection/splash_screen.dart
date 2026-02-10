@@ -39,13 +39,11 @@ class _SplashScreenState extends State<SplashScreen>
       CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),
     );
 
-    // Sequence: logo first, then text
     _scaleController.forward();
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) _fadeController.forward();
     });
 
-    // Navigate after splash
     Future.delayed(const Duration(milliseconds: 1800), () {
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/main');
@@ -65,13 +63,15 @@ class _SplashScreenState extends State<SplashScreen>
     final isDark = context.isDark;
 
     return Scaffold(
-      backgroundColor: isDark ? AppColors.darkBackground : AppColors.lightBackground,
       body: Container(
+        decoration: BoxDecoration(
+          gradient: isDark ? AppColors.darkBgGradient : AppColors.lightBgGradient,
+        ),
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Animated logo
+              // Animated logo with purple glow
               AnimatedBuilder(
                 animation: _scaleAnimation,
                 builder: (context, child) {
@@ -79,17 +79,27 @@ class _SplashScreenState extends State<SplashScreen>
                     scale: _scaleAnimation.value,
                     child: Opacity(
                       opacity: _fadeAnimation.value,
-                      child: Image.asset(
-                        'assets/logo.png',
-                        width: 72,
-                        height: 72,
-                        color: isDark ? Colors.white : const Color(0xFF0A1E3D),
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          gradient: AppColors.brandGradient,
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            AppShadows.glow(AppColors.primary, blur: 24),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.smart_toy,
+                          color: Colors.white,
+                          size: 40,
+                        ),
                       ),
                     ),
                   );
                 },
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               // Animated text
               FadeTransition(
                 opacity: _textFadeAnimation,
@@ -98,22 +108,20 @@ class _SplashScreenState extends State<SplashScreen>
                     Text(
                       '大算机器人',
                       style: TextStyle(
-                        fontSize: 26,
+                        fontSize: 28,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.5,
-                        color: isDark ? Colors.white : Colors.black87,
+                        color: context.titleColor,
                       ),
                     ),
                     const SizedBox(height: 10),
                     Text(
                       '让每一台机器人都拥有智慧',
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: FontWeight.w400,
                         letterSpacing: 0.5,
-                        color: isDark
-                            ? Colors.white.withValues(alpha:0.45)
-                            : Colors.black.withValues(alpha:0.4),
+                        color: context.subtitleColor,
                       ),
                     ),
                   ],

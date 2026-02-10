@@ -536,7 +536,7 @@ class _ControlScreenState extends State<ControlScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: context.borderColor),
+            boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
           ),
           child: Text(
             label,

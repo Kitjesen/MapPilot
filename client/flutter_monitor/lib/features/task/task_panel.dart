@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:flutter_monitor/app/theme.dart';
+import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:robot_proto/src/common.pb.dart';
 import 'package:robot_proto/src/control.pb.dart';
 
@@ -53,7 +54,15 @@ class _TaskPanelState extends State<TaskPanel> {
       );
       _showStatus(gw, ok);
     } else {
-      if (_waypoints.isEmpty) { _snack('请先添加航点', err: true); return; }
+      if (_selectedType == TaskType.TASK_TYPE_NAVIGATION) {
+        final ok = await gw.startNavigationTask(_waypoints, loop: _loop);
+        _showStatus(gw, ok);
+        return;
+      }
+      if (_waypoints.isEmpty) {
+        _snack('请先添加航点', err: true);
+        return;
+      }
       final ok = await gw.startTask(
         _selectedType,
         navigationParams: NavigationParams()
@@ -93,7 +102,10 @@ class _TaskPanelState extends State<TaskPanel> {
   void _snack(String msg, {bool err = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: const TextStyle(fontSize: 13)),
+      content: Text(
+        err ? UiErrorMapper.fromMessage(msg) : msg,
+        style: const TextStyle(fontSize: 13),
+      ),
       backgroundColor: err ? AppColors.error : AppColors.success,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -442,8 +454,8 @@ class _TaskPanelState extends State<TaskPanel> {
       width: double.infinity,
       decoration: BoxDecoration(
         color: context.isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: child,
     );
@@ -533,8 +545,8 @@ class _WaypointSheetState extends State<_WaypointSheet> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

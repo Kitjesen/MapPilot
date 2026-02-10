@@ -26,6 +26,7 @@ import 'package:flutter_monitor/features/map/map_manager_page.dart';
 import 'package:flutter_monitor/features/map/map_goal_picker.dart';
 import 'package:flutter_monitor/features/camera/camera_screen.dart';
 import 'package:flutter_monitor/features/files/file_browser_screen.dart';
+import 'package:flutter_monitor/features/events/events_screen.dart';
 
 import 'package:flutter_monitor/core/services/notification_service.dart';
 import 'package:flutter_monitor/core/services/app_logger.dart';
@@ -159,6 +160,12 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
         mapGateway.refreshMaps().catchError((_) {});
       };
 
+      // 2.1 Task terminal callback: refresh OTA-relevant state after task ends.
+      taskGateway.onTaskTerminated = (type, status) {
+        AppLogger.system.info('Task terminated: type=$type status=$status');
+        otaGateway.fetchInstalledVersions().catchError((_) {});
+      };
+
       // 3. Safety interlock: before COLD OTA apply → ensure robot safe
       otaGateway.safetyCheck = () async {
         // Check if robot is currently executing a task
@@ -263,15 +270,15 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
             ),
           ],
         ),
-        backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+        backgroundColor: isDark ? AppColors.darkCard : Colors.white,
         behavior: SnackBarBehavior.floating,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppRadius.card),
           side: BorderSide(
             color: isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : const Color(0xFFE5E5E5),
+                ? AppColors.borderDark
+                : AppColors.borderLight,
           ),
         ),
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -340,6 +347,8 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
         page = const CameraScreen();
       case '/files':
         page = const FileBrowserScreen();
+      case '/events':
+        page = const EventsScreen();
       default:
         page = const MainShellScreen();
     }

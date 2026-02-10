@@ -74,8 +74,8 @@ class _LogExportPageState extends State<LogExportPage> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: context.borderColor),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
             ),
             child: Row(
               children: [
@@ -97,8 +97,8 @@ class _LogExportPageState extends State<LogExportPage> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: context.borderColor),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -154,8 +154,8 @@ class _LogExportPageState extends State<LogExportPage> {
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: context.borderColor),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,8 +184,8 @@ class _LogExportPageState extends State<LogExportPage> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: isDark ? AppColors.darkCard : Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: context.borderColor),
+                borderRadius: BorderRadius.circular(AppRadius.card),
+                boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
               ),
               child: Column(
                 children: [
@@ -311,8 +311,8 @@ class _LogExportPageState extends State<LogExportPage> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: context.borderColor),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

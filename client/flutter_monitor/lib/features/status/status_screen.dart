@@ -6,6 +6,7 @@ import 'package:shimmer/shimmer.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
+import 'package:flutter_monitor/app/responsive.dart';
 import 'package:flutter_monitor/core/grpc/dog_direct_client.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 
@@ -151,7 +152,7 @@ class _StatusScreenState extends State<StatusScreen>
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: EdgeInsets.fromLTRB(
-                    16, MediaQuery.of(context).padding.top + 16, 16, 100),
+                    context.screenPadding, MediaQuery.of(context).padding.top + 16, context.screenPadding, 100),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -237,13 +238,13 @@ class _StatusScreenState extends State<StatusScreen>
                           child: RepaintBoundary(
                             child: _buildMetricCard(
                               icon: Icons.sd_storage_outlined,
-                              iconColor: const Color(0xFF5856D6),
+                              iconColor: AppColors.secondary,
                               label: 'MEMORY',
                               value: (_latestSlowState?.resources.memPercent ?? 0)
                                   .toStringAsFixed(0),
                               unit: '%',
                               progress: (_latestSlowState?.resources.memPercent ?? 0) / 100,
-                              progressColor: const Color(0xFF5856D6),
+                              progressColor: AppColors.secondary,
                             ),
                           ),
                         ),
@@ -337,13 +338,13 @@ class _StatusScreenState extends State<StatusScreen>
   Widget _buildSkeletonCard({required double height}) {
     final isDark = context.isDark;
     return Shimmer.fromColors(
-      baseColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
-      highlightColor: isDark ? Colors.white.withValues(alpha: 0.12) : Colors.grey.shade100,
+      baseColor: isDark ? Colors.white.withValues(alpha: 0.06) : const Color(0xFFEEEBFF),
+      highlightColor: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFF8F6FF),
       child: Container(
         height: height,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.card),
         ),
       ),
     );
@@ -407,8 +408,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         children: [
@@ -512,8 +513,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -571,9 +572,7 @@ class _StatusScreenState extends State<StatusScreen>
                     Container(
                       height: 4,
                       decoration: BoxDecoration(
-                        color: context.isDark
-                            ? Colors.white.withValues(alpha: 0.06)
-                            : Colors.black.withValues(alpha: 0.04),
+                        color: progressColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -582,9 +581,7 @@ class _StatusScreenState extends State<StatusScreen>
                       child: Container(
                         height: 4,
                         decoration: BoxDecoration(
-                          color: context.isDark
-                              ? Colors.white.withValues(alpha: 0.3)
-                              : Colors.black.withValues(alpha: 0.2),
+                          color: progressColor,
                           borderRadius: BorderRadius.circular(2),
                         ),
                       ),
@@ -607,8 +604,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -694,8 +691,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -765,8 +762,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -920,8 +917,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1048,8 +1045,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1160,8 +1157,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1336,8 +1333,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1436,8 +1433,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1533,8 +1530,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1634,8 +1631,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: context.borderColor),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        boxShadow: [context.isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

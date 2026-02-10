@@ -1,0 +1,35 @@
+[Unit]
+Description=Mapping System (ROS 2 - SLAM)
+After=network-online.target
+Wants=network-online.target
+
+# 与导航互斥: 不能同时运行
+Conflicts=navigation.service
+
+[Service]
+Type=simple
+User=sunrise
+Group=sunrise
+WorkingDirectory=/opt/robot/navigation/current
+
+# 环境变量
+Environment="ROS_DOMAIN_ID=0"
+Environment="RMW_IMPLEMENTATION=rmw_fastrtps_cpp"
+
+# 启动命令
+ExecStart=/opt/robot/navigation/start_mapping.sh
+ExecStop=/bin/kill -SIGINT $MAINPID
+
+# 建图不自动重启 (区别于导航: 崩溃后应由用户决定是否重来)
+Restart=no
+TimeoutStartSec=30
+TimeoutStopSec=15
+KillMode=mixed
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mapping
+
+[Install]
+WantedBy=multi-user.target

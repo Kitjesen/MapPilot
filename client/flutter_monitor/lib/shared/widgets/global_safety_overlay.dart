@@ -70,8 +70,9 @@ class _ConnectionStatusBanner extends StatelessWidget {
               color: isDark
                   ? color.withValues(alpha: 0.2)
                   : color.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: color.withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              border: isDark ? Border.all(color: color.withValues(alpha: 0.3)) : null,
+              boxShadow: isDark ? null : [AppShadows.light()],
             ),
             child: Row(
               children: [

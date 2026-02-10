@@ -62,6 +62,7 @@ dependencies:
   # UI Enhancements
   shimmer: ^3.0.0
   animations: ^2.0.11
+  window_manager: ^0.5.1
 
 dependency_overrides:
   protobuf: ^6.0.0

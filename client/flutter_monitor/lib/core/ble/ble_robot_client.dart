@@ -202,6 +202,8 @@ class BleRobotClient extends ChangeNotifier {
     }
   }
 
+  bool _disposed = false;
+
   /// 断开并清理
   void unbind() {
     stopStatusPolling();
@@ -213,11 +215,12 @@ class BleRobotClient extends ChangeNotifier {
     _device = null;
     _isReady = false;
     _latestStatus = null;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
     unbind();
     _statusController.close();
     super.dispose();
