@@ -93,6 +93,23 @@ void LidarProcessor::incrCloudMap()
     if (m_cloud_down_lidar->empty())
         return;
     const State &state = m_kf->x();
+    Eigen::Vector3d cur_pos = state.t_wi + state.r_wi * state.t_il;
+
+    // ---- 静止检测: 机器人没有明显移动时跳过地图更新 ----
+    // 防止原地长时间运行时因传感器噪声导致地图点数缓慢增长
+    if (m_config.stationary_thresh > 0)
+    {
+        if (m_has_last_map_pos)
+        {
+            double moved = (cur_pos - m_last_map_update_pos).norm();
+            if (moved < m_config.stationary_thresh)
+                return;  // 没动够，跳过本帧地图更新（不影响位姿估计）
+        }
+        m_last_map_update_pos = cur_pos;
+        m_has_last_map_pos = true;
+    }
+
+    // ---- 正常地图增量更新 ----
     int size = m_cloud_down_lidar->size();
     PointVec point_to_add;
     PointVec point_no_need_downsample;
@@ -144,6 +161,52 @@ void LidarProcessor::incrCloudMap()
     }
     m_ikdtree->Add_Points(point_to_add, true);
     m_ikdtree->Add_Points(point_no_need_downsample, false);
+
+    // ---- 硬上限保护: 极端情况下裁剪远处的点 ----
+    // 5M 点足够覆盖 1-2km 详细地图，正常建图不会触发
+    if (m_config.max_map_points > 0)
+    {
+        int current_size = m_ikdtree->validnum();
+        if (current_size > m_config.max_map_points)
+        {
+            // 保留以当前位置为中心、缩小后的立方体范围
+            double shrink_ratio = std::sqrt((double)m_config.max_map_points / current_size);
+            double half_len = m_config.cube_len * 0.5 * shrink_ratio;
+            // 下限：至少保留 det_range 范围
+            half_len = std::max(half_len, m_config.det_range * 2.0);
+            BoxPointType keep_box;
+            for (int i = 0; i < 3; i++)
+            {
+                keep_box.vertex_min[i] = cur_pos[i] - half_len;
+                keep_box.vertex_max[i] = cur_pos[i] + half_len;
+            }
+            Vec<BoxPointType> boxes_to_rm;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (m_local_map.local_map_corner.vertex_min[axis] < keep_box.vertex_min[axis])
+                {
+                    BoxPointType rm_box = m_local_map.local_map_corner;
+                    rm_box.vertex_max[axis] = keep_box.vertex_min[axis];
+                    boxes_to_rm.push_back(rm_box);
+                }
+                if (m_local_map.local_map_corner.vertex_max[axis] > keep_box.vertex_max[axis])
+                {
+                    BoxPointType rm_box = m_local_map.local_map_corner;
+                    rm_box.vertex_min[axis] = keep_box.vertex_max[axis];
+                    boxes_to_rm.push_back(rm_box);
+                }
+            }
+            if (!boxes_to_rm.empty())
+            {
+                m_ikdtree->Delete_Point_Boxes(boxes_to_rm);
+                for (int i = 0; i < 3; i++)
+                {
+                    m_local_map.local_map_corner.vertex_min[i] = std::max(m_local_map.local_map_corner.vertex_min[i], keep_box.vertex_min[i]);
+                    m_local_map.local_map_corner.vertex_max[i] = std::min(m_local_map.local_map_corner.vertex_max[i], keep_box.vertex_max[i]);
+                }
+            }
+        }
+    }
 }
 
 void LidarProcessor::initCloudMap(PointVec &point_vec)

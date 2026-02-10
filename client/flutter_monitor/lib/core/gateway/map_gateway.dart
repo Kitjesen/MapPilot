@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
 import 'package:robot_proto/src/common.pb.dart';
@@ -29,10 +31,14 @@ class MapGateway extends ChangeNotifier {
 
   List<MapInfo> _maps = [];
   bool _isLoading = false;
+  bool _isDownloading = false;
+  double _downloadProgress = 0.0;
   String? _error;
 
   List<MapInfo> get maps => _maps;
   bool get isLoading => _isLoading;
+  bool get isDownloading => _isDownloading;
+  double get downloadProgress => _downloadProgress;
   String? get error => _error;
 
   // ================================================================
@@ -142,6 +148,44 @@ class MapGateway extends ChangeNotifier {
       return (r.success, r.success ? '已加载' : r.message);
     } catch (e) {
       return (false, '$e');
+    }
+  }
+
+  /// 从机器人下载地图文件
+  ///
+  /// 返回文件字节内容，失败返回 null。
+  /// [remotePath] 机器人上的绝对路径（如 `/maps/xxx.pcd`）。
+  Future<Uint8List?> downloadMap(String remotePath) async {
+    final client = _client;
+    if (client == null) return null;
+
+    _isDownloading = true;
+    _downloadProgress = 0.0;
+    notifyListeners();
+
+    try {
+      final chunks = <int>[];
+      int totalSize = 0;
+
+      await for (final chunk in client.downloadFile(filePath: remotePath)) {
+        chunks.addAll(chunk.data);
+        if (chunk.totalSize.toInt() > 0) totalSize = chunk.totalSize.toInt();
+        if (totalSize > 0) {
+          _downloadProgress = chunks.length / totalSize;
+          notifyListeners();
+        }
+        if (chunk.isLast) break;
+      }
+
+      _isDownloading = false;
+      _downloadProgress = 1.0;
+      notifyListeners();
+      return Uint8List.fromList(chunks);
+    } catch (e) {
+      _isDownloading = false;
+      _downloadProgress = 0.0;
+      notifyListeners();
+      return null;
     }
   }
 

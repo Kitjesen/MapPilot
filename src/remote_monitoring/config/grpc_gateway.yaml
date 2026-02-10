@@ -28,6 +28,9 @@ grpc_gateway:
     global_path_topic: "/pct_path"
     lidar_topic: "/cloud_registered"
 
+    # ==================== SystemService 服务 ====================
+    save_map_service: "/fastlio2/save_map"
+
     # ==================== SafetyGate 话题 ====================
     safety_odom_topic: "/Odometry"
     cmd_vel_topic: "/cmd_vel"

@@ -35,9 +35,11 @@ struct Config
     double scan_resolution = 0.15;
     double map_resolution = 0.3;
 
-    double cube_len = 300;
+    double cube_len = 2000;
     double det_range = 60;
     double move_thresh = 1.5;
+    int max_map_points = 5000000;    // ikd-tree 点数硬上限，0=不限制
+    double stationary_thresh = 0.05; // 静止检测阈值(米)，0=不启用
 
     double na = 0.01;
     double ng = 0.01;

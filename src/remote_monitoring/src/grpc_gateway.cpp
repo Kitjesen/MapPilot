@@ -97,6 +97,8 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
       node_->declare_parameter<std::string>("robot_id", "robot_001");
     if (!node_->has_parameter("firmware_version"))
       node_->declare_parameter<std::string>("firmware_version", "1.0.0");
+    if (!node_->has_parameter("save_map_service"))
+      node_->declare_parameter<std::string>("save_map_service", "/save_map");
     std::string rid = node_->get_parameter("robot_id").as_string();
     std::string fwv = node_->get_parameter("firmware_version").as_string();
     system_service_ = std::make_shared<services::SystemServiceImpl>(node_, rid, fwv);

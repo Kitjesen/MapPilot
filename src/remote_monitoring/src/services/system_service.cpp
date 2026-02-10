@@ -13,8 +13,14 @@ SystemServiceImpl::SystemServiceImpl(rclcpp::Node *node,
     : node_(node), robot_id_(robot_id), firmware_version_(firmware_version) {
   relocalize_client_ =
       node_->create_client<interface::srv::Relocalize>("/relocalize");
+
+  // save_map 服务名：lio_node 可能带命名空间 (如 /fastlio2/save_map)
+  std::string save_map_srv = "/save_map";
+  if (node_->has_parameter("save_map_service")) {
+    save_map_srv = node_->get_parameter("save_map_service").as_string();
+  }
   save_map_client_ =
-      node_->create_client<interface::srv::SaveMaps>("/save_map");
+      node_->create_client<interface::srv::SaveMaps>(save_map_srv);
 }
 
 grpc::Status SystemServiceImpl::Login(

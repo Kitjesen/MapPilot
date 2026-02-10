@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fixnum/fixnum.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
 import 'package:flutter_monitor/app/theme.dart';
@@ -74,6 +77,28 @@ class _MapManagerPageState extends State<MapManagerPage> {
     final full = n.endsWith(ext) ? n : '$n$ext';
     final (success, msg) = await context.read<MapGateway>().renameMap(m.path, full);
     _snack(msg, err: !success);
+  }
+
+  Future<void> _download(MapInfo m) async {
+    HapticFeedback.lightImpact();
+    _snack('正在下载 ${m.name}...');
+    final gateway = context.read<MapGateway>();
+    final bytes = await gateway.downloadMap(m.path);
+    if (bytes == null || !mounted) {
+      _snack('下载失败', err: true);
+      return;
+    }
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/${m.name}');
+      await file.writeAsBytes(bytes);
+      if (mounted) {
+        final sizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(1);
+        _snack('已下载 ${m.name} (${sizeMB} MB) → ${file.path}');
+      }
+    } catch (e) {
+      _snack('保存失败: $e', err: true);
+    }
   }
 
   Future<String?> _inputDialog(String title, String label, String init) {
@@ -232,8 +257,13 @@ class _MapManagerPageState extends State<MapManagerPage> {
                 iconSize: 18,
                 padding: EdgeInsets.zero,
                 icon: Icon(Icons.more_horiz, size: 18, color: context.subtitleColor),
-                onSelected: (v) { if (v == 'rename') _rename(m); if (v == 'delete') _delete(m); },
+                onSelected: (v) {
+                  if (v == 'download') _download(m);
+                  if (v == 'rename') _rename(m);
+                  if (v == 'delete') _delete(m);
+                },
                 itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'download', child: Text('下载到本机')),
                   const PopupMenuItem(value: 'rename', child: Text('重命名')),
                   const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(color: AppColors.error))),
                 ],

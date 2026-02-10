@@ -54,10 +54,10 @@ public:
         m_imu_sub = this->create_subscription<sensor_msgs::msg::Imu>(m_node_config.imu_topic, 10, std::bind(&LIONode::imuCB, this, std::placeholders::_1));
         m_lidar_sub = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(m_node_config.lidar_topic, 10, std::bind(&LIONode::lidarCB, this, std::placeholders::_1));
 
-        m_body_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", 10000);
-        m_world_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_map", 10000);
-        m_path_pub = this->create_publisher<nav_msgs::msg::Path>("/path", 10000);
-        m_odom_pub = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 10000);
+        m_body_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_registered", 10);
+        m_world_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_map", 10);
+        m_path_pub = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
+        m_odom_pub = this->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 100);
         m_tf_broadcaster = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
         m_state_data.path.poses.clear();
@@ -122,6 +122,11 @@ public:
         m_builder_config.t_il << t_il_vec[0], t_il_vec[1], t_il_vec[2];
         m_builder_config.r_il << r_il_vec[0], r_il_vec[1], r_il_vec[2], r_il_vec[3], r_il_vec[4], r_il_vec[5], r_il_vec[6], r_il_vec[7], r_il_vec[8];
         m_builder_config.lidar_cov_inv = config["lidar_cov_inv"].as<double>();
+
+        if (config["max_map_points"])
+            m_builder_config.max_map_points = config["max_map_points"].as<int>();
+        if (config["stationary_thresh"])
+            m_builder_config.stationary_thresh = config["stationary_thresh"].as<double>();
     }
 
     void imuCB(const sensor_msgs::msg::Imu::SharedPtr msg)
@@ -230,6 +235,17 @@ public:
         pose.pose.orientation.z = q.z();
         pose.pose.orientation.w = q.w();
         m_state_data.path.poses.push_back(pose);
+
+        // 限制 path 历史长度，防止长时间运行后消息体积无限增长
+        // 保留最近 5000 个位姿 (~8 分钟 @10Hz)
+        constexpr size_t kMaxPathPoses = 5000;
+        if (m_state_data.path.poses.size() > kMaxPathPoses)
+        {
+            m_state_data.path.poses.erase(
+                m_state_data.path.poses.begin(),
+                m_state_data.path.poses.begin() + (m_state_data.path.poses.size() - kMaxPathPoses));
+        }
+
         path_pub->publish(m_state_data.path);
     }
 

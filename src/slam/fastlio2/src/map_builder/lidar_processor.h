@@ -37,6 +37,8 @@ private:
     LocalMap m_local_map;
     std::shared_ptr<IESKF> m_kf;
     std::shared_ptr<KD_TREE<PointType>> m_ikdtree;
+    Eigen::Vector3d m_last_map_update_pos{0, 0, 0};
+    bool m_has_last_map_pos = false;
     CloudType::Ptr m_cloud_lidar;
     CloudType::Ptr m_cloud_down_lidar;
     CloudType::Ptr m_cloud_down_world;

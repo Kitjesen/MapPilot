@@ -14,7 +14,7 @@ class FileGateway extends ChangeNotifier {
     _client = client;
     if (client == null) {
       _files = [];
-      _currentDirectory = '/';
+      _currentDirectory = defaultDirectory;
       _totalSize = 0;
       _freeSpace = 0;
       _isLoading = false;
@@ -25,8 +25,11 @@ class FileGateway extends ChangeNotifier {
 
   // ── State ──
 
+  /// 默认初始目录为地图目录（OTA allowed_directories 白名单内）
+  static const String defaultDirectory = '/home/sunrise/data/SLAM/navigation/maps';
+
   List<RemoteFileInfo> _files = [];
-  String _currentDirectory = '/';
+  String _currentDirectory = defaultDirectory;
   int _totalSize = 0;
   int _freeSpace = 0;
   bool _isLoading = false;

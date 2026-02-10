@@ -10,9 +10,17 @@ lidar_max_range: 30.0
 scan_resolution: 0.15
 map_resolution: 0.3
 
-cube_len: 300
+cube_len: 2000
 det_range: 60
 move_thresh: 1.5
+
+# 地图点数硬上限（超过后裁剪远处点，防止极端情况下内存溢出）
+# 5M 点 ≈ 1-2km 范围内的详细地图，一般不会触发
+max_map_points: 5000000
+
+# 静止检测: 机器人移动距离小于此值时跳过地图更新，防止原地累积冗余点
+# 单位: 米, 0 = 不启用
+stationary_thresh: 0.05
 
 na: 0.01
 ng: 0.01
