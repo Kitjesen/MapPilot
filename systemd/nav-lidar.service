@@ -14,6 +14,7 @@ RestartSec=3
 TimeoutStopSec=10
 KillMode=mixed
 KillSignal=SIGINT
+SuccessExitStatus=130 SIGINT
 
 # 环境
 Environment=HOME=/home/sunrise
