@@ -3,6 +3,9 @@
 #include "remote_monitoring/core/safety_gate.hpp"
 #include "remote_monitoring/core/service_orchestrator.hpp"
 
+#include <chrono>
+#include <fstream>
+
 namespace remote_monitoring {
 namespace core {
 
@@ -124,6 +127,9 @@ TransitionResult ModeManager::SwitchMode(robot::v1::RobotMode new_mode) {
   // 更新状态
   current_mode_.store(new_mode);
 
+  // 持久化 (best-effort, 不影响主逻辑)
+  PersistState(new_mode);
+
   // 事件记录
   if (event_buffer_) {
     event_buffer_->AddEvent(
@@ -154,6 +160,9 @@ void ModeManager::EmergencyStop(const std::string &reason) {
 
   // 3. 更新模式 (atomic, 不需要锁)
   const auto old_mode = current_mode_.exchange(robot::v1::ROBOT_MODE_ESTOP);
+
+  // 持久化 (best-effort)
+  PersistState(robot::v1::ROBOT_MODE_ESTOP);
 
   // 4. 事件通知 (尽力而为, 不影响停车)
   if (event_buffer_ && old_mode != robot::v1::ROBOT_MODE_ESTOP) {
@@ -298,6 +307,28 @@ void ModeManager::StartPathFollower() {
   std_msgs::msg::Int8 stop_msg;
   stop_msg.data = 0;
   pub_stop_->publish(stop_msg);
+}
+
+// ================================================================
+//  状态持久化 (best-effort, 崩溃恢复用)
+// ================================================================
+
+void ModeManager::PersistState(robot::v1::RobotMode mode) {
+  if (state_persist_path_.empty()) return;
+  try {
+    const auto now = std::chrono::system_clock::now();
+    const auto epoch_sec =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            now.time_since_epoch())
+            .count();
+    std::ofstream ofs(state_persist_path_, std::ios::trunc);
+    if (ofs.is_open()) {
+      ofs << "mode=" << static_cast<int>(mode) << "\n"
+          << "timestamp=" << epoch_sec << "\n";
+    }
+  } catch (...) {
+    // best-effort: 持久化失败不影响正常操作
+  }
 }
 
 }  // namespace core

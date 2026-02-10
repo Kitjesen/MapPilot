@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <atomic>
+#include <string>
 #include <thread>
 
 #include "grpcpp/grpcpp.h"
@@ -75,6 +76,12 @@ private:
   void CheckDisconnection();
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pub_slow_down_;
   int last_disconnect_level_{0};  // 0=正常, 1=减速, 2=停车
+
+  // 崩溃恢复: 启动时检查上次状态, 清理残留服务
+  void RecoverFromCrash();
+
+  // 状态持久化文件路径
+  static constexpr const char *kStateFilePath = "/tmp/nav_gateway_state";
 };
 
 }  // namespace remote_monitoring

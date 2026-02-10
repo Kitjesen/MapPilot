@@ -1,6 +1,8 @@
 #include "remote_monitoring/grpc_gateway.hpp"
+#include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/security/server_credentials.h>
 #include "remote_monitoring/core/event_buffer.hpp"
@@ -33,6 +35,8 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
   aggregator_ = std::make_shared<StatusAggregator>(node_);
   lease_mgr_ = std::make_shared<core::LeaseManager>();
   event_buffer_ = std::make_shared<core::EventBuffer>(1000);
+  event_buffer_->EnablePersistence("/opt/robot/logs/events.jsonl",
+                                   10 * 1024 * 1024);  // 10 MB, 自动轮转
   safety_gate_ = std::make_shared<core::SafetyGate>(node_);
   idempotency_cache_ = std::make_shared<core::IdempotencyCache>();
 
@@ -45,9 +49,20 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
   mode_manager_->SetSafetyGate(safety_gate_);
   mode_manager_->SetEventBuffer(event_buffer_);
   mode_manager_->SetGeofenceMonitor(geofence_monitor_);
+  mode_manager_->SetStatePersistPath(kStateFilePath);
 
   // Layer 3.5: 服务编排器 — 根据模式切换自动启停 systemd 服务
   service_orchestrator_ = std::make_shared<core::ServiceOrchestrator>(node_);
+  service_orchestrator_->SetEventBuffer(event_buffer_);
+  service_orchestrator_->SetModeProvider(
+      [this]() { return mode_manager_->GetCurrentMode(); });
+  service_orchestrator_->SetServiceCrashCallback(
+      [this](const std::string &svc, robot::v1::RobotMode /*expected_mode*/) {
+        // 服务崩溃 → 触发 ESTOP (安全优先)
+        if (mode_manager_) {
+          mode_manager_->EmergencyStop("service_crash: " + svc);
+        }
+      });
   mode_manager_->SetServiceOrchestrator(service_orchestrator_);
 
   // 注入转换守卫: 将各独立模块的状态查询接线到 ModeManager
@@ -133,6 +148,72 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
 
   // 断联降级: 发布 /slow_down
   pub_slow_down_ = node_->create_publisher<std_msgs::msg::Int8>("/slow_down", 5);
+
+  // 崩溃恢复: 检查上次运行状态, 清理残留 nav 服务
+  RecoverFromCrash();
+
+  // 启动服务巡检 (每 10 秒检查一次 systemctl is-active)
+  service_orchestrator_->StartPeriodicCheck(10);
+}
+
+// ================================================================
+//  崩溃恢复: 读取上次模式, 如果非 IDLE 则停止所有导航服务
+// ================================================================
+void GrpcGateway::RecoverFromCrash() {
+  int prev_mode = -1;
+  long prev_timestamp = 0;
+
+  // 1. 尝试读取上次状态文件
+  try {
+    std::ifstream ifs(kStateFilePath);
+    if (ifs.is_open()) {
+      std::string line;
+      while (std::getline(ifs, line)) {
+        if (line.rfind("mode=", 0) == 0) {
+          prev_mode = std::stoi(line.substr(5));
+        } else if (line.rfind("timestamp=", 0) == 0) {
+          prev_timestamp = std::stol(line.substr(10));
+        }
+      }
+    }
+  } catch (...) {
+    // 文件不存在或格式错误 — 首次启动, 无需恢复
+    prev_mode = -1;
+  }
+
+  // 2. 写入当前 IDLE 状态 (标记干净启动)
+  mode_manager_->PersistState(robot::v1::ROBOT_MODE_IDLE);
+
+  if (prev_mode < 0) {
+    RCLCPP_INFO(node_->get_logger(),
+                "CrashRecovery: no previous state file, clean start");
+    return;
+  }
+
+  // 3. 如果上次不是 IDLE, 说明可能崩溃了 — 保守处理
+  if (prev_mode != static_cast<int>(robot::v1::ROBOT_MODE_IDLE)) {
+    RCLCPP_WARN(node_->get_logger(),
+                "CrashRecovery: previous mode was %d (timestamp=%ld), "
+                "stopping all nav services for safety",
+                prev_mode, prev_timestamp);
+
+    if (service_orchestrator_) {
+      service_orchestrator_->StopAllNavServices();
+    }
+
+    if (event_buffer_) {
+      event_buffer_->AddEvent(
+          robot::v1::EVENT_TYPE_SYSTEM_BOOT,
+          robot::v1::EVENT_SEVERITY_WARNING,
+          "Crash recovery: stopped nav services",
+          "Previous mode was " + std::to_string(prev_mode) +
+              " (not IDLE). All nav services stopped for safety. "
+              "Previous timestamp: " + std::to_string(prev_timestamp));
+    }
+  } else {
+    RCLCPP_INFO(node_->get_logger(),
+                "CrashRecovery: previous shutdown was clean (IDLE)");
+  }
 }
 
 GrpcGateway::~GrpcGateway() { Stop(); }

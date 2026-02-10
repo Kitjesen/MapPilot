@@ -359,6 +359,8 @@ class _ControlScreenState extends State<ControlScreen> {
                                     RobotMode.ROBOT_MODE_IDLE, Colors.grey),
                                 _buildModeButton('MANUAL',
                                     RobotMode.ROBOT_MODE_MANUAL, Colors.blue),
+                                _buildModeButton('TELEOP',
+                                    RobotMode.ROBOT_MODE_TELEOP, Colors.orange),
                                 _buildModeButton(
                                     'AUTO',
                                     RobotMode.ROBOT_MODE_AUTONOMOUS,

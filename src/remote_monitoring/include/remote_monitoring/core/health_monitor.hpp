@@ -14,7 +14,8 @@
  *   FAULT    - 必须停车 (触发 ESTOP)
  *
  * 判定规则 (基于话题频率):
- *   SLAM:     odom_hz > 50 → OK,  > 20 → DEGRADED,  else → FAULT
+ *   SLAM:     odom_hz > 5  → OK,  > 2 → DEGRADED,  else → FAULT
+ *             (Fast-LIO2 输出与 LiDAR 帧率一致, 通常 10Hz)
  *   地形分析: terrain_hz > 3 → OK, > 1 → DEGRADED,  else → CRITICAL
  *   局部规划: path_hz > 3 → OK,   > 1 → DEGRADED,  else → CRITICAL
  *   TF链:    tf_ok → OK,          else → FAULT

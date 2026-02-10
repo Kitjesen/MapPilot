@@ -254,6 +254,46 @@ grpc::Status ControlServiceImpl::EmergencyStop(
   return grpc::Status::OK;
 }
 
+grpc::Status ControlServiceImpl::ClearEmergencyStop(
+    grpc::ServerContext *, const robot::v1::ClearEmergencyStopRequest *request,
+    robot::v1::ClearEmergencyStopResponse *response) {
+
+  // Idempotency Check
+  std::string cached_resp;
+  if (idempotency_cache_->TryGet(request->base().request_id(), &cached_resp)) {
+    if (response->ParseFromString(cached_resp)) {
+      return grpc::Status::OK;
+    }
+  }
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  if (mode_manager_) {
+    auto result = mode_manager_->ClearEmergencyStop();
+    if (result.success) {
+      response->set_current_mode(mode_manager_->GetCurrentMode());
+      response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+    } else {
+      response->set_current_mode(robot::v1::ROBOT_MODE_ESTOP);
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_MODE_CONFLICT);
+      response->mutable_base()->set_error_message(result.reason);
+    }
+  } else {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+    response->mutable_base()->set_error_message("ModeManager not available");
+  }
+
+  // Cache Result
+  std::string resp_str;
+  if (response->SerializeToString(&resp_str)) {
+    idempotency_cache_->Set(request->base().request_id(), resp_str);
+  }
+
+  return grpc::Status::OK;
+}
+
 grpc::Status ControlServiceImpl::StreamTeleop(
     grpc::ServerContext *context,
     grpc::ServerReaderWriter<robot::v1::TeleopFeedback,

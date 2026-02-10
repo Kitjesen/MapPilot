@@ -99,6 +99,14 @@ public:
 
   robot::v1::RobotMode GetCurrentMode() const { return current_mode_.load(); }
 
+  /// 设置状态持久化文件路径 (空=不持久化)
+  void SetStatePersistPath(const std::string &path) {
+    state_persist_path_ = path;
+  }
+
+  /// 将当前模式写入持久化文件 (public: 供 GrpcGateway 崩溃恢复调用)
+  void PersistState(robot::v1::RobotMode mode);
+
 private:
   /// 检查转换是否合法 (守卫条件)
   TransitionResult CheckTransition(robot::v1::RobotMode from,
@@ -126,6 +134,8 @@ private:
   std::mutex mutex_;
 
   TransitionGuards guards_;
+
+  std::string state_persist_path_;  // 空=不持久化
 };
 
 }  // namespace core

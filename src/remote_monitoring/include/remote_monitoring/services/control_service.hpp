@@ -49,6 +49,11 @@ public:
                 const robot::v1::EmergencyStopRequest *request,
                 robot::v1::EmergencyStopResponse *response) override;
 
+  grpc::Status ClearEmergencyStop(
+      grpc::ServerContext *context,
+      const robot::v1::ClearEmergencyStopRequest *request,
+      robot::v1::ClearEmergencyStopResponse *response) override;
+
   grpc::Status StreamTeleop(
       grpc::ServerContext *context,
       grpc::ServerReaderWriter<robot::v1::TeleopFeedback,

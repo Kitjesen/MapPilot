@@ -1,4 +1,5 @@
 #include "remote_monitoring/core/service_orchestrator.hpp"
+#include "remote_monitoring/core/event_buffer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -35,6 +36,84 @@ ServiceOrchestrator::ServiceOrchestrator(rclcpp::Node *node) : node_(node) {
   RCLCPP_INFO(node_->get_logger(),
               "ServiceOrchestrator initialized with %zu managed services",
               kNumManagedServices);
+}
+
+ServiceOrchestrator::~ServiceOrchestrator() { StopPeriodicCheck(); }
+
+// ================================================================
+//  后台巡检: 定期 systemctl is-active 确认服务存活
+// ================================================================
+
+void ServiceOrchestrator::StartPeriodicCheck(int interval_sec) {
+  if (check_thread_.joinable()) return;  // 已在运行
+  check_stop_.store(false);
+  check_thread_ = std::thread([this, interval_sec]() {
+    PeriodicCheckLoop(interval_sec);
+  });
+  RCLCPP_INFO(node_->get_logger(),
+              "ServiceOrchestrator: periodic check started (every %ds)",
+              interval_sec);
+}
+
+void ServiceOrchestrator::StopPeriodicCheck() {
+  check_stop_.store(true);
+  if (check_thread_.joinable()) {
+    check_thread_.join();
+  }
+}
+
+void ServiceOrchestrator::PeriodicCheckLoop(int interval_sec) {
+  while (!check_stop_.load()) {
+    // 细粒度睡眠: 每 500ms 检查一次 stop 标志, 避免析构时长时间阻塞
+    for (int i = 0; i < interval_sec * 2 && !check_stop_.load(); ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    if (check_stop_.load()) break;
+
+    // 获取当前模式
+    if (!mode_provider_) continue;
+    const auto mode = mode_provider_();
+
+    // IDLE 模式下不需要巡检 (服务可能本来就不运行)
+    if (mode == robot::v1::ROBOT_MODE_IDLE ||
+        mode == robot::v1::ROBOT_MODE_ESTOP) {
+      continue;
+    }
+
+    // 获取当前模式需要的服务集
+    auto required = GetRequiredServices(mode);
+    if (required.empty()) continue;
+
+    // 检查每个 required 服务是否 active
+    for (const auto &svc : required) {
+      std::string state = QueryServiceField(svc + ".service", "ActiveState");
+      if (state != "active") {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "ServiceOrchestrator: service %s CRASHED "
+                     "(state=%s, expected=active for mode %d)",
+                     svc.c_str(), state.c_str(), static_cast<int>(mode));
+
+        // 发事件通知
+        if (event_buffer_) {
+          event_buffer_->AddEvent(
+              robot::v1::EVENT_TYPE_SYSTEM_BOOT,
+              robot::v1::EVENT_SEVERITY_ERROR,
+              "Service crashed: " + svc,
+              "Service " + svc + ".service state=" + state +
+                  " (expected active for mode " +
+                  std::to_string(static_cast<int>(mode)) + ")");
+        }
+
+        // 通知上层 (ModeManager 可选择降级)
+        if (crash_callback_) {
+          crash_callback_(svc, mode);
+        }
+
+        // 只报告第一个崩溃的服务, 避免连锁触发
+        break;
+      }
+    }
+  }
 }
 
 std::set<std::string> ServiceOrchestrator::GetRequiredServices(
@@ -89,6 +168,58 @@ void ServiceOrchestrator::OnModeChange(robot::v1::RobotMode /*old_mode*/,
   }).detach();
 }
 
+bool ServiceOrchestrator::StartServiceWithRetry(const std::string &svc,
+                                                int max_retries) {
+  const std::string unit = svc + ".service";
+
+  for (int attempt = 0; attempt <= max_retries; ++attempt) {
+    std::string state = QueryServiceField(unit, "ActiveState");
+    if (state == "active") return true;
+
+    // 清除 failed 残留
+    if (state == "failed") {
+      ManageService(unit, "reset-failed");
+      RCLCPP_WARN(node_->get_logger(),
+                  "ServiceOrchestrator: reset-failed %s", unit.c_str());
+    }
+
+    if (attempt > 0) {
+      RCLCPP_WARN(node_->get_logger(),
+                  "ServiceOrchestrator: retry %d/%d for %s",
+                  attempt, max_retries, unit.c_str());
+    }
+
+    RCLCPP_INFO(node_->get_logger(),
+                "ServiceOrchestrator: starting %s", unit.c_str());
+    ManageService(unit, "start");
+
+    // 等待服务启动 (最多 5 秒)
+    for (int w = 0; w < 10; ++w) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      state = QueryServiceField(unit, "ActiveState");
+      if (state == "active") {
+        RCLCPP_INFO(node_->get_logger(),
+                    "ServiceOrchestrator: %s → active", unit.c_str());
+        return true;
+      }
+    }
+  }
+
+  // 所有重试失败 — 发事件通知
+  RCLCPP_ERROR(node_->get_logger(),
+               "ServiceOrchestrator: FAILED to start %s after %d retries",
+               unit.c_str(), max_retries);
+  if (event_buffer_) {
+    event_buffer_->AddEvent(
+        robot::v1::EVENT_TYPE_SYSTEM_BOOT,
+        robot::v1::EVENT_SEVERITY_ERROR,
+        "Service start failed: " + svc,
+        "Failed to start " + unit + " after " +
+            std::to_string(max_retries + 1) + " attempts");
+  }
+  return false;
+}
+
 void ServiceOrchestrator::OrchestrateAsync(std::set<std::string> required) {
   std::lock_guard<std::mutex> lock(orchestrate_mutex_);
 
@@ -96,32 +227,7 @@ void ServiceOrchestrator::OrchestrateAsync(std::set<std::string> required) {
   for (size_t i = 0; i < kNumManagedServices; ++i) {
     const std::string svc = kManagedServices[i];
     if (required.count(svc)) {
-      std::string state = QueryServiceField(svc + ".service", "ActiveState");
-      if (state != "active") {
-        // 清除 failed 残留, 否则 start 可能失败
-        if (state == "failed") {
-          ManageService(svc + ".service", "reset-failed");
-          RCLCPP_WARN(node_->get_logger(),
-                      "ServiceOrchestrator: reset-failed %s.service", svc.c_str());
-        }
-        RCLCPP_INFO(node_->get_logger(),
-                    "ServiceOrchestrator: starting %s.service", svc.c_str());
-        if (!ManageService(svc + ".service", "start")) {
-          RCLCPP_ERROR(node_->get_logger(),
-                       "ServiceOrchestrator: FAILED to start %s.service",
-                       svc.c_str());
-        } else {
-          // 等待服务启动 (最多 5 秒)
-          for (int retry = 0; retry < 10; ++retry) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            state = QueryServiceField(svc + ".service", "ActiveState");
-            if (state == "active") break;
-          }
-          RCLCPP_INFO(node_->get_logger(),
-                      "ServiceOrchestrator: %s.service → %s", svc.c_str(),
-                      state.c_str());
-        }
-      }
+      StartServiceWithRetry(svc, 2);
     }
   }
 

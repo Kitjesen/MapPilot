@@ -215,11 +215,35 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
     }
   }
 
-  // 6. COLD safety: stop navigation.service before installing
-  if (artifact.safety_level() == robot::v1::OTA_SAFETY_LEVEL_COLD) {
-    OtaLogInfo("COLD update: stopping navigation.service...");
-    ota::ManageService("navigation.service", "stop");
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+  // 6. Pre-update safety: 停止所有导航栈服务, 防止更新过程中服务状态不一致
+  //    grpc_gateway (nav-grpc) 不停止 — 它是控制面, 需要保持可达
+  //    按依赖反序停止: planning → autonomy → slam → lidar
+  {
+    static const char *nav_services[] = {
+        "nav-planning.service", "nav-autonomy.service",
+        "nav-slam.service", "nav-lidar.service"};
+    bool any_stopped = false;
+    for (const auto &svc : nav_services) {
+      auto st = ota::GetServiceStatus(svc);
+      if (st.active_state == "active") {
+        OtaLogInfo("ApplyUpdate: pre-update stop %s", svc);
+        ota::ManageService(svc, "stop");
+        any_stopped = true;
+      }
+    }
+    if (any_stopped) {
+      OtaLogInfo("ApplyUpdate: waiting for nav services to stop...");
+      std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+    // 兼容旧的 navigation.service (如果存在)
+    if (artifact.safety_level() == robot::v1::OTA_SAFETY_LEVEL_COLD) {
+      auto old_st = ota::GetServiceStatus("navigation.service");
+      if (old_st.active_state == "active") {
+        OtaLogInfo("ApplyUpdate: COLD update — also stopping navigation.service");
+        ota::ManageService("navigation.service", "stop");
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+      }
+    }
   }
 
   // 7. Transaction log
