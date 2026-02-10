@@ -238,8 +238,13 @@ grpc::Status SystemServiceImpl::ListMaps(
       map_info->set_size_bytes(static_cast<int64_t>(entry.file_size()));
 
       const auto mod_time = entry.last_write_time();
-      const auto sys_time = std::chrono::clock_cast<std::chrono::system_clock>(mod_time);
-      const auto time_t = std::chrono::system_clock::to_time_t(sys_time);
+      // C++17 compatible: convert file_clock to system_clock via time_t
+      const auto file_duration = mod_time.time_since_epoch();
+      const auto sys_duration = std::chrono::duration_cast<std::chrono::system_clock::duration>(
+          file_duration - fs::file_time_type::clock::now().time_since_epoch()
+          + std::chrono::system_clock::now().time_since_epoch());
+      const auto time_t = std::chrono::system_clock::to_time_t(
+          std::chrono::system_clock::time_point(sys_duration));
       char buf[64];
       std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&time_t));
       map_info->set_modified_at(buf);

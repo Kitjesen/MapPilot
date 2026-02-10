@@ -352,6 +352,13 @@ DataServiceImpl::Subscribe(grpc::ServerContext *context,
                         "Unsupported resource type for subscription");
   }
 
+  RCLCPP_INFO(node_->get_logger(),
+              "Subscribe: topic='%s', type=%d, name='%s', freq=%.1f",
+              topic.c_str(),
+              static_cast<int>(request->resource_id().type()),
+              request->resource_id().name().c_str(),
+              request->profile().frequency());
+
   const bool has_topic_override = IsTopicName(request->resource_id().name());
   if (!has_topic_override &&
       request->resource_id().type() == robot::v1::RESOURCE_TYPE_CAMERA &&
@@ -377,8 +384,10 @@ DataServiceImpl::Subscribe(grpc::ServerContext *context,
   const double hz = ResolveFrequency(request);
   switch (request->resource_id().type()) {
   case robot::v1::RESOURCE_TYPE_CAMERA:
+    // 使用 reliable QoS 以匹配 Orbbec camera 的 RELIABLE 发布 QoS
+    // SensorDataQoS(BEST_EFFORT) 会导致 FastDDS 不传递数据
     return StreamResource<sensor_msgs::msg::CompressedImage>(
-        node_, topic, rclcpp::SensorDataQoS(), request->resource_id(), hz,
+        node_, topic, rclcpp::QoS(5).reliable(), request->resource_id(), hz,
         [](const sensor_msgs::msg::CompressedImage::ConstSharedPtr &msg,
            std::string *output) {
           if (msg == nullptr || output == nullptr) {

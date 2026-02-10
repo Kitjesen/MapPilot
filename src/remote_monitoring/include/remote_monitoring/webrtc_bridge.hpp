@@ -48,7 +48,7 @@ public:
   void SetRemoteDescription(const std::string &sdp, const std::string &type);
   void CreateAnswer();
   
-  // 创建 DataChannel + Track（必须在 SetRemoteDescription 之后调用，避免 SDP glare）
+  // 创建 DataChannel + Track（在 HandleOffer 中，配合 suppress_local_desc_ 使用）
   void SetupMedia();
   
   // ICE 候选处理
@@ -69,6 +69,9 @@ public:
 
   // 关闭连接
   void Close();
+
+  // DataChannel 创建时抑制 libdatachannel 自动生成的 offer（供 Bridge 使用）
+  std::atomic<bool> suppress_local_desc_{false};
 
 private:
   std::string session_id_;

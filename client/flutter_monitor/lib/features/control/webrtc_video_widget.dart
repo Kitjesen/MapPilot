@@ -1,5 +1,8 @@
 // webrtc_video_widget.dart
-// Widget for displaying WebRTC video stream (supports both video track and DataChannel JPEG)
+// Widget for displaying video stream with automatic WebRTC → gRPC fallback.
+// Attempts WebRTC DataChannel first; if it fails or times out, falls back
+// to gRPC Subscribe (direct JPEG streaming) which is more reliable on
+// platforms where WebRTC native support is limited (e.g. Windows desktop).
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -9,8 +12,15 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
 import 'package:flutter_monitor/features/control/webrtc_client.dart';
+import 'package:robot_proto/src/common.pb.dart';
+import 'package:robot_proto/src/data.pb.dart';
 
-/// WebRTC 视频显示组件
+/// Camera video widget with WebRTC + gRPC Subscribe fallback.
+///
+/// Strategy:
+///   1. Try WebRTC DataChannel (low-latency, peer-to-peer)
+///   2. If no frame arrives within [_webrtcTimeoutSec], automatically
+///      switch to gRPC Subscribe (reliable, works across NAT)
 class WebRTCVideoWidget extends StatefulWidget {
   final RobotClientBase client;
   final String cameraId;
@@ -35,152 +45,263 @@ class WebRTCVideoWidget extends StatefulWidget {
   State<WebRTCVideoWidget> createState() => _WebRTCVideoWidgetState();
 }
 
+enum _VideoMode { none, connecting, webrtc, grpcFallback, failed }
+
 class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
+  // ── WebRTC ──
   WebRTCClient? _webrtcClient;
   RTCVideoRenderer? _renderer;
-  WebRTCConnectionState _connectionState = WebRTCConnectionState.disconnected;
   StreamSubscription<WebRTCConnectionState>? _stateSubscription;
   StreamSubscription<Uint8List>? _frameSubscription;
+
+  // ── gRPC Subscribe fallback ──
+  StreamSubscription<DataChunk>? _grpcSubscription;
+
+  // ── Shared state ──
   Uint8List? _latestJpegFrame;
   String? _errorMessage;
-  bool _isInitialized = false;
+  _VideoMode _mode = _VideoMode.none;
   bool _useDataChannelVideo = false;
+  Timer? _webrtcTimeout;
+
+  /// Seconds to wait for first WebRTC frame before falling back to gRPC.
+  static const int _webrtcTimeoutSec = 6;
 
   @override
   void initState() {
     super.initState();
     if (widget.autoConnect) {
-      _initializeWebRTC();
+      _startVideoStream();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant WebRTCVideoWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cameraId != widget.cameraId) {
+      _fullCleanup();
+      _startVideoStream();
     }
   }
 
   @override
   void dispose() {
-    _frameSubscription?.cancel();
-    _stateSubscription?.cancel();
-    _webrtcClient?.dispose();
+    _fullCleanup();
     super.dispose();
   }
 
-  Future<void> _initializeWebRTC() async {
-    // 检查客户端是否支持 WebRTC (真实客户端才支持)
-    final dataClient = widget.client.dataServiceClient;
-    if (dataClient == null) {
-      setState(() {
-        _errorMessage = 'WebRTC not available in mock mode';
-        _connectionState = WebRTCConnectionState.failed;
-      });
+  void _fullCleanup() {
+    _webrtcTimeout?.cancel();
+    _grpcSubscription?.cancel();
+    _grpcSubscription = null;
+    _cleanupWebRTC();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Entry: try WebRTC first, fallback to gRPC on timeout
+  // ════════════════════════════════════════════════════════════════════════
+
+  Future<void> _startVideoStream() async {
+    setState(() {
+      _mode = _VideoMode.connecting;
+      _errorMessage = null;
+      _latestJpegFrame = null;
+    });
+
+    final webrtcOk = await _tryWebRTC();
+
+    if (!webrtcOk && mounted) {
+      debugPrint('VideoWidget: WebRTC init failed, falling back to gRPC');
+      _startGrpcFallback();
       return;
     }
 
-    // ── 运行时权限请求 (Android 6+ 必需) ──
-    // flutter_webrtc 原生层即使只接收视频, 也需要 camera/microphone 权限声明
-    try {
-      final statuses = await [
-        Permission.camera,
-        Permission.microphone,
-      ].request();
-
-      final cameraDenied = statuses[Permission.camera]?.isDenied ?? true;
-      final micDenied = statuses[Permission.microphone]?.isDenied ?? true;
-
-      if (cameraDenied || micDenied) {
-        debugPrint('WebRTC: Permissions denied — camera=$cameraDenied, mic=$micDenied');
-        // 权限被拒不一定致命 (我们只接收不发送), 继续尝试连接
+    // Timeout: if no WebRTC frame arrives within N seconds, switch to gRPC
+    _webrtcTimeout = Timer(Duration(seconds: _webrtcTimeoutSec), () {
+      if (mounted && _latestJpegFrame == null && _mode != _VideoMode.grpcFallback) {
+        debugPrint('VideoWidget: WebRTC timeout (${_webrtcTimeoutSec}s), '
+            'falling back to gRPC Subscribe');
+        _cleanupWebRTC();
+        _startGrpcFallback();
       }
-    } catch (e) {
-      debugPrint('WebRTC: Permission request failed: $e');
-      // 非致命, 继续尝试
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Path A: WebRTC DataChannel
+  // ════════════════════════════════════════════════════════════════════════
+
+  Future<bool> _tryWebRTC() async {
+    final dataClient = widget.client.dataServiceClient;
+    if (dataClient == null) {
+      return false;
     }
 
-    // 生成唯一 session ID
-    final sessionId = 'webrtc_${DateTime.now().millisecondsSinceEpoch}';
+    // Runtime permissions (Android)
+    try {
+      await [Permission.camera, Permission.microphone].request();
+    } catch (_) {}
 
+    final sessionId = 'webrtc_${DateTime.now().millisecondsSinceEpoch}';
     _webrtcClient = WebRTCClient(
       dataClient: dataClient,
       sessionId: sessionId,
     );
 
-    // 监听 DataChannel JPEG 帧流
+    // Listen for JPEG frames (DataChannel)
     _frameSubscription = _webrtcClient!.videoFrameStream.listen((frameData) {
-      if (mounted) {
+      if (mounted && frameData.isNotEmpty) {
+        _webrtcTimeout?.cancel();
         setState(() {
           _latestJpegFrame = frameData;
           _useDataChannelVideo = true;
-          _isInitialized = true;
+          _mode = _VideoMode.webrtc;
         });
       }
     });
 
-    // 监听连接状态
+    // Listen for connection state
     _stateSubscription = _webrtcClient!.connectionStateStream.listen((state) {
-      if (mounted) {
-        setState(() {
-          _connectionState = state;
-          if (state == WebRTCConnectionState.connected) {
-            _renderer = _webrtcClient!.videoRenderer;
-            _isInitialized = true;
-          }
-          if (state == WebRTCConnectionState.disconnected ||
-              state == WebRTCConnectionState.failed) {
-            _useDataChannelVideo = false;
-            _latestJpegFrame = null;
-          }
-        });
+      if (!mounted) return;
+      if (state == WebRTCConnectionState.connected) {
+        _renderer = _webrtcClient!.videoRenderer;
+      }
+      if (state == WebRTCConnectionState.failed) {
+        debugPrint('VideoWidget: WebRTC state=failed, falling back');
+        _webrtcTimeout?.cancel();
+        _cleanupWebRTC();
+        _startGrpcFallback();
       }
     });
 
-    // 开始连接
     try {
       await _webrtcClient!.connect(
         videoEnabled: true,
         audioEnabled: false,
         cameraId: widget.cameraId,
       );
+      return true;
     } catch (e) {
-      debugPrint('WebRTC: Connection failed: $e');
+      debugPrint('VideoWidget: WebRTC connect exception: $e');
+      return false;
+    }
+  }
+
+  void _cleanupWebRTC() {
+    _frameSubscription?.cancel();
+    _frameSubscription = null;
+    _stateSubscription?.cancel();
+    _stateSubscription = null;
+    _webrtcClient?.dispose();
+    _webrtcClient = null;
+    _renderer = null;
+    _useDataChannelVideo = false;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Path B: gRPC Subscribe fallback (direct JPEG stream)
+  // ════════════════════════════════════════════════════════════════════════
+
+  void _startGrpcFallback() {
+    if (_mode == _VideoMode.grpcFallback) return;
+
+    debugPrint('VideoWidget: Starting gRPC Subscribe fallback for '
+        'camera "${widget.cameraId}"');
+
+    setState(() => _mode = _VideoMode.connecting);
+
+    final topicName = _cameraIdToTopic(widget.cameraId);
+
+    final resourceId = ResourceId()
+      ..type = ResourceType.RESOURCE_TYPE_CAMERA
+      ..name = topicName;
+
+    try {
+      _grpcSubscription = widget.client.subscribeToResource(resourceId).listen(
+        (chunk) {
+          if (mounted && chunk.data.isNotEmpty) {
+            setState(() {
+              _latestJpegFrame = Uint8List.fromList(chunk.data);
+              _mode = _VideoMode.grpcFallback;
+            });
+          }
+        },
+        onError: (error) {
+          debugPrint('VideoWidget: gRPC camera stream error: $error');
+          if (mounted) {
+            setState(() {
+              _errorMessage = 'Camera stream error: $error';
+              _mode = _VideoMode.failed;
+            });
+          }
+        },
+        onDone: () {
+          debugPrint('VideoWidget: gRPC stream ended');
+          if (mounted && _mode == _VideoMode.grpcFallback) {
+            Future.delayed(const Duration(seconds: 1), () {
+              if (mounted) _startGrpcFallback();
+            });
+          }
+        },
+      );
+    } catch (e) {
+      debugPrint('VideoWidget: gRPC Subscribe failed: $e');
       if (mounted) {
         setState(() {
-          _errorMessage = e.toString();
-          _connectionState = WebRTCConnectionState.failed;
+          _errorMessage = 'Failed to subscribe: $e';
+          _mode = _VideoMode.failed;
         });
       }
     }
   }
 
-  Future<void> _reconnect() async {
-    setState(() {
-      _connectionState = WebRTCConnectionState.disconnected;
-      _errorMessage = null;
-      _useDataChannelVideo = false;
-      _latestJpegFrame = null;
-    });
-
-    _frameSubscription?.cancel();
-    _frameSubscription = null;
-    await _webrtcClient?.disconnect();
-    _webrtcClient?.dispose();
-    _webrtcClient = null;
-
-    await _initializeWebRTC();
+  String _cameraIdToTopic(String cameraId) {
+    switch (cameraId) {
+      case 'front':
+        return '/camera/color/image_raw/compressed';
+      case 'rear':
+        return '/camera/rear/image_raw/compressed';
+      default:
+        if (cameraId.startsWith('/')) return cameraId;
+        return '/camera/color/image_raw/compressed';
+    }
   }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Reconnect
+  // ════════════════════════════════════════════════════════════════════════
+
+  Future<void> _reconnect() async {
+    _fullCleanup();
+    setState(() {
+      _latestJpegFrame = null;
+      _errorMessage = null;
+      _mode = _VideoMode.none;
+    });
+    await _startVideoStream();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  UI
+  // ════════════════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
-    switch (_connectionState) {
-      case WebRTCConnectionState.connecting:
+    switch (_mode) {
+      case _VideoMode.none:
+      case _VideoMode.connecting:
         return widget.loadingWidget ?? _buildLoadingWidget();
 
-      case WebRTCConnectionState.connected:
-        // 优先使用 DataChannel JPEG 帧渲染 (更可靠，无需 H.264)
-        if (_useDataChannelVideo && _latestJpegFrame != null) {
+      case _VideoMode.webrtc:
+      case _VideoMode.grpcFallback:
+        if (_latestJpegFrame != null) {
           return Container(
             color: Colors.black,
             child: Center(
               child: Image.memory(
                 _latestJpegFrame!,
                 fit: widget.fit,
-                gaplessPlayback: true,  // 关键：防止帧切换时闪烁
+                gaplessPlayback: true,
                 errorBuilder: (context, error, stackTrace) {
                   return widget.placeholder ?? _buildPlaceholder();
                 },
@@ -188,8 +309,8 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
             ),
           );
         }
-        // Fallback: 使用 RTCVideoView (video track 模式)
-        if (_renderer != null && _isInitialized) {
+        // Fallback: RTCVideoView (WebRTC video track mode)
+        if (_renderer != null) {
           return RTCVideoView(
             _renderer!,
             objectFit: _convertFit(widget.fit),
@@ -198,11 +319,8 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
         }
         return widget.placeholder ?? _buildPlaceholder();
 
-      case WebRTCConnectionState.failed:
+      case _VideoMode.failed:
         return widget.errorWidget ?? _buildErrorWidget();
-
-      case WebRTCConnectionState.disconnected:
-        return widget.placeholder ?? _buildPlaceholder();
     }
   }
 
@@ -229,7 +347,7 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
             ),
             SizedBox(height: 16),
             Text(
-              'Connecting to camera...',
+              '正在连接相机...',
               style: TextStyle(
                 color: Colors.white54,
                 fontSize: 14,
@@ -251,21 +369,21 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
             Icon(
               Icons.videocam_off,
               size: 48,
-              color: Colors.white.withValues(alpha:0.3),
+              color: Colors.white.withValues(alpha: 0.3),
             ),
             const SizedBox(height: 8),
             Text(
-              'No video feed',
+              '无视频信号',
               style: TextStyle(
-                color: Colors.white.withValues(alpha:0.3),
+                color: Colors.white.withValues(alpha: 0.3),
                 fontSize: 14,
               ),
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: _initializeWebRTC,
+              onPressed: _reconnect,
               icon: const Icon(Icons.play_arrow),
-              label: const Text('Start Video'),
+              label: const Text('开始播放'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF007AFF),
                 foregroundColor: Colors.white,
@@ -291,7 +409,7 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Connection failed',
+              '连接失败',
               style: TextStyle(
                 color: Colors.white70,
                 fontSize: 16,
@@ -309,7 +427,7 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
                     fontSize: 12,
                   ),
                   textAlign: TextAlign.center,
-                  maxLines: 2,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -318,7 +436,7 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
             ElevatedButton.icon(
               onPressed: _reconnect,
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
+              label: const Text('重试'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red.shade700,
                 foregroundColor: Colors.white,
@@ -330,4 +448,3 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
     );
   }
 }
-
