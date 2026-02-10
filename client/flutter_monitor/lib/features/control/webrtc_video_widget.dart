@@ -108,21 +108,15 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
       _latestJpegFrame = null;
     });
 
-    final webrtcOk = await _tryWebRTC();
+    // 直接启动 gRPC Subscribe（可靠路径），同时尝试 WebRTC
+    // 如果 WebRTC DataChannel 先出帧则自动切换
+    debugPrint('VideoWidget: Starting gRPC Subscribe as primary path');
+    _startGrpcFallback();
 
-    if (!webrtcOk && mounted) {
-      debugPrint('VideoWidget: WebRTC init failed, falling back to gRPC');
-      _startGrpcFallback();
-      return;
-    }
-
-    // Timeout: if no WebRTC frame arrives within N seconds, switch to gRPC
-    _webrtcTimeout = Timer(Duration(seconds: _webrtcTimeoutSec), () {
-      if (mounted && _latestJpegFrame == null && _mode != _VideoMode.grpcFallback) {
-        debugPrint('VideoWidget: WebRTC timeout (${_webrtcTimeoutSec}s), '
-            'falling back to gRPC Subscribe');
-        _cleanupWebRTC();
-        _startGrpcFallback();
+    // 同时尝试 WebRTC (可选的低延迟路径)
+    _tryWebRTC().then((ok) {
+      if (!ok) {
+        debugPrint('VideoWidget: WebRTC init failed, gRPC already active');
       }
     });
   }
@@ -151,7 +145,12 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
     // Listen for JPEG frames (DataChannel)
     _frameSubscription = _webrtcClient!.videoFrameStream.listen((frameData) {
       if (mounted && frameData.isNotEmpty) {
-        _webrtcTimeout?.cancel();
+        // WebRTC 出帧了，切换到 WebRTC 模式并停掉 gRPC
+        if (_mode != _VideoMode.webrtc) {
+          debugPrint('VideoWidget: WebRTC delivering frames, stopping gRPC');
+          _grpcSubscription?.cancel();
+          _grpcSubscription = null;
+        }
         setState(() {
           _latestJpegFrame = frameData;
           _useDataChannelVideo = true;
@@ -203,12 +202,10 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
   // ════════════════════════════════════════════════════════════════════════
 
   void _startGrpcFallback() {
-    if (_mode == _VideoMode.grpcFallback) return;
+    if (_grpcSubscription != null) return; // 已在运行
 
-    debugPrint('VideoWidget: Starting gRPC Subscribe fallback for '
+    debugPrint('VideoWidget: Starting gRPC Subscribe for '
         'camera "${widget.cameraId}"');
-
-    setState(() => _mode = _VideoMode.connecting);
 
     final topicName = _cameraIdToTopic(widget.cameraId);
 
