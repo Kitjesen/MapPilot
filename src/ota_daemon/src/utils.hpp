@@ -7,15 +7,22 @@
 namespace ota {
 
 // ──────────────── 日志 ────────────────
-enum class LogLevel { DEBUG, INFO, WARN, ERROR };
+// Avoid conflict with glog/syslog macros that define INFO, ERROR, DEBUG etc.
+enum class LogLevel { kDebug = 0, kInfo, kWarn, kError };
 
 void SetLogLevel(LogLevel level);
-void Log(LogLevel level, const char *fmt, ...);
+void Log(LogLevel level, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
 
-#define LOG_DEBUG(...) ::ota::Log(::ota::LogLevel::DEBUG, __VA_ARGS__)
-#define LOG_INFO(...)  ::ota::Log(::ota::LogLevel::INFO,  __VA_ARGS__)
-#define LOG_WARN(...)  ::ota::Log(::ota::LogLevel::WARN,  __VA_ARGS__)
-#define LOG_ERROR(...) ::ota::Log(::ota::LogLevel::ERROR, __VA_ARGS__)
+// Use template wrappers instead of macros to avoid macro conflicts
+template <typename... Args>
+inline void OtaLogDebug(const char *fmt, Args... args) { Log(LogLevel::kDebug, fmt, args...); }
+template <typename... Args>
+inline void OtaLogInfo(const char *fmt, Args... args) { Log(LogLevel::kInfo, fmt, args...); }
+template <typename... Args>
+inline void OtaLogWarn(const char *fmt, Args... args) { Log(LogLevel::kWarn, fmt, args...); }
+template <typename... Args>
+inline void OtaLogError(const char *fmt, Args... args) { Log(LogLevel::kError, fmt, args...); }
 
 // ──────────────── 文件 / 密码学 ────────────────
 std::string ComputeSHA256(const std::string &file_path);

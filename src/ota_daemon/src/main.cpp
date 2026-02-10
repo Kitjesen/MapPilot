@@ -12,25 +12,25 @@
 static std::unique_ptr<grpc::Server> g_server;
 
 static void SignalHandler(int sig) {
-  ota::LOG_INFO("Received signal %d, shutting down...", sig);
+  ota::OtaLogInfo("Received signal %d, shutting down...", sig);
   if (g_server) {
     g_server->Shutdown();
   }
 }
 
 static void PrintBanner(const ota::OtaDaemonConfig &config) {
-  ota::LOG_INFO("========================================");
-  ota::LOG_INFO("  OTA Daemon v%s", OTA_DAEMON_VERSION);
-  ota::LOG_INFO("  Port:     %d", config.grpc_port);
-  ota::LOG_INFO("  Robot:    %s (%s)", config.robot_id.c_str(), config.hw_id.c_str());
-  ota::LOG_INFO("  Hostname: %s", ota::GetHostname().c_str());
+  ota::OtaLogInfo("========================================");
+  ota::OtaLogInfo("  OTA Daemon v%s", OTA_DAEMON_VERSION);
+  ota::OtaLogInfo("  Port:     %d", config.grpc_port);
+  ota::OtaLogInfo("  Robot:    %s (%s)", config.robot_id.c_str(), config.hw_id.c_str());
+  ota::OtaLogInfo("  Hostname: %s", ota::GetHostname().c_str());
   auto ips = ota::GetIPAddresses();
   for (const auto &ip : ips) {
-    ota::LOG_INFO("  IP:       %s", ip.c_str());
+    ota::OtaLogInfo("  IP:       %s", ip.c_str());
   }
-  ota::LOG_INFO("  TLS:      %s", config.tls_cert_path.empty() ? "off" : "on");
-  ota::LOG_INFO("  Manifest: %s", config.ota_manifest_path.c_str());
-  ota::LOG_INFO("========================================");
+  ota::OtaLogInfo("  TLS:      %s", config.tls_cert_path.empty() ? "off" : "on");
+  ota::OtaLogInfo("  Manifest: %s", config.ota_manifest_path.c_str());
+  ota::OtaLogInfo("========================================");
 }
 
 int main(int argc, char *argv[]) {
@@ -56,16 +56,16 @@ int main(int argc, char *argv[]) {
   ota::OtaDaemonConfig config;
   if (ota::FileExists(config_path)) {
     config = ota::LoadConfig(config_path);
-    ota::LOG_INFO("Loaded config from %s", config_path.c_str());
+    ota::OtaLogInfo("Loaded config from %s", config_path.c_str());
   } else {
-    ota::LOG_WARN("Config not found at %s, using defaults", config_path.c_str());
+    ota::OtaLogWarn("Config not found at %s, using defaults", config_path.c_str());
   }
 
   // 设置日志级别
-  if (config.log_level == "DEBUG") ota::SetLogLevel(ota::LogLevel::DEBUG);
-  else if (config.log_level == "WARN") ota::SetLogLevel(ota::LogLevel::WARN);
-  else if (config.log_level == "ERROR") ota::SetLogLevel(ota::LogLevel::ERROR);
-  else ota::SetLogLevel(ota::LogLevel::INFO);
+  if (config.log_level == "DEBUG") ota::SetLogLevel(ota::LogLevel::kDebug);
+  else if (config.log_level == "WARN") ota::SetLogLevel(ota::LogLevel::kWarn);
+  else if (config.log_level == "ERROR") ota::SetLogLevel(ota::LogLevel::kError);
+  else ota::SetLogLevel(ota::LogLevel::kInfo);
 
   PrintBanner(config);
 
@@ -90,9 +90,9 @@ int main(int argc, char *argv[]) {
       grpc::SslServerCredentialsOptions ssl_opts;
       ssl_opts.pem_key_cert_pairs.push_back({key, cert});
       creds = grpc::SslServerCredentials(ssl_opts);
-      ota::LOG_INFO("TLS enabled");
+      ota::OtaLogInfo("TLS enabled");
     } else {
-      ota::LOG_WARN("TLS cert/key empty, falling back to insecure");
+      ota::OtaLogWarn("TLS cert/key empty, falling back to insecure");
       creds = grpc::InsecureServerCredentials();
     }
   } else {
@@ -108,13 +108,13 @@ int main(int argc, char *argv[]) {
 
   g_server = builder.BuildAndStart();
   if (!g_server) {
-    ota::LOG_ERROR("Failed to start gRPC server on %s", listen_addr.c_str());
+    ota::OtaLogError("Failed to start gRPC server on %s", listen_addr.c_str());
     return 1;
   }
 
-  ota::LOG_INFO("OTA Daemon listening on %s", listen_addr.c_str());
+  ota::OtaLogInfo("OTA Daemon listening on %s", listen_addr.c_str());
   g_server->Wait();
 
-  ota::LOG_INFO("OTA Daemon shutdown complete");
+  ota::OtaLogInfo("OTA Daemon shutdown complete");
   return 0;
 }

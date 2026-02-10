@@ -7,6 +7,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -23,7 +24,7 @@ namespace ota {
 
 // ──────────────── 日志 ────────────────
 
-static LogLevel g_log_level = LogLevel::INFO;
+static LogLevel g_log_level = LogLevel::kInfo;
 
 void SetLogLevel(LogLevel level) { g_log_level = level; }
 
@@ -40,10 +41,10 @@ void Log(LogLevel level, const char *fmt, ...) {
   const char *level_str = "???";
   FILE *out = stdout;
   switch (level) {
-    case LogLevel::DEBUG: level_str = "DEBUG"; break;
-    case LogLevel::INFO:  level_str = "INFO";  break;
-    case LogLevel::WARN:  level_str = "WARN";  out = stderr; break;
-    case LogLevel::ERROR: level_str = "ERROR"; out = stderr; break;
+    case LogLevel::kDebug: level_str = "DEBUG"; break;
+    case LogLevel::kInfo:  level_str = "INFO";  break;
+    case LogLevel::kWarn:  level_str = "WARN";  out = stderr; break;
+    case LogLevel::kError: level_str = "ERROR"; out = stderr; break;
   }
 
   fprintf(out, "%04d-%02d-%02d %02d:%02d:%02d.%03d [%s] ",
@@ -102,14 +103,14 @@ bool VerifyEd25519(const std::string &public_key_pem,
 
   FILE *fp = fopen(public_key_pem.c_str(), "r");
   if (!fp) {
-    LOG_WARN("Ed25519: cannot open public key: %s", public_key_pem.c_str());
+    OtaLogWarn("Ed25519: cannot open public key: %s", public_key_pem.c_str());
     return false;
   }
 
   EVP_PKEY *pkey = PEM_read_PUBKEY(fp, nullptr, nullptr, nullptr);
   fclose(fp);
   if (!pkey) {
-    LOG_WARN("Ed25519: failed to parse public key");
+    OtaLogWarn("Ed25519: failed to parse public key");
     return false;
   }
 
@@ -270,19 +271,19 @@ bool ManageService(const std::string &service_name,
                    const std::string &action) {
   // Validate action
   if (action != "start" && action != "stop" && action != "restart") {
-    LOG_ERROR("Invalid service action: %s", action.c_str());
+    OtaLogError("Invalid service action: %s", action.c_str());
     return false;
   }
   // Validate service name (security: only allow alphanumeric, dash, dot)
   for (char c : service_name) {
     if (!std::isalnum(c) && c != '-' && c != '_' && c != '.') {
-      LOG_ERROR("Invalid service name: %s", service_name.c_str());
+      OtaLogError("Invalid service name: %s", service_name.c_str());
       return false;
     }
   }
 
   std::string cmd = "systemctl " + action + " " + service_name + " 2>&1";
-  LOG_INFO("Executing: %s", cmd.c_str());
+  OtaLogInfo("Executing: %s", cmd.c_str());
   int ret = system(cmd.c_str());
   return ret == 0;
 }

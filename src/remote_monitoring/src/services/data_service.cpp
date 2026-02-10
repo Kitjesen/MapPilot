@@ -18,6 +18,7 @@
 #include <vector>
 
 // OpenSSL and health_monitor no longer needed (OTA moved to ota_daemon)
+#include "nav_msgs/msg/path.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 
@@ -29,6 +30,7 @@ namespace {
 constexpr double kDefaultCameraHz = 15.0;
 constexpr double kDefaultMapHz = 1.0;
 constexpr double kDefaultPointCloudHz = 10.0;
+constexpr double kDefaultPathHz = 5.0;
 constexpr double kMinStreamHz = 0.1;
 constexpr double kMaxStreamHz = 60.0;
 
@@ -137,6 +139,40 @@ std::string SerializePointCloud2WithMeta(
   return result;
 }
 
+// 序列化 nav_msgs::Path → 紧凑二进制
+// header 格式（小端）: num_poses(4) frame_id_len(4) frame_id(N)
+// 每个 pose: x(8) y(8) z(8) qx(8) qy(8) qz(8) qw(8) = 56 bytes
+std::string SerializePathWithMeta(
+    const nav_msgs::msg::Path::ConstSharedPtr &msg) {
+  if (!msg) return {};
+
+  const uint32_t num_poses = static_cast<uint32_t>(msg->poses.size());
+  const std::string &frame_id = msg->header.frame_id;
+  const uint32_t frame_id_len = static_cast<uint32_t>(frame_id.size());
+
+  // 4 + 4 + frame_id_len + num_poses * 56
+  std::string result;
+  result.resize(8 + frame_id_len + num_poses * 56);
+  char *p = result.data();
+
+  std::memcpy(p, &num_poses, 4);
+  p += 4;
+  std::memcpy(p, &frame_id_len, 4);
+  p += 4;
+  std::memcpy(p, frame_id.data(), frame_id_len);
+  p += frame_id_len;
+
+  for (const auto &pose : msg->poses) {
+    const auto &pos = pose.pose.position;
+    const auto &ori = pose.pose.orientation;
+    double vals[7] = {pos.x, pos.y, pos.z, ori.x, ori.y, ori.z, ori.w};
+    std::memcpy(p, vals, 56);
+    p += 56;
+  }
+
+  return result;
+}
+
 void AddDefaultProfiles(robot::v1::ResourceInfo *resource) {
   if (resource == nullptr) {
     return;
@@ -175,14 +211,36 @@ grpc::Status StreamResource(
   bool has_new_msg = false;
   uint64_t sequence = 1;
 
+  // ---------- Dedicated executor for this subscription ----------
+  // The main node executor is often congested (TF lookups, health
+  // timers, …).  Give this subscription its own callback group +
+  // private SingleThreadedExecutor so the callback fires at the
+  // full topic rate regardless of main-thread load.
+  auto cb_group = node->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive, false /*auto-add=false*/);
+  rclcpp::SubscriptionOptions sub_opts;
+  sub_opts.callback_group = cb_group;
+
   auto sub = node->create_subscription<MsgT>(
-      topic, qos, [&](const typename MsgT::ConstSharedPtr msg) {
+      topic, qos,
+      [&](const typename MsgT::ConstSharedPtr msg) {
         std::lock_guard<std::mutex> lock(mutex);
         latest_msg = msg;
         has_new_msg = true;
         cv.notify_one();
-      });
-  (void)sub;
+      },
+      sub_opts);
+
+  // Spin the callback group on a dedicated thread
+  std::atomic_bool spin_done{false};
+  auto spin_executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  spin_executor->add_callback_group(cb_group, node->get_node_base_interface());
+  std::thread spin_thread([&]() {
+    while (!spin_done.load() && rclcpp::ok()) {
+      spin_executor->spin_some(std::chrono::milliseconds(10));
+    }
+  });
+  // ---------------------------------------------------------------
 
   const double hz = std::max(kMinStreamHz, std::min(kMaxStreamHz, frequency_hz));
   const auto interval = std::chrono::duration<double>(1.0 / hz);
@@ -216,24 +274,38 @@ grpc::Status StreamResource(
       continue;
     }
 
+    const auto payload_size = payload.size();
+
     robot::v1::DataChunk chunk;
     chunk.mutable_resource_id()->CopyFrom(resource_id);
     chunk.mutable_header()->mutable_timestamp()->set_seconds(msg->header.stamp.sec);
     chunk.mutable_header()->mutable_timestamp()->set_nanos(msg->header.stamp.nanosec);
     chunk.mutable_header()->set_frame_id(msg->header.frame_id);
     chunk.mutable_header()->set_sequence(sequence++);
-    chunk.set_data(payload);
+    chunk.set_data(std::move(payload));  // zero-copy
     chunk.set_compression(robot::v1::COMPRESSION_TYPE_NONE);
     chunk.set_uncompressed_size(static_cast<uint32_t>(
-        std::min(payload.size(),
+        std::min(payload_size,
                  static_cast<size_t>(std::numeric_limits<uint32_t>::max()))));
 
     if (!writer->Write(chunk)) {
-      return grpc::Status::OK;
+      break;
+    }
+
+    if (sequence <= 6 || sequence % 100 == 0) {
+      RCLCPP_INFO(node->get_logger(),
+                  "StreamResource: seq=%lu, %zu bytes",
+                  sequence - 1, payload_size);
     }
 
     last_sent = now;
     sent_once = true;
+  }
+
+  // Clean-up: stop the private executor thread
+  spin_done.store(true);
+  if (spin_thread.joinable()) {
+    spin_thread.join();
   }
 
   return grpc::Status::OK;
@@ -261,6 +333,7 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   safe_declare_str("data_map_topic", "/overall_map");
   safe_declare_str("data_pointcloud_topic", "/cloud_registered");
   safe_declare_str("data_terrain_topic", "/terrain_map_ext");
+  safe_declare_str("data_path_topic", "/path");
   safe_declare_str("data_file_root", "");
   // OTA 参数已迁移到 ota_daemon (:50052), 此处不再声明
   safe_declare_bool("webrtc_enabled", false);
@@ -276,6 +349,7 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   map_topic_ = node_->get_parameter("data_map_topic").as_string();
   pointcloud_topic_ = node_->get_parameter("data_pointcloud_topic").as_string();
   terrain_topic_ = node_->get_parameter("data_terrain_topic").as_string();
+  path_topic_ = node_->get_parameter("data_path_topic").as_string();
   file_root_ = node_->get_parameter("data_file_root").as_string();
 
   webrtc_enabled_ = node_->get_parameter("webrtc_enabled").as_bool();
@@ -327,6 +401,13 @@ DataServiceImpl::ListResources(grpc::ServerContext *,
                            terrain_topic_);
   terrain->set_available(true);
   AddDefaultProfiles(terrain);
+
+  auto *path = response->add_resources();
+  path->mutable_id()->set_type(robot::v1::RESOURCE_TYPE_PATH);
+  path->mutable_id()->set_name("local_path");
+  path->set_description("Nav path (poses), default topic: " + path_topic_);
+  path->set_available(true);
+  AddDefaultProfiles(path);
 
   return grpc::Status::OK;
 }
@@ -420,6 +501,18 @@ DataServiceImpl::Subscribe(grpc::ServerContext *context,
             return false;
           }
           *output = SerializePointCloud2WithMeta(msg);
+          return !output->empty();
+        },
+        cancel_flag, context, writer);
+  case robot::v1::RESOURCE_TYPE_PATH:
+    return StreamResource<nav_msgs::msg::Path>(
+        node_, topic, rclcpp::QoS(5), request->resource_id(), hz,
+        [](const nav_msgs::msg::Path::ConstSharedPtr &msg,
+           std::string *output) {
+          if (msg == nullptr || output == nullptr) {
+            return false;
+          }
+          *output = SerializePathWithMeta(msg);
           return !output->empty();
         },
         cancel_flag, context, writer);
@@ -680,6 +773,8 @@ double DataServiceImpl::ResolveFrequency(
     return kDefaultMapHz;
   case robot::v1::RESOURCE_TYPE_POINTCLOUD:
     return kDefaultPointCloudHz;
+  case robot::v1::RESOURCE_TYPE_PATH:
+    return kDefaultPathHz;
   default:
     return kDefaultPointCloudHz;
   }
@@ -708,6 +803,8 @@ std::string DataServiceImpl::ResolveTopic(
       return terrain_topic_;
     }
     return pointcloud_topic_;
+  case robot::v1::RESOURCE_TYPE_PATH:
+    return path_topic_;
   default:
     return {};
   }

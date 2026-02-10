@@ -90,6 +90,10 @@ endif()
 add_executable(ota_daemon
   src/main.cpp
   src/ota_service.cpp
+  src/ota_config.cpp
+  src/ota_file_ops.cpp
+  src/ota_update.cpp
+  src/ota_device.cpp
   src/utils.cpp
 )
 
@@ -111,7 +115,13 @@ target_link_libraries(ota_daemon PRIVATE
 )
 
 if(yaml-cpp_FOUND)
-  target_link_libraries(ota_daemon PRIVATE yaml-cpp::yaml-cpp)
+  # yaml-cpp 0.7 provides target "yaml-cpp" (no namespace),
+  # yaml-cpp 0.8+ provides "yaml-cpp::yaml-cpp".
+  if(TARGET yaml-cpp::yaml-cpp)
+    target_link_libraries(ota_daemon PRIVATE yaml-cpp::yaml-cpp)
+  else()
+    target_link_libraries(ota_daemon PRIVATE yaml-cpp)
+  endif()
 else()
   target_include_directories(ota_daemon PRIVATE ${YAMLCPP_INCLUDE_DIRS})
   target_link_libraries(ota_daemon PRIVATE ${YAMLCPP_LIBRARIES})

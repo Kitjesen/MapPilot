@@ -179,6 +179,13 @@ void GrpcGateway::Run() {
                              grpc::InsecureServerCredentials());
   }
 
+  // 增大 HTTP/2 流控窗口和消息大小，避免视频流帧率被限制
+  builder.SetMaxSendMessageSize(4 * 1024 * 1024);     // 4 MB per message
+  builder.SetMaxReceiveMessageSize(4 * 1024 * 1024);
+  builder.AddChannelArgument(GRPC_ARG_HTTP2_STREAM_LOOKAHEAD_BYTES,
+                             2 * 1024 * 1024);          // 2 MB stream window
+  builder.AddChannelArgument(GRPC_ARG_HTTP2_BDP_PROBE, 1);  // 自动探测带宽
+
   // 注册所有服务
   builder.RegisterService(system_service_.get());
   builder.RegisterService(control_service_.get());
