@@ -74,11 +74,8 @@ class RobotCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: context.cardColor,
-          borderRadius: BorderRadius.circular(AppRadius.card),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(color: context.borderColor),
-          boxShadow: [
-            isDark ? AppShadows.dark() : AppShadows.light(),
-          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,7 +113,7 @@ class RobotCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(isDark ? 0.15 : 0.08),
+                    color: statusColor.withValues(alpha: isDark ? 0.15 : 0.08),
                     borderRadius: BorderRadius.circular(AppRadius.pill),
                   ),
                   child: Row(

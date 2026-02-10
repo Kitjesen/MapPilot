@@ -16,8 +16,21 @@ import 'package:flutter_monitor/features/settings/app_settings_screen.dart';
 import 'package:flutter_monitor/features/control/control_screen.dart';
 import 'package:flutter_monitor/features/robot_select/robot_select_screen.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
+import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
+import 'package:flutter_monitor/core/gateway/map_gateway.dart';
+import 'package:flutter_monitor/core/gateway/task_gateway.dart';
+import 'package:flutter_monitor/core/gateway/control_gateway.dart';
+import 'package:flutter_monitor/core/gateway/file_gateway.dart';
+import 'package:flutter_monitor/features/task/task_panel.dart';
+import 'package:flutter_monitor/features/map/map_manager_page.dart';
+import 'package:flutter_monitor/features/map/map_goal_picker.dart';
+import 'package:flutter_monitor/features/camera/camera_screen.dart';
+import 'package:flutter_monitor/features/files/file_browser_screen.dart';
 
 import 'package:flutter_monitor/core/services/notification_service.dart';
+import 'package:flutter_monitor/core/services/app_logger.dart';
+import 'package:flutter_monitor/shared/widgets/global_safety_overlay.dart';
+import 'package:flutter_monitor/shared/widgets/error_boundary.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +39,15 @@ void main() async {
       statusBarColor: Colors.transparent,
     ),
   );
+
+  // Capture unhandled Flutter errors
+  FlutterError.onError = (details) {
+    AppLogger.system.error(
+      'Flutter framework error: ${details.exceptionAsString()}',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+  };
 
   // 初始化系统通知服务
   await NotificationService().initialize();
@@ -44,6 +66,11 @@ class RobotMonitorApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => SettingsPreferences()),
         ChangeNotifierProvider(create: (_) => RobotProfileProvider()),
+        ChangeNotifierProvider(create: (_) => OtaGateway()),
+        ChangeNotifierProvider(create: (_) => MapGateway()),
+        ChangeNotifierProvider(create: (_) => TaskGateway()),
+        ChangeNotifierProvider(create: (_) => ControlGateway()),
+        ChangeNotifierProvider(create: (_) => FileGateway()),
         ChangeNotifierProvider(create: (_) => AlertMonitorService()),
         ChangeNotifierProvider(create: (_) => StateLoggerService()),
       ],
@@ -83,6 +110,83 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
         settingsPrefs: settingsPrefs,
       );
       stateLogger.bind(connProvider);
+
+      // 绑定 OtaGateway：监听连接变化，自动更新 client 引用
+      final otaGateway = context.read<OtaGateway>();
+      otaGateway.updateClient(connProvider.client);
+      otaGateway.cloud.loadConfig();
+
+      // 绑定 MapGateway
+      final mapGateway = context.read<MapGateway>();
+      mapGateway.updateClient(connProvider.client);
+
+      // 绑定 TaskGateway
+      final taskGateway = context.read<TaskGateway>();
+      taskGateway.updateClient(connProvider.client);
+
+      // 绑定 FileGateway
+      final fileGateway = context.read<FileGateway>();
+      fileGateway.updateClient(connProvider.client);
+
+      // 绑定 ControlGateway
+      final controlGateway = context.read<ControlGateway>();
+      controlGateway.updateClients(
+        client: connProvider.client,
+        dogClient: connProvider.dogClient,
+      );
+
+      // 监听连接变化，自动同步所有 Gateway 的 client 引用
+      connProvider.addListener(() {
+        otaGateway.updateClient(connProvider.client);
+        mapGateway.updateClient(connProvider.client);
+        taskGateway.updateClient(connProvider.client);
+        fileGateway.updateClient(connProvider.client);
+        controlGateway.updateClients(
+          client: connProvider.client,
+          dogClient: connProvider.dogClient,
+        );
+      });
+
+      // ── Cross-Gateway Orchestration ──
+
+      // 1. Mapping auto-save: when mapping task completes → save map
+      taskGateway.onMappingComplete = () {
+        AppLogger.system.info('Mapping complete → auto-saving map');
+        mapGateway.saveMap('auto_${DateTime.now().millisecondsSinceEpoch}.pcd');
+      };
+
+      // 2. Disconnect recovery: on reconnect → re-query gateway states
+      connProvider.onReconnected = () {
+        AppLogger.system.info('Reconnected → refreshing gateway states');
+        // Re-query installed versions (and check deployment status)
+        otaGateway.fetchInstalledVersions().catchError((_) {});
+        // Re-query maps
+        mapGateway.refreshMaps().catchError((_) {});
+      };
+
+      // 3. Safety interlock: before COLD OTA apply → ensure robot safe
+      otaGateway.safetyCheck = () async {
+        // Check if robot is currently executing a task
+        if (taskGateway.isRunning) {
+          AppLogger.system.warning('Safety check: task running, blocking COLD update');
+          return false;
+        }
+        // Check if dog is standing — sit down + disable first
+        final dog = controlGateway.dogClient;
+        if (dog != null && dog.isConnected && dog.isStanding) {
+          AppLogger.system.info('Safety check: dog standing, sitting down + disabling');
+          await controlGateway.dogSitDown();
+          await Future.delayed(const Duration(seconds: 2));
+          await controlGateway.dogDisable();
+          await Future.delayed(const Duration(seconds: 1));
+        }
+        // Release teleop lease if held
+        if (controlGateway.hasLease) {
+          AppLogger.system.info('Safety check: releasing control lease');
+          await controlGateway.toggleLease();
+        }
+        return true;
+      };
 
       // 监听告警流，展示 SnackBar
       _alertSub = alertService.alertStream.listen(_showAlertSnackBar);
@@ -141,8 +245,8 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
                     style: TextStyle(
                       fontSize: 12,
                       color: isDark
-                          ? Colors.white.withOpacity(0.5)
-                          : Colors.black.withOpacity(0.45),
+                          ? Colors.white.withValues(alpha: 0.5)
+                          : Colors.black.withValues(alpha: 0.45),
                     ),
                   ),
                 ],
@@ -158,8 +262,8 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
                 Icons.close,
                 size: 16,
                 color: isDark
-                    ? Colors.white.withOpacity(0.35)
-                    : Colors.black.withOpacity(0.3),
+                    ? Colors.white.withValues(alpha: 0.35)
+                    : Colors.black.withValues(alpha: 0.3),
               ),
             ),
           ],
@@ -171,7 +275,7 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(
             color: isDark
-                ? Colors.white.withOpacity(0.08)
+                ? Colors.white.withValues(alpha: 0.08)
                 : const Color(0xFFE5E5E5),
           ),
         ),
@@ -201,6 +305,14 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
           themeMode: themeProvider.mode,
           initialRoute: '/',
           onGenerateRoute: _generateRoute,
+          builder: (context, child) {
+            // Global error boundary + safety overlay wrapping all screens
+            return ErrorBoundary(
+              child: GlobalSafetyOverlay(
+                child: child ?? const SizedBox.shrink(),
+              ),
+            );
+          },
         );
       },
     );
@@ -223,6 +335,16 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
         page = const ControlScreen();
       case '/robot-select':
         page = const RobotSelectScreen();
+      case '/task-panel':
+        page = const TaskPanel();
+      case '/map-manager':
+        page = const MapManagerPage();
+      case '/map-select-goal':
+        page = const MapGoalPicker();
+      case '/camera':
+        page = const CameraScreen();
+      case '/files':
+        page = const FileBrowserScreen();
       default:
         page = const MainShellScreen();
     }

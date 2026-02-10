@@ -87,7 +87,7 @@ class GlassButton extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: (backgroundColor ?? Theme.of(context).primaryColor)
-                .withOpacity(0.2),
+                .withValues(alpha: 0.2),
             blurRadius: 14,
             offset: const Offset(0, 6),
           ),
@@ -104,7 +104,7 @@ class GlassButton extends StatelessWidget {
                   const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               backgroundColor:
                   (backgroundColor ?? Theme.of(context).primaryColor)
-                      .withOpacity(0.8),
+                      .withValues(alpha: 0.8),
               foregroundColor: foregroundColor ?? Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(22),

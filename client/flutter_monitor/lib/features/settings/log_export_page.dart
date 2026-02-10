@@ -71,19 +71,20 @@ class _LogExportPageState extends State<LogExportPage> {
         children: [
           // ===== 缓存状态 =====
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(isDark ? 0.1 : 0.06),
-              borderRadius: BorderRadius.circular(16),
+              color: isDark ? AppColors.darkCard : Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: context.borderColor),
             ),
             child: Row(
               children: [
-                Icon(Icons.storage_rounded, size: 20, color: AppColors.primary),
+                Icon(Icons.storage_rounded, size: 16, color: context.subtitleColor),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     '缓存中共 ${logger.entryCount} 条记录（最多 ${StateLoggerService.maxEntries} 条，1秒/条）',
-                    style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.black87),
+                    style: TextStyle(fontSize: 12, color: context.subtitleColor),
                   ),
                 ),
               ],
@@ -93,17 +94,11 @@ class _LogExportPageState extends State<LogExportPage> {
 
           // ===== 时间范围选择 =====
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: [
-                BoxShadow(
-                  color: context.cardShadowColor,
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: context.borderColor),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -111,9 +106,9 @@ class _LogExportPageState extends State<LogExportPage> {
                 Text(
                   '时间范围',
                   style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: isDark ? Colors.white : Colors.black87,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: context.subtitleColor,
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -156,10 +151,11 @@ class _LogExportPageState extends State<LogExportPage> {
 
           // ===== 导出内容说明 =====
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppColors.info.withOpacity(isDark ? 0.08 : 0.05),
-              borderRadius: BorderRadius.circular(16),
+              color: isDark ? AppColors.darkCard : Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: context.borderColor),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -167,9 +163,9 @@ class _LogExportPageState extends State<LogExportPage> {
                 Text(
                   '导出内容（CSV 格式）',
                   style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white70 : Colors.black87,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: context.subtitleColor,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -185,35 +181,30 @@ class _LogExportPageState extends State<LogExportPage> {
           // ===== 进度 =====
           if (_isExporting) ...[
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: isDark ? AppColors.darkCard : Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                boxShadow: [
-                  BoxShadow(
-                    color: context.cardShadowColor,
-                    blurRadius: 14,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: context.borderColor),
               ),
               child: Column(
                 children: [
-                  const Text('正在导出...',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  Text('正在导出...',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: context.titleColor)),
                   const SizedBox(height: 12),
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(2),
                     child: LinearProgressIndicator(
                       value: _exportProgress,
-                      minHeight: 6,
+                      minHeight: 4,
+                      backgroundColor: isDark ? Colors.white.withValues(alpha:0.06) : Colors.black.withValues(alpha:0.04),
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     '${(_exportProgress * 100).toStringAsFixed(0)}%',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600, color: AppColors.primary),
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w500, color: context.subtitleColor),
                   ),
                 ],
               ),
@@ -226,7 +217,7 @@ class _LogExportPageState extends State<LogExportPage> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
+                color: AppColors.success.withValues(alpha:0.1),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Column(
@@ -272,7 +263,7 @@ class _LogExportPageState extends State<LogExportPage> {
               padding: const EdgeInsets.all(16),
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.1),
+                color: AppColors.error.withValues(alpha:0.1),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Text(
@@ -283,25 +274,23 @@ class _LogExportPageState extends State<LogExportPage> {
 
           // ===== 导出按钮 =====
           SizedBox(
-            height: 52,
-            child: ElevatedButton.icon(
+            height: 44,
+            child: TextButton(
               onPressed: !_isExporting && _matchingEntries > 0
                   ? () => _exportLogs(context)
                   : null,
-              icon: const Icon(Icons.download_rounded),
-              label: Text(_matchingEntries > 0
-                  ? '导出 $_matchingEntries 条记录'
-                  : isConnected ? '无匹配记录' : '等待数据采集...'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                disabledBackgroundColor:
-                    AppColors.primary.withOpacity(isDark ? 0.15 : 0.1),
+              style: TextButton.styleFrom(
+                foregroundColor: context.titleColor,
                 disabledForegroundColor: context.subtitleColor,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
-                elevation: 0,
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(color: context.borderColor),
+                ),
               ),
+              child: Text(_matchingEntries > 0
+                  ? '导出 $_matchingEntries 条记录'
+                  : isConnected ? '无匹配记录' : '等待数据采集...',
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
             ),
           ),
 
@@ -319,17 +308,11 @@ class _LogExportPageState extends State<LogExportPage> {
 
           // ===== 从机器人拉取系统日志 =====
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: [
-                BoxShadow(
-                  color: context.cardShadowColor,
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: context.borderColor),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -427,22 +410,16 @@ class _LogExportPageState extends State<LogExportPage> {
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             color: isDark ? AppColors.darkCard : Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: context.cardShadowColor,
-                blurRadius: 8,
-                offset: const Offset(0, 3),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: context.borderColor),
           ),
           child: Text(
             label,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: isDark ? Colors.white70 : Colors.black87,
+              fontWeight: FontWeight.w500,
+              color: context.titleColor,
             ),
           ),
         ),
@@ -455,7 +432,7 @@ class _LogExportPageState extends State<LogExportPage> {
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
-          const Icon(Icons.check, size: 14, color: AppColors.info),
+          Icon(Icons.check, size: 14, color: context.subtitleColor),
           const SizedBox(width: 8),
           Text(
             text,
@@ -552,13 +529,10 @@ class _LogExportPageState extends State<LogExportPage> {
         icon: Icon(icon, size: 18),
         label: Text(label),
         style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.secondary,
-          side: BorderSide(
-              color: isConnected
-                  ? AppColors.secondary.withOpacity(0.3)
-                  : context.dividerColor),
+          foregroundColor: context.titleColor,
+          side: BorderSide(color: context.borderColor),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(8),
           ),
         ),
       ),
@@ -600,9 +574,8 @@ class _LogExportPageState extends State<LogExportPage> {
         setState(() => _exportProgress = 0.7);
 
         // 下载文件（通过 DownloadFile gRPC）
+        // ignore: unused_local_variable
         final dir = await getApplicationDocumentsDirectory();
-        final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-        final localPath = '${dir.path}/${filename}_$timestamp';
         // 由于 DownloadFile 返回的是 stream of FileChunk，
         // 这里简化处理 - 列出文件信息即可
         setState(() {

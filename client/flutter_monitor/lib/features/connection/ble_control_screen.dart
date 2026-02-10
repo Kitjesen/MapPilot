@@ -176,23 +176,13 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: context.cardShadowColor, blurRadius: 10),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
       ),
       child: Row(
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.success.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(Icons.bluetooth_connected,
-                color: AppColors.success, size: 24),
-          ),
+          Icon(Icons.bluetooth_connected,
+              color: context.subtitleColor, size: 20),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -219,15 +209,15 @@ class _BleControlScreenState extends State<BleControlScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: context.isDark ? Colors.white.withValues(alpha:0.05) : Colors.black.withValues(alpha:0.04),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 '${_pingLatencyMs}ms',
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.primary),
+                    fontWeight: FontWeight.w500,
+                    color: context.titleColor),
               ),
             ),
         ],
@@ -241,10 +231,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: context.cardShadowColor, blurRadius: 10),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -258,32 +246,14 @@ class _BleControlScreenState extends State<BleControlScreen> {
           const SizedBox(height: 12),
           Row(
             children: [
-              _statusTile(
-                Icons.battery_std,
-                '电量',
-                s != null ? '${s.batteryPercent}%' : '--',
-                _batteryColor(s?.batteryPercent),
-              ),
-              _statusTile(
-                Icons.thermostat,
-                '温度',
-                s != null ? '${s.cpuTemp}°C' : '--',
-                s != null && s.cpuTemp > 70
-                    ? AppColors.error
-                    : AppColors.info,
-              ),
-              _statusTile(
-                Icons.gamepad,
-                '模式',
-                s?.modeString ?? '--',
-                AppColors.secondary,
-              ),
-              _statusTile(
-                Icons.timer,
-                '运行',
-                s != null ? _formatUptime(s.uptimeSeconds) : '--',
-                AppColors.primary,
-              ),
+              _statusTile(Icons.battery_std, '电量',
+                  s != null ? '${s.batteryPercent}%' : '--'),
+              _statusTile(Icons.thermostat, '温度',
+                  s != null ? '${s.cpuTemp}°C' : '--'),
+              _statusTile(Icons.gamepad, '模式',
+                  s?.modeString ?? '--'),
+              _statusTile(Icons.timer, '运行',
+                  s != null ? _formatUptime(s.uptimeSeconds) : '--'),
             ],
           ),
           if (s != null && s.hasError) ...[
@@ -291,7 +261,7 @@ class _BleControlScreenState extends State<BleControlScreen> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.08),
+                color: AppColors.error.withValues(alpha:0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
@@ -313,18 +283,18 @@ class _BleControlScreenState extends State<BleControlScreen> {
     );
   }
 
-  Widget _statusTile(IconData icon, String label, String value, Color color) {
+  Widget _statusTile(IconData icon, String label, String value) {
     return Expanded(
       child: Column(
         children: [
-          Icon(icon, size: 20, color: color),
+          Icon(icon, size: 16, color: context.subtitleColor),
           const SizedBox(height: 4),
           Text(
             value,
             style: TextStyle(
               fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: color,
+              fontWeight: FontWeight.w600,
+              color: context.titleColor,
             ),
           ),
           const SizedBox(height: 2),
@@ -372,10 +342,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: context.cardShadowColor, blurRadius: 10),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,24 +375,21 @@ class _BleControlScreenState extends State<BleControlScreen> {
     final isActive = _lastStatus?.mode == mode;
     return ActionChip(
       avatar: Icon(icon,
-          size: 16,
-          color: isActive ? Colors.white : AppColors.primary),
+          size: 14,
+          color: isActive ? context.titleColor : context.subtitleColor),
       label: Text(label),
-      backgroundColor: isActive ? AppColors.primary : null,
+      backgroundColor: isActive
+          ? (context.isDark ? Colors.white.withValues(alpha:0.08) : Colors.black.withValues(alpha:0.05))
+          : null,
       labelStyle: TextStyle(
         fontSize: 13,
-        fontWeight: FontWeight.w500,
-        color: isActive ? Colors.white : null,
+        fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+        color: isActive ? context.titleColor : context.subtitleColor,
       ),
-      side: BorderSide(
-        color: isActive
-            ? AppColors.primary
-            : AppColors.primary.withOpacity(0.2),
-      ),
+      side: BorderSide(color: context.borderColor),
       onPressed: () async {
         HapticFeedback.lightImpact();
         await _client.sendModeSwitch(mode);
-        // 稍等一下再刷新状态
         await Future.delayed(const Duration(milliseconds: 300));
         await _client.requestStatus();
       },
@@ -436,10 +401,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: context.cardShadowColor, blurRadius: 10),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -465,8 +428,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
                   fontSize: 15,
                   color: isDark ? Colors.white : Colors.black87),
               decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.wifi, size: 20,
-                    color: AppColors.primary),
+                prefixIcon: Icon(Icons.wifi, size: 18,
+                    color: context.subtitleColor),
                 hintText: 'WiFi SSID',
                 hintStyle: TextStyle(color: context.subtitleColor),
                 border: InputBorder.none,
@@ -488,8 +451,8 @@ class _BleControlScreenState extends State<BleControlScreen> {
                   fontSize: 15,
                   color: isDark ? Colors.white : Colors.black87),
               decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.lock_outline,
-                    size: 20, color: AppColors.primary),
+                prefixIcon: Icon(Icons.lock_outline,
+                    size: 18, color: context.subtitleColor),
                 suffixIcon: IconButton(
                   icon: Icon(
                     _passwordVisible
@@ -513,36 +476,28 @@ class _BleControlScreenState extends State<BleControlScreen> {
           SizedBox(
             width: double.infinity,
             height: 44,
-            child: ElevatedButton.icon(
+            child: TextButton(
               onPressed: _isSendingWifi ? null : _sendWifiConfig,
-              icon: _isSendingWifi
-                  ? const SizedBox(
+              style: TextButton.styleFrom(
+                foregroundColor: context.titleColor,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(color: context.borderColor),
+                ),
+              ),
+              child: _isSendingWifi
+                  ? SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
+                          strokeWidth: 2, color: context.subtitleColor),
                     )
-                  : const Icon(Icons.send, size: 18),
-              label: Text(_isSendingWifi ? '发送中...' : '发送配置'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+                  : Text(_isSendingWifi ? '发送中...' : '发送配置', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
             ),
           ),
         ],
       ),
     );
-  }
-
-  Color _batteryColor(int? percent) {
-    if (percent == null) return AppColors.info;
-    if (percent <= 15) return AppColors.error;
-    if (percent <= 30) return AppColors.warning;
-    return AppColors.success;
   }
 
   String _formatUptime(int seconds) {

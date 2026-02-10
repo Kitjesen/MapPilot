@@ -39,7 +39,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
     final provider = context.watch<RobotConnectionProvider>();
     final profileProvider = context.watch<RobotProfileProvider>();
     final profile = profileProvider.current;
@@ -58,56 +57,76 @@ class _HomeScreenState extends State<HomeScreen>
                   0,
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 24, 24, 4),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Name only — no icon box
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () =>
-                                Navigator.of(context).pushNamed('/robot-select'),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      profile.name,
-                                      style: TextStyle(
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w700,
-                                        letterSpacing: -0.5,
-                                        color: context.titleColor,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Icon(
-                                      Icons.keyboard_arrow_down,
-                                      size: 20,
-                                      color: context.subtitleColor,
-                                    ),
-                                  ],
-                                ),
-                                Text(
-                                  profile.subtitle,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: context.subtitleColor,
-                                  ),
-                                ),
-                              ],
+                        Row(
+                          children: [
+                            Image.asset(
+                              'assets/logo.png',
+                              width: 22,
+                              height: 22,
+                              color: context.isDark ? Colors.white70 : const Color(0xFF0A1E3D),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '大算机器人',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                                color: context.titleColor,
+                              ),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              onPressed: () {
+                                HapticFeedback.selectionClick();
+                                Navigator.of(context).pushNamed('/scan');
+                              },
+                              icon: Icon(
+                                Icons.search,
+                                size: 20,
+                                color: context.subtitleColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 30),
+                          child: Text(
+                            '让每一台机器人都拥有智慧',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w400,
+                              color: context.subtitleColor,
+                              letterSpacing: 0.3,
                             ),
                           ),
                         ),
-                        // Scan button
-                        IconButton(
-                          onPressed: () {
-                            HapticFeedback.selectionClick();
-                            Navigator.of(context).pushNamed('/scan');
-                          },
-                          icon: Icon(
-                            Icons.search,
-                            size: 22,
-                            color: context.subtitleColor,
+                        const SizedBox(height: 12),
+                        // Profile selector
+                        GestureDetector(
+                          onTap: () =>
+                              Navigator.of(context).pushNamed('/robot-select'),
+                          child: Row(
+                            children: [
+                              Text(
+                                profile.name,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.3,
+                                  color: context.titleColor,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.keyboard_arrow_down,
+                                size: 16,
+                                color: context.subtitleColor,
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -121,15 +140,13 @@ class _HomeScreenState extends State<HomeScreen>
                 child: _buildAnimatedChild(
                   1,
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.xxl, AppSpacing.xl, AppSpacing.xxl, AppSpacing.xs),
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 4),
                     child: Text(
                       isConnected ? '已连接设备' : '我的设备',
                       style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: context.titleColor,
-                        letterSpacing: -0.3,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: context.subtitleColor,
                       ),
                     ),
                   ),
@@ -173,49 +190,55 @@ class _HomeScreenState extends State<HomeScreen>
                       child: Material(
                         color: Colors.transparent,
                         child: InkWell(
-                          borderRadius: BorderRadius.circular(AppRadius.card),
+                          borderRadius: BorderRadius.circular(10),
                           onTap: () {
                             HapticFeedback.lightImpact();
                             Navigator.of(context).pushNamed('/scan');
                           },
                           child: Ink(
                             padding: const EdgeInsets.symmetric(
-                                vertical: 28, horizontal: 24),
+                                vertical: 16, horizontal: 16),
                             decoration: BoxDecoration(
                               color: context.cardColor,
-                              borderRadius: BorderRadius.circular(AppRadius.card),
+                              borderRadius: BorderRadius.circular(10),
                               border: Border.all(
                                 color: context.borderColor,
                               ),
-                              boxShadow: [
-                                isDark
-                                    ? AppShadows.dark()
-                                    : AppShadows.light(),
-                              ],
                             ),
-                            child: Column(
+                            child: Row(
                               children: [
                                 Icon(
-                                  Icons.add,
-                                  size: 28,
-                                  color: AppColors.primary,
+                                  Icons.add_circle_outline,
+                                  size: 20,
+                                  color: context.subtitleColor,
                                 ),
-                                const SizedBox(height: AppSpacing.md),
-                                Text(
-                                  '连接机器人',
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: context.titleColor,
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '连接机器人',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                          color: context.titleColor,
+                                        ),
+                                      ),
+                                      Text(
+                                        '扫描网络或蓝牙发现设备',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: context.subtitleColor,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(height: AppSpacing.xs),
-                                Text(
-                                  '扫描网络或蓝牙发现设备',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: context.subtitleColor,
-                                  ),
+                                Icon(
+                                  Icons.chevron_right,
+                                  size: 16,
+                                  color: context.subtitleColor,
                                 ),
                               ],
                             ),
@@ -231,15 +254,13 @@ class _HomeScreenState extends State<HomeScreen>
                 child: _buildAnimatedChild(
                   3,
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.xxl, 28, AppSpacing.xxl, AppSpacing.md),
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
                     child: Text(
                       '快速操作',
                       style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: context.titleColor,
-                        letterSpacing: -0.3,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: context.subtitleColor,
                       ),
                     ),
                   ),
@@ -251,35 +272,60 @@ class _HomeScreenState extends State<HomeScreen>
                   4,
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
+                    child: Column(
                       children: [
-                        Expanded(
-                          child: _QuickActionButton(
-                            icon: Icons.wifi_find,
-                            label: '扫描设备',
-                            color: AppColors.primary,
-                            onTap: () =>
-                                Navigator.of(context).pushNamed('/scan'),
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _QuickActionButton(
+                                icon: Icons.wifi_find,
+                                label: '扫描设备',
+                                onTap: () =>
+                                    Navigator.of(context).pushNamed('/scan'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _QuickActionButton(
+                                icon: Icons.widgets_outlined,
+                                label: '选择型号',
+                                onTap: () =>
+                                    Navigator.of(context).pushNamed('/robot-select'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _QuickActionButton(
+                                icon: Icons.play_circle_outline,
+                                label: '演示模式',
+                                onTap: () => _startMock(context),
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _QuickActionButton(
-                            icon: Icons.widgets_outlined,
-                            label: '选择型号',
-                            color: profile.themeColor,
-                            onTap: () =>
-                                Navigator.of(context).pushNamed('/robot-select'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _QuickActionButton(
-                            icon: Icons.play_circle_outline,
-                            label: '演示模式',
-                            color: AppColors.warning,
-                            onTap: () => _startMock(context),
-                          ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _QuickActionButton(
+                                icon: Icons.navigation_outlined,
+                                label: '任务导航',
+                                onTap: () =>
+                                    Navigator.of(context).pushNamed('/task-panel'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _QuickActionButton(
+                                icon: Icons.folder_outlined,
+                                label: '地图管理',
+                                onTap: () =>
+                                    Navigator.of(context).pushNamed('/map-manager'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(child: SizedBox()), // placeholder for alignment
+                          ],
                         ),
                       ],
                     ),
@@ -342,13 +388,11 @@ class _HomeScreenState extends State<HomeScreen>
 class _QuickActionButton extends StatefulWidget {
   final IconData icon;
   final String label;
-  final Color color;
   final VoidCallback? onTap;
 
   const _QuickActionButton({
     required this.icon,
     required this.label,
-    required this.color,
     this.onTap,
   });
 
@@ -381,21 +425,18 @@ class _QuickActionButtonState extends State<_QuickActionButton>
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: context.cardColor,
-            borderRadius: BorderRadius.circular(AppRadius.card),
+            color: context.isDark ? AppColors.darkCard : Colors.white,
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(color: context.borderColor),
-            boxShadow: [
-              context.isDark ? AppShadows.dark() : AppShadows.light(),
-            ],
           ),
           child: Column(
             children: [
-              Icon(widget.icon, color: widget.color, size: 20),
-              const SizedBox(height: AppSpacing.sm),
+              Icon(widget.icon, color: context.subtitleColor, size: 18),
+              const SizedBox(height: 6),
               Text(
                 widget.label,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: FontWeight.w500,
                   color: context.titleColor,
                 ),

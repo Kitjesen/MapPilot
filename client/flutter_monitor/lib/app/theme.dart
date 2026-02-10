@@ -37,21 +37,21 @@ class AppRadius {
 class AppShadows {
   /// Barely visible shadow (light mode) — Cursor/Apple style.
   static BoxShadow light({Color? color}) => BoxShadow(
-        color: color ?? Colors.black.withOpacity(0.04),
+        color: color ?? Colors.black.withValues(alpha: 0.04),
         blurRadius: 6,
         offset: const Offset(0, 1),
       );
 
   /// Subtle shadow (dark mode).
   static BoxShadow dark({Color? color}) => BoxShadow(
-        color: color ?? Colors.black.withOpacity(0.40),
+        color: color ?? Colors.black.withValues(alpha: 0.40),
         blurRadius: 8,
         offset: const Offset(0, 2),
       );
 
   /// Colored glow — very subtle.
   static BoxShadow glow(Color color, {double blur = 10}) => BoxShadow(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         blurRadius: blur,
         offset: const Offset(0, 1),
       );
@@ -96,8 +96,8 @@ class AppColors {
   static Color borderDark = const Color(0xFF38383A);
 
   // Glass — now cleaner, less frosted
-  static Color glassLight = Colors.white.withOpacity(0.95);
-  static Color glassDark = const Color(0xFF1C1C1E).withOpacity(0.92);
+  static Color glassLight = Colors.white.withValues(alpha: 0.95);
+  static Color glassDark = const Color(0xFF1C1C1E).withValues(alpha: 0.92);
   static Color glassBorderLight = const Color(0xFFE5E5E5);
   static Color glassBorderDark = const Color(0xFF38383A);
 
@@ -212,7 +212,7 @@ final ThemeData lightTheme = ThemeData(
     margin: EdgeInsets.zero,
   ),
   dividerTheme: DividerThemeData(
-    color: Colors.black.withOpacity(0.05),
+    color: Colors.black.withValues(alpha: 0.05),
     thickness: 0.5,
     space: 0,
   ),
@@ -274,7 +274,7 @@ final ThemeData darkTheme = ThemeData(
     margin: EdgeInsets.zero,
   ),
   dividerTheme: DividerThemeData(
-    color: Colors.white.withOpacity(0.06),
+    color: Colors.white.withValues(alpha: 0.06),
     thickness: 0.5,
     space: 0,
   ),
@@ -321,12 +321,12 @@ extension ThemeContextExtension on BuildContext {
 
   // ── Decorative ──
   Color get cardShadowColor => isDark
-      ? Colors.black.withOpacity(0.50)
-      : Colors.black.withOpacity(0.08);
+      ? Colors.black.withValues(alpha: 0.50)
+      : Colors.black.withValues(alpha: 0.08);
   Color get dividerColor =>
       isDark ? const Color(0xFF38383A) : const Color(0xFFE5E5E5);
   Color get inputFillColor =>
-      isDark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.04);
+      isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.04);
 
   // ── Convenience decorations — clean card with border ──
   BoxDecoration get cardDecoration => BoxDecoration(

@@ -1,10 +1,10 @@
-import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_joystick/flutter_joystick.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
+import 'package:flutter_monitor/core/gateway/control_gateway.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/shared/widgets/glass_widgets.dart';
@@ -21,18 +21,6 @@ class ControlScreen extends StatefulWidget {
 }
 
 class _ControlScreenState extends State<ControlScreen> {
-  final StreamController<Twist> _velocityController =
-      StreamController<Twist>.broadcast();
-  StreamSubscription? _teleopSubscription;
-  double _linearX = 0.0;
-  double _linearY = 0.0;
-  double _angularZ = 0.0;
-  bool _useDogDirect = false;
-
-  // 发送节流
-  DateTime _lastTwistSend = DateTime(2000);
-  static const _twistSendInterval = Duration(milliseconds: 50); // 20Hz max
-
   @override
   void initState() {
     super.initState();
@@ -42,20 +30,10 @@ class _ControlScreenState extends State<ControlScreen> {
     ]);
     // 隐藏系统状态栏提升沉浸感
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-
-    // Auto-select dog direct mode when only dog board is connected
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = context.read<RobotConnectionProvider>();
-      if (provider.isDogConnected && !provider.isConnected) {
-        setState(() => _useDogDirect = true);
-      }
-    });
   }
 
   @override
   void dispose() {
-    _velocityController.close();
-    _teleopSubscription?.cancel();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -64,161 +42,57 @@ class _ControlScreenState extends State<ControlScreen> {
     super.dispose();
   }
 
-  Future<void> _toggleLease() async {
-    final provider = context.read<RobotConnectionProvider>();
-    HapticFeedback.mediumImpact();
-
-    if (provider.hasLease) {
-      await provider.releaseLease();
-      _teleopSubscription?.cancel();
-      _teleopSubscription = null;
-    } else {
-      final success = await provider.acquireLease();
-      if (success) {
-        _startTeleopStream();
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('无法获取控制权'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      }
-    }
-  }
-
-  void _startTeleopStream() {
-    try {
-      final client = context.read<RobotConnectionProvider>().client;
-      if (client == null) return;
-
-      _teleopSubscription =
-          client.streamTeleop(_velocityController.stream).listen(
-        (feedback) {
-          // Handle feedback (e.g., safety warnings)
-        },
-        onError: (e) {
-          debugPrint('Teleop stream error: $e');
-          if (mounted) {
-            context.read<RobotConnectionProvider>().releaseLease();
-          }
-        },
-      );
-    } catch (e) {
-      debugPrint('Failed to start teleop stream: $e');
-    }
-  }
+  // ─── Joystick callbacks ───
 
   void _onLeftJoystickChange(StickDragDetails details) {
-    if (_useDogDirect) {
-      _linearX = -details.y; // normalized [-1, 1]
-      _linearY = details.x;
+    final gw = context.read<ControlGateway>();
+    if (gw.useDogDirect) {
+      gw.sendVelocity(-details.y, details.x, gw.angularZ);
     } else {
-      final provider = context.read<RobotConnectionProvider>();
-      if (!provider.hasLease) return;
+      if (!gw.hasLease) return;
       final profile = context.read<RobotProfileProvider>().current;
-      _linearX = -details.y * profile.maxLinearSpeed;
-      _linearY = details.x * profile.maxLinearSpeed;
+      gw.sendVelocity(
+        -details.y * profile.maxLinearSpeed,
+        details.x * profile.maxLinearSpeed,
+        gw.angularZ,
+      );
     }
-    _throttledSendCommand();
   }
 
   void _onRightJoystickChange(StickDragDetails details) {
-    if (_useDogDirect) {
-      _angularZ = -details.x;
+    final gw = context.read<ControlGateway>();
+    if (gw.useDogDirect) {
+      gw.sendVelocity(gw.linearX, gw.linearY, -details.x);
     } else {
-      final provider = context.read<RobotConnectionProvider>();
-      if (!provider.hasLease) return;
+      if (!gw.hasLease) return;
       final profile = context.read<RobotProfileProvider>().current;
-      _angularZ = -details.x * profile.maxAngularSpeed;
-    }
-    _throttledSendCommand();
-  }
-
-  void _throttledSendCommand() {
-    final now = DateTime.now();
-    if (now.difference(_lastTwistSend) >= _twistSendInterval) {
-      _lastTwistSend = now;
-      if (_useDogDirect) {
-        _sendDogWalk();
-      } else {
-        _sendTwist();
-      }
+      gw.sendVelocity(gw.linearX, gw.linearY, -details.x * profile.maxAngularSpeed);
     }
   }
 
-  void _sendDogWalk() {
-    final dogClient = context.read<RobotConnectionProvider>().dogClient;
-    dogClient?.walk(_linearX, _linearY, _angularZ);
-    if (mounted) setState(() {});
-  }
+  // ─── Button handlers ───
 
-  void _sendTwist() {
-    final twist = Twist()
-      ..linear = (Vector3()
-        ..x = _linearX
-        ..y = _linearY)
-      ..angular = (Vector3()..z = _angularZ);
-    _velocityController.add(twist);
-    if (mounted) setState(() {});
-  }
-
-  // ─── Dog Direct Control ───
-
-  Future<void> _dogEnable() async {
+  Future<void> _toggleLease() async {
     HapticFeedback.mediumImpact();
-    final dogClient = context.read<RobotConnectionProvider>().dogClient;
-    if (dogClient == null) return;
-    final ok = await dogClient.enable();
-    if (mounted && !ok) {
+    final gw = context.read<ControlGateway>();
+    final ok = await gw.toggleLease();
+    if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('使能失败: ${dogClient.errorMessage}'),
-            behavior: SnackBarBehavior.floating),
+          content: Text(gw.statusMessage ?? '无法获取控制权'),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     }
-  }
-
-  Future<void> _dogDisable() async {
-    HapticFeedback.mediumImpact();
-    final dogClient = context.read<RobotConnectionProvider>().dogClient;
-    if (dogClient == null) return;
-    await dogClient.disable();
-  }
-
-  Future<void> _dogStandUp() async {
-    HapticFeedback.mediumImpact();
-    final dogClient = context.read<RobotConnectionProvider>().dogClient;
-    if (dogClient == null) return;
-    final ok = await dogClient.standUp();
-    if (mounted && !ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('站立失败: ${dogClient.errorMessage}'),
-            behavior: SnackBarBehavior.floating),
-      );
-    }
-  }
-
-  Future<void> _dogSitDown() async {
-    HapticFeedback.mediumImpact();
-    final dogClient = context.read<RobotConnectionProvider>().dogClient;
-    if (dogClient == null) return;
-    await dogClient.sitDown();
   }
 
   Future<void> _setMode(RobotMode mode) async {
     HapticFeedback.lightImpact();
-    final client = context.read<RobotConnectionProvider>().client;
-    if (client == null) return;
-
-    final success = await client.setMode(mode);
+    final (ok, msg) = await context.read<ControlGateway>().setMode(mode);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(success ? '模式已切换: $mode' : '模式切换失败'),
+          content: Text(msg),
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 1),
         ),
@@ -228,24 +102,8 @@ class _ControlScreenState extends State<ControlScreen> {
 
   Future<void> _emergencyStop() async {
     HapticFeedback.heavyImpact();
-    _linearX = 0;
-    _linearY = 0;
-    _angularZ = 0;
-
-    final provider = context.read<RobotConnectionProvider>();
-
-    // Stop dog if connected
-    if (provider.isDogConnected) {
-      await provider.dogClient!.emergencyStop();
-    }
-
-    // Stop nav board if connected
-    if (provider.isConnected && provider.client != null) {
-      await provider.client!.emergencyStop(hardStop: false);
-    }
-
+    await context.read<ControlGateway>().emergencyStop();
     if (mounted) {
-      setState(() {});
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('紧急停止已触发'),
@@ -256,13 +114,42 @@ class _ControlScreenState extends State<ControlScreen> {
     }
   }
 
+  Future<void> _dogEnable() async {
+    HapticFeedback.mediumImpact();
+    final (ok, err) = await context.read<ControlGateway>().dogEnable();
+    if (mounted && !ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('使能失败: ${err ?? ""}'), behavior: SnackBarBehavior.floating),
+      );
+    }
+  }
+
+  Future<void> _dogDisable() async {
+    HapticFeedback.mediumImpact();
+    await context.read<ControlGateway>().dogDisable();
+  }
+
+  Future<void> _dogStandUp() async {
+    HapticFeedback.mediumImpact();
+    final (ok, err) = await context.read<ControlGateway>().dogStandUp();
+    if (mounted && !ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('站立失败: ${err ?? ""}'), behavior: SnackBarBehavior.floating),
+      );
+    }
+  }
+
+  Future<void> _dogSitDown() async {
+    HapticFeedback.mediumImpact();
+    await context.read<ControlGateway>().dogSitDown();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final gw = context.watch<ControlGateway>();
     final provider = context.watch<RobotConnectionProvider>();
-    final hasLease = provider.hasLease;
     final client = provider.client;
     final isDogConnected = provider.isDogConnected;
-    final dogClient = provider.dogClient;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -309,14 +196,15 @@ class _ControlScreenState extends State<ControlScreen> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.videocam, size: 14, color: AppColors.primary),
+                  Icon(Icons.videocam, size: 14,
+                      color: context.isDark ? Colors.white54 : Colors.black54),
                   const SizedBox(width: 6),
-                  const Text(
+                  Text(
                     'FPV',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
+                      color: context.isDark ? Colors.white54 : Colors.black54,
                     ),
                   ),
                 ],
@@ -330,16 +218,16 @@ class _ControlScreenState extends State<ControlScreen> {
               child: GestureDetector(
                 onTap: () {
                   HapticFeedback.selectionClick();
-                  setState(() => _useDogDirect = !_useDogDirect);
+                  gw.toggleDogDirect();
                 },
                 child: GlassCard(
                   borderRadius: 20,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   blurSigma: 10,
-                  color: _useDogDirect
-                      ? AppColors.warning.withOpacity(0.2)
-                      : Colors.grey.withOpacity(0.1),
+                  color: gw.useDogDirect
+                      ? AppColors.warning.withValues(alpha: 0.2)
+                      : Colors.grey.withValues(alpha: 0.1),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -347,15 +235,15 @@ class _ControlScreenState extends State<ControlScreen> {
                         Icons.pets,
                         size: 14,
                         color:
-                            _useDogDirect ? AppColors.warning : Colors.grey,
+                            gw.useDogDirect ? AppColors.warning : Colors.grey,
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        _useDogDirect ? 'DOG' : 'NAV',
+                        gw.useDogDirect ? 'DOG' : 'NAV',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: _useDogDirect
+                          color: gw.useDogDirect
                               ? AppColors.warning
                               : Colors.grey,
                         ),
@@ -373,23 +261,23 @@ class _ControlScreenState extends State<ControlScreen> {
                 borderRadius: 20,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                color: hasLease
-                    ? AppColors.success.withOpacity(0.2)
-                    : Colors.grey.withOpacity(0.2),
+                color: gw.hasLease
+                    ? AppColors.success.withValues(alpha: 0.2)
+                    : Colors.grey.withValues(alpha: 0.2),
                 child: Row(
                   children: [
                     Icon(
-                      hasLease ? Icons.lock_open : Icons.lock,
+                      gw.hasLease ? Icons.lock_open : Icons.lock,
                       size: 16,
-                      color: hasLease ? AppColors.success : Colors.grey,
+                      color: gw.hasLease ? AppColors.success : Colors.grey,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      hasLease ? 'LEASE ACTIVE' : 'NO LEASE',
+                      gw.hasLease ? 'LEASE ACTIVE' : 'NO LEASE',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: hasLease ? AppColors.success : Colors.grey,
+                        color: gw.hasLease ? AppColors.success : Colors.grey,
                       ),
                     ),
                   ],
@@ -424,9 +312,9 @@ class _ControlScreenState extends State<ControlScreen> {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withOpacity(0.3),
-                    Colors.black.withOpacity(0.1),
-                    Colors.black.withOpacity(0.3),
+                    Colors.black.withValues(alpha: 0.3),
+                    Colors.black.withValues(alpha: 0.1),
+                    Colors.black.withValues(alpha: 0.3),
                   ],
                 ),
               ),
@@ -458,8 +346,8 @@ class _ControlScreenState extends State<ControlScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         // Mode Selection / Dog Control
-                        if (_useDogDirect)
-                          _buildDogControlButtons(dogClient)
+                        if (gw.useDogDirect)
+                          _buildDogControlButtons(gw.dogClient)
                         else
                           GlassCard(
                             padding: const EdgeInsets.all(4),
@@ -475,6 +363,8 @@ class _ControlScreenState extends State<ControlScreen> {
                                     'AUTO',
                                     RobotMode.ROBOT_MODE_AUTONOMOUS,
                                     Colors.purple),
+                                _buildModeButton('MAP',
+                                    RobotMode.ROBOT_MODE_MAPPING, Colors.teal),
                               ],
                             ),
                           ),
@@ -483,30 +373,23 @@ class _ControlScreenState extends State<ControlScreen> {
                         GestureDetector(
                           onTap: _emergencyStop,
                           child: Container(
-                            height: 80,
-                            width: 80,
+                            height: 72,
+                            width: 72,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: Colors.red.withOpacity(0.8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.red.withOpacity(0.4),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
+                              color: Colors.red.withValues(alpha: 0.7),
                               border: Border.all(
-                                  color: Colors.white.withOpacity(0.5),
-                                  width: 2),
+                                  color: Colors.white.withValues(alpha: 0.3),
+                                  width: 1.5),
                             ),
                             child: const Center(
                               child: Text(
                                 'STOP',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                  letterSpacing: 1.0,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                  letterSpacing: 0.5,
                                 ),
                               ),
                             ),
@@ -518,9 +401,9 @@ class _ControlScreenState extends State<ControlScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 8),
                           child: Text(
-                            _useDogDirect
-                                ? 'X: ${_linearX.toStringAsFixed(2)}  Y: ${_linearY.toStringAsFixed(2)}  Z: ${_angularZ.toStringAsFixed(2)}'
-                                : 'Vx: ${_linearX.toStringAsFixed(2)}  Vy: ${_linearY.toStringAsFixed(2)}  Wz: ${_angularZ.toStringAsFixed(2)}',
+                            gw.useDogDirect
+                                ? 'X: ${gw.linearX.toStringAsFixed(2)}  Y: ${gw.linearY.toStringAsFixed(2)}  Z: ${gw.angularZ.toStringAsFixed(2)}'
+                                : 'Vx: ${gw.linearX.toStringAsFixed(2)}  Vy: ${gw.linearY.toStringAsFixed(2)}  Wz: ${gw.angularZ.toStringAsFixed(2)}',
                             style: TextStyle(
                               fontSize: 12,
                               fontFamily: 'monospace',
@@ -529,7 +412,7 @@ class _ControlScreenState extends State<ControlScreen> {
                               ],
                               color: context.isDark
                                   ? Colors.white70
-                                  : Colors.black.withOpacity(0.6),
+                                  : Colors.black.withValues(alpha: 0.6),
                             ),
                           ),
                         ),
@@ -591,16 +474,9 @@ class _ControlScreenState extends State<ControlScreen> {
             height: 180,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.15),
               border:
-                  Border.all(color: Colors.white.withOpacity(0.4), width: 1),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  spreadRadius: 2,
-                ),
-              ],
+                  Border.all(color: Colors.white.withValues(alpha: 0.3), width: 1),
             ),
             child: ClipOval(
               child: BackdropFilter(
@@ -608,56 +484,36 @@ class _ControlScreenState extends State<ControlScreen> {
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.1),
+                    color: Colors.white.withValues(alpha: 0.1),
                   ),
                 ),
               ),
             ),
           ),
           stick: Container(
-            width: 60,
-            height: 60,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.white.withOpacity(0.4),
+              color: Colors.white.withValues(alpha: 0.3),
               border:
-                  Border.all(color: Colors.white.withOpacity(0.6), width: 1),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+                  Border.all(color: Colors.white.withValues(alpha: 0.5), width: 1),
             ),
             child: ClipOval(
               child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Colors.white.withOpacity(0.6),
-                        Colors.white.withOpacity(0.1),
-                      ],
-                    ),
+                    color: Colors.white.withValues(alpha: 0.15),
                   ),
                   child: Center(
                     child: Container(
-                      width: 20,
-                      height: 20,
+                      width: 16,
+                      height: 16,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(0.8),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4,
-                          ),
-                        ],
+                        color: Colors.white.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
@@ -675,15 +531,19 @@ class _ControlScreenState extends State<ControlScreen> {
       color: Colors.transparent,
       child: InkWell(
         onTap: () => _setMode(mode),
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: context.borderColor),
+          ),
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: context.titleColor,
             ),
           ),
         ),
@@ -708,13 +568,11 @@ class _ControlScreenState extends State<ControlScreen> {
               _buildDogButton(
                 label: 'ENABLE',
                 icon: Icons.power,
-                color: AppColors.success,
                 onTap: _dogEnable,
               ),
               _buildDogButton(
                 label: 'DISABLE',
                 icon: Icons.power_off,
-                color: AppColors.error,
                 onTap: _dogDisable,
               ),
             ],
@@ -731,14 +589,12 @@ class _ControlScreenState extends State<ControlScreen> {
               _buildDogButton(
                 label: 'STAND',
                 icon: Icons.arrow_upward,
-                color: AppColors.primary,
                 onTap: _dogStandUp,
                 isActive: isStanding,
               ),
               _buildDogButton(
                 label: 'SIT',
                 icon: Icons.arrow_downward,
-                color: AppColors.warning,
                 onTap: _dogSitDown,
                 isActive: !isStanding,
               ),
@@ -752,32 +608,32 @@ class _ControlScreenState extends State<ControlScreen> {
   Widget _buildDogButton({
     required String label,
     required IconData icon,
-    required Color color,
     required VoidCallback onTap,
     bool isActive = false,
   }) {
+    final textColor = context.isDark ? Colors.white70 : Colors.black87;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: isActive ? color.withOpacity(0.15) : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
+            color: isActive ? Colors.white.withValues(alpha: 0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: color),
+              Icon(icon, size: 14, color: textColor),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: color,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                  color: textColor,
                 ),
               ),
             ],

@@ -71,13 +71,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
                     ? const Color(0xFF38383A)
                     : const Color(0xFFE5E5E5),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(isDark ? 0.4 : 0.08),
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                ),
-              ],
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -154,9 +147,9 @@ class _NavItem extends StatelessWidget {
           children: [
             Icon(
               isActive ? activeIcon : icon,
-              size: 22,
+              size: 20,
               color: isActive
-                  ? AppColors.primary
+                  ? context.titleColor
                   : context.subtitleColor,
             ),
             if (badge)

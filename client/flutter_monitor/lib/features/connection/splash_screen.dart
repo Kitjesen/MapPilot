@@ -65,24 +65,8 @@ class _SplashScreenState extends State<SplashScreen>
     final isDark = context.isDark;
 
     return Scaffold(
+      backgroundColor: isDark ? AppColors.darkBackground : AppColors.lightBackground,
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: isDark
-                ? [
-                    const Color(0xFF0A0A0A),
-                    const Color(0xFF111128),
-                    const Color(0xFF0A0A0A),
-                  ]
-                : [
-                    const Color(0xFFF2F2F7),
-                    const Color(0xFFE8ECF4),
-                    const Color(0xFFF2F2F7),
-                  ],
-          ),
-        ),
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -95,38 +79,17 @@ class _SplashScreenState extends State<SplashScreen>
                     scale: _scaleAnimation.value,
                     child: Opacity(
                       opacity: _fadeAnimation.value,
-                      child: Container(
-                        width: 110,
-                        height: 110,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              AppColors.primary,
-                              AppColors.secondary,
-                            ],
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.primary.withOpacity(0.35),
-                              blurRadius: 40,
-                              spreadRadius: 8,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.smart_toy_outlined,
-                          size: 52,
-                          color: Colors.white,
-                        ),
+                      child: Image.asset(
+                        'assets/logo.png',
+                        width: 72,
+                        height: 72,
+                        color: isDark ? Colors.white : const Color(0xFF0A1E3D),
                       ),
                     ),
                   );
                 },
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
               // Animated text
               FadeTransition(
                 opacity: _textFadeAnimation,
@@ -135,22 +98,22 @@ class _SplashScreenState extends State<SplashScreen>
                     Text(
                       '大算机器人',
                       style: TextStyle(
-                        fontSize: 30,
+                        fontSize: 26,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.5,
                         color: isDark ? Colors.white : Colors.black87,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text(
-                      'Robot Monitor & Control',
+                      '让每一台机器人都拥有智慧',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: FontWeight.w400,
-                        letterSpacing: 1.0,
+                        letterSpacing: 0.5,
                         color: isDark
-                            ? Colors.white.withOpacity(0.4)
-                            : Colors.black.withOpacity(0.35),
+                            ? Colors.white.withValues(alpha:0.45)
+                            : Colors.black.withValues(alpha:0.4),
                       ),
                     ),
                   ],

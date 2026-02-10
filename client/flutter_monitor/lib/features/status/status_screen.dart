@@ -30,7 +30,6 @@ class _StatusScreenState extends State<StatusScreen>
   StreamSubscription? _dogJointSub;
 
   late AnimationController _breathingController;
-  late Animation<double> _breathingAnimation;
 
   // UI 刷新节流
   DateTime _lastUiUpdate = DateTime(2000);
@@ -46,10 +45,6 @@ class _StatusScreenState extends State<StatusScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-
-    _breathingAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(parent: _breathingController, curve: Curves.easeInOut),
-    );
 
     // 使用 Provider 的广播流
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -127,38 +122,15 @@ class _StatusScreenState extends State<StatusScreen>
               )
             : null,
         actions: [
-          // Dog connection badge
           if (isDogConnected)
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: AppColors.warning,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'DOG',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.warning,
-                      ),
-                    ),
-                  ],
+              child: Text(
+                'DOG',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
                 ),
               ),
             ),
@@ -257,11 +229,58 @@ class _StatusScreenState extends State<StatusScreen>
                         ),
                       ],
                     ),
+                    const SizedBox(height: 12),
+                    // Memory metric
+                    Row(
+                      children: [
+                        Expanded(
+                          child: RepaintBoundary(
+                            child: _buildMetricCard(
+                              icon: Icons.sd_storage_outlined,
+                              iconColor: const Color(0xFF5856D6),
+                              label: 'MEMORY',
+                              value: (_latestSlowState?.resources.memPercent ?? 0)
+                                  .toStringAsFixed(0),
+                              unit: '%',
+                              progress: (_latestSlowState?.resources.memPercent ?? 0) / 100,
+                              progressColor: const Color(0xFF5856D6),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(child: SizedBox()), // Placeholder for symmetry
+                      ],
+                    ),
                     const SizedBox(height: 14),
                     RepaintBoundary(child: _buildMotionCard()),
                     if (_latestSlowState != null) ...[
                       const SizedBox(height: 14),
                       RepaintBoundary(child: _buildTopicRatesCard()),
+                      // ─── Network Quality ───
+                      if (_latestSlowState!.hasNetwork()) ...[
+                        const SizedBox(height: 14),
+                        RepaintBoundary(child: _buildNetworkQualityCard()),
+                      ],
+                      // ─── System Health ───
+                      if (_latestSlowState!.hasHealth()) ...[
+                        const SizedBox(height: 14),
+                        RepaintBoundary(child: _buildHealthCard()),
+                      ],
+                      // ─── Navigation Status ───
+                      if (_latestSlowState!.hasNavigation()) ...[
+                        const SizedBox(height: 14),
+                        RepaintBoundary(child: _buildNavigationCard()),
+                      ],
+                      // ─── Geofence ───
+                      if (_latestSlowState!.hasGeofence()) ...[
+                        const SizedBox(height: 14),
+                        RepaintBoundary(child: _buildGeofenceCard()),
+                      ],
+                    ],
+                    // ─── FastState IMU (Nav Board) ───
+                    if (_latestFastState != null) ...[
+                      const SizedBox(height: 14),
+                      RepaintBoundary(child: _buildNavImuCard()),
                     ],
                     ], // end _latestFastState != null
                     // ─── Dog Direct Sensor Data ───
@@ -272,6 +291,13 @@ class _StatusScreenState extends State<StatusScreen>
                       const SizedBox(height: 14),
                       RepaintBoundary(
                           child: _buildDogJointCard(dogClient)),
+                    ],
+                    // ─── FastState Joint Angles Fallback (when Dog not connected) ───
+                    if (!(isDogConnected && dogClient != null) &&
+                        _latestFastState != null &&
+                        _latestFastState!.jointAngles.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      RepaintBoundary(child: _buildNavJointCard()),
                     ],
                   ],
                 ),
@@ -311,13 +337,13 @@ class _StatusScreenState extends State<StatusScreen>
   Widget _buildSkeletonCard({required double height}) {
     final isDark = context.isDark;
     return Shimmer.fromColors(
-      baseColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade200,
-      highlightColor: isDark ? Colors.white.withOpacity(0.12) : Colors.grey.shade100,
+      baseColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
+      highlightColor: isDark ? Colors.white.withValues(alpha: 0.12) : Colors.grey.shade100,
       child: Container(
         height: height,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(10),
         ),
       ),
     );
@@ -341,67 +367,39 @@ class _StatusScreenState extends State<StatusScreen>
       builder: (context, status, _) {
         final isOnline = status == ConnectionStatus.connected;
         final isReconnecting = status == ConnectionStatus.reconnecting;
-        final color = isOnline
-            ? AppColors.success
-            : isReconnecting
-                ? AppColors.warning
-                : AppColors.error;
         final label = isOnline
             ? 'ONLINE'
             : isReconnecting
                 ? 'RECONNECTING'
                 : 'OFFLINE';
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(30),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AnimatedBuilder(
-                animation: _breathingAnimation,
-                builder: (context, _) {
-                  return Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      boxShadow: isOnline
-                          ? [
-                              BoxShadow(
-                                color: color.withOpacity(0.5 * _breathingAnimation.value),
-                                blurRadius: 6,
-                                spreadRadius: 1,
-                              ),
-                            ]
-                          : [],
-                    ),
-                  );
-                },
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: isOnline ? AppColors.success : (isReconnecting ? AppColors.warning : AppColors.error),
+                shape: BoxShape.circle,
               ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
-                  color: color,
-                ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: context.subtitleColor,
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
   }
 
   Widget _buildRobotCard() {
-    final isDark = context.isDark;
     final pose = _latestFastState!.pose;
     final profile = context.watch<RobotProfileProvider>().current;
 
@@ -409,9 +407,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: context.borderColor),
-        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         children: [
@@ -429,8 +426,8 @@ class _StatusScreenState extends State<StatusScreen>
             _latestSlowState?.currentMode ?? 'IDLE',
             style: TextStyle(
               fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: AppColors.primary,
+              fontWeight: FontWeight.w500,
+              color: context.subtitleColor,
               letterSpacing: 0.8,
             ),
           ),
@@ -509,23 +506,21 @@ class _StatusScreenState extends State<StatusScreen>
     required double progress,
     required Color progressColor,
   }) {
-    final isDark = context.isDark;
     final clampedProgress = progress.clamp(0.0, 1.0);
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: context.borderColor),
-        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 16, color: iconColor),
+              Icon(icon, size: 16, color: context.subtitleColor),
               const SizedBox(width: 6),
               Text(
                 label,
@@ -576,9 +571,9 @@ class _StatusScreenState extends State<StatusScreen>
                     Container(
                       height: 4,
                       decoration: BoxDecoration(
-                        color: isDark
-                            ? Colors.white.withOpacity(0.06)
-                            : Colors.black.withOpacity(0.04),
+                        color: context.isDark
+                            ? Colors.white.withValues(alpha: 0.06)
+                            : Colors.black.withValues(alpha: 0.04),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -587,7 +582,9 @@ class _StatusScreenState extends State<StatusScreen>
                       child: Container(
                         height: 4,
                         decoration: BoxDecoration(
-                          color: progressColor,
+                          color: context.isDark
+                              ? Colors.white.withValues(alpha: 0.3)
+                              : Colors.black.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(2),
                         ),
                       ),
@@ -603,7 +600,6 @@ class _StatusScreenState extends State<StatusScreen>
   }
 
   Widget _buildMotionCard() {
-    final isDark = context.isDark;
     final linear = _latestFastState!.velocity.linear.x;
     final angular = _latestFastState!.velocity.angular.z;
 
@@ -611,9 +607,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: context.borderColor),
-        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -654,7 +649,7 @@ class _StatusScreenState extends State<StatusScreen>
       IconData icon, String label, String value, String unit, Color color) {
     return Column(
       children: [
-        Icon(icon, size: 20, color: color.withOpacity(0.6)),
+        Icon(icon, size: 18, color: context.subtitleColor),
         const SizedBox(height: 8),
         RichText(
           textAlign: TextAlign.center,
@@ -693,16 +688,14 @@ class _StatusScreenState extends State<StatusScreen>
   }
 
   Widget _buildTopicRatesCard() {
-    final isDark = context.isDark;
     final rates = _latestSlowState!.topicRates;
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: context.borderColor),
-        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -731,29 +724,27 @@ class _StatusScreenState extends State<StatusScreen>
   }
 
   Widget _buildRateChip(String label, double hz, Color color) {
-    final isDark = context.isDark;
     return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-          decoration: BoxDecoration(
-            color: color.withOpacity(isDark ? 0.15 : 0.08),
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: Text(
-            '${hz.toStringAsFixed(1)} Hz',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
+        Text(
+          '${hz.toStringAsFixed(1)}',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: context.titleColor,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 2),
+        Text(
+          'Hz',
+          style: TextStyle(fontSize: 11, color: context.subtitleColor),
+        ),
+        const SizedBox(height: 4),
         Text(
           label,
           style: TextStyle(
             fontSize: 11,
+            fontWeight: FontWeight.w500,
             color: context.subtitleColor,
           ),
         ),
@@ -774,9 +765,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: context.borderColor),
-        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -822,8 +812,8 @@ class _StatusScreenState extends State<StatusScreen>
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: isDark
-                  ? Colors.white.withOpacity(0.04)
-                  : Colors.black.withOpacity(0.03),
+                  ? Colors.white.withValues(alpha: 0.04)
+                  : Colors.black.withValues(alpha: 0.03),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Row(
@@ -899,6 +889,264 @@ class _StatusScreenState extends State<StatusScreen>
     );
   }
 
+  // ═══════════════════════════════════════════════
+  //  Nav Board IMU Card (from FastState stream)
+  // ═══════════════════════════════════════════════
+
+  Widget _buildNavImuCard() {
+    final isDark = context.isDark;
+    final state = _latestFastState;
+    if (state == null) return const SizedBox.shrink();
+
+    // RPY from FastState
+    final hasRpy = state.hasRpyDeg();
+    final roll = hasRpy ? state.rpyDeg.x : null;
+    final pitch = hasRpy ? state.rpyDeg.y : null;
+    final yaw = hasRpy ? state.rpyDeg.z : null;
+
+    // IMU accelerometer
+    final hasAccel = state.hasLinearAcceleration();
+    final ax = hasAccel ? state.linearAcceleration.x : null;
+    final ay = hasAccel ? state.linearAcceleration.y : null;
+    final az = hasAccel ? state.linearAcceleration.z : null;
+
+    // IMU gyroscope
+    final hasGyro = state.hasAngularVelocity();
+    final gx = hasGyro ? state.angularVelocity.x : null;
+    final gy = hasGyro ? state.angularVelocity.y : null;
+    final gz = hasGyro ? state.angularVelocity.z : null;
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      decoration: BoxDecoration(
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'NAV IMU',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Roll / Pitch / Yaw
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildImuValue('ROLL', roll, '°'),
+              Container(width: 1, height: 36, color: context.dividerColor),
+              _buildImuValue('PITCH', pitch, '°'),
+              Container(width: 1, height: 36, color: context.dividerColor),
+              _buildImuValue('YAW', yaw, '°'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Accelerometer
+          _buildImuRow(
+            icon: Icons.speed,
+            label: 'ACCEL',
+            x: ax, y: ay, z: az,
+            unit: 'm/s²',
+            isDark: isDark,
+          ),
+          const SizedBox(height: 8),
+          // Gyroscope
+          _buildImuRow(
+            icon: Icons.rotate_right,
+            label: 'GYRO',
+            x: gx, y: gy, z: gz,
+            unit: 'rad/s',
+            isDark: isDark,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImuRow({
+    required IconData icon,
+    required String label,
+    required double? x,
+    required double? y,
+    required double? z,
+    required String unit,
+    required bool isDark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.04)
+            : Colors.black.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: context.subtitleColor),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: context.subtitleColor,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            (x != null && y != null && z != null)
+                ? 'X: ${x.toStringAsFixed(2)}  Y: ${y.toStringAsFixed(2)}  Z: ${z.toStringAsFixed(2)}'
+                : '-- -- --',
+            style: TextStyle(
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: isDark ? Colors.white70 : Colors.black87,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════
+  //  Nav Board Joint Card (FastState fallback)
+  // ═══════════════════════════════════════════════
+
+  Widget _buildNavJointCard() {
+    final isDark = context.isDark;
+    final state = _latestFastState;
+    if (state == null || state.jointAngles.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final angles = state.jointAngles;
+    const legNames = ['FR', 'FL', 'RR', 'RL'];
+    const jointNames = ['Hip', 'Thigh', 'Calf', 'Foot'];
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      decoration: BoxDecoration(
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'NAV JOINT ANGLES',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${angles.length} DOF',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: context.subtitleColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Joint angles table: 4 legs × 4 joints
+          Table(
+            columnWidths: const {
+              0: FlexColumnWidth(1.2),
+              1: FlexColumnWidth(1),
+              2: FlexColumnWidth(1),
+              3: FlexColumnWidth(1),
+              4: FlexColumnWidth(1),
+            },
+            children: [
+              // Header
+              TableRow(
+                children: [
+                  const SizedBox(),
+                  ...jointNames.map((j) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      j,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: context.subtitleColor,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  )),
+                ],
+              ),
+              // Data rows
+              for (int leg = 0; leg < 4 && (leg * 4 + 3) < angles.length; leg++)
+                TableRow(
+                  decoration: BoxDecoration(
+                    color: leg.isEven
+                        ? (isDark ? Colors.white.withValues(alpha: 0.02) : Colors.black.withValues(alpha: 0.02))
+                        : null,
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Text(
+                        legNames[leg],
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: context.titleColor,
+                        ),
+                      ),
+                    ),
+                    for (int j = 0; j < 4; j++)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Text(
+                          _radToDeg(angles[leg * 4 + j]).toStringAsFixed(1),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                            color: isDark ? Colors.white70 : Colors.black87,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDogJointCard(DogDirectClient dogClient) {
     final isDark = context.isDark;
     final positions = dogClient.jointPositions;
@@ -912,9 +1160,8 @@ class _StatusScreenState extends State<StatusScreen>
       padding: const EdgeInsets.all(AppSpacing.xl),
       decoration: BoxDecoration(
         color: context.cardColor,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: context.borderColor),
-        boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -977,8 +1224,8 @@ class _StatusScreenState extends State<StatusScreen>
                     decoration: BoxDecoration(
                       color: leg.isEven
                           ? (isDark
-                              ? Colors.white.withOpacity(0.02)
-                              : Colors.black.withOpacity(0.02))
+                              ? Colors.white.withValues(alpha: 0.02)
+                              : Colors.black.withValues(alpha: 0.02))
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -1030,8 +1277,8 @@ class _StatusScreenState extends State<StatusScreen>
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: isDark
-                    ? Colors.white.withOpacity(0.04)
-                    : Colors.black.withOpacity(0.03),
+                    ? Colors.white.withValues(alpha: 0.04)
+                    : Colors.black.withValues(alpha: 0.03),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Row(
@@ -1066,4 +1313,373 @@ class _StatusScreenState extends State<StatusScreen>
   }
 
   double _radToDeg(double rad) => rad * 180 / math.pi;
+
+  // ═══════════════════════════════════════════════
+  //  Network Quality Card (from SlowState.network)
+  // ═══════════════════════════════════════════════
+
+  Widget _buildNetworkQualityCard() {
+    final net = _latestSlowState!.network;
+    final rtt = net.rttMs;
+    final loss = net.packetLoss;
+    final jitter = net.jitterMs;
+    final bw = net.bandwidthKbps;
+    final signal = net.signalStrength;
+
+    Color rttColor() {
+      if (rtt < 50) return AppColors.success;
+      if (rtt < 150) return AppColors.warning;
+      return AppColors.error;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      decoration: BoxDecoration(
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'NETWORK',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: rttColor(),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildNetStat('RTT', '${rtt.toStringAsFixed(0)}', 'ms', rttColor()),
+              _buildNetStat('丢包', '${loss.toStringAsFixed(1)}', '%',
+                  loss < 1 ? AppColors.success : loss < 5 ? AppColors.warning : AppColors.error),
+              _buildNetStat('抖动', '${jitter.toStringAsFixed(0)}', 'ms', context.subtitleColor),
+              _buildNetStat('带宽', bw > 1000 ? '${(bw / 1000).toStringAsFixed(1)}' : '$bw',
+                  bw > 1000 ? 'Mbps' : 'Kbps', context.subtitleColor),
+            ],
+          ),
+          if (signal > 0) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.signal_cellular_alt, size: 14, color: context.subtitleColor),
+                const SizedBox(width: 6),
+                Text('信号强度: $signal dBm',
+                    style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNetStat(String label, String value, String unit, Color color) {
+    return Column(
+      children: [
+        Text(value,
+            style: TextStyle(
+                fontSize: 18, fontWeight: FontWeight.w700, color: color)),
+        Text(unit,
+            style: TextStyle(fontSize: 10, color: context.subtitleColor)),
+        const SizedBox(height: 4),
+        Text(label,
+            style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: context.subtitleColor)),
+      ],
+    );
+  }
+
+  // ═══════════════════════════════════════════════
+  //  System Health Card (from SlowState.health)
+  // ═══════════════════════════════════════════════
+
+  Widget _buildHealthCard() {
+    final health = _latestSlowState!.health;
+    final isDark = context.isDark;
+
+    Color levelColor(String level) {
+      switch (level.toUpperCase()) {
+        case 'OK':
+          return AppColors.success;
+        case 'DEGRADED':
+          return AppColors.warning;
+        case 'CRITICAL':
+        case 'FAULT':
+          return AppColors.error;
+        default:
+          return context.subtitleColor;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      decoration: BoxDecoration(
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'HEALTH',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: levelColor(health.overallLevel).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  health.overallLevel.isNotEmpty ? health.overallLevel : 'N/A',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: levelColor(health.overallLevel),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (health.localizationScore > 0) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.my_location, size: 14, color: context.subtitleColor),
+                const SizedBox(width: 6),
+                Text('定位置信度: ${(health.localizationScore * 100).toStringAsFixed(0)}%',
+                    style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+              ],
+            ),
+          ],
+          if (health.subsystems.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: health.subsystems.map((sub) {
+                final color = levelColor(sub.level);
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: isDark ? 0.12 : 0.08),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: color.withValues(alpha: 0.2)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6, height: 6,
+                        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(sub.name,
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color)),
+                      if (sub.actualHz > 0) ...[
+                        const SizedBox(width: 4),
+                        Text('${sub.actualHz.toStringAsFixed(0)}Hz',
+                            style: TextStyle(fontSize: 10, color: color.withValues(alpha: 0.7))),
+                      ],
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════
+  //  Navigation Status Card (from SlowState.navigation)
+  // ═══════════════════════════════════════════════
+
+  Widget _buildNavigationCard() {
+    final nav = _latestSlowState!.navigation;
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      decoration: BoxDecoration(
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'NAVIGATION',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              Icon(
+                nav.localizationValid ? Icons.check_circle : Icons.warning_amber,
+                size: 14,
+                color: nav.localizationValid ? AppColors.success : AppColors.warning,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                nav.localizationValid ? '定位有效' : '定位无效',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: nav.localizationValid ? AppColors.success : AppColors.warning,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Planner status
+          _buildNavRow(Icons.route, '规划器', nav.globalPlannerStatus.isNotEmpty
+              ? nav.globalPlannerStatus
+              : 'N/A'),
+          if (nav.hasGlobalPath) ...[
+            const SizedBox(height: 6),
+            _buildNavRow(Icons.straighten, '路径长度',
+                '${nav.globalPathLength.toStringAsFixed(1)} m'),
+          ],
+          if (nav.hasWaypoint) ...[
+            const SizedBox(height: 6),
+            _buildNavRow(Icons.place, '当前航点',
+                '(${nav.currentWaypoint.x.toStringAsFixed(1)}, ${nav.currentWaypoint.y.toStringAsFixed(1)})'),
+          ],
+          if (nav.slowDownLevel > 0) ...[
+            const SizedBox(height: 6),
+            _buildNavRow(Icons.speed, '减速等级', '${nav.slowDownLevel}'),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: context.subtitleColor),
+        const SizedBox(width: 8),
+        Text('$label: ', style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+        Expanded(
+          child: Text(value,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                  color: context.titleColor),
+              textAlign: TextAlign.end),
+        ),
+      ],
+    );
+  }
+
+  // ═══════════════════════════════════════════════
+  //  Geofence Status Card (from SlowState.geofence)
+  // ═══════════════════════════════════════════════
+
+  Widget _buildGeofenceCard() {
+    final geo = _latestSlowState!.geofence;
+
+    Color stateColor() {
+      switch (geo.state.toUpperCase()) {
+        case 'OK':
+        case 'INSIDE':
+          return AppColors.success;
+        case 'WARNING':
+        case 'NEAR_BOUNDARY':
+          return AppColors.warning;
+        case 'VIOLATION':
+        case 'OUTSIDE':
+          return AppColors.error;
+        default:
+          return context.subtitleColor;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      decoration: BoxDecoration(
+        color: context.cardColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'GEOFENCE',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: context.subtitleColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const Spacer(),
+              if (!geo.hasFence)
+                Text('未设置围栏',
+                    style: TextStyle(fontSize: 11, color: context.subtitleColor))
+              else ...[
+                Container(
+                  width: 8, height: 8,
+                  decoration: BoxDecoration(color: stateColor(), shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 6),
+                Text(geo.state.isNotEmpty ? geo.state : 'N/A',
+                    style: TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600, color: stateColor())),
+              ],
+            ],
+          ),
+          if (geo.hasFence && geo.marginDistance > 0) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.fence, size: 14, color: context.subtitleColor),
+                const SizedBox(width: 6),
+                Text('边界距离: ${geo.marginDistance.toStringAsFixed(1)} m',
+                    style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }

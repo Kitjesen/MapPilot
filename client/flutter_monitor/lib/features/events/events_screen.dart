@@ -128,7 +128,6 @@ class _EventsScreenState extends State<EventsScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final isDark = context.isDark;
 
     return Scaffold(
       appBar: AppBar(
@@ -138,19 +137,12 @@ class _EventsScreenState extends State<EventsScreen>
             const Text('事件日志'),
             if (_events.isNotEmpty) ...[
               const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(isDark ? 0.15 : 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${_events.length}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.primary,
-                  ),
+              Text(
+                '${_events.length}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: context.subtitleColor,
                 ),
               ),
             ],
@@ -281,14 +273,11 @@ class _EventListItem extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(AppRadius.card),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(color: context.borderColor),
-          boxShadow: [
-            isDark ? AppShadows.dark() : AppShadows.light(),
-          ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.card),
+          borderRadius: BorderRadius.circular(10),
           child: IntrinsicHeight(
             child: Row(
               children: [

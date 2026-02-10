@@ -29,7 +29,8 @@ class _AlertHistoryPageState extends State<AlertHistoryPage> {
           // 筛选
           PopupMenuButton<AlertLevel?>(
             icon: Icon(Icons.filter_list,
-                color: _filterLevel != null ? AppColors.primary : null),
+                color: _filterLevel != null ? context.titleColor : context.subtitleColor,
+                size: 20),
             tooltip: '按级别筛选',
             onSelected: (level) => setState(() => _filterLevel = level),
             itemBuilder: (_) => [
@@ -119,17 +120,13 @@ class _AlertHistoryPageState extends State<AlertHistoryPage> {
   }
 
   Widget _buildAlertItem(AlertRecord alert, bool isDark) {
-    final Color color;
     final IconData icon;
     switch (alert.level) {
       case AlertLevel.critical:
-        color = AppColors.error;
         icon = Icons.error_outline;
       case AlertLevel.warning:
-        color = AppColors.warning;
         icon = Icons.warning_amber_rounded;
       case AlertLevel.info:
-        color = AppColors.info;
         icon = Icons.info_outline;
     }
 
@@ -141,26 +138,13 @@ class _AlertHistoryPageState extends State<AlertHistoryPage> {
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border(
-            left: BorderSide(color: color, width: 3),
-          ),
-          boxShadow: [
-            BoxShadow(color: context.cardShadowColor, blurRadius: 8),
-          ],
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: context.borderColor),
         ),
         child: ListTile(
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          leading: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
+          leading: Icon(icon, color: context.subtitleColor, size: 18),
           title: Text(
             alert.title,
             style: TextStyle(
@@ -185,7 +169,7 @@ class _AlertHistoryPageState extends State<AlertHistoryPage> {
                 timeStr,
                 style: TextStyle(
                     fontSize: 11,
-                    color: context.subtitleColor.withOpacity(0.7)),
+                    color: context.subtitleColor.withValues(alpha:0.7)),
               ),
             ],
           ),

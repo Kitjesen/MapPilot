@@ -1,11 +1,11 @@
 {
-    "name": "flutter_monitor",
-    "short_name": "flutter_monitor",
+    "name": "大算机器人",
+    "short_name": "大算机器人",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Dasuan Robot Controller - 机器人远程监控与控制",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

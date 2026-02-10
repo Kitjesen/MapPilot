@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter/webview_flutter.dart' as wv;
+import 'package:webview_windows/webview_windows.dart' as wv_win;
 import 'package:robot_proto/src/common.pb.dart';
 import 'package:flutter_monitor/app/theme.dart';
 
@@ -15,6 +16,9 @@ import 'package:flutter_monitor/app/theme.dart';
 ///   4-7  : FL  hip, thigh, calf, foot
 ///   8-11 : RR  hip, thigh, calf, foot
 ///  12-15 : RL  hip, thigh, calf, foot
+///
+/// On Windows desktop, uses `webview_windows` (WebView2).
+/// On mobile (Android / iOS), uses `webview_flutter`.
 class RobotModelWidget extends StatefulWidget {
   final Pose? currentPose;
 
@@ -32,7 +36,6 @@ class RobotModelWidget extends StatefulWidget {
 }
 
 class _RobotModelWidgetState extends State<RobotModelWidget> {
-  WebViewController? _controller;
   bool _isLoaded = false;
   DateTime? _lastPoseUpdate;
   DateTime? _lastJointUpdate;
@@ -40,6 +43,11 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
   Timer? _jointThrottle;
   HttpServer? _server;
   int? _serverPort;
+
+  // ── Platform-specific controllers ───────────────────────────
+  wv.WebViewController? _mobileController;
+  wv_win.WebviewController? _windowsController;
+  bool _windowsReady = false;
 
   @override
   void initState() {
@@ -52,6 +60,9 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
     _poseThrottle?.cancel();
     _jointThrottle?.cancel();
     _server?.close(force: true);
+    if (Platform.isWindows) {
+      _windowsController?.dispose();
+    }
     super.dispose();
   }
 
@@ -64,16 +75,21 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
     debugPrint('[RobotModel] HTTP server on port $_serverPort');
 
     _server!.listen((HttpRequest request) async {
-      final path =
-          request.uri.path == '/' ? '/urdf_viewer_simple.html' : request.uri.path;
-      final assetPath = 'assets$path';
+      var path = request.uri.path;
+      if (path == '/') path = '/urdf_viewer_simple.html';
+
+      // Decode percent-encoded segments (Chinese characters, etc.)
+      final decoded = Uri.decodeFull(path);
+      final assetPath = 'assets$decoded';
+
       try {
         final data = await rootBundle.load(assetPath);
-        request.response.headers.contentType = _contentType(assetPath);
+        request.response.headers.contentType = _contentType(decoded);
+        request.response.headers.add('Access-Control-Allow-Origin', '*');
         request.response.add(data.buffer.asUint8List());
       } catch (_) {
         request.response.statusCode = HttpStatus.notFound;
-        request.response.write('Not Found');
+        request.response.write('Not Found: $assetPath');
       } finally {
         await request.response.close();
       }
@@ -81,40 +97,49 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
   }
 
   static ContentType _contentType(String path) {
-    if (path.endsWith('.html')) return ContentType.html;
-    if (path.endsWith('.js')) return ContentType('application', 'javascript');
-    if (path.endsWith('.stl') || path.endsWith('.STL')) {
-      return ContentType('application', 'octet-stream');
+    final p = path.toLowerCase();
+    if (p.endsWith('.html')) return ContentType.html;
+    if (p.endsWith('.js')) {
+      return ContentType('application', 'javascript', charset: 'utf-8');
     }
-    if (path.endsWith('.urdf')) return ContentType('application', 'xml');
-    if (path.endsWith('.png')) return ContentType('image', 'png');
+    if (p.endsWith('.stl')) return ContentType('application', 'octet-stream');
+    if (p.endsWith('.urdf')) {
+      return ContentType('application', 'xml', charset: 'utf-8');
+    }
+    if (p.endsWith('.png')) return ContentType('image', 'png');
+    if (p.endsWith('.json')) {
+      return ContentType('application', 'json', charset: 'utf-8');
+    }
     return ContentType('application', 'octet-stream');
   }
 
-  // ==================== WebView ====================
+  // ==================== WebView initialisation ====================
 
   void _initializeWebView() {
     if (_serverPort == null) return;
-    final url = 'http://127.0.0.1:$_serverPort/urdf_viewer_simple.html';
-    debugPrint('[RobotModel] WebView URL: $url');
+    final url = 'http://127.0.0.1:$_serverPort/';
 
+    if (Platform.isWindows) {
+      _initWindowsWebView(url);
+    } else {
+      _initMobileWebView(url);
+    }
+  }
+
+  // ── Mobile (webview_flutter) ──────────────────────────────────
+
+  void _initMobileWebView(String url) {
+    debugPrint('[RobotModel] Mobile WebView → $url');
     setState(() {
-      _controller = WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      _mobileController = wv.WebViewController()
+        ..setJavaScriptMode(wv.JavaScriptMode.unrestricted)
         ..setBackgroundColor(Colors.transparent)
         ..addJavaScriptChannel(
           'FlutterChannel',
-          onMessageReceived: (msg) => _handleJS(msg.message),
+          onMessageReceived: (msg) => _onJSMessage(msg.message),
         )
         ..setNavigationDelegate(
-          NavigationDelegate(
-            onPageFinished: (_) {
-              setState(() => _isLoaded = true);
-              Future.delayed(const Duration(milliseconds: 600), () {
-                if (widget.currentPose != null) _sendPose();
-                if (widget.jointAngles != null) _sendJointAngles();
-              });
-            },
+          wv.NavigationDelegate(
             onWebResourceError: (e) =>
                 debugPrint('[RobotModel] WebView error: ${e.description}'),
           ),
@@ -123,11 +148,96 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
     });
   }
 
-  void _handleJS(String message) {
+  // ── Windows (webview_windows / WebView2) ──────────────────────
+
+  Future<void> _initWindowsWebView(String url) async {
+    debugPrint('[RobotModel] Windows WebView → $url');
     try {
-      final data = jsonDecode(message);
-      debugPrint('[RobotModel] JS ${data['type']}: ${data['message']}');
+      _windowsController = wv_win.WebviewController();
+      await _windowsController!.initialize();
+
+      // webMessage stream: webview_windows JSON-decodes the value
+      // from get_WebMessageAsJson, so if JS sends an object via
+      // chrome.webview.postMessage(obj) it arrives as a Map.
+      _windowsController!.webMessage.listen(
+        (dynamic decoded) {
+          if (decoded is Map) {
+            _onJSMessageDecoded(decoded);
+          } else {
+            // Fallback for string messages
+            _onJSMessage(decoded.toString());
+          }
+        },
+        onError: (e) => debugPrint('[RobotModel] webMessage error: $e'),
+      );
+
+      // Debug: log loading state changes
+      _windowsController!.loadingState.listen((state) {
+        debugPrint('[RobotModel] loadingState: $state');
+        if (state == wv_win.LoadingState.navigationCompleted && !_isLoaded) {
+          // Page loaded — give JS a moment then try triggering ready
+          Future.delayed(const Duration(seconds: 2), () {
+            if (!_isLoaded && mounted) {
+              debugPrint('[RobotModel] Force-checking ready via JS');
+              _runJS("if(typeof sendToFlutter==='function') sendToFlutter({type:'ready',message:'forced'});");
+            }
+          });
+        }
+      });
+
+      _windowsController!.onLoadError.listen((error) {
+        debugPrint('[RobotModel] WebView load error: $error');
+      });
+
+      await _windowsController!.setPopupWindowPolicy(
+          wv_win.WebviewPopupWindowPolicy.deny);
+      await _windowsController!.loadUrl(url);
+
+      if (mounted) setState(() => _windowsReady = true);
+    } catch (e) {
+      debugPrint('[RobotModel] Windows WebView init failed: $e');
+    }
+  }
+
+  // ==================== JS message handling ====================
+
+  /// Called with a raw JSON string (mobile path).
+  void _onJSMessage(String raw) {
+    try {
+      final data = jsonDecode(raw);
+      _onJSMessageDecoded(data);
     } catch (_) {}
+  }
+
+  /// Called with an already-decoded map (Windows path or after decode).
+  void _onJSMessageDecoded(dynamic data) {
+    final type = data is Map ? data['type'] ?? '' : '';
+    debugPrint('[RobotModel] JS $type: ${data is Map ? data['message'] : data}');
+
+    if (type == 'ready' || type == 'info') {
+      if (!_isLoaded) {
+        setState(() => _isLoaded = true);
+        Future.delayed(const Duration(milliseconds: 400), () {
+          if (!mounted) return;
+          if (widget.currentPose != null) _sendPose();
+          if (widget.jointAngles != null) _sendJointAngles();
+          // Sync theme
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          _runJS(
+              "if(window.setTheme) window.setTheme('${isDark ? 'dark' : 'light'}');");
+        });
+      }
+    }
+  }
+
+  // ==================== JS execution ====================
+
+  void _runJS(String script) {
+    if (Platform.isWindows) {
+      _windowsController?.executeScript(script);
+    } else {
+      _mobileController?.runJavaScript(script);
+    }
   }
 
   // ==================== didUpdateWidget ====================
@@ -136,13 +246,11 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
   void didUpdateWidget(RobotModelWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // Pose change → throttled at 2 Hz
     if (widget.currentPose != oldWidget.currentPose &&
         widget.currentPose != null) {
       _schedulePose();
     }
 
-    // Joint angles change → throttled at 5 Hz
     if (widget.jointAngles != oldWidget.jointAngles &&
         widget.jointAngles != null) {
       _scheduleJoints();
@@ -160,15 +268,15 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
   }
 
   void _sendPose() {
-    if (_controller == null || !_isLoaded || widget.currentPose == null) return;
+    if (!_isLoaded || widget.currentPose == null) return;
     final p = widget.currentPose!.position;
     final o = widget.currentPose!.orientation;
 
-    // ROS (X fwd, Y left, Z up) → Three.js (X, Y up, Z back)
-    _controller!.runJavaScript(
+    // Viewer uses Z-up (matching ROS convention) → send raw coords
+    _runJS(
       'if(window.updateRobotPose) window.updateRobotPose('
-      '${p.x},${p.z},${-p.y},'
-      '${o.x},${o.z},${-o.y},${o.w});',
+      '${p.x},${p.y},${p.z},'
+      '${o.x},${o.y},${o.z},${o.w});',
     );
     _lastPoseUpdate = DateTime.now();
   }
@@ -184,12 +292,12 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
   }
 
   void _sendJointAngles() {
-    if (_controller == null || !_isLoaded || widget.jointAngles == null) return;
+    if (!_isLoaded || widget.jointAngles == null) return;
     final a = widget.jointAngles!;
     if (a.length < 16) return;
 
     final csv = a.map((v) => v.toStringAsFixed(4)).join(',');
-    _controller!.runJavaScript(
+    _runJS(
       'if(window.updateJointAngles) window.updateJointAngles([$csv]);',
     );
     _lastJointUpdate = DateTime.now();
@@ -197,7 +305,7 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
 
   /// Manually set idle animation on/off from parent.
   void setIdleAnimation(bool enable) {
-    _controller?.runJavaScript(
+    _runJS(
       'if(window.enableIdleAnimation) window.enableIdleAnimation(${enable ? 'true' : 'false'});',
     );
   }
@@ -208,52 +316,70 @@ class _RobotModelWidgetState extends State<RobotModelWidget> {
   Widget build(BuildContext context) {
     final isDark = context.isDark;
 
-    if (_controller == null) {
-      return Container(
-        color: isDark ? AppColors.darkBackground : Colors.grey[100],
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(color: AppColors.primary),
-              const SizedBox(height: 14),
-              Text(
-                '正在启动 3D 查看器…',
-                style: TextStyle(
-                  color: isDark ? Colors.white60 : Colors.black54,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+    // ── Still initialising ──────────────────────────────────────
+    final controllerReady = Platform.isWindows
+        ? _windowsReady
+        : _mobileController != null;
+
+    if (!controllerReady) {
+      return _buildPlaceholder(isDark, '正在启动 3D 查看器…');
     }
 
+    // ── WebView + loading overlay ───────────────────────────────
     return Stack(
       children: [
-        WebViewWidget(controller: _controller!),
-        if (!_isLoaded)
-          Container(
-            color: (isDark ? Colors.black : Colors.white).withOpacity(0.85),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(color: AppColors.primary),
-                  const SizedBox(height: 14),
-                  Text(
-                    '正在加载机器人模型…',
-                    style: TextStyle(
-                      color: isDark ? Colors.white60 : Colors.black54,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
+        if (Platform.isWindows)
+          wv_win.Webview(_windowsController!)
+        else
+          wv.WebViewWidget(controller: _mobileController!),
+        if (!_isLoaded) _buildLoadingOverlay(isDark),
+      ],
+    );
+  }
+
+  Widget _buildPlaceholder(bool isDark, String text) {
+    return Container(
+      color: isDark ? AppColors.darkBackground : Colors.grey[100],
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(
+                color: context.subtitleColor, strokeWidth: 2),
+            const SizedBox(height: 14),
+            Text(
+              text,
+              style: TextStyle(
+                color: isDark ? Colors.white60 : Colors.black54,
+                fontSize: 12,
               ),
             ),
-          ),
-      ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingOverlay(bool isDark) {
+    return Container(
+      color: (isDark ? Colors.black : Colors.white).withValues(alpha:0.85),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(
+                color: context.subtitleColor, strokeWidth: 2),
+            const SizedBox(height: 14),
+            Text(
+              '正在加载机器人模型…',
+              style: TextStyle(
+                color: isDark ? Colors.white60 : Colors.black54,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

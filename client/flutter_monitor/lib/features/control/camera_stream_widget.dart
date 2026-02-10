@@ -106,13 +106,13 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
             Icon(
               Icons.videocam_off,
               size: 64,
-              color: Colors.white.withOpacity(0.3),
+              color: Colors.white.withValues(alpha:0.3),
             ),
             const SizedBox(height: 16),
             Text(
               _hasError ? _errorMessage : 'Simulation Mode',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
+                color: Colors.white.withValues(alpha:0.5),
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
               ),
@@ -121,7 +121,7 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
             Text(
               'No Camera Feed',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.3),
+                color: Colors.white.withValues(alpha:0.3),
                 fontSize: 12,
               ),
             ),

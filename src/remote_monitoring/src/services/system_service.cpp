@@ -1,6 +1,8 @@
 #include "remote_monitoring/services/system_service.hpp"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 
 namespace remote_monitoring {
 namespace services {
@@ -199,6 +201,150 @@ grpc::Status SystemServiceImpl::SaveMap(
       ros_resp->success ? robot::v1::ERROR_CODE_OK
                         : robot::v1::ERROR_CODE_INTERNAL_ERROR);
   
+  return grpc::Status::OK;
+}
+
+grpc::Status SystemServiceImpl::ListMaps(
+  grpc::ServerContext *,
+  const robot::v1::ListMapsRequest *request,
+  robot::v1::ListMapsResponse *response) {
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  std::string directory = request->directory();
+  if (directory.empty()) {
+    directory = "/maps";
+  }
+
+  namespace fs = std::filesystem;
+  try {
+    if (!fs::exists(directory) || !fs::is_directory(directory)) {
+      response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+      return grpc::Status::OK;  // Empty list
+    }
+
+    for (const auto &entry : fs::directory_iterator(directory)) {
+      if (!entry.is_regular_file()) continue;
+
+      const auto ext = entry.path().extension().string();
+      // Accept PCD, PLY, and other map formats
+      if (ext != ".pcd" && ext != ".ply" && ext != ".pickle" && ext != ".pgm") {
+        continue;
+      }
+
+      auto *map_info = response->add_maps();
+      map_info->set_name(entry.path().filename().string());
+      map_info->set_path(entry.path().string());
+      map_info->set_size_bytes(static_cast<int64_t>(entry.file_size()));
+
+      const auto mod_time = entry.last_write_time();
+      const auto sys_time = std::chrono::clock_cast<std::chrono::system_clock>(mod_time);
+      const auto time_t = std::chrono::system_clock::to_time_t(sys_time);
+      char buf[64];
+      std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&time_t));
+      map_info->set_modified_at(buf);
+
+      // Try to read PCD point count from header
+      if (ext == ".pcd") {
+        std::ifstream pcd(entry.path());
+        std::string line;
+        while (std::getline(pcd, line)) {
+          if (line.rfind("POINTS ", 0) == 0) {
+            try {
+              map_info->set_point_count(std::stoi(line.substr(7)));
+            } catch (...) {}
+            break;
+          }
+          if (line == "DATA ascii" || line == "DATA binary" ||
+              line == "DATA binary_compressed") {
+            break;
+          }
+        }
+      }
+    }
+
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  } catch (const std::exception &e) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INTERNAL_ERROR);
+    response->mutable_base()->set_error_message(
+        std::string("Failed to list maps: ") + e.what());
+  }
+
+  return grpc::Status::OK;
+}
+
+grpc::Status SystemServiceImpl::DeleteMap(
+  grpc::ServerContext *,
+  const robot::v1::DeleteMapRequest *request,
+  robot::v1::DeleteMapResponse *response) {
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  namespace fs = std::filesystem;
+  try {
+    const fs::path path(request->path());
+    if (!fs::exists(path)) {
+      response->set_success(false);
+      response->set_message("File not found: " + request->path());
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+      return grpc::Status::OK;
+    }
+
+    fs::remove(path);
+    response->set_success(true);
+    response->set_message("Deleted: " + request->path());
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  } catch (const std::exception &e) {
+    response->set_success(false);
+    response->set_message(std::string("Delete failed: ") + e.what());
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INTERNAL_ERROR);
+  }
+
+  return grpc::Status::OK;
+}
+
+grpc::Status SystemServiceImpl::RenameMap(
+  grpc::ServerContext *,
+  const robot::v1::RenameMapRequest *request,
+  robot::v1::RenameMapResponse *response) {
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  namespace fs = std::filesystem;
+  try {
+    const fs::path old_path(request->old_path());
+    if (!fs::exists(old_path)) {
+      response->set_success(false);
+      response->set_message("File not found: " + request->old_path());
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+      return grpc::Status::OK;
+    }
+
+    const fs::path new_path = old_path.parent_path() / request->new_name();
+    if (fs::exists(new_path)) {
+      response->set_success(false);
+      response->set_message("Target already exists: " + new_path.string());
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_RESOURCE_CONFLICT);
+      return grpc::Status::OK;
+    }
+
+    fs::rename(old_path, new_path);
+    response->set_success(true);
+    response->set_new_path(new_path.string());
+    response->set_message("Renamed to: " + new_path.string());
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  } catch (const std::exception &e) {
+    response->set_success(false);
+    response->set_message(std::string("Rename failed: ") + e.what());
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_INTERNAL_ERROR);
+  }
+
   return grpc::Status::OK;
 }
 

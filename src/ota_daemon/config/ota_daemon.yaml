@@ -37,6 +37,17 @@ health_check_timeout_sec: 30
 # ── 日志级别: DEBUG, INFO, WARN, ERROR ──
 log_level: "INFO"
 
+# ── Dog Board 配置 (Nav Board 代理 OTA 到 Dog Board) ──
+# ota_daemon 运行在 Nav Board, 通过 Ethernet 连接 Dog Board
+# 模型文件先 copy 到本地, 再通知 Dog Board 热加载
+dog_board:
+  host: "192.168.123.161"         # Dog Board 的 IP (内部以太网)
+  port: 13145                     # Dog Board CMS gRPC 端口
+  # 模型热加载通知脚本 (copy 后执行, 参数: <model_path> <dog_host> <dog_port>)
+  reload_script: "/opt/robot/scripts/reload_dog_model.sh"
+  # 连接超时 (秒)
+  timeout_sec: 5
+
 # ── 目录白名单 (仅允许上传/安装到以下路径) ──
 # 对齐实际机器人文件布局, 不再使用虚假的 /opt/robot/models
 allowed_directories:

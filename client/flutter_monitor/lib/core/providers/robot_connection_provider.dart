@@ -59,10 +59,27 @@ class RobotConnectionProvider extends ChangeNotifier {
   void bindSettings(SettingsPreferences prefs) => _settingsPrefs = prefs;
   void bindProfileProvider(RobotProfileProvider p) => _profileProvider = p;
 
+  /// Called after a successful reconnection (not the initial connect).
+  /// Used for cross-gateway orchestration: re-query deployment/task states.
+  VoidCallback? onReconnected;
+
   // — Connection health —
   DateTime? _lastFastStateTime;
   Timer? _healthCheckTimer;
   static const Duration _healthTimeout = Duration(seconds: 10);
+
+  // — Heartbeat / RTT —
+  Timer? _heartbeatTimer;
+  double? _lastRttMs;
+  int _heartbeatFailCount = 0;
+  static const Duration _heartbeatInterval = Duration(seconds: 5);
+  static const int _heartbeatMaxFails = 3;
+
+  // — Capabilities —
+  CapabilitiesResponse? _capabilities;
+
+  // — Available resources —
+  ListResourcesResponse? _resources;
 
   // — Throttle for fast state notifications —
   DateTime _lastFastStateNotify = DateTime(2000);
@@ -87,6 +104,24 @@ class RobotConnectionProvider extends ChangeNotifier {
   DogDirectClient? get dogClient => _dogClient;
   bool get isDogConnected => _dogClient?.isConnected ?? false;
 
+  /// Latest measured RTT in milliseconds (null if no heartbeat yet).
+  double? get connectionRttMs => _lastRttMs;
+
+  /// Robot capabilities (null until fetched).
+  CapabilitiesResponse? get capabilities => _capabilities;
+
+  /// Available resources (cameras, pointclouds, etc.). Null until fetched.
+  ListResourcesResponse? get resources => _resources;
+
+  /// Convenience: list of available camera resource IDs.
+  List<String> get availableCameras {
+    if (_resources == null) return [];
+    return _resources!.resources
+        .where((r) => r.id.type == ResourceType.RESOURCE_TYPE_CAMERA && r.available)
+        .map((r) => r.id.name)
+        .toList();
+  }
+
   // ============ Connection ============
 
   /// 设置客户端并连接
@@ -103,6 +138,9 @@ class RobotConnectionProvider extends ChangeNotifier {
         _status = ConnectionStatus.connected;
         _startCentralStreams();
         _startHealthCheck();
+        _startHeartbeat();
+        _fetchCapabilities();
+        _fetchResources();
         notifyListeners();
         return true;
       } else {
@@ -123,6 +161,7 @@ class RobotConnectionProvider extends ChangeNotifier {
   Future<void> disconnect() async {
     _stopCentralStreams();
     _stopHealthCheck();
+    _stopHeartbeat();
     _cancelReconnect();
 
     if (_hasLease) {
@@ -277,7 +316,10 @@ class RobotConnectionProvider extends ChangeNotifier {
             _reconnectAttempts = 0;
             _startCentralStreams();
             _startHealthCheck();
+            _startHeartbeat();
             notifyListeners();
+            // Fire reconnection hook for cross-gateway state recovery
+            onReconnected?.call();
             return;
           }
         } catch (_) {}
@@ -308,6 +350,67 @@ class RobotConnectionProvider extends ChangeNotifier {
   void _stopHealthCheck() {
     _healthCheckTimer?.cancel();
     _healthCheckTimer = null;
+  }
+
+  // ============ Heartbeat (RTT measurement) ============
+
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    _heartbeatFailCount = 0;
+    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) => _sendHeartbeat());
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _lastRttMs = null;
+  }
+
+  Future<void> _sendHeartbeat() async {
+    final c = _client;
+    if (c == null || !c.isConnected) return;
+
+    final start = DateTime.now();
+    try {
+      await c.heartbeat();
+      final rtt = DateTime.now().difference(start).inMicroseconds / 1000.0;
+      _lastRttMs = rtt;
+      _heartbeatFailCount = 0;
+      notifyListeners();
+    } catch (_) {
+      _heartbeatFailCount++;
+      if (_heartbeatFailCount >= _heartbeatMaxFails) {
+        debugPrint('[Provider] Heartbeat failed ${_heartbeatMaxFails}x → triggering reconnect');
+        _handleStreamError();
+      }
+    }
+  }
+
+  // ============ Capabilities ============
+
+  Future<void> _fetchCapabilities() async {
+    final c = _client;
+    if (c == null) return;
+    try {
+      _capabilities = await c.getCapabilities();
+      notifyListeners();
+    } catch (_) {
+      // Server may not support GetCapabilities; gracefully ignore.
+      _capabilities = null;
+    }
+  }
+
+  // ============ Resources ============
+
+  Future<void> _fetchResources() async {
+    final c = _client;
+    if (c == null) return;
+    try {
+      _resources = await c.listResources();
+      notifyListeners();
+    } catch (_) {
+      _resources = null;
+    }
   }
 
   // ============ Dog Board Direct Connection ============
@@ -354,6 +457,7 @@ class RobotConnectionProvider extends ChangeNotifier {
   void dispose() {
     _stopCentralStreams();
     _stopHealthCheck();
+    _stopHeartbeat();
     _cancelReconnect();
     _fastStateBroadcast.close();
     _slowStateBroadcast.close();

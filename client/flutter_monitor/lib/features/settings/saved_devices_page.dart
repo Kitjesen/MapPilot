@@ -11,7 +11,6 @@ class SavedDevicesPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
     final settingsPrefs = context.watch<SettingsPreferences>();
     final devices = settingsPrefs.savedDevices;
 
@@ -203,41 +202,25 @@ class _DeviceCard extends StatelessWidget {
             : '${timeDiff.inMinutes} 分钟前';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
       ),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(10),
         child: InkWell(
           onTap: onConnect,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(10),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(
               children: [
-                // Robot icon
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(isDark ? 0.15 : 0.08),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(Icons.smart_toy_outlined,
-                      color: AppColors.primary, size: 24),
-                ),
-                const SizedBox(width: 14),
-                // Info
+                Icon(Icons.smart_toy_outlined,
+                    color: context.subtitleColor, size: 18),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -247,58 +230,38 @@ class _DeviceCard extends StatelessWidget {
                           Text(
                             device.name,
                             style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: isDark ? Colors.white : Colors.black87,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: context.titleColor,
                             ),
                           ),
                           if (device.isDefault) ...[
                             const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Text(
-                                '默认',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.primary,
-                                ),
+                            Text(
+                              '默认',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                color: context.subtitleColor,
                               ),
                             ),
                           ],
                         ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${device.host}:${device.port}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: context.subtitleColor,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
                       const SizedBox(height: 2),
                       Text(
-                        '上次连接: $timeAgo',
+                        '${device.host}:${device.port}  ·  $timeAgo',
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 12,
                           color: context.subtitleColor,
                         ),
                       ),
                     ],
                   ),
                 ),
-                // Actions
                 PopupMenuButton<String>(
-                  icon: Icon(Icons.more_vert,
-                      size: 20, color: context.subtitleColor),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+                  icon: Icon(Icons.more_horiz,
+                      size: 18, color: context.subtitleColor),
                   onSelected: (value) {
                     switch (value) {
                       case 'connect':

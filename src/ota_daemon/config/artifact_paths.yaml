@@ -27,18 +27,22 @@ category_defaults:
 # install_path = 文件最终安装位置 (覆盖 manifest 的 target_path)
 artifacts:
 
-  # ---- 模型 ----
+  # ---- 模型 (Dog Board — target_board: "dog") ----
+  # These models are stored on the Nav Board filesystem but used by the Dog Board.
+  # OTA flow: App → Nav Board (copy) → notify Dog Board (RELOAD_MODEL action)
+  # The reload_dog_model.sh script handles Dog Board notification after copy.
   policy_walk:
     install_path: "/home/sunrise/models/policy_walk.onnx"
-    description: "步态策略模型 (Dog Board 热加载)"
+    description: "步态策略模型 (Dog Board 热加载, target_board=dog)"
 
   policy_stand:
     install_path: "/home/sunrise/models/policy_stand.onnx"
-    description: "站立策略模型"
+    description: "站立策略模型 (Dog Board 热加载, target_board=dog)"
 
+  # ---- 模型 (Nav Board — target_board: "nav") ----
   yolo_terrain:
     install_path: "/home/sunrise/models/yolo_terrain.pt"
-    description: "地形分类模型 (terrain_analysis)"
+    description: "地形分类模型 (terrain_analysis, Nav Board)"
 
   neupan_checkpoint:
     install_path: "/home/sunrise/data/SLAM/navigation/src/global_planning/NeuPAN/example/dune_train/model/go2/model_5000.pth"

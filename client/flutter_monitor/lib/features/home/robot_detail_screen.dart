@@ -9,8 +9,11 @@ import 'package:flutter_monitor/features/status/status_screen.dart';
 import 'package:flutter_monitor/features/control/control_screen.dart';
 import 'package:flutter_monitor/features/map/map_screen.dart';
 import 'package:flutter_monitor/features/events/events_screen.dart';
-import 'package:flutter_monitor/features/settings/app_settings_screen.dart';
+import 'package:flutter_monitor/features/files/file_browser_screen.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
+import 'package:flutter_monitor/core/gateway/task_gateway.dart';
+import 'package:flutter_monitor/core/gateway/map_gateway.dart';
+import 'package:robot_proto/robot_proto.dart';
 
 class RobotDetailScreen extends StatefulWidget {
   const RobotDetailScreen({super.key});
@@ -70,6 +73,8 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
           final slowState = provider.latestSlowState;
           final isConnected = provider.isConnected;
           final profile = context.watch<RobotProfileProvider>().current;
+          final taskGw = context.watch<TaskGateway>();
+          final mapGw = context.watch<MapGateway>();
 
           return CustomScrollView(
             physics: const BouncingScrollPhysics(),
@@ -86,7 +91,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                   IconButton(
                     icon: Icon(
                       Icons.power_settings_new,
-                      color: AppColors.error.withOpacity(0.7),
+                      color: AppColors.error.withValues(alpha:0.7),
                     ),
                     onPressed: _handleDisconnect,
                   ),
@@ -130,6 +135,21 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                                   : AppColors.error,
                             ),
                           ),
+                          if (provider.connectionRttMs != null) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              '${provider.connectionRttMs!.toStringAsFixed(0)}ms',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                color: provider.connectionRttMs! < 50
+                                    ? AppColors.success
+                                    : provider.connectionRttMs! < 150
+                                        ? AppColors.warning
+                                        : AppColors.error,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ],
@@ -159,10 +179,9 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                   child: Text(
                     '功能模块',
                     style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: isDark ? Colors.white : Colors.black87,
-                      letterSpacing: -0.3,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: context.subtitleColor,
                     ),
                   ),
                 ),
@@ -178,59 +197,13 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                     crossAxisSpacing: 12,
                     childAspectRatio: 1.05,
                   ),
-                  delegate: SliverChildListDelegate([
-                    FeatureCard(
-                      icon: Icons.dashboard_outlined,
-                      title: '状态监控',
-                      subtitle: _buildStatusSubtitle(slowState),
-                      color: AppColors.primary,
-                      onTap: () => _pushScreen(const StatusScreen()),
-                      trailing: _buildMiniMetrics(slowState),
-                    ),
-                    FeatureCard(
-                      icon: Icons.gamepad_outlined,
-                      title: '遥控操作',
-                      subtitle: provider.hasLease ? '租约已获取' : '需要获取租约',
-                      color: AppColors.accent,
-                      onTap: () => _pushScreen(const ControlScreen()),
-                      badge: provider.hasLease
-                          ? _buildBadge('LIVE', AppColors.success)
-                          : null,
-                    ),
-                    FeatureCard(
-                      icon: Icons.map_outlined,
-                      title: '地图导航',
-                      subtitle: _poseText(fastState),
-                      color: AppColors.success,
-                      onTap: () => _pushScreen(const MapScreen()),
-                    ),
-                    FeatureCard(
-                      icon: Icons.notifications_outlined,
-                      title: '事件日志',
-                      subtitle: '查看系统事件',
-                      color: AppColors.warning,
-                      onTap: () => _pushScreen(const EventsScreen()),
-                    ),
-                    FeatureCard(
-                      icon: Icons.folder_outlined,
-                      title: '文件管理',
-                      subtitle: '模型/地图/配置',
-                      color: AppColors.info,
-                      onTap: () => _pushScreen(const AppSettingsScreen()),
-                    ),
-                    FeatureCard(
-                      icon: Icons.videocam_outlined,
-                      title: '相机画面',
-                      subtitle: '实时视频流',
-                      color: const Color(0xFFFF2D55),
-                      onTap: () {
-                        // Future: dedicated camera screen
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('相机功能开发中...')),
-                        );
-                      },
-                    ),
-                  ]),
+                  delegate: SliverChildListDelegate(_buildFeatureCards(
+                    provider: provider,
+                    fastState: fastState,
+                    slowState: slowState,
+                    mapGw: mapGw,
+                    taskGw: taskGw,
+                  )),
                 ),
               ),
 
@@ -241,6 +214,89 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
         },
       ),
     );
+  }
+
+  List<Widget> _buildFeatureCards({
+    required RobotConnectionProvider provider,
+    required FastState? fastState,
+    required SlowState? slowState,
+    required MapGateway mapGw,
+    required TaskGateway taskGw,
+  }) {
+    final caps = provider.capabilities;
+    // Soft-gate: if capabilities are known, check support; if unknown, show all.
+    final teleopOk = caps?.teleopSupported ?? true;
+    final mappingOk = caps?.mappingSupported ?? true;
+    final cameraOk = caps == null ||
+        caps.supportedResources.any((r) => r.toLowerCase().contains('camera'));
+
+    return [
+      FeatureCard(
+        icon: Icons.dashboard_outlined,
+        title: '状态监控',
+        subtitle: _buildStatusSubtitle(slowState),
+        onTap: () => _pushScreen(const StatusScreen()),
+        trailing: _buildMiniMetrics(slowState),
+      ),
+      _gatedCard(
+        enabled: teleopOk,
+        child: FeatureCard(
+          icon: Icons.gamepad_outlined,
+          title: '遥控操作',
+          subtitle: !teleopOk
+              ? '不支持'
+              : provider.hasLease
+                  ? '控制中'
+                  : '点击获取控制权',
+          onTap: teleopOk ? () => _pushScreen(const ControlScreen()) : null,
+          badge: provider.hasLease
+              ? _buildBadge('LIVE', AppColors.success)
+              : null,
+        ),
+      ),
+      _gatedCard(
+        enabled: mappingOk,
+        child: FeatureCard(
+          icon: Icons.map_outlined,
+          title: '地图导航',
+          subtitle: !mappingOk
+              ? '不支持'
+              : mapGw.maps.isNotEmpty
+                  ? '${mapGw.maps.length} 张地图'
+                  : _poseText(fastState),
+          onTap: mappingOk ? () => _pushScreen(const MapScreen()) : null,
+          badge: taskGw.isRunning
+              ? _buildBadge('任务中', AppColors.warning)
+              : null,
+        ),
+      ),
+      FeatureCard(
+        icon: Icons.notifications_outlined,
+        title: '事件日志',
+        subtitle: '查看系统事件',
+        onTap: () => _pushScreen(const EventsScreen()),
+      ),
+      FeatureCard(
+        icon: Icons.folder_outlined,
+        title: '文件管理',
+        subtitle: '模型/地图/固件',
+        onTap: () => _pushScreen(const FileBrowserScreen()),
+      ),
+      _gatedCard(
+        enabled: cameraOk,
+        child: FeatureCard(
+          icon: Icons.videocam_outlined,
+          title: '相机画面',
+          subtitle: cameraOk ? '实时视频流' : '不支持',
+          onTap: cameraOk ? () => Navigator.pushNamed(context, '/camera') : null,
+        ),
+      ),
+    ];
+  }
+
+  Widget _gatedCard({required bool enabled, required Widget child}) {
+    if (enabled) return child;
+    return Opacity(opacity: 0.45, child: child);
   }
 
   void _pushScreen(Widget screen) {
@@ -269,7 +325,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha:0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -312,66 +368,131 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
     final mode = slowState?.currentMode ?? 'N/A';
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: context.borderColor),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildStatItem(Icons.battery_charging_full, '电量',
-              '${battery.toStringAsFixed(0)}%', _batteryColor(battery)),
-          _buildStatDivider(),
-          _buildStatItem(Icons.memory, 'CPU',
-              '${cpu.toStringAsFixed(0)}%', _cpuColor(cpu)),
-          _buildStatDivider(),
-          _buildStatItem(Icons.thermostat, '温度',
-              '${temp.toStringAsFixed(0)}°', _tempColor(temp)),
-          _buildStatDivider(),
-          _buildStatItem(
-              Icons.tune, '模式', _formatMode(mode), AppColors.primary),
+          Expanded(
+            child: _buildRingStatItem(
+              '电量',
+              '${battery.toStringAsFixed(0)}%',
+              battery / 100.0,
+              _batteryColor(battery),
+              Icons.bolt,
+              isDark,
+            ),
+          ),
+          Expanded(
+            child: _buildRingStatItem(
+              'CPU',
+              '${cpu.toStringAsFixed(0)}%',
+              cpu / 100.0,
+              _cpuColor(cpu),
+              Icons.memory,
+              isDark,
+            ),
+          ),
+          Expanded(
+            child: _buildRingStatItem(
+              '温度',
+              '${temp.toStringAsFixed(0)}°C',
+              (temp / 100.0).clamp(0.0, 1.0),
+              _tempColor(temp),
+              Icons.thermostat,
+              isDark,
+            ),
+          ),
+          Expanded(
+            child: _buildModeStatItem(
+              _formatMode(mode),
+              isDark,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildStatItem(
-      IconData icon, String label, String value, Color color) {
-    final isDark = context.isDark;
+  Widget _buildRingStatItem(String label, String value, double ratio,
+      Color color, IconData icon, bool isDark) {
     return Column(
       children: [
-        Icon(icon, size: 20, color: color),
+        SizedBox(
+          width: 46,
+          height: 46,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                width: 46,
+                height: 46,
+                child: CircularProgressIndicator(
+                  value: ratio.clamp(0.0, 1.0),
+                  strokeWidth: 3,
+                  color: color,
+                  backgroundColor: isDark
+                      ? Colors.white.withValues(alpha:0.06)
+                      : Colors.black.withValues(alpha:0.04),
+                ),
+              ),
+              Icon(icon, size: 16, color: color),
+            ],
+          ),
+        ),
         const SizedBox(height: 6),
         Text(
           value,
           style: TextStyle(
-            fontSize: 15,
+            fontSize: 14,
             fontWeight: FontWeight.w700,
             color: isDark ? Colors.white : Colors.black87,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 1),
         Text(
           label,
-          style: TextStyle(fontSize: 11, color: context.subtitleColor),
+          style: TextStyle(
+            fontSize: 11,
+            color: context.subtitleColor,
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildStatDivider() {
-    return Container(
-      width: 1,
-      height: 36,
-      color: context.dividerColor,
+  Widget _buildModeStatItem(String mode, bool isDark) {
+    return Column(
+      children: [
+        Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isDark
+                ? Colors.white.withValues(alpha:0.06)
+                : Colors.black.withValues(alpha:0.04),
+          ),
+          child: Icon(Icons.tune, size: 18, color: context.subtitleColor),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          mode,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          '模式',
+          style: TextStyle(fontSize: 11, color: context.subtitleColor),
+        ),
+      ],
     );
   }
 
@@ -385,7 +506,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
         height: 4,
         child: LinearProgressIndicator(
           value: cpu / 100.0,
-          backgroundColor: AppColors.primary.withOpacity(0.1),
+          backgroundColor: context.isDark ? Colors.white.withValues(alpha:0.06) : Colors.black.withValues(alpha:0.05),
           valueColor: AlwaysStoppedAnimation(_cpuColor(cpu)),
         ),
       ),
@@ -396,7 +517,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha:0.15),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(

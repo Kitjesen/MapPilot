@@ -29,10 +29,10 @@ class _ScanScreenState extends State<ScanScreen>
   double _scanProgress = 0.0;
   bool _isNetworkScanning = false;
 
-  // Manual entry
-  final _hostController = TextEditingController(text: '192.168.66.190');
+  // Manual entry — defaults loaded from settings/profile in initState
+  final _hostController = TextEditingController();
   final _portController = TextEditingController(text: '50051');
-  final _dogHostController = TextEditingController(text: '192.168.66.190');
+  final _dogHostController = TextEditingController();
   final _dogPortController = TextEditingController(text: '13145');
   bool _isConnecting = false;
   bool _isDogConnecting = false;
@@ -46,9 +46,17 @@ class _ScanScreenState extends State<ScanScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
 
-    // Set defaults from selected robot profile
+    // Set defaults from saved devices / robot profile
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final prefs = context.read<SettingsPreferences>();
       final profile = context.read<RobotProfileProvider>().current;
+
+      // Pre-fill from last connected device, or leave empty for scan discovery
+      final defaultDevice = prefs.defaultDevice;
+      if (defaultDevice != null && defaultDevice.host.isNotEmpty) {
+        _hostController.text = defaultDevice.host;
+        _portController.text = defaultDevice.port.toString();
+      }
       _dogHostController.text = profile.defaultHost;
       _dogPortController.text = profile.defaultPort.toString();
     });
@@ -106,6 +114,9 @@ class _ScanScreenState extends State<ScanScreen>
     });
     HapticFeedback.lightImpact();
 
+    // Show connecting overlay
+    _showConnectingOverlay(context, host, port);
+
     try {
       final client = RobotClient(host: host, port: port);
       final provider = context.read<RobotConnectionProvider>();
@@ -120,8 +131,13 @@ class _ScanScreenState extends State<ScanScreen>
           port: port,
           lastConnected: DateTime.now(),
         ));
+        // Dismiss overlay then navigate
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        await Future.delayed(const Duration(milliseconds: 150));
+        if (!mounted) return;
         Navigator.of(context).pushReplacementNamed('/robot-detail');
       } else {
+        if (Navigator.canPop(context)) Navigator.pop(context);
         setState(() {
           _errorMessage = provider.errorMessage ?? '无法连接到机器人';
           _isConnecting = false;
@@ -129,11 +145,72 @@ class _ScanScreenState extends State<ScanScreen>
       }
     } catch (e) {
       if (!mounted) return;
+      if (Navigator.canPop(context)) Navigator.pop(context);
       setState(() {
         _errorMessage = '连接错误: $e';
         _isConnecting = false;
       });
     }
+  }
+
+  void _showConnectingOverlay(BuildContext ctx, String host, int port) {
+    final isDark = Theme.of(ctx).brightness == Brightness.dark;
+    showDialog(
+      context: ctx,
+      barrierDismissible: false,
+      barrierColor: Colors.black54,
+      builder: (_) => Center(
+        child: Container(
+          width: 260,
+          padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.2),
+                blurRadius: 20,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  color: AppColors.primary,
+                  backgroundColor: isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : Colors.black.withValues(alpha: 0.06),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                '正在连接...',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '$host:$port',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isDark ? Colors.white54 : Colors.black45,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// 直连 Dog Board (han_dog CMS gRPC)
@@ -204,22 +281,24 @@ class _ScanScreenState extends State<ScanScreen>
             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(
               color: isDark
-                  ? Colors.white.withOpacity(0.06)
-                  : Colors.black.withOpacity(0.04),
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.black.withValues(alpha: 0.04),
               borderRadius: BorderRadius.circular(12),
             ),
             child: TabBar(
               controller: _tabController,
-              labelColor: AppColors.primary,
+              labelColor: context.titleColor,
               unselectedLabelColor: context.subtitleColor,
               indicatorSize: TabBarIndicatorSize.tab,
               dividerHeight: 0,
               indicator: BoxDecoration(
-                color: AppColors.primary.withOpacity(isDark ? 0.15 : 0.1),
-                borderRadius: BorderRadius.circular(10),
+                color: isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(8),
               ),
               labelStyle: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600),
+                  fontSize: 13, fontWeight: FontWeight.w600),
+              unselectedLabelStyle: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w400),
               tabs: const [
                 Tab(text: '网络扫描'),
                 Tab(text: '蓝牙'),
@@ -262,10 +341,10 @@ class _ScanScreenState extends State<ScanScreen>
                   child: LinearProgressIndicator(
                     value: _scanProgress,
                     backgroundColor: isDark
-                        ? Colors.white.withOpacity(0.06)
-                        : Colors.black.withOpacity(0.05),
+                        ? Colors.white.withValues(alpha: 0.06)
+                        : Colors.black.withValues(alpha: 0.05),
                     valueColor:
-                        const AlwaysStoppedAnimation(AppColors.primary),
+                        AlwaysStoppedAnimation(context.subtitleColor),
                     minHeight: 3,
                   ),
                 ),
@@ -300,7 +379,7 @@ class _ScanScreenState extends State<ScanScreen>
                     final robot = _networkDevices[index];
                     return _buildDeviceItem(
                       icon: Icons.wifi,
-                      iconColor: AppColors.primary,
+                      iconColor: context.subtitleColor,
                       title: robot.displayName,
                       subtitle: robot.address,
                       onTap: () =>
@@ -320,15 +399,14 @@ class _ScanScreenState extends State<ScanScreen>
               onPressed: _isNetworkScanning ? null : _startNetworkScan,
               icon: Icon(
                 _isNetworkScanning ? Icons.hourglass_top : Icons.refresh,
-                size: 18,
+                size: 16,
               ),
               label: Text(_isNetworkScanning ? '扫描中...' : '重新扫描'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: BorderSide(
-                    color: AppColors.primary.withOpacity(0.3)),
+                foregroundColor: context.titleColor,
+                side: BorderSide(color: context.borderColor),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
             ),
@@ -372,7 +450,7 @@ class _ScanScreenState extends State<ScanScreen>
                   margin: const EdgeInsets.all(16),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: AppColors.error.withOpacity(0.08),
+                    color: AppColors.error.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -449,11 +527,10 @@ class _ScanScreenState extends State<ScanScreen>
                         ? '搜索中...'
                         : '搜索蓝牙'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.secondary,
-                      side: BorderSide(
-                          color: AppColors.secondary.withOpacity(0.3)),
+                      foregroundColor: context.titleColor,
+                      side: BorderSide(color: context.borderColor),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                     ),
                   ),
@@ -479,8 +556,8 @@ class _ScanScreenState extends State<ScanScreen>
           const SizedBox(height: 16),
           Icon(
             Icons.link,
-            size: 48,
-            color: AppColors.primary.withOpacity(0.5),
+            size: 36,
+            color: context.subtitleColor,
           ),
           const SizedBox(height: 16),
           Text(
@@ -518,7 +595,7 @@ class _ScanScreenState extends State<ScanScreen>
                     margin: const EdgeInsets.only(top: 16),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: AppColors.error.withOpacity(0.08),
+                      color: AppColors.error.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
@@ -563,11 +640,11 @@ class _ScanScreenState extends State<ScanScreen>
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: isDark
-                  ? Colors.orange.withOpacity(0.08)
-                  : Colors.orange.withOpacity(0.05),
-              borderRadius: BorderRadius.circular(14),
+                  ? Colors.orange.withValues(alpha: 0.08)
+                  : Colors.orange.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: Colors.orange.withOpacity(0.2),
+                color: Colors.orange.withValues(alpha: 0.2),
               ),
             ),
             child: Column(
@@ -634,7 +711,7 @@ class _ScanScreenState extends State<ScanScreen>
                     ),
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(
-                          color: Colors.orange.withOpacity(0.4)),
+                          color: Colors.orange.withValues(alpha: 0.4)),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -658,7 +735,7 @@ class _ScanScreenState extends State<ScanScreen>
                 foregroundColor: context.subtitleColor,
                 side: BorderSide(color: context.dividerColor),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
             ),
@@ -681,45 +758,31 @@ class _ScanScreenState extends State<ScanScreen>
     final isDark = context.isDark;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
       ),
       child: ListTile(
         onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: iconColor.withOpacity(isDark ? 0.2 : 0.1),
-            borderRadius: BorderRadius.circular(11),
-          ),
-          child: Icon(icon, color: iconColor, size: 20),
-        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        leading: Icon(icon, color: context.subtitleColor, size: 18),
         title: Text(
           title,
           style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: isDark ? Colors.white : Colors.black87,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: context.titleColor,
           ),
         ),
         subtitle: Text(
           subtitle,
-          style: TextStyle(fontSize: 13, color: context.subtitleColor),
+          style: TextStyle(fontSize: 12, color: context.subtitleColor),
         ),
         trailing: trailing ??
-            Icon(Icons.chevron_right, size: 20, color: context.subtitleColor),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            Icon(Icons.chevron_right, size: 16, color: context.subtitleColor),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
@@ -727,15 +790,15 @@ class _ScanScreenState extends State<ScanScreen>
   Widget _buildShimmerItem() {
     final isDark = context.isDark;
     return Shimmer.fromColors(
-      baseColor: isDark ? Colors.white.withOpacity(0.06) : Colors.grey.shade200,
+      baseColor: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.grey.shade200,
       highlightColor:
-          isDark ? Colors.white.withOpacity(0.12) : Colors.grey.shade100,
+          isDark ? Colors.white.withValues(alpha: 0.12) : Colors.grey.shade100,
       child: Container(
         height: 70,
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
         ),
       ),
     );
@@ -777,7 +840,7 @@ class _ScanScreenState extends State<ScanScreen>
           height: 6.0 + i * 4.0,
           margin: const EdgeInsets.only(right: 2),
           decoration: BoxDecoration(
-            color: active ? AppColors.primary : Colors.grey.withOpacity(0.2),
+            color: active ? context.titleColor : Colors.grey.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(2),
           ),
         );
@@ -806,7 +869,7 @@ class _ScanScreenState extends State<ScanScreen>
           color: context.isDark ? Colors.white : Colors.black87,
         ),
         decoration: InputDecoration(
-          prefixIcon: Icon(icon, size: 20, color: AppColors.primary),
+          prefixIcon: Icon(icon, size: 18, color: context.subtitleColor),
           hintText: label,
           hintStyle: TextStyle(color: context.subtitleColor),
           border: InputBorder.none,
@@ -823,54 +886,29 @@ class _ScanScreenState extends State<ScanScreen>
     required IconData icon,
     required String label,
   }) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        height: 52,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: onPressed != null
-                ? [AppColors.primary, AppColors.secondary]
-                : [Colors.grey.shade400, Colors.grey.shade500],
+    return SizedBox(
+      height: 44,
+      width: double.infinity,
+      child: TextButton(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: context.titleColor,
+          backgroundColor: context.isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.04),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: context.borderColor),
           ),
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: onPressed != null
-              ? [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.3),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ]
-              : [],
         ),
-        child: Center(
-          child: isLoading
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: Colors.white,
-                  ),
-                )
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(icon, size: 20, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Text(
-                      label,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
+        child: isLoading
+            ? SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: context.subtitleColor,
                 ),
-        ),
+              )
+            : Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
       ),
     );
   }

@@ -9,7 +9,6 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
 import 'package:flutter_monitor/features/control/webrtc_client.dart';
-import 'package:robot_proto/src/data.pbgrpc.dart';
 
 /// WebRTC 视频显示组件
 class WebRTCVideoWidget extends StatefulWidget {
@@ -203,7 +202,6 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
         return widget.errorWidget ?? _buildErrorWidget();
 
       case WebRTCConnectionState.disconnected:
-      default:
         return widget.placeholder ?? _buildPlaceholder();
     }
   }
@@ -253,13 +251,13 @@ class _WebRTCVideoWidgetState extends State<WebRTCVideoWidget> {
             Icon(
               Icons.videocam_off,
               size: 48,
-              color: Colors.white.withOpacity(0.3),
+              color: Colors.white.withValues(alpha:0.3),
             ),
             const SizedBox(height: 8),
             Text(
               'No video feed',
               style: TextStyle(
-                color: Colors.white.withOpacity(0.3),
+                color: Colors.white.withValues(alpha:0.3),
                 fontSize: 14,
               ),
             ),

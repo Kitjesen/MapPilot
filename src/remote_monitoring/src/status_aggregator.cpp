@@ -192,20 +192,36 @@ void StatusAggregator::update_fast_state() {
                      check_tf(tf_odom_frame_, tf_body_frame_);
   state.set_tf_ok(tf_ok);
 
-  // 关节角度（从 interface::msg::RobotState.joint_positions[0..11]）
-  // 顺序: FR(hip,thigh,calf) FL(hip,thigh,calf) RR(hip,thigh,calf) RL(hip,thigh,calf)
-  // 转换为 16 个角度 (每条腿 4 个: hip,thigh,calf,foot)，foot 关节填 0
+  // 从 RobotState 提取：关节角度 + IMU (加速度 / 角速度)
   {
     std::lock_guard<std::mutex> rs_lock(robot_state_mutex_);
     if (latest_robot_state_) {
-      state.clear_joint_angles();
+      // ── 关节角度 ──
       // 12 DOF -> 16 个值 (每条腿增加一个 foot=0)
+      // 顺序: FR(hip,thigh,calf) FL(hip,thigh,calf) RR(hip,thigh,calf) RL(hip,thigh,calf)
+      state.clear_joint_angles();
       for (int leg = 0; leg < 4; ++leg) {
         state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 0]); // hip
         state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 1]); // thigh
         state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 2]); // calf
         state.add_joint_angles(0.0f); // foot (no physical joint)
       }
+
+      // ── IMU 线加速度 (m/s²) from imu_accelerometer[3] ──
+      state.mutable_linear_acceleration()->set_x(
+          static_cast<double>(latest_robot_state_->imu_accelerometer[0]));
+      state.mutable_linear_acceleration()->set_y(
+          static_cast<double>(latest_robot_state_->imu_accelerometer[1]));
+      state.mutable_linear_acceleration()->set_z(
+          static_cast<double>(latest_robot_state_->imu_accelerometer[2]));
+
+      // ── IMU 角速度 (rad/s) from imu_gyroscope[3] ──
+      state.mutable_angular_velocity()->set_x(
+          static_cast<double>(latest_robot_state_->imu_gyroscope[0]));
+      state.mutable_angular_velocity()->set_y(
+          static_cast<double>(latest_robot_state_->imu_gyroscope[1]));
+      state.mutable_angular_velocity()->set_z(
+          static_cast<double>(latest_robot_state_->imu_gyroscope[2]));
     }
   }
 

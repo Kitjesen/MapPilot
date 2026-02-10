@@ -42,6 +42,12 @@ struct OtaDaemonConfig {
   std::string log_level = "INFO";
   std::vector<std::string> allowed_directories;
 
+  // ── Dog Board OTA proxy config ──
+  std::string dog_board_host = "192.168.123.161";
+  int dog_board_port = 13145;
+  std::string dog_reload_script;   // Post-copy script for RELOAD_MODEL
+  int dog_timeout_sec = 5;
+
   // ── 制品路径映射 (接收方决定安装位置) ──
   // category → 默认目录
   std::unordered_map<std::string, std::string> category_defaults;

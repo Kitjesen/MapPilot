@@ -26,7 +26,6 @@ class SupportPage extends StatelessWidget {
           // ===== 联系方式 =====
           _SupportCard(
             icon: Icons.email_outlined,
-            iconColor: AppColors.primary,
             title: '技术支持邮箱',
             subtitle: 'support@dasuan-robot.com',
             action: '复制邮箱',
@@ -35,7 +34,6 @@ class SupportPage extends StatelessWidget {
           const SizedBox(height: 12),
           _SupportCard(
             icon: Icons.language,
-            iconColor: AppColors.info,
             title: '文档中心',
             subtitle: 'docs.dasuan-robot.com',
             action: '复制链接',
@@ -44,7 +42,6 @@ class SupportPage extends StatelessWidget {
           const SizedBox(height: 12),
           _SupportCard(
             icon: Icons.forum_outlined,
-            iconColor: AppColors.secondary,
             title: '社区论坛',
             subtitle: '与其他用户交流',
             action: '复制链接',
@@ -53,7 +50,6 @@ class SupportPage extends StatelessWidget {
           const SizedBox(height: 12),
           _SupportCard(
             icon: Icons.question_answer_outlined,
-            iconColor: AppColors.warning,
             title: '常见问题 FAQ',
             subtitle: '查看常见问题及解答',
             action: '复制链接',
@@ -66,14 +62,8 @@ class SupportPage extends StatelessWidget {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: [
-                BoxShadow(
-                  color: context.cardShadowColor,
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: context.borderColor),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -81,35 +71,34 @@ class SupportPage extends StatelessWidget {
                 Text(
                   '一键复制设备信息',
                   style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: isDark ? Colors.white : Colors.black87,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: context.titleColor,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
                   '反馈问题时附带设备信息，可以帮助我们更快定位问题。',
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 12,
                     color: context.subtitleColor,
                     height: 1.4,
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
+                  height: 40,
+                  child: TextButton(
                     onPressed: () => _copyDeviceInfo(context),
-                    icon: const Icon(Icons.content_copy, size: 18),
-                    label: const Text('复制设备信息'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+                    style: TextButton.styleFrom(
+                      foregroundColor: context.titleColor,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      elevation: 0,
+                        borderRadius: BorderRadius.circular(8),
+                        side: BorderSide(color: context.borderColor),
+                      ),
                     ),
+                    child: const Text('复制设备信息', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                   ),
                 ),
               ],
@@ -156,7 +145,6 @@ class SupportPage extends StatelessWidget {
 
 class _SupportCard extends StatelessWidget {
   final IconData icon;
-  final Color iconColor;
   final String title;
   final String subtitle;
   final String action;
@@ -164,7 +152,6 @@ class _SupportCard extends StatelessWidget {
 
   const _SupportCard({
     required this.icon,
-    required this.iconColor,
     required this.title,
     required this.subtitle,
     required this.action,
@@ -175,30 +162,16 @@ class _SupportCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: context.cardShadowColor,
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
       ),
       child: Row(
         children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(isDark ? 0.15 : 0.08),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: iconColor, size: 22),
-          ),
-          const SizedBox(width: 14),
+          Icon(icon, color: context.subtitleColor, size: 18),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -206,9 +179,9 @@ class _SupportCard extends StatelessWidget {
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: isDark ? Colors.white : Colors.black87,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: context.titleColor,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -222,7 +195,7 @@ class _SupportCard extends StatelessWidget {
           TextButton(
             onPressed: onAction,
             style: TextButton.styleFrom(
-              foregroundColor: AppColors.primary,
+              foregroundColor: context.titleColor,
               visualDensity: VisualDensity.compact,
             ),
             child: Text(action, style: const TextStyle(fontSize: 12)),

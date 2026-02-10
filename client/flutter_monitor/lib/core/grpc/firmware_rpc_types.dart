@@ -1,25 +1,8 @@
-// Re-export OTA types from generated proto.
-// All OTA types are defined in data.proto.
+/// **Deprecated** — Use `package:flutter_monitor/core/gateway/ota_types.dart` instead.
+///
+/// This file is kept only for backward compatibility and will be removed
+/// in a future version.
+@Deprecated('Use package:flutter_monitor/core/gateway/ota_types.dart instead')
+library firmware_rpc_types;
 
-export 'package:robot_proto/src/data.pb.dart'
-    show
-        ApplyUpdateRequest,
-        ApplyUpdateResponse,
-        GetInstalledVersionsRequest,
-        GetInstalledVersionsResponse,
-        RollbackRequest,
-        RollbackResponse,
-        DownloadFromUrlRequest,
-        OtaProgress,
-        CheckUpdateReadinessRequest,
-        CheckUpdateReadinessResponse,
-        ReadinessCheck,
-        OtaArtifact,
-        InstalledArtifact,
-        RollbackEntry;
-
-export 'package:robot_proto/src/data.pbenum.dart'
-    show
-        OtaCategory,
-        OtaApplyAction,
-        OtaUpdateStatus;
+export 'package:flutter_monitor/core/gateway/ota_types.dart';

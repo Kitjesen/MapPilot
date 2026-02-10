@@ -33,10 +33,12 @@ make -j$(nproc)
 echo "Build complete: ${BUILD_DIR}/ota_daemon"
 
 # ──────────────── 部署 ────────────────
+INSTALL_SCRIPTS="/opt/robot/scripts"
+
 deploy_local() {
   echo "=== Installing locally ==="
 
-  sudo mkdir -p "$INSTALL_BIN" "$INSTALL_CONFIG"
+  sudo mkdir -p "$INSTALL_BIN" "$INSTALL_CONFIG" "$INSTALL_SCRIPTS"
   sudo cp "${BUILD_DIR}/ota_daemon" "$INSTALL_BIN/"
   sudo chmod +x "${INSTALL_BIN}/ota_daemon"
 
@@ -48,6 +50,19 @@ deploy_local() {
     echo "Config exists, skipping: ${INSTALL_CONFIG}/ota_daemon.yaml"
   fi
 
+  # 制品路径映射 (不覆盖已有)
+  if [ ! -f "${INSTALL_CONFIG}/artifact_paths.yaml" ]; then
+    sudo cp "${DAEMON_DIR}/config/artifact_paths.yaml" "$INSTALL_CONFIG/"
+    echo "Installed config: ${INSTALL_CONFIG}/artifact_paths.yaml"
+  else
+    echo "Config exists, skipping: ${INSTALL_CONFIG}/artifact_paths.yaml"
+  fi
+
+  # Dog Board model reload script
+  sudo cp "${DAEMON_DIR}/deploy/reload_dog_model.sh" "$INSTALL_SCRIPTS/"
+  sudo chmod +x "${INSTALL_SCRIPTS}/reload_dog_model.sh"
+  echo "Installed script: ${INSTALL_SCRIPTS}/reload_dog_model.sh"
+
   # systemd 服务
   sudo cp "${DAEMON_DIR}/deploy/ota_daemon.service" "$INSTALL_SERVICE/"
   sudo systemctl daemon-reload
@@ -57,6 +72,7 @@ deploy_local() {
   echo "=== OTA Daemon installed ==="
   echo "  Binary:  ${INSTALL_BIN}/ota_daemon"
   echo "  Config:  ${INSTALL_CONFIG}/ota_daemon.yaml"
+  echo "  Scripts: ${INSTALL_SCRIPTS}/reload_dog_model.sh"
   echo "  Service: ota_daemon.service"
   echo ""
   echo "Commands:"

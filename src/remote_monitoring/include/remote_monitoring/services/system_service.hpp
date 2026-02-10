@@ -48,6 +48,18 @@ public:
                        const robot::v1::SaveMapRequest *request,
                        robot::v1::SaveMapResponse *response) override;
 
+  grpc::Status ListMaps(grpc::ServerContext *context,
+                        const robot::v1::ListMapsRequest *request,
+                        robot::v1::ListMapsResponse *response) override;
+
+  grpc::Status DeleteMap(grpc::ServerContext *context,
+                         const robot::v1::DeleteMapRequest *request,
+                         robot::v1::DeleteMapResponse *response) override;
+
+  grpc::Status RenameMap(grpc::ServerContext *context,
+                         const robot::v1::RenameMapRequest *request,
+                         robot::v1::RenameMapResponse *response) override;
+
   /// 返回自上次心跳以来的秒数 (供 GrpcGateway 检查断联)
   double SecondsSinceLastHeartbeat() const;
 

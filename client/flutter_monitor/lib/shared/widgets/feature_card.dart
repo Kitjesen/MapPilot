@@ -3,12 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_monitor/app/theme.dart';
 
 /// A card-based entry point for a robot feature (Status, Control, Map, etc.)
-/// Clean, minimal design — no glass morphism, subtle border + shadow.
+/// Clean, minimal design with tinted icon container — subtle border + shadow.
 class FeatureCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String? subtitle;
-  final Color color;
+  final Color? color;
   final VoidCallback? onTap;
   final Widget? badge;
   final Widget? trailing;
@@ -18,45 +18,74 @@ class FeatureCard extends StatelessWidget {
     required this.icon,
     required this.title,
     this.subtitle,
-    required this.color,
+    this.color,
     this.onTap,
     this.badge,
     this.trailing,
   });
 
+  /// Deterministic icon accent from the icon's codePoint.
+  Color _iconAccent() {
+    const palette = [
+      AppColors.primary,
+      Color(0xFF5856D6),
+      AppColors.success,
+      AppColors.warning,
+      Color(0xFF5AC8FA),
+      Color(0xFFAF52DE),
+    ];
+    return color ?? palette[icon.codePoint % palette.length];
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
+    final accent = _iconAccent();
 
     return GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
         onTap?.call();
       },
-      child: Container(
-        padding: const EdgeInsets.all(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: context.cardColor,
-          borderRadius: BorderRadius.circular(AppRadius.card),
+          color: isDark ? AppColors.darkCard : Colors.white,
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: context.borderColor),
-          boxShadow: [
-            isDark ? AppShadows.dark() : AppShadows.light(),
-          ],
+          boxShadow: isDark
+              ? null
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Icon — simple, small, no colored container
             Row(
               children: [
-                Icon(icon, color: color, size: 20),
+                // Tinted icon container
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: isDark ? 0.15 : 0.1),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Icon(icon, color: accent, size: 18),
+                ),
                 if (badge != null) ...[
                   const Spacer(),
                   badge!,
                 ],
               ],
             ),
-            const SizedBox(height: 12),
+            const Spacer(),
             // Title
             Text(
               title,
@@ -80,7 +109,7 @@ class FeatureCard extends StatelessWidget {
               ),
             ],
             if (trailing != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               trailing!,
             ],
           ],
@@ -128,10 +157,11 @@ class SettingsSection extends StatelessWidget {
           Container(
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkCard : Colors.white,
-              borderRadius: BorderRadius.circular(AppRadius.card),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: context.borderColor),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.card),
+              borderRadius: BorderRadius.circular(10),
               child: Column(
                 children: _insertDividers(context, children),
               ),
@@ -173,7 +203,7 @@ class SettingsTile extends StatelessWidget {
   const SettingsTile({
     super.key,
     this.icon,
-    this.iconColor = AppColors.primary,
+    this.iconColor = Colors.grey,
     required this.title,
     this.subtitle,
     this.trailing,
@@ -188,6 +218,14 @@ class SettingsTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
+            if (icon != null) ...[
+              Icon(
+                icon,
+                size: 18,
+                color: context.subtitleColor,
+              ),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -249,8 +287,8 @@ class SettingsActionButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
             color: isDark
-                ? Colors.white.withOpacity(0.15)
-                : Colors.black.withOpacity(0.12),
+                ? Colors.white.withValues(alpha: 0.15)
+                : Colors.black.withValues(alpha: 0.12),
           ),
         ),
         child: Text(

@@ -62,6 +62,18 @@ public:
                           const robot::v1::CancelTaskRequest *request,
                           robot::v1::CancelTaskResponse *response) override;
 
+  grpc::Status PauseTask(grpc::ServerContext *context,
+                         const robot::v1::PauseTaskRequest *request,
+                         robot::v1::PauseTaskResponse *response) override;
+
+  grpc::Status ResumeTask(grpc::ServerContext *context,
+                          const robot::v1::ResumeTaskRequest *request,
+                          robot::v1::ResumeTaskResponse *response) override;
+
+  grpc::Status GetTaskStatus(grpc::ServerContext *context,
+                             const robot::v1::GetTaskStatusRequest *request,
+                             robot::v1::GetTaskStatusResponse *response) override;
+
   // 获取当前模式（委托给 ModeManager）
   robot::v1::RobotMode GetCurrentMode() const;
 

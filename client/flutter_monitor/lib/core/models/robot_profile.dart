@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 
 /// 机器人型号配置
@@ -70,7 +69,7 @@ class RobotProfile {
     this.legNames = const ['FR', 'FL', 'RR', 'RL'],
     this.jointNames = const ['Hip', 'Thigh', 'Calf', 'Foot'],
     this.defaultPort = 13145,
-    this.defaultHost = '192.168.66.190',
+    this.defaultHost = '',
     this.maxLinearSpeed = 1.0,
     this.maxAngularSpeed = 1.0,
     this.mass = 12.0,
@@ -125,7 +124,7 @@ class RobotProfiles {
     legNames: ['FR', 'FL', 'RR', 'RL'],
     jointNames: ['Hip', 'Thigh', 'Calf', 'Foot'],
     defaultPort: 13145,
-    defaultHost: '192.168.66.190',
+    defaultHost: '',
     maxLinearSpeed: 3.0,
     maxAngularSpeed: 1.5,
     mass: 40.0,
@@ -146,7 +145,7 @@ class RobotProfiles {
     legNames: ['FR', 'FL', 'RR', 'RL'],
     jointNames: ['Hip', 'Thigh', 'Calf'],
     defaultPort: 13145,
-    defaultHost: '192.168.66.190',
+    defaultHost: '',
     maxLinearSpeed: 0.6,
     maxAngularSpeed: 1.0,
     mass: 5.0,
@@ -167,7 +166,7 @@ class RobotProfiles {
     legNames: ['FR', 'FL', 'RR', 'RL'],
     jointNames: ['Hip', 'Thigh', 'Calf'],
     defaultPort: 13145,
-    defaultHost: '192.168.66.190',
+    defaultHost: '',
     maxLinearSpeed: 0.8,
     maxAngularSpeed: 1.2,
     mass: 6.0,
@@ -188,7 +187,7 @@ class RobotProfiles {
     legNames: ['FR', 'FL', 'RR', 'RL'],
     jointNames: ['Hip', 'Thigh', 'Calf', 'Foot'],
     defaultPort: 13145,
-    defaultHost: '192.168.66.190',
+    defaultHost: '',
     maxLinearSpeed: 0.5,
     maxAngularSpeed: 0.8,
     mass: 10.0,

@@ -1,4 +1,4 @@
-name: Build Flutter APK
+name: Flutter CI/CD
 
 on:
   push:
@@ -12,25 +12,73 @@ on:
     paths:
       - 'client/flutter_monitor/**'
       - 'src/robot_proto/**'
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 env:
   FLUTTER_VERSION: '3.38.x'
   JAVA_VERSION: '17'
 
 jobs:
-  build-apk:
-    name: Build Android APK
+  # ──────────────────────────────────────────────
+  # Step 1: Analyze & Test (runs on all triggers)
+  # ──────────────────────────────────────────────
+  analyze-and-test:
+    name: Analyze & Test
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # 创建 Release 需要
     defaults:
       run:
         working-directory: client/flutter_monitor
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Configure Git credentials for private deps
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Patch pubspec for CI (SSH → HTTPS)
+        run: |
+          sed -i 's|git@github.com:Kitjesen/Robot_Proto.git|https://github.com/Kitjesen/Robot_Proto.git|g' pubspec.yaml
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Dart analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test --coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: client/flutter_monitor/coverage/lcov.info
+          retention-days: 7
+
+  # ──────────────────────────────────────────────
+  # Step 2: Build Android APK (release)
+  # ──────────────────────────────────────────────
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    needs: analyze-and-test
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: client/flutter_monitor
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -45,13 +93,10 @@ jobs:
           channel: stable
           cache: true
 
-      # 配置 Git 凭证，使 CI 能 clone 私有仓库 (han_dog_message 等)
-      # 需要在 repo Settings → Secrets 中添加 GH_PAT (Personal Access Token, repo scope)
       - name: Configure Git credentials for private deps
         run: |
           git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
-      # robot_proto 用 SSH git 引用, CI 中改为 HTTPS
       - name: Patch pubspec for CI (SSH → HTTPS)
         run: |
           sed -i 's|git@github.com:Kitjesen/Robot_Proto.git|https://github.com/Kitjesen/Robot_Proto.git|g' pubspec.yaml
@@ -59,42 +104,154 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Extract version info
+        id: version
+        run: |
+          VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d'+' -f1)
+          BUILD=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}' | cut -d'+' -f2)
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build=$BUILD" >> $GITHUB_OUTPUT
+          echo "git_hash=$GIT_HASH" >> $GITHUB_OUTPUT
+
       - name: Build APK (release)
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release \
+            --dart-define=APP_VERSION=${{ steps.version.outputs.version }} \
+            --dart-define=BUILD_NUMBER=${{ steps.version.outputs.build }} \
+            --dart-define=GIT_HASH=${{ steps.version.outputs.git_hash }}
 
       - name: Rename APK with version
         run: |
-          VERSION=$(grep 'version:' pubspec.yaml | head -1 | awk '{print $2}')
           DATE=$(date +%Y%m%d)
           cp build/app/outputs/flutter-apk/app-release.apk \
-             build/app/outputs/flutter-apk/MapPilot-v${VERSION}-${DATE}.apk
+             build/app/outputs/flutter-apk/DasuanRobot-v${{ steps.version.outputs.version }}-${DATE}.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MapPilot-APK
-          path: client/flutter_monitor/build/app/outputs/flutter-apk/MapPilot-*.apk
+          name: Android-APK
+          path: client/flutter_monitor/build/app/outputs/flutter-apk/DasuanRobot-*.apk
           retention-days: 30
 
-      # 推送到 main 时自动创建 Release
+      # Auto-release on push to main
       - name: Create Release (on push to main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: apk-${{ github.run_number }}
-          name: "MapPilot APK Build #${{ github.run_number }}"
+          tag_name: v${{ steps.version.outputs.version }}-${{ github.run_number }}
+          name: "v${{ steps.version.outputs.version }} Build #${{ github.run_number }}"
           body: |
-            自动构建的 APK 安装包。
+            ## 大算机器人 v${{ steps.version.outputs.version }}
 
-            **安装方式:**
+            **Git:** `${{ steps.version.outputs.git_hash }}`
+
+            ### 安装方式
             1. 下载 `.apk` 文件到 Android 手机
             2. 打开文件安装（需开启"允许未知来源"）
-            3. 连接机器人 IP:50051
-
-            **OTA 更新:**
-            手机访问 `https://github.com/Kitjesen/MapPilot/releases/latest` 下载最新版本。
-          files: client/flutter_monitor/build/app/outputs/flutter-apk/MapPilot-*.apk
+            3. 启动 App → 扫描 → 连接机器人
+          files: client/flutter_monitor/build/app/outputs/flutter-apk/DasuanRobot-*.apk
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────
+  # Step 3: Build Windows (release)
+  # ──────────────────────────────────────────────
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    needs: analyze-and-test
+    defaults:
+      run:
+        working-directory: client/flutter_monitor
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Configure Git credentials for private deps
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Patch pubspec for CI (SSH → HTTPS)
+        run: |
+          (Get-Content pubspec.yaml) -replace 'git@github.com:Kitjesen/Robot_Proto.git','https://github.com/Kitjesen/Robot_Proto.git' | Set-Content pubspec.yaml
+        shell: pwsh
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Extract version info
+        id: version
+        run: |
+          $ver = (Select-String -Path pubspec.yaml -Pattern 'version:' | Select-Object -First 1).Line.Split(' ')[1].Split('+')[0]
+          $hash = git rev-parse --short HEAD
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+          echo "git_hash=$hash" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Build Windows (release)
+        run: |
+          flutter build windows --release `
+            --dart-define=APP_VERSION=${{ steps.version.outputs.version }} `
+            --dart-define=BUILD_NUMBER=${{ github.run_number }} `
+            --dart-define=GIT_HASH=${{ steps.version.outputs.git_hash }}
+        shell: pwsh
+
+      - name: Package Windows build
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "build\DasuanRobot-Windows-v${{ steps.version.outputs.version }}.zip"
+        shell: pwsh
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-Build
+          path: client/flutter_monitor/build/DasuanRobot-Windows-*.zip
+          retention-days: 30
+
+  # ──────────────────────────────────────────────
+  # Step 4: Build iOS (release) — requires macOS runner
+  # Note: Actual signing requires Apple Developer certificates
+  #       stored as GitHub Secrets (P12_CERT, PROVISIONING_PROFILE, etc.)
+  # ──────────────────────────────────────────────
+  build-ios:
+    name: Build iOS
+    runs-on: macos-latest
+    needs: analyze-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    defaults:
+      run:
+        working-directory: client/flutter_monitor
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Configure Git credentials for private deps
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Patch pubspec for CI (SSH → HTTPS)
+        run: |
+          sed -i '' 's|git@github.com:Kitjesen/Robot_Proto.git|https://github.com/Kitjesen/Robot_Proto.git|g' pubspec.yaml
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS (no codesign — for CI validation)
+        run: flutter build ios --release --no-codesign

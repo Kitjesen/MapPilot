@@ -30,11 +30,37 @@ abstract class RobotClientBase {
   /// 保存地图
   Future<SaveMapResponse> saveMap({required String filePath, bool savePatches = false});
 
-  /// 启动任务（导航/建图）
-  Future<StartTaskResponse> startTask({required TaskType taskType, String paramsJson = ''});
+  /// 启动任务（导航/建图）— 支持结构化参数
+  Future<StartTaskResponse> startTask({
+    required TaskType taskType,
+    String paramsJson = '',
+    NavigationParams? navigationParams,
+    MappingParams? mappingParams,
+    FollowPathParams? followPathParams,
+  });
 
   /// 取消任务
   Future<CancelTaskResponse> cancelTask({required String taskId});
+
+  /// 暂停任务
+  Future<PauseTaskResponse> pauseTask({required String taskId});
+
+  /// 恢复任务
+  Future<ResumeTaskResponse> resumeTask({required String taskId});
+
+  /// 查询任务状态
+  Future<GetTaskStatusResponse> getTaskStatus({required String taskId});
+
+  // ==================== 地图管理 ====================
+
+  /// 列出已保存的地图
+  Future<ListMapsResponse> listMaps({String directory = '/maps'});
+
+  /// 删除地图
+  Future<DeleteMapResponse> deleteMap({required String path});
+
+  /// 重命名地图
+  Future<RenameMapResponse> renameMap({required String oldPath, required String newName});
 
   // ==================== 文件管理 ====================
 
@@ -109,6 +135,42 @@ abstract class RobotClientBase {
     String expectedSystemVersion = '',
     List<ComponentVersion> expectedComponents = const [],
   });
+
+  // ==================== 系统信息 ====================
+
+  /// 获取机器人信息 (ID, firmware/software versions)
+  Future<RobotInfoResponse> getRobotInfo();
+
+  /// 获取机器人能力 (支持的资源/任务)
+  Future<CapabilitiesResponse> getCapabilities();
+
+  /// 心跳检测 (RTT 测量, 保活)
+  Future<HeartbeatResponse> heartbeat();
+
+  // ==================== 设备管理 (OTA daemon) ====================
+
+  /// 获取设备信息 (IP, 磁盘, 运行时间, 服务状态)
+  Future<DeviceInfoResponse> getDeviceInfo();
+
+  /// 管理系统服务 (start/stop/restart)
+  Future<ManageServiceResponse> manageService({
+    required String serviceName,
+    required ServiceAction action,
+  });
+
+  // ==================== 资源发现 ====================
+
+  /// 列出可用资源 (相机, 点云, 地图等)
+  Future<ListResourcesResponse> listResources();
+
+  /// 下载文件 (流式)
+  Stream<FileChunk> downloadFile({
+    required String filePath,
+    int chunkSize = 65536,
+  });
+
+  /// 取消订阅资源
+  Future<UnsubscribeResponse> unsubscribe({required String subscriptionId});
 
   Future<void> disconnect();
   bool get isConnected;

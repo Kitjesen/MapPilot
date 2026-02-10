@@ -12,6 +12,9 @@ import 'package:flutter_monitor/features/settings/firmware_ota_page.dart';
 import 'package:flutter_monitor/features/settings/log_export_page.dart';
 import 'package:flutter_monitor/features/settings/support_page.dart';
 import 'package:flutter_monitor/features/settings/version_detail_page.dart';
+import 'package:flutter_monitor/features/settings/cloud_config_page.dart';
+import 'package:flutter_monitor/features/settings/device_info_page.dart';
+import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
 
 /// Settings screen — every entry is a real, functional feature.
 class AppSettingsScreen extends StatelessWidget {
@@ -21,6 +24,7 @@ class AppSettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final themeProvider = context.watch<ThemeProvider>();
     final settingsPrefs = context.watch<SettingsPreferences>();
+    final otaGw = context.watch<OtaGateway>();
 
     return Scaffold(
       appBar: AppBar(
@@ -42,6 +46,7 @@ class AppSettingsScreen extends StatelessWidget {
             title: '外观',
             children: [
               SettingsTile(
+                icon: Icons.contrast_outlined,
                 title: '深色模式',
                 subtitle: _themeModeLabel(themeProvider.mode),
                 trailing: _buildThemeSelector(context, themeProvider),
@@ -54,6 +59,7 @@ class AppSettingsScreen extends StatelessWidget {
             title: '连接',
             children: [
               SettingsTile(
+                icon: Icons.devices_outlined,
                 title: '已保存的设备',
                 subtitle: '${settingsPrefs.savedDevices.length} 个设备',
                 trailing: SettingsActionButton(
@@ -63,11 +69,13 @@ class AppSettingsScreen extends StatelessWidget {
                 onTap: () => _push(context, const SavedDevicesPage()),
               ),
               SettingsTile(
+                icon: Icons.timer_outlined,
                 title: '连接超时',
                 subtitle: '${settingsPrefs.connectionTimeoutSec} 秒',
                 onTap: () => _showTimeoutPicker(context, settingsPrefs),
               ),
               SettingsTile(
+                icon: Icons.sync_outlined,
                 title: '自动重连',
                 subtitle: settingsPrefs.autoReconnect
                     ? '断连后自动尝试重连'
@@ -85,6 +93,7 @@ class AppSettingsScreen extends StatelessWidget {
             title: '通知',
             children: [
               SettingsTile(
+                icon: Icons.vibration_outlined,
                 title: '操作震动反馈',
                 subtitle: settingsPrefs.hapticFeedback
                     ? '控制操作时触觉反馈'
@@ -95,6 +104,7 @@ class AppSettingsScreen extends StatelessWidget {
                 ),
               ),
               SettingsTile(
+                icon: Icons.notifications_outlined,
                 title: '异常告警提醒',
                 subtitle: '电量/温度/通信异常',
                 trailing: SettingsActionButton(
@@ -111,6 +121,7 @@ class AppSettingsScreen extends StatelessWidget {
             title: '设备与固件',
             children: [
               SettingsTile(
+                icon: Icons.system_update_outlined,
                 title: '固件升级 (OTA)',
                 subtitle: '查看/上传机器人固件',
                 trailing: SettingsActionButton(
@@ -120,6 +131,19 @@ class AppSettingsScreen extends StatelessWidget {
                 onTap: () => _push(context, const FirmwareOtaPage()),
               ),
               SettingsTile(
+                icon: Icons.cloud_outlined,
+                title: '云端更新源',
+                subtitle: otaGw.cloud.useCustomUrl
+                    ? '自定义 URL'
+                    : '${otaGw.cloud.owner}/${otaGw.cloud.repo}',
+                trailing: SettingsActionButton(
+                  label: '配置',
+                  onTap: () => _push(context, const CloudConfigPage()),
+                ),
+                onTap: () => _push(context, const CloudConfigPage()),
+              ),
+              SettingsTile(
+                icon: Icons.description_outlined,
                 title: '导出机器人日志',
                 subtitle: '状态/事件/通信日志',
                 trailing: SettingsActionButton(
@@ -144,20 +168,30 @@ class AppSettingsScreen extends StatelessWidget {
             title: '关于',
             children: [
               SettingsTile(
+                icon: Icons.developer_board_outlined,
+                title: '设备管理',
+                subtitle: '设备信息、系统服务',
+                onTap: () => _push(context, const DeviceInfoPage()),
+              ),
+              SettingsTile(
+                icon: Icons.info_outlined,
                 title: '版本信息',
-                subtitle: 'v1.0.0 (Build 1)',
+                subtitle: 'v${const String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0')}'
+                    '${const String.fromEnvironment('BUILD_NUMBER').isNotEmpty ? ' (${const String.fromEnvironment('BUILD_NUMBER')})' : ''}',
                 onTap: () => _push(context, const VersionDetailPage()),
               ),
               SettingsTile(
+                icon: Icons.article_outlined,
                 title: '开源许可',
                 subtitle: '第三方库许可证',
                 onTap: () => showLicensePage(
                   context: context,
                   applicationName: '大算机器人',
-                  applicationVersion: 'v1.0.0',
+                  applicationVersion: 'v${const String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0')}',
                 ),
               ),
               SettingsTile(
+                icon: Icons.help_outline,
                 title: '反馈与支持',
                 subtitle: '技术支持/文档/FAQ',
                 onTap: () => _push(context, const SupportPage()),
@@ -244,7 +278,7 @@ class AppSettingsScreen extends StatelessWidget {
                   width: 36,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: context.subtitleColor.withOpacity(0.3),
+                    color: context.subtitleColor.withValues(alpha:0.3),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -272,13 +306,13 @@ class AppSettingsScreen extends StatelessWidget {
                         fontWeight:
                             isSelected ? FontWeight.w700 : FontWeight.normal,
                         color: isSelected
-                            ? AppColors.primary
+                            ? context.titleColor
                             : (isDark ? Colors.white : Colors.black87),
                       ),
                     ),
                     trailing: isSelected
-                        ? const Icon(Icons.check_circle,
-                            color: AppColors.primary, size: 22)
+                        ? Icon(Icons.check_circle,
+                            color: context.titleColor, size: 20)
                         : null,
                     onTap: () {
                       HapticFeedback.selectionClick();
@@ -416,6 +450,7 @@ class _ClearCacheTileState extends State<_ClearCacheTile> {
   @override
   Widget build(BuildContext context) {
     return SettingsTile(
+      icon: Icons.delete_outline,
       title: '清除缓存',
       subtitle: _isClearing ? '正在清除...' : _cacheSize,
       trailing: _isClearing

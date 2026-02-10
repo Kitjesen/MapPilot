@@ -166,6 +166,12 @@ uint64_t GetDiskFreeBytes(const std::string &path) {
   return static_cast<uint64_t>(stat.f_bavail) * stat.f_frsize;
 }
 
+uint64_t GetDiskTotalBytes(const std::string &path) {
+  struct statvfs stat;
+  if (statvfs(path.c_str(), &stat) != 0) return 0;
+  return static_cast<uint64_t>(stat.f_blocks) * stat.f_frsize;
+}
+
 int GetBatteryPercent() {
   std::ifstream ifs("/sys/class/power_supply/battery/capacity");
   if (!ifs) return -1;

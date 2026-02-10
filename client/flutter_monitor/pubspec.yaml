@@ -16,10 +16,7 @@ dependencies:
   
   # Robot proto definitions (generated gRPC stubs)
   robot_proto:
-    git:
-      url: https://github.com/Kitjesen/Robot_Proto.git
-      path: dart
-      ref: main
+    path: ../../src/robot_proto/dart
   
   # Han Dog CMS proto (direct dog board communication)
   han_dog_message:
@@ -39,6 +36,7 @@ dependencies:
   webview_flutter: ^4.4.0
   webview_flutter_android: ^3.12.0
   webview_flutter_wkwebview: ^3.9.0
+  webview_windows: ^0.4.0
   
   # Utils
   uuid: ^4.2.1
@@ -74,11 +72,13 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^2.0.0
   flutter_launcher_icons: ^0.13.1
+  msix: ^3.16.0
 
 flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/logo.png
     - assets/libs/
     - assets/urdf/
     - assets/meshes/
@@ -87,5 +87,14 @@ flutter:
 
 flutter_launcher_icons:
   android: true
-  ios: false
+  ios: true
   image_path: assets/app_icon.png
+
+msix_config:
+  display_name: 大算机器人
+  publisher_display_name: Dasuan Robotics
+  identity_name: com.dasuan.robot
+  msix_version: 1.0.0.0
+  logo_path: assets/app_icon.png
+  capabilities: internetClient, privateNetworkClientServer
+  languages: zh-Hans, en

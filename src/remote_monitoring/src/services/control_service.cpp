@@ -318,42 +318,79 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
     return grpc::Status::OK;
   }
 
-  // 解析 params_json: {"waypoints": [{"x":1,"y":2,"z":0,"label":"A"}, ...],
-  //                     "loop": false, "arrival_radius": 1.0}
   core::TaskParams params;
   params.type = request->task_type();
 
-  // 简易 JSON 解析 (航点列表)
-  // 格式: "x1,y1,z1;x2,y2,z2;..." 或完整 JSON
-  // 为简化实现，使用分号分隔的坐标格式
-  const std::string &params_json = request->params_json();
-  if (!params_json.empty()) {
-    std::istringstream stream(params_json);
-    std::string token;
-    while (std::getline(stream, token, ';')) {
-      core::Waypoint wp;
-      std::istringstream point_stream(token);
-      std::string val;
-      if (std::getline(point_stream, val, ',')) wp.x = std::stod(val);
-      if (std::getline(point_stream, val, ',')) wp.y = std::stod(val);
-      if (std::getline(point_stream, val, ',')) wp.z = std::stod(val);
-      if (std::getline(point_stream, val, ',')) wp.label = val;
-      params.waypoints.push_back(wp);
+  // 优先使用结构化参数，fallback 到 params_json
+  bool has_structured_params = false;
+
+  if (request->has_navigation_params() &&
+      request->navigation_params().waypoints_size() > 0) {
+    // 结构化导航参数
+    const auto &nav = request->navigation_params();
+    for (const auto &wp : nav.waypoints()) {
+      core::Waypoint w;
+      w.x = wp.position().x();
+      w.y = wp.position().y();
+      w.z = wp.position().z();
+      w.label = wp.label();
+      if (wp.arrival_radius() > 0) {
+        params.arrival_radius = wp.arrival_radius();
+      }
+      params.waypoints.push_back(w);
+    }
+    params.loop = nav.loop();
+    has_structured_params = true;
+  } else if (request->has_follow_path_params() &&
+             request->follow_path_params().waypoints_size() > 0) {
+    // 结构化路径跟随参数
+    const auto &fp = request->follow_path_params();
+    for (const auto &wp : fp.waypoints()) {
+      core::Waypoint w;
+      w.x = wp.position().x();
+      w.y = wp.position().y();
+      w.z = wp.position().z();
+      w.label = wp.label();
+      params.waypoints.push_back(w);
+    }
+    has_structured_params = true;
+  }
+
+  // Fallback: 解析 params_json (向后兼容)
+  if (!has_structured_params) {
+    const std::string &params_json = request->params_json();
+    if (!params_json.empty()) {
+      std::istringstream stream(params_json);
+      std::string token;
+      while (std::getline(stream, token, ';')) {
+        core::Waypoint wp;
+        std::istringstream point_stream(token);
+        std::string val;
+        if (std::getline(point_stream, val, ',')) wp.x = std::stod(val);
+        if (std::getline(point_stream, val, ',')) wp.y = std::stod(val);
+        if (std::getline(point_stream, val, ',')) wp.z = std::stod(val);
+        if (std::getline(point_stream, val, ',')) wp.label = val;
+        params.waypoints.push_back(wp);
+      }
     }
   }
 
-  if (params.waypoints.empty()) {
+  // 建图任务不需要航点
+  const bool is_mapping = (request->task_type() == robot::v1::TASK_TYPE_MAPPING);
+  if (params.waypoints.empty() && !is_mapping) {
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_INVALID_REQUEST);
     response->mutable_base()->set_error_message(
-        "No waypoints provided. Use params_json format: "
+        "No waypoints provided. Use navigation_params or params_json format: "
         "'x1,y1,z1;x2,y2,z2;...'");
     return grpc::Status::OK;
   }
 
   // 默认参数
-  params.loop = (request->task_type() == robot::v1::TASK_TYPE_INSPECTION);
-  params.arrival_radius = 1.0;
+  if (!has_structured_params) {
+    params.loop = (request->task_type() == robot::v1::TASK_TYPE_INSPECTION);
+    params.arrival_radius = 1.0;
+  }
 
   const std::string task_id = task_manager_->StartTask(params);
   if (task_id.empty()) {
@@ -420,6 +457,112 @@ ControlServiceImpl::CancelTask(grpc::ServerContext *,
   if (response->SerializeToString(&resp_str)) {
     idempotency_cache_->Set(request->base().request_id(), resp_str);
   }
+
+  return grpc::Status::OK;
+}
+
+grpc::Status
+ControlServiceImpl::PauseTask(grpc::ServerContext *,
+                              const robot::v1::PauseTaskRequest *request,
+                              robot::v1::PauseTaskResponse *response) {
+
+  std::string cached_resp;
+  if (idempotency_cache_->TryGet(request->base().request_id(), &cached_resp)) {
+    if (response->ParseFromString(cached_resp)) {
+      return grpc::Status::OK;
+    }
+  }
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  if (!task_manager_) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+    return grpc::Status::OK;
+  }
+
+  if (!task_manager_->PauseTask(request->task_id())) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+    response->mutable_base()->set_error_message(
+        "Task not found or not running: " + request->task_id());
+    return grpc::Status::OK;
+  }
+
+  *response->mutable_task() = task_manager_->GetCurrentTask();
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+
+  std::string resp_str;
+  if (response->SerializeToString(&resp_str)) {
+    idempotency_cache_->Set(request->base().request_id(), resp_str);
+  }
+
+  return grpc::Status::OK;
+}
+
+grpc::Status
+ControlServiceImpl::ResumeTask(grpc::ServerContext *,
+                               const robot::v1::ResumeTaskRequest *request,
+                               robot::v1::ResumeTaskResponse *response) {
+
+  std::string cached_resp;
+  if (idempotency_cache_->TryGet(request->base().request_id(), &cached_resp)) {
+    if (response->ParseFromString(cached_resp)) {
+      return grpc::Status::OK;
+    }
+  }
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  if (!task_manager_) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+    return grpc::Status::OK;
+  }
+
+  if (!task_manager_->ResumeTask(request->task_id())) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+    response->mutable_base()->set_error_message(
+        "Task not found or not paused: " + request->task_id());
+    return grpc::Status::OK;
+  }
+
+  *response->mutable_task() = task_manager_->GetCurrentTask();
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+
+  std::string resp_str;
+  if (response->SerializeToString(&resp_str)) {
+    idempotency_cache_->Set(request->base().request_id(), resp_str);
+  }
+
+  return grpc::Status::OK;
+}
+
+grpc::Status
+ControlServiceImpl::GetTaskStatus(grpc::ServerContext *,
+                                  const robot::v1::GetTaskStatusRequest *request,
+                                  robot::v1::GetTaskStatusResponse *response) {
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  if (!task_manager_) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+    return grpc::Status::OK;
+  }
+
+  auto task = task_manager_->GetCurrentTask();
+  if (!request->task_id().empty() && task.task_id() != request->task_id()) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+    response->mutable_base()->set_error_message(
+        "Task not found: " + request->task_id());
+    return grpc::Status::OK;
+  }
+
+  *response->mutable_task() = task;
+  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
 
   return grpc::Status::OK;
 }

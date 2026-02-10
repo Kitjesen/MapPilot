@@ -5,56 +5,17 @@ import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
-import 'package:flutter_monitor/features/settings/cloud_ota_service.dart';
+import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
+import 'package:flutter_monitor/core/gateway/cloud_ota_client.dart';
 
-class FirmwareOtaPage extends StatefulWidget {
+class FirmwareOtaPage extends StatelessWidget {
   const FirmwareOtaPage({super.key});
-
-  @override
-  State<FirmwareOtaPage> createState() => _FirmwareOtaPageState();
-}
-
-class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
-  // ---- 本地文件上传 ----
-  bool _isUploading = false;
-  double _uploadProgress = 0.0;
-  String? _statusMessage;
-  String? _selectedFileName;
-  String? _lastUploadedRemotePath;
-
-  // ---- 云端更新检查 ----
-  final CloudOtaService _cloudService = CloudOtaService();
-  bool _isCheckingCloud = false;
-  CloudRelease? _latestRelease;
-  String? _cloudError;
-  bool _isDownloadingAsset = false;
-  double _downloadProgress = 0.0;
-  String? _downloadingAssetName;
-
-  // ---- 应用固件 ----
-  bool _isApplying = false;
-
-  // ---- 已安装版本 ----
-  bool _isLoadingVersions = false;
-  List<_InstalledItem> _installedVersions = [];
-  List<_RollbackItem> _rollbackEntries = [];
-  String? _systemVersionJson;
-  String? _robotSystemVersion;
-
-  // ---- 升级历史 ----
-  bool _isLoadingHistory = false;
-  List<_HistoryItem> _historyEntries = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _cloudService.loadConfig();
-  }
 
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final provider = context.watch<RobotConnectionProvider>();
+    final ota = context.watch<OtaGateway>();
     final isConnected = provider.isConnected;
     final slowState = provider.latestSlowState;
     final currentVersion = slowState?.currentMode ?? '未知';
@@ -73,143 +34,209 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         children: [
           // ===== 设备状态 =====
-          _buildDeviceStatusSection(isDark, isConnected, currentVersion, battery),
+          _DeviceStatusSection(
+            isDark: isDark,
+            isConnected: isConnected,
+            currentVersion: currentVersion,
+            battery: battery,
+          ),
           const SizedBox(height: 24),
 
           // ===== 状态提示 =====
-          if (!isConnected) _buildNotice('请先连接机器人', NoticeType.warning),
+          if (!isConnected) const _Notice(text: '请先连接机器人', type: NoticeType.warning),
           if (isConnected && battery < 30)
-            _buildNotice('电量低于 30%，建议充电后再升级', NoticeType.error),
-          if (_statusMessage != null)
-            _buildNotice(
-              _statusMessage!,
-              _statusMessage!.contains('成功')
+            const _Notice(text: '电量低于 30%，建议充电后再升级', type: NoticeType.error),
+          if (ota.statusMessage != null && ota.activeDeployment == null)
+            _Notice(
+              text: ota.statusMessage!,
+              type: ota.statusMessage!.contains('成功')
                   ? NoticeType.success
-                  : _statusMessage!.contains('失败')
+                  : ota.statusMessage!.contains('失败')
                       ? NoticeType.error
                       : NoticeType.info,
             ),
 
-          // ===== 上传进度 =====
-          if (_isUploading) ...[
-            _buildProgressSection('正在上传固件...', _uploadProgress,
-                subtitle: _selectedFileName),
+          // ===== 部署进度（事务式）=====
+          if (ota.activeDeployment != null) ...[
+            _DeploymentProgressSection(
+              deployment: ota.activeDeployment!,
+              isDark: isDark,
+              ota: ota,
+            ),
             const SizedBox(height: 24),
           ],
 
+          // Upload progress now handled by deployment transaction above
+
           // ===== 本地固件 =====
-          _buildSectionTitle('本地固件'),
+          _SectionTitle(title: '本地固件'),
           const SizedBox(height: 8),
-          _buildLocalFirmwareSection(isDark, isConnected, battery),
+          _LocalFirmwareSection(
+            isDark: isDark,
+            isConnected: isConnected,
+            battery: battery,
+            ota: ota,
+          ),
           const SizedBox(height: 28),
 
           // ===== 云端更新 =====
-          _buildSectionTitle('云端更新'),
+          _SectionTitle(title: '云端更新'),
           const SizedBox(height: 8),
-          _buildCloudSection(isDark, isConnected, battery),
+          _CloudSection(
+            isDark: isDark,
+            isConnected: isConnected,
+            battery: battery,
+            ota: ota,
+          ),
           const SizedBox(height: 28),
 
           // ===== 已安装版本 =====
-          _buildSectionTitle('已安装版本'),
+          _SectionTitle(title: '已安装版本'),
           const SizedBox(height: 8),
-          _buildInstalledVersionsSection(isDark, isConnected),
+          _InstalledVersionsSection(isDark: isDark, isConnected: isConnected, ota: ota),
           const SizedBox(height: 28),
 
           // ===== 升级历史 =====
-          _buildSectionTitle('升级历史'),
+          _SectionTitle(title: '升级历史'),
           const SizedBox(height: 8),
-          _buildHistorySection(isDark, isConnected),
+          _HistorySection(isDark: isDark, isConnected: isConnected, ota: ota),
           const SizedBox(height: 28),
 
           // ===== 升级须知 =====
-          _buildSectionTitle('升级须知'),
+          _SectionTitle(title: '升级须知'),
           const SizedBox(height: 8),
-          _buildInfoSection(isDark),
+          _InfoSection(isDark: isDark),
 
           const SizedBox(height: 40),
         ],
       ),
     );
   }
+}
 
-  // ================================================================
-  // 设备状态
-  // ================================================================
+// ================================================================
+// 设备状态
+// ================================================================
 
-  Widget _buildDeviceStatusSection(
-      bool isDark, bool isConnected, String currentVersion, double battery) {
+class _DeviceStatusSection extends StatelessWidget {
+  final bool isDark;
+  final bool isConnected;
+  final String currentVersion;
+  final double battery;
+
+  const _DeviceStatusSection({
+    required this.isDark,
+    required this.isConnected,
+    required this.currentVersion,
+    required this.battery,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
       ),
       child: Row(
         children: [
-          // 固件版本
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '当前固件',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: context.subtitleColor,
-                  ),
-                ),
+                Text('当前固件',
+                    style: TextStyle(fontSize: 12, color: context.subtitleColor)),
                 const SizedBox(height: 4),
-                Text(
-                  currentVersion,
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: context.titleColor,
-                    letterSpacing: -0.3,
-                  ),
-                ),
+                Text(currentVersion,
+                    style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: context.titleColor,
+                        letterSpacing: -0.3)),
               ],
             ),
           ),
-          // 状态指示器
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               _StatusDot(
-                label: isConnected ? '已连接' : '未连接',
-                color: isConnected ? AppColors.success : const Color(0xFF86868B),
-              ),
+                  label: isConnected ? '已连接' : '未连接',
+                  color: isConnected ? AppColors.success : const Color(0xFF86868B)),
               const SizedBox(width: 16),
               _StatusDot(
-                label: '${battery.toStringAsFixed(0)}%',
-                color: battery > 30 ? AppColors.success : AppColors.error,
-              ),
+                  label: '${battery.toStringAsFixed(0)}%',
+                  color: battery > 30 ? AppColors.success : AppColors.error),
             ],
           ),
         ],
       ),
     );
   }
+}
 
-  // ================================================================
-  // 本地固件
-  // ================================================================
+// ================================================================
+// 本地固件
+// ================================================================
 
-  Widget _buildLocalFirmwareSection(bool isDark, bool isConnected, double battery) {
+class _LocalFirmwareSection extends StatelessWidget {
+  final bool isDark;
+  final bool isConnected;
+  final double battery;
+  final OtaGateway ota;
+
+  const _LocalFirmwareSection({
+    required this.isDark,
+    required this.isConnected,
+    required this.battery,
+    required this.ota,
+  });
+
+  Future<void> _selectAndUpload(BuildContext context) async {
+    HapticFeedback.mediumImpact();
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      withData: true,
+    );
+
+    if (result == null || result.files.isEmpty) return;
+
+    final file = result.files.first;
+    if (file.bytes == null && file.path == null) {
+      _showError(context, '无法读取文件');
+      return;
+    }
+
+    final bytes = file.bytes ?? await File(file.path!).readAsBytes();
+    await ota.deployFromLocal(bytes, file.name);
+  }
+
+  void _showError(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(AppRadius.card),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
       ),
       child: Column(
         children: [
-          // 上传按钮
           InkWell(
-            borderRadius: BorderRadius.circular(AppRadius.card),
-            onTap: isConnected && !_isUploading && battery >= 30
-                ? () => _selectAndUploadFirmware(context)
+            borderRadius: BorderRadius.circular(10),
+            onTap: isConnected && ota.activeDeployment?.isBusy != true && battery >= 30
+                ? () => _selectAndUpload(context)
                 : null,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -219,80 +246,52 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '选择固件文件并上传',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: isConnected && battery >= 30
-                                ? context.titleColor
-                                : context.subtitleColor,
-                          ),
-                        ),
+                        Text('选择固件文件并上传',
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: isConnected && battery >= 30
+                                    ? context.titleColor
+                                    : context.subtitleColor)),
                         const SizedBox(height: 2),
-                        Text(
-                          '支持 .bin / .fw / .zip / .deb 格式',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: context.subtitleColor,
-                          ),
-                        ),
+                        Text('支持 .bin / .fw / .zip / .deb 格式',
+                            style: TextStyle(fontSize: 12, color: context.subtitleColor)),
                       ],
                     ),
                   ),
-                  Icon(
-                    Icons.upload_outlined,
-                    size: 18,
-                    color: isConnected && battery >= 30
-                        ? AppColors.primary
-                        : context.subtitleColor,
-                  ),
+                  Icon(Icons.upload_outlined,
+                      size: 18,
+                      color: isConnected && battery >= 30
+                          ? AppColors.primary
+                          : context.subtitleColor),
                 ],
               ),
             ),
           ),
-
-          // 应用固件按钮（上传成功后出现）
-          if (_lastUploadedRemotePath != null && !_isUploading) ...[
-            Divider(
-              height: 1,
-              color: isDark ? AppColors.borderDark : AppColors.borderLight,
-            ),
+          if (ota.activeDeployment?.phase == DeployPhase.failed) ...[
+            Divider(height: 1, color: isDark ? AppColors.borderDark : AppColors.borderLight),
             InkWell(
               borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(12),
-                bottomRight: Radius.circular(12),
-              ),
-              onTap: isConnected && !_isApplying ? () => _applyFirmware() : null,
+                  bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)),
+              onTap: isConnected && ota.activeDeployment?.phase == DeployPhase.failed
+                  ? () {
+                      HapticFeedback.mediumImpact();
+                      ota.retryDeploy();
+                    }
+                  : null,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 child: Row(
                   children: [
                     Expanded(
                       child: Text(
-                        _isApplying ? '正在触发刷写...' : '应用固件到机器人',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.warning,
-                        ),
-                      ),
+                          ota.activeDeployment?.phase == DeployPhase.failed ? '重试部署' : '应用固件到机器人',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.warning)),
                     ),
-                    if (_isApplying)
-                      const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.warning,
-                        ),
-                      )
-                    else
-                      Icon(
-                        Icons.play_arrow_outlined,
-                        size: 18,
-                        color: AppColors.warning,
-                      ),
+                    Icon(Icons.refresh_outlined, size: 18, color: AppColors.warning),
                   ],
                 ),
               ),
@@ -302,26 +301,39 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
       ),
     );
   }
+}
 
-  // ================================================================
-  // 云端更新
-  // ================================================================
+// ================================================================
+// 云端更新
+// ================================================================
 
-  Widget _buildCloudSection(bool isDark, bool isConnected, double battery) {
+class _CloudSection extends StatelessWidget {
+  final bool isDark;
+  final bool isConnected;
+  final double battery;
+  final OtaGateway ota;
+
+  const _CloudSection({
+    required this.isDark,
+    required this.isConnected,
+    required this.battery,
+    required this.ota,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 仓库来源 + 检查按钮
         Container(
           decoration: BoxDecoration(
             color: isDark ? AppColors.darkCard : Colors.white,
-            borderRadius: BorderRadius.circular(AppRadius.card),
-            border: Border.all(
-                color: isDark ? AppColors.borderDark : AppColors.borderLight),
+            borderRadius: BorderRadius.circular(10),
+            border:
+                Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
           ),
           child: Column(
             children: [
-              // 仓库来源
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                 child: Row(
@@ -330,428 +342,365 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            '更新源',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: context.subtitleColor,
-                            ),
-                          ),
+                          Text('更新源',
+                              style: TextStyle(fontSize: 12, color: context.subtitleColor)),
                           const SizedBox(height: 2),
-                          Text(
-                            _cloudService.repoDisplay,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: context.titleColor,
-                            ),
-                          ),
+                          Text(ota.cloud.repoDisplay,
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: context.titleColor)),
                         ],
                       ),
                     ),
-                    Text(
-                      'GitHub Releases',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: context.subtitleColor,
-                      ),
-                    ),
+                    Text('GitHub Releases',
+                        style: TextStyle(fontSize: 11, color: context.subtitleColor)),
                   ],
                 ),
               ),
-
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                 child: SizedBox(
                   width: double.infinity,
                   height: 40,
                   child: TextButton(
-                    onPressed: _isCheckingCloud ? null : _checkCloudUpdate,
+                    onPressed: ota.isCheckingCloud ? null : () => ota.checkCloudUpdate(),
                     style: TextButton.styleFrom(
                       backgroundColor: isDark
-                          ? Colors.white.withOpacity(0.05)
-                          : Colors.black.withOpacity(0.03),
+                          ? Colors.white.withValues(alpha: 0.05)
+                          : Colors.black.withValues(alpha: 0.03),
                       foregroundColor: context.titleColor,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     ),
-                    child: _isCheckingCloud
+                    child: ota.isCheckingCloud
                         ? SizedBox(
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: context.subtitleColor,
-                            ),
-                          )
-                        : const Text(
-                            '检查最新版本',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
+                                strokeWidth: 2, color: context.subtitleColor))
+                        : const Text('检查最新版本',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                   ),
                 ),
               ),
             ],
           ),
         ),
-
-        if (_cloudError != null) ...[
+        if (ota.cloudError != null) ...[
           const SizedBox(height: 12),
-          _buildNotice(_cloudError!, NoticeType.error),
+          _Notice(text: ota.cloudError!, type: NoticeType.error),
         ],
-
-        // 最新版本信息
-        if (_latestRelease != null) ...[
+        if (ota.latestRelease != null) ...[
           const SizedBox(height: 16),
-          _buildReleaseCard(isDark, isConnected, battery),
+          _ReleaseCard(
+              isDark: isDark, isConnected: isConnected, battery: battery, ota: ota),
         ],
       ],
     );
   }
+}
 
-  Widget _buildReleaseCard(bool isDark, bool isConnected, double battery) {
-    final release = _latestRelease!;
+class _ReleaseCard extends StatelessWidget {
+  final bool isDark;
+  final bool isConnected;
+  final double battery;
+  final OtaGateway ota;
+
+  const _ReleaseCard({
+    required this.isDark,
+    required this.isConnected,
+    required this.battery,
+    required this.ota,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final release = ota.latestRelease!;
     final firmwareAssets =
         release.assets.where((a) => a.category == 'firmware').toList();
 
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(
-            color: isDark ? AppColors.borderDark : AppColors.borderLight),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header: 版本号 + 日期
+          // Header
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
             child: Row(
               children: [
-                // 版本 tag
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(isDark ? 0.15 : 0.08),
+                    color: AppColors.primary.withValues(alpha: isDark ? 0.15 : 0.08),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: Text(
-                    release.tagName,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
-                  ),
+                  child: Text(release.tagName,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primary)),
                 ),
                 if (release.prerelease) ...[
                   const SizedBox(width: 6),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppColors.warning.withOpacity(0.1),
+                      color: AppColors.warning.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Text(
-                      'Pre',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.warning,
-                      ),
-                    ),
+                    child: Text('Pre',
+                        style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.warning)),
                   ),
                 ],
                 const Spacer(),
-                Text(
-                  release.publishedDate,
-                  style: TextStyle(fontSize: 11, color: context.subtitleColor),
-                ),
+                Text(release.publishedDate,
+                    style: TextStyle(fontSize: 11, color: context.subtitleColor)),
               ],
             ),
           ),
-
-          // Release 名称
           if (release.name.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-              child: Text(
-                release.name,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: context.titleColor,
-                ),
-              ),
+              child: Text(release.name,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: context.titleColor)),
             ),
-
-          // Release 描述
           if (release.body.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
               child: Text(
-                release.body.length > 200
-                    ? '${release.body.substring(0, 200)}...'
-                    : release.body,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: context.subtitleColor,
-                  height: 1.5,
-                ),
-              ),
+                  release.body.length > 200
+                      ? '${release.body.substring(0, 200)}...'
+                      : release.body,
+                  style: TextStyle(
+                      fontSize: 12, color: context.subtitleColor, height: 1.5)),
             ),
-
           const SizedBox(height: 12),
-
-          // 固件资产列表
           if (firmwareAssets.isEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-              child: Text(
-                '此版本无固件文件',
-                style: TextStyle(fontSize: 12, color: context.subtitleColor),
-              ),
+              child: Text('此版本无固件文件',
+                  style: TextStyle(fontSize: 12, color: context.subtitleColor)),
             )
           else ...[
             Divider(
-              height: 1,
-              color: isDark ? AppColors.borderDark : AppColors.borderLight,
-            ),
+                height: 1,
+                color: isDark ? AppColors.borderDark : AppColors.borderLight),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-              child: Text(
-                '固件文件（${firmwareAssets.length}）',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: context.subtitleColor,
-                  letterSpacing: 0.3,
-                ),
-              ),
+              child: Text('固件文件（${firmwareAssets.length}）',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: context.subtitleColor,
+                      letterSpacing: 0.3)),
             ),
-            ...firmwareAssets.map((asset) => _buildAssetRow(
-                  asset,
-                  isDark,
-                  canUpload: isConnected && battery >= 30,
-                )),
+            ...firmwareAssets.map((asset) => _AssetRow(
+                asset: asset,
+                isDark: isDark,
+                canUpload: isConnected && battery >= 30,
+                ota: ota)),
             const SizedBox(height: 8),
           ],
-
-          // 其他可部署资产
           if (release.deployableAssets.length > firmwareAssets.length) ...[
             Divider(
-              height: 1,
-              color: isDark ? AppColors.borderDark : AppColors.borderLight,
-            ),
+                height: 1,
+                color: isDark ? AppColors.borderDark : AppColors.borderLight),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-              child: Text(
-                '其他资源',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: context.subtitleColor,
-                  letterSpacing: 0.3,
-                ),
-              ),
+              child: Text('其他资源',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: context.subtitleColor,
+                      letterSpacing: 0.3)),
             ),
             ...release.deployableAssets
                 .where((a) => a.category != 'firmware')
-                .map((asset) => _buildAssetRow(
-                      asset,
-                      isDark,
-                      canUpload: isConnected,
-                    )),
+                .map((asset) => _AssetRow(
+                    asset: asset,
+                    isDark: isDark,
+                    canUpload: isConnected,
+                    ota: ota)),
             const SizedBox(height: 8),
           ],
         ],
       ),
     );
   }
+}
 
-  Widget _buildAssetRow(CloudAsset asset, bool isDark,
-      {required bool canUpload}) {
-    final isThisDownloading =
-        _isDownloadingAsset && _downloadingAssetName == asset.name;
+class _AssetRow extends StatelessWidget {
+  final CloudAsset asset;
+  final bool isDark;
+  final bool canUpload;
+  final OtaGateway ota;
+
+  const _AssetRow({
+    required this.asset,
+    required this.isDark,
+    required this.canUpload,
+    required this.ota,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isThisDeploying = ota.activeDeployment?.isBusy == true &&
+        ota.activeDeployment?.cloudAsset?.name == asset.name;
+    final anyBusy = ota.activeDeployment?.isBusy == true;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Column(
+      child: Row(
         children: [
-          Row(
-            children: [
-              // 分类小圆点
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: _categoryColor(asset.category),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      asset.name,
-                      style: TextStyle(
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+                color: _categoryColor(asset.category), shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(asset.name,
+                    style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: context.titleColor,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      asset.formattedSize,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: context.subtitleColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              // 部署按钮
-              SizedBox(
-                height: 28,
-                child: TextButton(
-                  onPressed: canUpload && !_isDownloadingAsset
-                      ? () => _downloadAndUploadAsset(asset)
-                      : null,
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    backgroundColor: isDark
-                        ? Colors.white.withOpacity(0.06)
-                        : Colors.black.withOpacity(0.04),
-                    foregroundColor: AppColors.primary,
-                    disabledForegroundColor: context.subtitleColor,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    textStyle: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w500),
-                  ),
-                  child: isThisDownloading
-                      ? SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.5,
-                            color: AppColors.primary,
-                          ),
-                        )
-                      : const Text('部署'),
-                ),
-              ),
-            ],
+                        color: context.titleColor),
+                    overflow: TextOverflow.ellipsis),
+                Text(asset.formattedSize,
+                    style: TextStyle(fontSize: 11, color: context.subtitleColor)),
+              ],
+            ),
           ),
-          if (isThisDownloading) ...[
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                value: _downloadProgress,
-                minHeight: 2,
+          const SizedBox(width: 8),
+          SizedBox(
+            height: 28,
+            child: TextButton(
+              onPressed: canUpload && !anyBusy
+                  ? () {
+                      HapticFeedback.mediumImpact();
+                      _showDeployMethodDialog(context, ota, asset);
+                    }
+                  : null,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 backgroundColor: isDark
-                    ? Colors.white.withOpacity(0.06)
-                    : Colors.black.withOpacity(0.04),
+                    ? Colors.white.withValues(alpha: 0.06)
+                    : Colors.black.withValues(alpha: 0.04),
+                foregroundColor: AppColors.primary,
+                disabledForegroundColor: context.subtitleColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                textStyle:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
               ),
+              child: isThisDeploying
+                  ? SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 1.5, color: AppColors.primary))
+                  : const Text('部署'),
             ),
-          ],
+          ),
         ],
       ),
     );
   }
 
-  // ================================================================
-  // 上传进度
-  // ================================================================
-
-  Widget _buildProgressSection(String title, double progress,
-      {String? subtitle}) {
-    final isDark = context.isDark;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(
-            color: isDark ? AppColors.borderDark : AppColors.borderLight),
+  void _showDeployMethodDialog(BuildContext context, OtaGateway ota, CloudAsset asset) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: context.titleColor,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Text(
+                    '选择部署方式',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: context.titleColor,
+                    ),
                   ),
                 ),
-              ),
-              Text(
-                '${(progress * 100).toStringAsFixed(0)}%',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.primary,
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.phone_android, color: AppColors.primary),
+                  title: const Text('通过手机中转'),
+                  subtitle: const Text('手机下载 → 上传到机器人（适合小文件）'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    ota.deployFromCloud(asset);
+                  },
                 ),
-              ),
-            ],
-          ),
-          if (subtitle != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              subtitle,
-              style: TextStyle(fontSize: 12, color: context.subtitleColor),
-            ),
-          ],
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 4,
-              backgroundColor: isDark
-                  ? Colors.white.withOpacity(0.06)
-                  : Colors.black.withOpacity(0.04),
+                ListTile(
+                  leading: const Icon(Icons.cloud_download, color: AppColors.success),
+                  title: const Text('机器人直接下载'),
+                  subtitle: const Text('机器人从 URL 直接拉取（适合大文件，省手机内存）'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    ota.deployDirectFromUrl(asset);
+                  },
+                ),
+              ],
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
+}
 
-  // ================================================================
-  // 已安装版本
-  // ================================================================
+// ================================================================
+// 已安装版本
+// ================================================================
 
-  Widget _buildInstalledVersionsSection(bool isDark, bool isConnected) {
+class _InstalledVersionsSection extends StatelessWidget {
+  final bool isDark;
+  final bool isConnected;
+  final OtaGateway ota;
+
+  const _InstalledVersionsSection({
+    required this.isDark,
+    required this.isConnected,
+    required this.ota,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
         borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(
-            color: isDark ? AppColors.borderDark : AppColors.borderLight),
+        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
       ),
       child: Column(
         children: [
-          // 查询按钮
           InkWell(
             borderRadius: BorderRadius.circular(AppRadius.card),
-            onTap: isConnected && !_isLoadingVersions
-                ? _fetchInstalledVersions
+            onTap: isConnected && !ota.isLoadingVersions
+                ? () => ota.fetchInstalledVersions()
                 : null,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -761,87 +710,69 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '查看已安装组件',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: isConnected
-                                ? context.titleColor
-                                : context.subtitleColor,
-                          ),
-                        ),
-                        if (_robotSystemVersion != null)
-                          Text(
-                            '系统版本: $_robotSystemVersion',
+                        Text('查看已安装组件',
                             style: TextStyle(
-                                fontSize: 12, color: context.subtitleColor),
-                          ),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: isConnected
+                                    ? context.titleColor
+                                    : context.subtitleColor)),
+                        if (ota.robotSystemVersion != null)
+                          Text('系统版本: ${ota.robotSystemVersion}',
+                              style:
+                                  TextStyle(fontSize: 12, color: context.subtitleColor)),
                       ],
                     ),
                   ),
-                  if (_isLoadingVersions)
+                  if (ota.isLoadingVersions)
                     const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
                   else
                     Icon(Icons.refresh, size: 18, color: context.subtitleColor),
                 ],
               ),
             ),
           ),
-          // 版本列表
-          if (_installedVersions.isNotEmpty) ...[
+          if (ota.installedVersions.isNotEmpty) ...[
             Divider(
-              height: 1,
-              color: isDark ? AppColors.borderDark : AppColors.borderLight,
-            ),
-            ..._installedVersions.map((item) => Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                height: 1,
+                color: isDark ? AppColors.borderDark : AppColors.borderLight),
+            ...ota.installedVersions.map((item) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     children: [
                       Container(
                         width: 6,
                         height: 6,
                         decoration: BoxDecoration(
-                          color: _categoryColor(item.category),
-                          shape: BoxShape.circle,
-                        ),
+                            color: _categoryColor(item.category),
+                            shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              item.name,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: context.titleColor,
-                              ),
-                            ),
-                            Text(
-                              'v${item.version}',
-                              style: TextStyle(
-                                  fontSize: 11, color: context.subtitleColor),
-                            ),
+                            Text(item.name,
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: context.titleColor)),
+                            Text('v${item.version}',
+                                style: TextStyle(
+                                    fontSize: 11, color: context.subtitleColor)),
                           ],
                         ),
                       ),
-                      // 回滚按钮（如果有回滚条目）
-                      if (_rollbackEntries
-                          .any((r) => r.name == item.name)) ...[
+                      if (ota.rollbackEntries.any((r) => r.name == item.name))
                         SizedBox(
                           height: 26,
                           child: TextButton(
-                            onPressed: () => _performRollback(item.name),
+                            onPressed: () => _confirmRollback(context, item.name),
                             style: TextButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 10),
+                              padding: const EdgeInsets.symmetric(horizontal: 10),
                               foregroundColor: AppColors.warning,
                               textStyle: const TextStyle(
                                   fontSize: 11, fontWeight: FontWeight.w500),
@@ -849,7 +780,6 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
                             child: const Text('回滚'),
                           ),
                         ),
-                      ],
                     ],
                   ),
                 )),
@@ -860,63 +790,91 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
     );
   }
 
-  // ================================================================
-  // 升级历史
-  // ================================================================
+  Future<void> _confirmRollback(BuildContext context, String artifactName) async {
+    HapticFeedback.mediumImpact();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认回滚'),
+        content: Text('确定要回滚 $artifactName 到上一版本吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.warning),
+            child: const Text('回滚'),
+          ),
+        ],
+      ),
+    );
 
-  Widget _buildHistorySection(bool isDark, bool isConnected) {
+    if (confirmed == true) {
+      ota.performRollback(artifactName);
+    }
+  }
+}
+
+// ================================================================
+// 升级历史
+// ================================================================
+
+class _HistorySection extends StatelessWidget {
+  final bool isDark;
+  final bool isConnected;
+  final OtaGateway ota;
+
+  const _HistorySection({
+    required this.isDark,
+    required this.isConnected,
+    required this.ota,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : Colors.white,
         borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(
-            color: isDark ? AppColors.borderDark : AppColors.borderLight),
+        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
       ),
       child: Column(
         children: [
-          // 查询按钮
           InkWell(
             borderRadius: BorderRadius.circular(AppRadius.card),
-            onTap: isConnected && !_isLoadingHistory
-                ? _fetchUpgradeHistory
+            onTap: isConnected && !ota.isLoadingHistory
+                ? () => ota.fetchUpgradeHistory()
                 : null,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      '查看升级历史',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: isConnected
-                            ? context.titleColor
-                            : context.subtitleColor,
-                      ),
-                    ),
+                    child: Text('查看升级历史',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: isConnected
+                                ? context.titleColor
+                                : context.subtitleColor)),
                   ),
-                  if (_isLoadingHistory)
+                  if (ota.isLoadingHistory)
                     const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
                   else
                     Icon(Icons.history, size: 18, color: context.subtitleColor),
                 ],
               ),
             ),
           ),
-          // 历史列表
-          if (_historyEntries.isNotEmpty) ...[
+          if (ota.historyEntries.isNotEmpty) ...[
             Divider(
-              height: 1,
-              color: isDark ? AppColors.borderDark : AppColors.borderLight,
-            ),
-            ..._historyEntries.take(10).map((item) => Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                height: 1,
+                color: isDark ? AppColors.borderDark : AppColors.borderLight),
+            ...ota.historyEntries.take(10).map((item) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   child: Row(
                     children: [
                       Container(
@@ -936,29 +894,23 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            Text('${item.action} ${item.artifactName}',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: context.titleColor)),
                             Text(
-                              '${item.action} ${item.artifactName}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: context.titleColor,
-                              ),
-                            ),
-                            Text(
-                              '${item.fromVersion} -> ${item.toVersion} (${item.status})',
-                              style: TextStyle(
-                                  fontSize: 11, color: context.subtitleColor),
-                            ),
+                                '${item.fromVersion} -> ${item.toVersion} (${item.status})',
+                                style: TextStyle(
+                                    fontSize: 11, color: context.subtitleColor)),
                           ],
                         ),
                       ),
                       Text(
-                        item.timestamp.length > 10
-                            ? item.timestamp.substring(0, 10)
-                            : item.timestamp,
-                        style: TextStyle(
-                            fontSize: 10, color: context.subtitleColor),
-                      ),
+                          item.timestamp.length > 10
+                              ? item.timestamp.substring(0, 10)
+                              : item.timestamp,
+                          style: TextStyle(fontSize: 10, color: context.subtitleColor)),
                     ],
                   ),
                 )),
@@ -968,85 +920,37 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
       ),
     );
   }
+}
 
-  // ================================================================
-  // 升级须知
-  // ================================================================
+// ================================================================
+// 通用组件
+// ================================================================
 
-  Widget _buildInfoSection(bool isDark) {
-    final items = [
-      '确保机器人电量 >= 30%',
-      '升级过程中请勿断开连接',
-      '确保机器人处于静止状态',
-      '支持 .bin / .fw / .zip / .deb 格式',
-      '上传完成后需点击"应用固件"触发刷写',
-    ];
+class _SectionTitle extends StatelessWidget {
+  final String title;
+  const _SectionTitle({required this.title});
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(
-            color: isDark ? AppColors.borderDark : AppColors.borderLight),
-      ),
-      child: Column(
-        children: items.asMap().entries.map((entry) {
-          final isLast = entry.key == items.length - 1;
-          return Padding(
-            padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Container(
-                    width: 4,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: context.subtitleColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    entry.value,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: context.subtitleColor,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  // ================================================================
-  // 通用组件
-  // ================================================================
-
-  Widget _buildSectionTitle(String title) {
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(left: 2),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: context.subtitleColor,
-        ),
-      ),
+      child: Text(title,
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600, color: context.subtitleColor)),
     );
   }
+}
 
-  Widget _buildNotice(String text, NoticeType type) {
+enum NoticeType { error, warning, success, info }
+
+class _Notice extends StatelessWidget {
+  final String text;
+  final NoticeType type;
+
+  const _Notice({required this.text, required this.type});
+
+  @override
+  Widget build(BuildContext context) {
     final Color accentColor;
     switch (type) {
       case NoticeType.error:
@@ -1066,9 +970,9 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkCard : Colors.white,
-          borderRadius: BorderRadius.circular(AppRadius.card),
-          border: Border.all(
-              color: isDark ? AppColors.borderDark : AppColors.borderLight),
+          borderRadius: BorderRadius.circular(10),
+          border:
+              Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
         ),
         child: Row(
           children: [
@@ -1076,404 +980,565 @@ class _FirmwareOtaPageState extends State<FirmwareOtaPage> {
               width: 3,
               height: 28,
               decoration: BoxDecoration(
-                color: accentColor,
-                borderRadius: BorderRadius.circular(2),
-              ),
+                  color: accentColor, borderRadius: BorderRadius.circular(2)),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                text,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: context.titleColor,
-                ),
-              ),
+              child: Text(text,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: context.titleColor)),
             ),
           ],
         ),
       ),
     );
   }
+}
 
-  Color _categoryColor(String category) {
-    switch (category) {
-      case 'firmware':
-        return AppColors.warning;
-      case 'model':
-        return AppColors.secondary;
-      case 'map':
-        return AppColors.success;
-      case 'config':
-        return AppColors.info;
-      default:
-        return AppColors.primary;
+// ================================================================
+// 部署进度（事务式状态机驱动 — 可视化阶段步进器）
+// ================================================================
+
+/// The visible deployment phases for the stepper (excludes idle).
+const _stepperPhases = [
+  DeployPhase.downloading,
+  DeployPhase.uploading,
+  DeployPhase.checking,
+  DeployPhase.applying,
+  DeployPhase.validating,
+];
+
+const _stepperIcons = <DeployPhase, IconData>{
+  DeployPhase.downloading: Icons.cloud_download_outlined,
+  DeployPhase.uploading: Icons.upload_outlined,
+  DeployPhase.checking: Icons.verified_user_outlined,
+  DeployPhase.applying: Icons.system_update_outlined,
+  DeployPhase.validating: Icons.fact_check_outlined,
+};
+
+const _stepperLabels = <DeployPhase, String>{
+  DeployPhase.downloading: '下载',
+  DeployPhase.uploading: '上传',
+  DeployPhase.checking: '预检',
+  DeployPhase.applying: '安装',
+  DeployPhase.validating: '验证',
+};
+
+class _DeploymentProgressSection extends StatelessWidget {
+  final DeploymentSession deployment;
+  final bool isDark;
+  final OtaGateway ota;
+
+  const _DeploymentProgressSection({
+    required this.deployment,
+    required this.isDark,
+    required this.ota,
+  });
+
+  int get _activeStepIndex {
+    final idx = _stepperPhases.indexOf(deployment.phase);
+    if (deployment.phase == DeployPhase.completed) return _stepperPhases.length;
+    if (deployment.phase == DeployPhase.failed) {
+      final failIdx = _stepperPhases.indexOf(deployment.failedAtPhase ?? deployment.phase);
+      return failIdx >= 0 ? failIdx : 0;
     }
+    return idx >= 0 ? idx : 0;
   }
 
-  // ================================================================
-  // 业务逻辑
-  // ================================================================
+  @override
+  Widget build(BuildContext context) {
+    final isFailed = deployment.phase == DeployPhase.failed;
+    final isCompleted = deployment.phase == DeployPhase.completed;
+    final Color accentColor = isFailed
+        ? AppColors.error
+        : isCompleted
+            ? AppColors.success
+            : AppColors.primary;
+    final activeIdx = _activeStepIndex;
 
-  /// 从本地选择文件并上传到机器人
-  Future<void> _selectAndUploadFirmware(BuildContext context) async {
-    HapticFeedback.mediumImpact();
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-      withData: true,
-    );
-
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.first;
-    if (file.bytes == null && file.path == null) {
-      _showError('无法读取文件');
-      return;
-    }
-
-    final bytes = file.bytes ?? await File(file.path!).readAsBytes();
-    final filename = file.name;
-
-    setState(() {
-      _isUploading = true;
-      _uploadProgress = 0.0;
-      _statusMessage = null;
-      _selectedFileName = filename;
-      _lastUploadedRemotePath = null;
-    });
-
-    try {
-      final client = context.read<RobotConnectionProvider>().client;
-      if (client == null) throw Exception('未连接');
-
-      final remotePath = '/firmware/$filename';
-      final response = await client.uploadFile(
-        localBytes: bytes,
-        remotePath: remotePath,
-        filename: filename,
-        category: 'firmware',
-        overwrite: true,
-        onProgress: (progress) {
-          if (mounted) setState(() => _uploadProgress = progress);
-        },
-      );
-
-      setState(() {
-        _isUploading = false;
-        if (response.success) {
-          _statusMessage = '固件上传成功，可点击下方按钮应用到机器人';
-          _lastUploadedRemotePath = remotePath;
-        } else {
-          _statusMessage = '上传失败: ${response.message}';
-        }
-      });
-    } catch (e) {
-      setState(() {
-        _isUploading = false;
-        _statusMessage = '升级失败: $e';
-      });
-    }
-  }
-
-  /// 触发机器人端固件应用
-  /// 先执行 checkUpdateReadiness，通过后再 applyFirmware (兼容旧接口)
-  Future<void> _applyFirmware() async {
-    if (_lastUploadedRemotePath == null) return;
-    HapticFeedback.mediumImpact();
-
-    setState(() {
-      _isApplying = true;
-      _statusMessage = '正在检查安装条件...';
-    });
-
-    try {
-      final client = context.read<RobotConnectionProvider>().client;
-      if (client == null) throw Exception('未连接');
-
-      // Phase 3.1: 先调用 checkUpdateReadiness
-      try {
-        final readiness = await client.checkUpdateReadiness(artifacts: []);
-        if (!readiness.ready) {
-          final failedChecks = readiness.checks
-              .where((c) => !c.passed)
-              .map((c) => c.message)
-              .join('; ');
-          setState(() {
-            _isApplying = false;
-            _statusMessage = '预检查未通过: $failedChecks';
-          });
-          return;
-        }
-      } catch (_) {
-        // readiness check failure is non-blocking (backward compat)
-      }
-
-      setState(() => _statusMessage = '正在应用固件...');
-
-      final response =
-          await client.applyFirmware(firmwarePath: _lastUploadedRemotePath!);
-
-      setState(() {
-        _isApplying = false;
-        _statusMessage = response.success
-            ? '固件应用成功'
-            : '应用失败: ${response.message}';
-        if (response.success) _lastUploadedRemotePath = null;
-      });
-    } catch (e) {
-      setState(() {
-        _isApplying = false;
-        _statusMessage = '应用固件失败: $e';
-      });
-    }
-  }
-
-  /// 从 GitHub 检查最新版本
-  Future<void> _checkCloudUpdate() async {
-    setState(() {
-      _isCheckingCloud = true;
-      _cloudError = null;
-      _latestRelease = null;
-    });
-
-    try {
-      final release = await _cloudService.fetchLatestRelease();
-      setState(() {
-        _isCheckingCloud = false;
-        _latestRelease = release;
-        if (release == null) {
-          _cloudError = '未找到任何 Release';
-        }
-      });
-    } catch (e) {
-      setState(() {
-        _isCheckingCloud = false;
-        _cloudError = '检查更新失败: $e';
-      });
-    }
-  }
-
-  /// 从云端下载资产并自动上传到机器人
-  Future<void> _downloadAndUploadAsset(CloudAsset asset) async {
-    HapticFeedback.mediumImpact();
-
-    setState(() {
-      _isDownloadingAsset = true;
-      _downloadProgress = 0.0;
-      _downloadingAssetName = asset.name;
-      _statusMessage = null;
-      _lastUploadedRemotePath = null;
-    });
-
-    try {
-      // 1. 下载到内存
-      final bytes = await _cloudService.downloadAsset(
-        asset,
-        onProgress: (p) {
-          if (mounted) setState(() => _downloadProgress = p * 0.5); // 0~50%
-        },
-      );
-
-      // 2. 上传到机器人
-      final client = context.read<RobotConnectionProvider>().client;
-      if (client == null) throw Exception('未连接');
-
-      final remotePath = '/${asset.category}/${asset.name}';
-      final response = await client.uploadFile(
-        localBytes: bytes,
-        remotePath: remotePath,
-        filename: asset.name,
-        category: asset.category,
-        overwrite: true,
-        onProgress: (p) {
-          if (mounted) {
-            setState(() => _downloadProgress = 0.5 + p * 0.5); // 50~100%
-          }
-        },
-      );
-
-      setState(() {
-        _isDownloadingAsset = false;
-        _downloadingAssetName = null;
-        if (response.success) {
-          _statusMessage = '${asset.name} 已成功部署到机器人';
-          if (asset.category == 'firmware') {
-            _lastUploadedRemotePath = remotePath;
-          }
-        } else {
-          _statusMessage = '部署失败: ${response.message}';
-        }
-      });
-    } catch (e) {
-      setState(() {
-        _isDownloadingAsset = false;
-        _downloadingAssetName = null;
-        _statusMessage = '部署失败: $e';
-      });
-    }
-  }
-
-  /// 获取已安装版本列表
-  Future<void> _fetchInstalledVersions() async {
-    setState(() => _isLoadingVersions = true);
-    try {
-      final client = context.read<RobotConnectionProvider>().client;
-      if (client == null) throw Exception('未连接');
-
-      final response = await client.getInstalledVersions();
-      setState(() {
-        _isLoadingVersions = false;
-        _robotSystemVersion = response.systemVersion;
-        _installedVersions = response.installed
-            .map((a) => _InstalledItem(
-                  name: a.name,
-                  version: a.version,
-                  category: _categoryStr(a.category.value),
-                ))
-            .toList();
-        _rollbackEntries = response.rollbackAvailable
-            .map((r) => _RollbackItem(
-                  name: r.name,
-                  version: r.version,
-                ))
-            .toList();
-      });
-    } catch (e) {
-      setState(() {
-        _isLoadingVersions = false;
-        _statusMessage = '获取版本信息失败: $e';
-      });
-    }
-  }
-
-  /// 执行回滚
-  Future<void> _performRollback(String artifactName) async {
-    HapticFeedback.mediumImpact();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认回滚'),
-        content: Text('确定要回滚 $artifactName 到上一版本吗？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.warning),
-            child: const Text('回滚'),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isFailed
+              ? AppColors.error.withValues(alpha: 0.3)
+              : isCompleted
+                  ? AppColors.success.withValues(alpha: 0.3)
+                  : accentColor.withValues(alpha: 0.2),
+        ),
+        boxShadow: [
+          if (!isDark)
+            BoxShadow(
+              color: accentColor.withValues(alpha: 0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 2),
+            ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ─── Header: phase label + percentage ───
+          Row(
+            children: [
+              // Animated icon
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: deployment.isBusy
+                    ? Padding(
+                        padding: const EdgeInsets.all(7),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: accentColor,
+                        ),
+                      )
+                    : Icon(
+                        isCompleted
+                            ? Icons.check_circle_outline
+                            : isFailed
+                                ? Icons.error_outline
+                                : Icons.cloud_download_outlined,
+                        size: 18,
+                        color: accentColor,
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      deployment.phaseLabel,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: accentColor,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      deployment.artifactName,
+                      style: TextStyle(fontSize: 12, color: context.subtitleColor),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              // Percentage badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${(deployment.progress * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: accentColor,
+                  ),
+                ),
+              ),
+            ],
           ),
+
+          // ─── Phase Stepper ───
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 56,
+            child: Row(
+              children: [
+                for (int i = 0; i < _stepperPhases.length; i++) ...[
+                  if (i > 0)
+                    Expanded(
+                      child: Container(
+                        height: 2,
+                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                        decoration: BoxDecoration(
+                          color: i <= activeIdx
+                              ? (isFailed && i == activeIdx
+                                  ? AppColors.error.withValues(alpha: 0.5)
+                                  : accentColor.withValues(alpha: 0.6))
+                              : isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                    ),
+                  _StepDot(
+                    phase: _stepperPhases[i],
+                    index: i,
+                    activeIndex: activeIdx,
+                    isFailed: isFailed,
+                    isCompleted: isCompleted,
+                    isCurrent: _stepperPhases[i] == deployment.phase,
+                    isDark: isDark,
+                    accentColor: accentColor,
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          // ─── Overall Progress Bar ───
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: deployment.progress,
+              minHeight: 3,
+              color: accentColor,
+              backgroundColor: isDark
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.black.withValues(alpha: 0.04),
+            ),
+          ),
+
+          // ─── Readiness check results ───
+          if (deployment.readinessResults.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.03)
+                    : Colors.black.withValues(alpha: 0.02),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: deployment.readinessResults
+                    .map((check) => Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Row(
+                            children: [
+                              Icon(
+                                check.passed
+                                    ? Icons.check_circle
+                                    : Icons.cancel,
+                                size: 14,
+                                color: check.passed
+                                    ? AppColors.success
+                                    : AppColors.error,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  '${check.checkName}: ${check.message}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: check.passed
+                                        ? context.subtitleColor
+                                        : AppColors.error,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ),
+          ],
+
+          // ─── Error message ───
+          if (isFailed && deployment.errorMessage != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.error.withValues(alpha: isDark ? 0.1 : 0.05),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.error.withValues(alpha: 0.15)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline, size: 16, color: AppColors.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      deployment.errorMessage!,
+                      style: const TextStyle(fontSize: 12, color: AppColors.error, height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // ─── Action buttons ───
+          if (isFailed || isCompleted) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                if (deployment.canRetry) ...[
+                  Expanded(
+                    child: _ActionButton(
+                      label: '重试部署',
+                      icon: Icons.refresh,
+                      color: AppColors.primary,
+                      isDark: isDark,
+                      onTap: () {
+                        HapticFeedback.mediumImpact();
+                        ota.retryDeploy();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                if (deployment.canRollback) ...[
+                  Expanded(
+                    child: _ActionButton(
+                      label: '回滚',
+                      icon: Icons.undo,
+                      color: AppColors.warning,
+                      isDark: isDark,
+                      onTap: () {
+                        HapticFeedback.mediumImpact();
+                        ota.performRollback(deployment.artifact.name);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: _ActionButton(
+                    label: isCompleted ? '完成' : '关闭',
+                    icon: isCompleted ? Icons.done : Icons.close,
+                    color: context.subtitleColor,
+                    isDark: isDark,
+                    onTap: () => ota.cancelDeploy(),
+                  ),
+                ),
+              ],
+            ),
+          ],
+
+          // ─── Cancel during progress ───
+          if (deployment.isBusy) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => ota.cancelDeploy(),
+                icon: Icon(Icons.close, size: 14, color: context.subtitleColor),
+                label: Text('取消',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: context.subtitleColor)),
+              ),
+            ),
+          ],
         ],
       ),
     );
-
-    if (confirmed != true) return;
-
-    try {
-      final client = context.read<RobotConnectionProvider>().client;
-      if (client == null) throw Exception('未连接');
-
-      final response = await client.rollback(artifactName: artifactName);
-      setState(() {
-        _statusMessage = response.success
-            ? '$artifactName 已回滚到 v${response.restoredVersion}'
-            : '回滚失败: ${response.message}';
-      });
-      // Refresh installed versions
-      if (response.success) _fetchInstalledVersions();
-    } catch (e) {
-      setState(() => _statusMessage = '回滚失败: $e');
-    }
   }
+}
 
-  /// 获取升级历史
-  Future<void> _fetchUpgradeHistory() async {
-    setState(() => _isLoadingHistory = true);
-    try {
-      final client = context.read<RobotConnectionProvider>().client;
-      if (client == null) throw Exception('未连接');
+/// A single dot in the phase stepper.
+class _StepDot extends StatelessWidget {
+  final DeployPhase phase;
+  final int index;
+  final int activeIndex;
+  final bool isFailed;
+  final bool isCompleted;
+  final bool isCurrent;
+  final bool isDark;
+  final Color accentColor;
 
-      final response = await client.getUpgradeHistory(limit: 20);
-      setState(() {
-        _isLoadingHistory = false;
-        _historyEntries = response.entries
-            .map((e) => _HistoryItem(
-                  timestamp: e.timestamp,
-                  action: e.action,
-                  artifactName: e.artifactName,
-                  fromVersion: e.fromVersion,
-                  toVersion: e.toVersion,
-                  status: e.status,
-                ))
-            .toList();
-      });
-    } catch (e) {
-      setState(() {
-        _isLoadingHistory = false;
-        _statusMessage = '获取升级历史失败: $e';
-      });
-    }
+  const _StepDot({
+    required this.phase,
+    required this.index,
+    required this.activeIndex,
+    required this.isFailed,
+    required this.isCompleted,
+    required this.isCurrent,
+    required this.isDark,
+    required this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isDone = isCompleted || index < activeIndex;
+    final bool isActive = isCurrent && !isCompleted && !isFailed;
+    final bool isBroken = isFailed && index == activeIndex;
+
+    final Color dotColor = isBroken
+        ? AppColors.error
+        : isDone
+            ? AppColors.success
+            : isActive
+                ? accentColor
+                : isDark
+                    ? Colors.white.withValues(alpha: 0.15)
+                    : Colors.black.withValues(alpha: 0.1);
+
+    final Color iconColor = isBroken || isDone || isActive
+        ? Colors.white
+        : isDark
+            ? Colors.white.withValues(alpha: 0.25)
+            : Colors.black.withValues(alpha: 0.2);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Dot with icon
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          width: isActive ? 30 : 26,
+          height: isActive ? 30 : 26,
+          decoration: BoxDecoration(
+            color: dotColor,
+            shape: BoxShape.circle,
+            boxShadow: isActive
+                ? [BoxShadow(color: accentColor.withValues(alpha: 0.3), blurRadius: 8)]
+                : null,
+          ),
+          child: Icon(
+            isBroken
+                ? Icons.close
+                : isDone
+                    ? Icons.check
+                    : _stepperIcons[phase] ?? Icons.circle,
+            size: isActive ? 15 : 13,
+            color: iconColor,
+          ),
+        ),
+        const SizedBox(height: 4),
+        // Label
+        Text(
+          _stepperLabels[phase] ?? '',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: isActive || isDone ? FontWeight.w600 : FontWeight.w400,
+            color: isBroken
+                ? AppColors.error
+                : isDone || isActive
+                    ? (isDark ? Colors.white70 : Colors.black87)
+                    : (isDark ? Colors.white24 : Colors.black26),
+          ),
+        ),
+      ],
+    );
   }
+}
 
-  String _categoryStr(int value) {
-    switch (value) {
-      case 1: return 'model';
-      case 2: return 'firmware';
-      case 3: return 'map';
-      case 4: return 'config';
-      default: return 'other';
-    }
-  }
+/// Pill-shaped action button for deployment actions.
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool isDark;
+  final VoidCallback onTap;
 
-  void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+  const _ActionButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: isDark ? 0.12 : 0.08),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 15, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-// ================================================================
-// 辅助枚举和组件
-// ================================================================
+class _InfoSection extends StatelessWidget {
+  final bool isDark;
+  const _InfoSection({required this.isDark});
 
-enum NoticeType { error, warning, success, info }
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      '确保机器人电量 >= 30%',
+      '升级过程中请勿断开连接',
+      '确保机器人处于静止状态',
+      '支持 .bin / .fw / .zip / .deb 格式',
+      '上传完成后需点击"应用固件"触发刷写',
+    ];
 
-class _InstalledItem {
-  final String name;
-  final String version;
-  final String category;
-
-  _InstalledItem({required this.name, required this.version, required this.category});
-}
-
-class _RollbackItem {
-  final String name;
-  final String version;
-
-  _RollbackItem({required this.name, required this.version});
-}
-
-class _HistoryItem {
-  final String timestamp;
-  final String action;
-  final String artifactName;
-  final String fromVersion;
-  final String toVersion;
-  final String status;
-
-  _HistoryItem({
-    required this.timestamp,
-    required this.action,
-    required this.artifactName,
-    required this.fromVersion,
-    required this.toVersion,
-    required this.status,
-  });
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkCard : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: isDark ? AppColors.borderDark : AppColors.borderLight),
+      ),
+      child: Column(
+        children: items.asMap().entries.map((entry) {
+          final isLast = entry.key == items.length - 1;
+          return Padding(
+            padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Container(
+                    width: 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: context.subtitleColor, shape: BoxShape.circle),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(entry.value,
+                      style: TextStyle(
+                          fontSize: 13, color: context.subtitleColor, height: 1.3)),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
 }
 
 class _StatusDot extends StatelessWidget {
@@ -1490,21 +1555,34 @@ class _StatusDot extends StatelessWidget {
         Container(
           width: 6,
           height: 6,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 5),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: context.subtitleColor,
-          ),
-        ),
+        Text(label,
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: context.subtitleColor)),
       ],
     );
+  }
+}
+
+// ================================================================
+// Helpers
+// ================================================================
+
+Color _categoryColor(String category) {
+  switch (category) {
+    case 'firmware':
+      return AppColors.warning;
+    case 'model':
+      return AppColors.secondary;
+    case 'map':
+      return AppColors.success;
+    case 'config':
+      return AppColors.info;
+    default:
+      return AppColors.primary;
   }
 }

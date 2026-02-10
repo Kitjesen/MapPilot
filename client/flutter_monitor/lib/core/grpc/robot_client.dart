@@ -293,13 +293,70 @@ class RobotClient implements RobotClientBase {
   }
 
   /// 获取机器人信息
+  @override
   Future<RobotInfoResponse> getRobotInfo() async {
     return await _systemClient.getRobotInfo(Empty());
   }
 
   /// 获取机器人能力
+  @override
   Future<CapabilitiesResponse> getCapabilities() async {
     return await _systemClient.getCapabilities(Empty());
+  }
+
+  /// 心跳检测
+  @override
+  Future<HeartbeatResponse> heartbeat() async {
+    final request = HeartbeatRequest()
+      ..clientTimestamp = Timestamp.fromDateTime(DateTime.now());
+    return await _systemClient.heartbeat(request);
+  }
+
+  /// 获取设备信息 (OTA daemon)
+  @override
+  Future<DeviceInfoResponse> getDeviceInfo() async {
+    return await _otaClient.getDeviceInfo(Empty());
+  }
+
+  /// 管理系统服务 (OTA daemon)
+  @override
+  Future<ManageServiceResponse> manageService({
+    required String serviceName,
+    required ServiceAction action,
+  }) async {
+    final request = ManageServiceRequest()
+      ..base = _createRequestBase()
+      ..serviceName = serviceName
+      ..action = action;
+    return await _otaClient.manageService(request);
+  }
+
+  /// 列出可用资源
+  @override
+  Future<ListResourcesResponse> listResources() async {
+    return await _dataClient.listResources(Empty());
+  }
+
+  /// 下载文件 (流式)
+  @override
+  Stream<FileChunk> downloadFile({
+    required String filePath,
+    int chunkSize = 65536,
+  }) {
+    final request = DownloadFileRequest()
+      ..base = _createRequestBase()
+      ..filePath = filePath
+      ..chunkSize = chunkSize;
+    return _dataClient.downloadFile(request);
+  }
+
+  /// 取消订阅资源
+  @override
+  Future<UnsubscribeResponse> unsubscribe({required String subscriptionId}) async {
+    final request = UnsubscribeRequest()
+      ..base = _createRequestBase()
+      ..subscriptionId = subscriptionId;
+    return await _dataClient.unsubscribe(request);
   }
 
   /// 重定位
@@ -327,13 +384,22 @@ class RobotClient implements RobotClientBase {
     return await _systemClient.saveMap(request);
   }
 
-  /// 启动任务
+  /// 启动任务（支持结构化参数）
   @override
-  Future<StartTaskResponse> startTask({required TaskType taskType, String paramsJson = ''}) async {
+  Future<StartTaskResponse> startTask({
+    required TaskType taskType,
+    String paramsJson = '',
+    NavigationParams? navigationParams,
+    MappingParams? mappingParams,
+    FollowPathParams? followPathParams,
+  }) async {
     final request = StartTaskRequest()
       ..base = _createRequestBase()
       ..taskType = taskType
       ..paramsJson = paramsJson;
+    if (navigationParams != null) request.navigationParams = navigationParams;
+    if (mappingParams != null) request.mappingParams = mappingParams;
+    if (followPathParams != null) request.followPathParams = followPathParams;
     return await _controlClient.startTask(request);
   }
 
@@ -344,6 +410,60 @@ class RobotClient implements RobotClientBase {
       ..base = _createRequestBase()
       ..taskId = taskId;
     return await _controlClient.cancelTask(request);
+  }
+
+  /// 暂停任务
+  @override
+  Future<PauseTaskResponse> pauseTask({required String taskId}) async {
+    final request = PauseTaskRequest()
+      ..base = _createRequestBase()
+      ..taskId = taskId;
+    return await _controlClient.pauseTask(request);
+  }
+
+  /// 恢复任务
+  @override
+  Future<ResumeTaskResponse> resumeTask({required String taskId}) async {
+    final request = ResumeTaskRequest()
+      ..base = _createRequestBase()
+      ..taskId = taskId;
+    return await _controlClient.resumeTask(request);
+  }
+
+  /// 查询任务状态
+  @override
+  Future<GetTaskStatusResponse> getTaskStatus({required String taskId}) async {
+    final request = GetTaskStatusRequest()
+      ..base = _createRequestBase()
+      ..taskId = taskId;
+    return await _controlClient.getTaskStatus(request);
+  }
+
+  // ==================== 地图管理 ====================
+
+  @override
+  Future<ListMapsResponse> listMaps({String directory = '/maps'}) async {
+    final request = ListMapsRequest()
+      ..base = _createRequestBase()
+      ..directory = directory;
+    return await _systemClient.listMaps(request);
+  }
+
+  @override
+  Future<DeleteMapResponse> deleteMap({required String path}) async {
+    final request = DeleteMapRequest()
+      ..base = _createRequestBase()
+      ..path = path;
+    return await _systemClient.deleteMap(request);
+  }
+
+  @override
+  Future<RenameMapResponse> renameMap({required String oldPath, required String newName}) async {
+    final request = RenameMapRequest()
+      ..base = _createRequestBase()
+      ..oldPath = oldPath
+      ..newName = newName;
+    return await _systemClient.renameMap(request);
   }
 
   // ==================== 文件管理 (支持断点续传) ====================

@@ -35,6 +35,7 @@ int CompareSemver(const std::string &a, const std::string &b);
 
 // ──────────────── 系统工具 ────────────────
 uint64_t GetDiskFreeBytes(const std::string &path);
+uint64_t GetDiskTotalBytes(const std::string &path);
 int GetBatteryPercent();  // -1 = 未知
 uint64_t GetUptimeSeconds();
 std::string GetHostname();

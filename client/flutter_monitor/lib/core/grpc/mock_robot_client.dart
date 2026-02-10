@@ -18,6 +18,12 @@ class MockRobotClient implements RobotClientBase {
   bool _connected = false;
   bool _hasLease = false;
   RobotMode _currentMode = RobotMode.ROBOT_MODE_IDLE;
+
+  // Mock task state
+  String _mockTaskId = '';
+  TaskStatus _mockTaskStatus = TaskStatus.TASK_STATUS_UNSPECIFIED;
+  TaskType _mockTaskType = TaskType.TASK_TYPE_UNSPECIFIED;
+  double _mockTaskProgress = 0.0;
   int _eventCounter = 0;
   int _teleopSeq = 0;
 
@@ -243,23 +249,120 @@ class MockRobotClient implements RobotClientBase {
   }
 
   @override
-  Future<StartTaskResponse> startTask({required TaskType taskType, String paramsJson = ''}) async {
+  Future<StartTaskResponse> startTask({
+    required TaskType taskType,
+    String paramsJson = '',
+    NavigationParams? navigationParams,
+    MappingParams? mappingParams,
+    FollowPathParams? followPathParams,
+  }) async {
+    _mockTaskId = 'mock-task-${DateTime.now().millisecondsSinceEpoch}';
+    _mockTaskStatus = TaskStatus.TASK_STATUS_RUNNING;
+    _mockTaskType = taskType;
+    _mockTaskProgress = 0.0;
     return StartTaskResponse()
       ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
-      ..taskId = 'mock-task-001'
+      ..taskId = _mockTaskId
       ..task = (Task()
-        ..taskId = 'mock-task-001'
+        ..taskId = _mockTaskId
         ..type = taskType
         ..status = TaskStatus.TASK_STATUS_RUNNING);
   }
 
   @override
   Future<CancelTaskResponse> cancelTask({required String taskId}) async {
+    _mockTaskStatus = TaskStatus.TASK_STATUS_CANCELLED;
     return CancelTaskResponse()
       ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
       ..task = (Task()
         ..taskId = taskId
         ..status = TaskStatus.TASK_STATUS_CANCELLED);
+  }
+
+  @override
+  Future<PauseTaskResponse> pauseTask({required String taskId}) async {
+    _mockTaskStatus = TaskStatus.TASK_STATUS_PAUSED;
+    return PauseTaskResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..task = (Task()
+        ..taskId = taskId
+        ..status = TaskStatus.TASK_STATUS_PAUSED
+        ..progressPercent = _mockTaskProgress);
+  }
+
+  @override
+  Future<ResumeTaskResponse> resumeTask({required String taskId}) async {
+    _mockTaskStatus = TaskStatus.TASK_STATUS_RUNNING;
+    return ResumeTaskResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..task = (Task()
+        ..taskId = taskId
+        ..status = TaskStatus.TASK_STATUS_RUNNING
+        ..progressPercent = _mockTaskProgress);
+  }
+
+  @override
+  Future<GetTaskStatusResponse> getTaskStatus({required String taskId}) async {
+    // Simulate progress
+    if (_mockTaskStatus == TaskStatus.TASK_STATUS_RUNNING) {
+      _mockTaskProgress = math.min(1.0, _mockTaskProgress + 0.05);
+      if (_mockTaskProgress >= 1.0) {
+        _mockTaskStatus = TaskStatus.TASK_STATUS_COMPLETED;
+      }
+    }
+    return GetTaskStatusResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..task = (Task()
+        ..taskId = _mockTaskId
+        ..type = _mockTaskType
+        ..status = _mockTaskStatus
+        ..progressPercent = _mockTaskProgress);
+  }
+
+  // ==================== 地图管理 Mock ====================
+
+  @override
+  Future<ListMapsResponse> listMaps({String directory = '/maps'}) async {
+    return ListMapsResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..maps.addAll([
+        MapInfo()
+          ..name = 'office_floor1.pcd'
+          ..path = '/maps/office_floor1.pcd'
+          ..sizeBytes = Int64(52428800)
+          ..modifiedAt = '2026-01-15T10:30:00'
+          ..pointCount = 1250000,
+        MapInfo()
+          ..name = 'warehouse.pcd'
+          ..path = '/maps/warehouse.pcd'
+          ..sizeBytes = Int64(104857600)
+          ..modifiedAt = '2026-01-20T14:00:00'
+          ..pointCount = 3500000,
+        MapInfo()
+          ..name = 'outdoor_campus.pcd'
+          ..path = '/maps/outdoor_campus.pcd'
+          ..sizeBytes = Int64(209715200)
+          ..modifiedAt = '2026-02-01T09:15:00'
+          ..pointCount = 8200000,
+      ]);
+  }
+
+  @override
+  Future<DeleteMapResponse> deleteMap({required String path}) async {
+    return DeleteMapResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..message = 'Deleted: $path';
+  }
+
+  @override
+  Future<RenameMapResponse> renameMap({required String oldPath, required String newName}) async {
+    final dir = oldPath.substring(0, oldPath.lastIndexOf('/') + 1);
+    return RenameMapResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..success = true
+      ..newPath = '$dir$newName'
+      ..message = 'Renamed to: $dir$newName';
   }
 
   // ==================== 文件管理 (OTA) Mock ====================
@@ -403,6 +506,7 @@ class MockRobotClient implements RobotClientBase {
   @override
   Future<CheckUpdateReadinessResponse> checkUpdateReadiness({
     required List<OtaArtifact> artifacts,
+    String manifestSignature = '',
   }) async {
     return CheckUpdateReadinessResponse()
       ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
@@ -422,12 +526,132 @@ class MockRobotClient implements RobotClientBase {
   }
 
   @override
-  Future<ApplyFirmwareResponse> applyFirmware({required String firmwarePath}) async {
-    await Future.delayed(const Duration(seconds: 1));
-    return ApplyFirmwareResponse()
+  Future<GetUpgradeHistoryResponse> getUpgradeHistory({
+    String artifactFilter = '',
+    int limit = 50,
+  }) async {
+    return GetUpgradeHistoryResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..entries.addAll([
+        UpgradeHistoryEntry()
+          ..timestamp = DateTime.now().subtract(const Duration(days: 1)).toIso8601String()
+          ..action = 'install'
+          ..artifactName = 'navigation_firmware'
+          ..fromVersion = '0.9.0'
+          ..toVersion = '1.0.0'
+          ..success = true,
+        UpgradeHistoryEntry()
+          ..timestamp = DateTime.now().subtract(const Duration(days: 3)).toIso8601String()
+          ..action = 'install'
+          ..artifactName = 'yolov8n'
+          ..fromVersion = '8.0.0'
+          ..toVersion = '8.0.1'
+          ..success = true,
+      ]);
+  }
+
+  @override
+  Future<ValidateSystemVersionResponse> validateSystemVersion({
+    String expectedSystemVersion = '',
+    List<ComponentVersion> expectedComponents = const [],
+  }) async {
+    return ValidateSystemVersionResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..consistent = true
+      ..actualSystemVersion = '1.0.0';
+  }
+
+  @override
+  Future<RobotInfoResponse> getRobotInfo() async {
+    return RobotInfoResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..robotId = 'mock-robot-001'
+      ..displayName = 'Mock Robot'
+      ..firmwareVersion = '1.0.0-mock'
+      ..softwareVersion = '2.0.0-mock';
+  }
+
+  @override
+  Future<CapabilitiesResponse> getCapabilities() async {
+    return CapabilitiesResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..supportedResources.addAll(['camera', 'pointcloud', 'map'])
+      ..supportedTasks.addAll([
+        TaskType.TASK_TYPE_NAVIGATION,
+        TaskType.TASK_TYPE_MAPPING,
+      ])
+      ..teleopSupported = true
+      ..mappingSupported = true;
+  }
+
+  @override
+  Future<HeartbeatResponse> heartbeat() async {
+    return HeartbeatResponse()
+      ..serverTimestamp = Timestamp.fromDateTime(DateTime.now())
+      ..activeSessions = 1;
+  }
+
+  @override
+  Future<DeviceInfoResponse> getDeviceInfo() async {
+    return DeviceInfoResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..hostname = 'mock-robot'
+      ..robotId = 'mock-001'
+      ..hwId = 'hw-0001'
+      ..ipAddresses.addAll(['192.168.1.100', '10.0.0.1'])
+      ..diskTotalBytes = Int64(64 * 1024 * 1024 * 1024) // 64 GB
+      ..diskFreeBytes = Int64(32 * 1024 * 1024 * 1024)  // 32 GB
+      ..batteryPercent = 85
+      ..uptimeSeconds = Int64(86400) // 1 day
+      ..osVersion = 'Ubuntu 22.04 LTS'
+      ..otaDaemonVersion = '1.2.0'
+      ..services.addAll([
+        ServiceStatus()..name = 'navigation.service'..state = 'active'..subState = 'running'..uptimeSeconds = Int64(3600),
+        ServiceStatus()..name = 'slam.service'..state = 'active'..subState = 'running'..uptimeSeconds = Int64(3600),
+        ServiceStatus()..name = 'camera.service'..state = 'inactive'..subState = 'dead',
+      ]);
+  }
+
+  @override
+  Future<ManageServiceResponse> manageService({
+    required String serviceName,
+    required ServiceAction action,
+  }) async {
+    return ManageServiceResponse()
       ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
       ..success = true
-      ..message = 'Mock apply firmware OK: $firmwarePath';
+      ..message = 'Mock: $serviceName ${action.name}'
+      ..status = (ServiceStatus()..name = serviceName..state = 'active'..subState = 'running');
+  }
+
+  @override
+  Future<ListResourcesResponse> listResources() async {
+    return ListResourcesResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..resources.addAll([
+        ResourceInfo()..id = (ResourceId()..name = 'front_camera'..type = ResourceType.RESOURCE_TYPE_CAMERA)..description = '前置摄像头'..available = true,
+        ResourceInfo()..id = (ResourceId()..name = 'rear_camera'..type = ResourceType.RESOURCE_TYPE_CAMERA)..description = '后置摄像头'..available = true,
+        ResourceInfo()..id = (ResourceId()..name = 'pointcloud'..type = ResourceType.RESOURCE_TYPE_POINTCLOUD)..description = '3D 点云'..available = true,
+      ]);
+  }
+
+  @override
+  Stream<FileChunk> downloadFile({
+    required String filePath,
+    int chunkSize = 65536,
+  }) async* {
+    // Mock: emit a single small chunk
+    yield FileChunk()
+      ..offset = Int64.ZERO
+      ..data = [0x4D, 0x4F, 0x43, 0x4B] // "MOCK"
+      ..totalSize = Int64(4)
+      ..isLast = true;
+  }
+
+  @override
+  Future<UnsubscribeResponse> unsubscribe({required String subscriptionId}) async {
+    return UnsubscribeResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK);
   }
 
   @override

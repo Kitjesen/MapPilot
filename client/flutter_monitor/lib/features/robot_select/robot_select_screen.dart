@@ -120,9 +120,9 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                   gridDelegate:
                       const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 0.78,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: 1.15,
                   ),
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
@@ -148,11 +148,8 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                           return Opacity(
                             opacity: t,
                             child: Transform.translate(
-                              offset: Offset(0, 24 * (1 - t)),
-                              child: Transform.scale(
-                                scale: 0.92 + 0.08 * t,
-                                child: child,
-                              ),
+                              offset: Offset(0, 16 * (1 - t)),
+                              child: child,
                             ),
                           );
                         },
@@ -171,9 +168,9 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                   gridDelegate:
                       const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 0.78,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: 1.15,
                   ),
                   delegate: SliverChildBuilderDelegate(
                     (context, index) => _ShimmerCard(isDark: isDark),
@@ -203,8 +200,8 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             decoration: BoxDecoration(
               color: isDark
-                  ? const Color(0xFF1C1C1E).withOpacity(0.92)
-                  : Colors.white.withOpacity(0.92),
+                  ? const Color(0xFF1C1C1E).withValues(alpha: 0.92)
+                  : Colors.white.withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: isDark ? AppColors.borderDark : AppColors.borderLight,
@@ -229,7 +226,7 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                           height: 4,
                           margin: const EdgeInsets.only(bottom: 16),
                           decoration: BoxDecoration(
-                            color: context.subtitleColor.withOpacity(0.25),
+                            color: context.subtitleColor.withValues(alpha: 0.25),
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
@@ -263,20 +260,12 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                             ),
                           ),
                           if (isSelected)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: color.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                '当前',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: color,
-                                ),
+                            Text(
+                              '当前',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: context.subtitleColor,
                               ),
                             ),
                         ],
@@ -304,8 +293,8 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                             horizontal: 12, vertical: 10),
                         decoration: BoxDecoration(
                           color: isDark
-                              ? Colors.white.withOpacity(0.04)
-                              : Colors.black.withOpacity(0.03),
+                              ? Colors.white.withValues(alpha: 0.04)
+                              : Colors.black.withValues(alpha: 0.03),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
@@ -363,13 +352,12 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
                                 }
                               : null,
                           style: TextButton.styleFrom(
-                            backgroundColor: color,
-                            foregroundColor: Colors.white,
-                            disabledBackgroundColor:
-                                Colors.grey.withOpacity(0.15),
-                            disabledForegroundColor: Colors.grey,
+                            foregroundColor: context.titleColor,
+                            backgroundColor: isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.04),
+                            disabledForegroundColor: context.subtitleColor,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(8),
+                              side: BorderSide(color: context.borderColor),
                             ),
                           ),
                           child: Text(
@@ -412,8 +400,8 @@ class _RobotSelectScreenState extends State<RobotSelectScreen>
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
             color: isDark
-                ? Colors.white.withOpacity(0.05)
-                : Colors.black.withOpacity(0.04),
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.black.withValues(alpha: 0.04),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
@@ -448,89 +436,72 @@ class _RobotCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
-    final color = profile.themeColor;
 
     return GestureDetector(
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
+          color: isDark ? AppColors.darkCard : Colors.white,
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isSelected
-                ? color.withOpacity(0.6)
-                : (isDark ? AppColors.borderDark : AppColors.borderLight),
-            width: isSelected ? 1.5 : 1,
+            color: isDark ? AppColors.borderDark : AppColors.borderLight,
           ),
         ),
         clipBehavior: Clip.antiAlias,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // ─── Background ───
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: isDark
-                      ? [
-                          const Color(0xFF1A1A2E),
-                          const Color(0xFF16162A),
-                          const Color(0xFF0F0F1A),
-                        ]
-                      : [
-                          const Color(0xFFF5F5FA),
-                          const Color(0xFFEEEEF5),
-                          const Color(0xFFE8E8F0),
-                        ],
-                ),
-              ),
-            ),
-
-            // ─── Frosted glass overlay ───
-            BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 0.5, sigmaY: 0.5),
-              child: Container(
-                color: isDark
-                    ? Colors.white.withOpacity(0.02)
-                    : Colors.white.withOpacity(0.4),
-              ),
-            ),
-
-            // ─── Content ───
             Padding(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Icon area
-                  Expanded(
-                    child: Center(
-                      child: Icon(
-                        profile.icon,
-                        size: 40,
-                        color: isDark
-                            ? Colors.white.withOpacity(0.35)
-                            : Colors.black.withOpacity(0.15),
+                  Row(
+                    children: [
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: profile.themeColor.withValues(alpha: isDark ? 0.15 : 0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          profile.icon,
+                          size: 18,
+                          color: profile.themeColor,
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              profile.name,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: context.titleColor,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              '${profile.jointCount}J · ${profile.mass.toStringAsFixed(0)}kg',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: context.subtitleColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (isSelected)
+                        Icon(Icons.check, size: 14, color: profile.themeColor),
+                    ],
                   ),
-
-                  // ─── Info ───
-                  // Name
-                  Text(
-                    profile.name,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: context.titleColor,
-                      letterSpacing: -0.2,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  // Subtitle
+                  const SizedBox(height: 6),
                   Text(
                     profile.subtitle,
                     style: TextStyle(
@@ -540,50 +511,20 @@ class _RobotCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 8),
-                  // Bottom: specs + selected indicator
-                  Row(
-                    children: [
-                      Text(
-                        '${profile.jointCount}J · ${profile.mass.toStringAsFixed(0)}kg',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: context.subtitleColor,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (isSelected)
-                        Container(
-                          width: 18,
-                          height: 18,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.check,
-                              size: 12, color: Colors.white),
-                        ),
-                    ],
-                  ),
                 ],
               ),
             ),
-
-            // ─── Unavailable overlay ───
             if (!profile.available)
               Container(
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? Colors.black.withOpacity(0.5)
-                      : Colors.white.withOpacity(0.6),
-                ),
+                color: isDark
+                    ? Colors.black.withValues(alpha: 0.5)
+                    : Colors.white.withValues(alpha: 0.6),
                 child: Center(
                   child: Text(
                     '即将推出',
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                       color: context.subtitleColor,
                     ),
                   ),
@@ -634,11 +575,11 @@ class _ShimmerCardState extends State<_ShimmerCard>
       builder: (context, _) {
         final shimmer = _shimmerController.value;
         final baseColor = widget.isDark
-            ? Colors.white.withOpacity(0.04)
-            : Colors.black.withOpacity(0.04);
+            ? Colors.white.withValues(alpha: 0.04)
+            : Colors.black.withValues(alpha: 0.04);
         final highlightColor = widget.isDark
-            ? Colors.white.withOpacity(0.08)
-            : Colors.black.withOpacity(0.07);
+            ? Colors.white.withValues(alpha: 0.08)
+            : Colors.black.withValues(alpha: 0.07);
         final color =
             Color.lerp(baseColor, highlightColor, (shimmer * 2 - 1).abs())!;
 

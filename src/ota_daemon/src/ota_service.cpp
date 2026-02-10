@@ -55,6 +55,15 @@ OtaDaemonConfig LoadConfig(const std::string &yaml_path) {
       for (const auto &d : root["allowed_directories"])
         cfg.allowed_directories.push_back(d.as<std::string>());
     }
+
+    // Dog Board OTA proxy
+    if (root["dog_board"]) {
+      auto dog = root["dog_board"];
+      if (dog["host"]) cfg.dog_board_host = dog["host"].as<std::string>();
+      if (dog["port"]) cfg.dog_board_port = dog["port"].as<int>();
+      if (dog["reload_script"]) cfg.dog_reload_script = dog["reload_script"].as<std::string>();
+      if (dog["timeout_sec"]) cfg.dog_timeout_sec = dog["timeout_sec"].as<int>();
+    }
   } catch (const std::exception &e) {
     LOG_ERROR("Failed to parse config %s: %s", yaml_path.c_str(), e.what());
   }
@@ -948,8 +957,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
   std::string install_msg;
 
   switch (artifact.apply_action()) {
-    case robot::v1::OTA_APPLY_ACTION_COPY_ONLY:
-    case robot::v1::OTA_APPLY_ACTION_RELOAD_MODEL: {
+    case robot::v1::OTA_APPLY_ACTION_COPY_ONLY: {
       auto dir = target_path.substr(0, target_path.rfind('/'));
       std::filesystem::create_directories(dir);
       try {
@@ -959,6 +967,42 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
         install_msg = "Copied to " + target_path;
       } catch (const std::exception &e) {
         install_msg = std::string("Copy failed: ") + e.what();
+      }
+      break;
+    }
+    case robot::v1::OTA_APPLY_ACTION_RELOAD_MODEL: {
+      // Step 1: Copy model to target path
+      auto dir = target_path.substr(0, target_path.rfind('/'));
+      std::filesystem::create_directories(dir);
+      try {
+        std::filesystem::copy_file(staged_path, target_path,
+                                   std::filesystem::copy_options::overwrite_existing);
+        install_ok = true;
+        install_msg = "Copied to " + target_path;
+      } catch (const std::exception &e) {
+        install_msg = std::string("Copy failed: ") + e.what();
+        break;
+      }
+
+      // Step 2: Notify Dog Board to hot-reload (only for dog-targeted artifacts)
+      if (artifact.target_board() == "dog" && !config_.dog_reload_script.empty()) {
+        LOG_INFO("RELOAD_MODEL: notifying Dog Board (%s:%d) for %s",
+                 config_.dog_board_host.c_str(), config_.dog_board_port,
+                 artifact.name().c_str());
+
+        std::string cmd = config_.dog_reload_script +
+                          " '" + target_path + "'" +
+                          " '" + config_.dog_board_host + "'" +
+                          " " + std::to_string(config_.dog_board_port) +
+                          " 2>&1";
+        int r = std::system(cmd.c_str());
+        if (r != 0) {
+          LOG_WARN("Dog Board reload script returned %d (non-fatal, model file was copied)", r);
+          install_msg += " (reload notification failed, script exit=" + std::to_string(r) + ")";
+        } else {
+          LOG_INFO("Dog Board reload notification succeeded for %s", artifact.name().c_str());
+          install_msg += " + Dog Board notified to reload";
+        }
       }
       break;
     }
@@ -1316,7 +1360,7 @@ grpc::Status OtaServiceImpl::GetDeviceInfo(
     response->add_ip_addresses(ip);
   }
 
-  response->set_disk_total_bytes(0);  // TODO: implement
+  response->set_disk_total_bytes(GetDiskTotalBytes("/opt/robot"));
   response->set_disk_free_bytes(GetDiskFreeBytes("/opt/robot"));
   response->set_battery_percent(GetBatteryPercent());
   response->set_uptime_seconds(GetUptimeSeconds());
