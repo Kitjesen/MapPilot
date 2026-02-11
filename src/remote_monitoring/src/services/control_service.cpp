@@ -368,6 +368,9 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
       request->navigation_params().waypoints_size() > 0) {
     // 结构化导航参数
     const auto &nav = request->navigation_params();
+    if (nav.max_speed() > 0.0) {
+      params.max_speed = nav.max_speed();
+    }
     for (const auto &wp : nav.waypoints()) {
       core::Waypoint w;
       w.x = wp.position().x();
@@ -380,6 +383,7 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
       params.waypoints.push_back(w);
     }
     params.loop = nav.loop();
+    // TODO(protocol): Parse task-level priority and obstacle_override when StartTaskRequest supports them.
     has_structured_params = true;
   } else if (request->has_follow_path_params() &&
              request->follow_path_params().waypoints_size() > 0) {

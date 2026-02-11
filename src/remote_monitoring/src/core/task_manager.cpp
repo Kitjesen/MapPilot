@@ -47,9 +47,10 @@ std::string TaskManager::StartTask(const TaskParams &params) {
   state_.store(TaskState::RUNNING);
 
   RCLCPP_INFO(node_->get_logger(),
-              "TaskManager: Starting task %s with %zu waypoints (loop=%s)",
+              "TaskManager: Starting task %s with %zu waypoints (loop=%s, max_speed=%.2f)",
               task_id_.c_str(), params.waypoints.size(),
-              params.loop ? "true" : "false");
+              params.loop ? "true" : "false",
+              params.max_speed);
 
   // 事件通知
   if (event_buffer_) {

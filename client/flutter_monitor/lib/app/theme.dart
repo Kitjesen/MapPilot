@@ -517,4 +517,44 @@ extension ThemeContextExtension on BuildContext {
 
   LinearGradient get bgGradient =>
       isDark ? AppColors.darkBgGradient : AppColors.lightBgGradient;
+
+  /// Soft card — subtle gradient fill, thin border, light shadow.
+  BoxDecoration get softCardDecoration => BoxDecoration(
+        gradient: isDark
+            ? null
+            : const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFFFFFFF), Color(0xFFFAF9FF)],
+              ),
+        color: isDark ? cardColor : null,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(
+          color: isDark
+              ? borderColor
+              : const Color(0xFFE8E5F0).withValues(alpha: 0.6),
+        ),
+        boxShadow: [
+          isDark ? AppShadows.dark() : AppShadows.light(),
+        ],
+      );
+
+  /// Shell workspace container — large rounded corners, gradient, shadow.
+  BoxDecoration get shellDecoration => BoxDecoration(
+        gradient: isDark
+            ? null
+            : const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFFFFFFF), Color(0xFFFCFBFF)],
+              ),
+        color: isDark ? AppColors.darkSurface : null,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: isDark
+              ? borderColor
+              : const Color(0xFFE8E5F0).withValues(alpha: 0.5),
+        ),
+        boxShadow: AppShadows.elevated(isDark: isDark),
+      );
 }

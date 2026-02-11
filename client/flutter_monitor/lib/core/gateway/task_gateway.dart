@@ -73,6 +73,7 @@ class TaskGateway extends ChangeNotifier {
   Future<bool> startNavigationTask(
     List<NavigationGoal> waypoints, {
     bool loop = false,
+    double maxSpeed = 0,
   }) async {
     if (waypoints.isEmpty) {
       _statusMessage = '请先设置导航目标';
@@ -81,7 +82,8 @@ class TaskGateway extends ChangeNotifier {
     }
     final params = NavigationParams()
       ..waypoints.addAll(waypoints)
-      ..loop = loop;
+      ..loop = loop
+      ..maxSpeed = maxSpeed;
     return startTask(
       TaskType.TASK_TYPE_NAVIGATION,
       navigationParams: params,
@@ -96,6 +98,7 @@ class TaskGateway extends ChangeNotifier {
     double yaw = 0,
     double arrivalRadius = 1.0,
     String label = '',
+    double maxSpeed = 0,
   }) async {
     final goal = NavigationGoal()
       ..position = (Vector3()
@@ -105,7 +108,7 @@ class TaskGateway extends ChangeNotifier {
       ..yaw = yaw
       ..arrivalRadius = arrivalRadius
       ..label = label;
-    return startNavigationTask([goal]);
+    return startNavigationTask([goal], maxSpeed: maxSpeed);
   }
 
   /// Whether current task execution should block cold OTA actions.

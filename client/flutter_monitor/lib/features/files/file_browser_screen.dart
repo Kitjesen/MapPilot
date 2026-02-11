@@ -166,13 +166,17 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
               ]
             : null,
       ),
-      body: !connProvider.isConnected
+      body: Container(
+        decoration: BoxDecoration(gradient: context.bgGradient),
+        child: !connProvider.isConnected
           ? _buildDisconnectedPlaceholder(context)
           : !connProvider.otaAvailable
               ? _buildOtaUnavailablePlaceholder(context)
               : Consumer<FileGateway>(
         builder: (context, gw, _) {
-          return Column(
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
             children: [
               // ── Breadcrumb bar ──
               _BreadcrumbBar(
@@ -190,9 +194,10 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
               // ── Upload progress ──
               if (gw.isUploading)
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: context.softCardDecoration,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -217,9 +222,10 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
               // ── Download progress ──
               if (gw.isDownloading)
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: context.softCardDecoration,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -245,12 +251,14 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
               // ── Error banner ──
               if (gw.errorMessage != null)
                 Container(
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  margin: const EdgeInsets.symmetric(vertical: 4),
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: AppColors.error.withValues(alpha: isDark ? 0.1 : 0.05),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppColors.error.withValues(alpha: 0.2),
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -288,10 +296,10 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                             child: ListView.separated(
                               physics: const AlwaysScrollableScrollPhysics(),
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 8),
+                                  horizontal: 4, vertical: 8),
                               itemCount: gw.files.length,
                               separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 2),
+                                  const SizedBox(height: 8),
                               itemBuilder: (context, index) {
                                 final file = gw.files[index];
                                 return _FileListTile(
@@ -312,14 +320,17 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                           ),
               ),
             ],
+          ),
           );
         },
       ),
+      ),
       floatingActionButton: connProvider.isConnected && connProvider.otaAvailable
-          ? FloatingActionButton(
+          ? FloatingActionButton.extended(
               onPressed: _pickAndUpload,
               backgroundColor: AppColors.primary,
-              child: const Icon(Icons.upload_file, color: Colors.white),
+              icon: const Icon(Icons.upload_file, color: Colors.white),
+              label: const Text('上传'),
             )
           : null,
     );
@@ -327,8 +338,10 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
   Widget _buildDisconnectedPlaceholder(BuildContext context) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.all(24),
+        decoration: context.softCardDecoration,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -373,8 +386,10 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
   Widget _buildOtaUnavailablePlaceholder(BuildContext context) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 24),
+        padding: const EdgeInsets.all(24),
+        decoration: context.softCardDecoration,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -434,13 +449,9 @@ class _BreadcrumbBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 40,
+      height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: context.borderColor, width: 0.5),
-        ),
-      ),
+      decoration: context.softCardDecoration,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: breadcrumbs.length,
@@ -497,8 +508,10 @@ class _StorageInfoBar extends StatelessWidget {
     final used = totalSize - freeSpace;
     final ratio = totalSize > 0 ? used / totalSize : 0.0;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: context.softCardDecoration,
       child: Row(
         children: [
           Icon(Icons.storage, size: 14, color: context.subtitleColor),
@@ -627,8 +640,11 @@ class _FileListTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppRadius.card),
-      child: Padding(
+      child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: context.softCardDecoration.copyWith(
+          borderRadius: BorderRadius.circular(AppRadius.card),
+        ),
         child: Row(
           children: [
             // Icon

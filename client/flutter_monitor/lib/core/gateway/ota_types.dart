@@ -24,9 +24,7 @@ export 'package:robot_proto/src/data.pb.dart'
         GetUpgradeHistoryResponse,
         ValidateSystemVersionRequest,
         ValidateSystemVersionResponse,
-        ComponentVersion,
-        ApplyFirmwareRequest,
-        ApplyFirmwareResponse;
+        ComponentVersion;
 
 // Proto OTA enums
 export 'package:robot_proto/src/data.pbenum.dart'

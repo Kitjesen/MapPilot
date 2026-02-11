@@ -46,6 +46,8 @@ struct TaskParams {
   std::vector<Waypoint> waypoints;
   bool loop{false};             // 循环巡检
   double arrival_radius{1.0};   // 到达判定半径 (m)
+  double max_speed{0.0};        // 任务期望最大速度 (m/s), 0 = 使用系统默认
+  // TODO(protocol): Add task-level priority and obstacle_override once proto is extended.
 };
 
 /// 任务执行状态 (内部)

@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,20 +8,12 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/features/home/home_screen.dart';
 import 'package:flutter_monitor/features/status/status_screen.dart';
 import 'package:flutter_monitor/features/map/map_screen.dart';
-import 'package:flutter_monitor/features/files/file_browser_screen.dart';
+import 'package:flutter_monitor/features/events/events_screen.dart';
 import 'package:flutter_monitor/features/settings/app_settings_screen.dart';
 
-/// 自适应主导航: 手机→底部导航栏, 平板/桌面→侧边栏
-///
-/// Tab 结构:
-///   0 — 首页 (Dashboard): 连接状态 + 快速操作 + 事件摘要
-///   1 — 监控 (Monitor):  实时遥测 (StatusScreen)
-///   2 — 控制 (Control):  地图导航 + 遥控 (MapScreen)
-///   3 — 文件 (Files):    远程文件管理 (FileBrowserScreen)
-///   4 — 设置 (Settings): 应用设置
+/// Adaptive main navigation: mobile→bottom nav, tablet/desktop→sidebar
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({super.key});
-
   @override
   State<MainShellScreen> createState() => _MainShellScreenState();
 }
@@ -32,15 +25,23 @@ class _MainShellScreenState extends State<MainShellScreen> {
     HomeScreen(),
     StatusScreen(),
     MapScreen(),
-    FileBrowserScreen(embedded: true),
+    EventsScreen(),
     AppSettingsScreen(),
   ];
 
-  static const _navItems = [
+  // Main nav items (0-3), settings separate at bottom
+  static const _mainNavItems = [
+    _NavDef(Icons.dashboard_outlined, Icons.dashboard_rounded, 'Dashboard'),
+    _NavDef(Icons.grid_view_outlined, Icons.grid_view_rounded, 'Modules'),
+    _NavDef(Icons.map_outlined, Icons.map_rounded, 'Map'),
+    _NavDef(Icons.history_rounded, Icons.history_rounded, 'History'),
+  ];
+
+  static const _allNavItems = [
     _NavDef(Icons.dashboard_outlined, Icons.dashboard_rounded, '首页'),
-    _NavDef(Icons.monitor_heart_outlined, Icons.monitor_heart_rounded, '监控'),
-    _NavDef(Icons.map_outlined, Icons.map_rounded, '控制'),
-    _NavDef(Icons.folder_outlined, Icons.folder_rounded, '文件'),
+    _NavDef(Icons.grid_view_outlined, Icons.grid_view_rounded, '状态'),
+    _NavDef(Icons.map_outlined, Icons.map_rounded, '地图'),
+    _NavDef(Icons.history_rounded, Icons.history_rounded, '事件'),
     _NavDef(Icons.settings_outlined, Icons.settings_rounded, '设置'),
   ];
 
@@ -67,16 +68,16 @@ class _MainShellScreenState extends State<MainShellScreen> {
     final isDogConnected = provider.isDogConnected;
     final useSide = context.useSideNav;
 
-    // Listen for tab-switch notifications from child widgets (e.g. HomeScreen quick actions)
+    // Listen for tab-switch notifications from children
     return NotificationListener<MainShellTabNotification>(
-      onNotification: (notification) {
-        _onTap(notification.tabIndex);
+      onNotification: (n) {
+        _onTap(n.tabIndex);
         return true;
       },
       child: Scaffold(
         extendBody: !useSide,
         body: useSide
-            ? _buildSideNavLayout(context, isConnected, isDogConnected)
+            ? _buildDesktopShell(context, isConnected, isDogConnected)
             : IndexedStack(index: _currentIndex, children: _screens),
         bottomNavigationBar: useSide
             ? null
@@ -86,119 +87,91 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  桌面/平板: 侧边栏 — 紫色主题
+  //  DESKTOP SHELL — Glass panel with sidebar
   // ═══════════════════════════════════════════════════════════════
-  Widget _buildSideNavLayout(
+  Widget _buildDesktopShell(
       BuildContext context, bool isConnected, bool isDogConnected) {
-    final isDark = context.isDark;
+    final dark = context.isDark;
 
-    return Row(
+    return Stack(
       children: [
-        // Custom sidebar
-        Container(
-          width: 72,
-          decoration: BoxDecoration(
-            color: isDark ? AppColors.darkSurface : AppColors.lightSidebar,
-            border: Border(
-              right: BorderSide(
-                color: isDark ? AppColors.borderDark : Colors.transparent,
-                width: 1,
-              ),
-            ),
+        // ── Background gradient ──
+        Positioned.fill(
+          child: Container(
+            decoration: BoxDecoration(gradient: context.bgGradient),
           ),
-          child: SafeArea(
-            child: Column(
-              children: [
-                const SizedBox(height: 16),
-                // Robot avatar
-                _buildRobotAvatar(isConnected, isDogConnected),
-                const SizedBox(height: 24),
-                // Nav items
-                Expanded(
-                  child: Column(
+        ),
+
+        // ── Decorative blobs ──
+        if (!dark) ...[
+          _posBlob(top: -120, left: -100, color: const Color(0x30C4B5FD), size: 450),
+          _posBlob(bottom: -120, right: -100, color: const Color(0x2893C5FD), size: 450),
+          _posBlob(top: 300, left: 400, color: const Color(0x22FBCFE8), size: 300),
+        ] else ...[
+          _posBlob(top: -120, left: -100, color: const Color(0x10C4B5FD), size: 450),
+          _posBlob(bottom: -120, right: -100, color: const Color(0x1093C5FD), size: 450),
+        ],
+
+        // ── Floating glass panel ──
+        Positioned.fill(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(40),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: dark
+                        ? Colors.white.withValues(alpha: 0.06)
+                        : Colors.white.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(40),
+                    border: Border.all(
+                      color: dark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.white.withValues(alpha: 0.65),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: dark ? 0.2 : 0.08),
+                        blurRadius: 40,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Row(
                     children: [
-                      for (int i = 0; i < _navItems.length; i++)
-                        _SideNavItem(
-                          icon: _navItems[i].icon,
-                          activeIcon: _navItems[i].activeIcon,
-                          label: _navItems[i].label,
-                          isActive: _currentIndex == i,
-                          onTap: () => _onTap(i),
+                      // ── Sidebar ──
+                      _buildSidebar(context, isConnected, isDogConnected, dark),
+
+                      // ── Content (transparent scaffold bg inside shell) ──
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: const BorderRadius.only(
+                            topRight: Radius.circular(40),
+                            bottomRight: Radius.circular(40),
+                          ),
+                          child: Theme(
+                            data: Theme.of(context).copyWith(
+                              scaffoldBackgroundColor: Colors.transparent,
+                              appBarTheme: Theme.of(context).appBarTheme.copyWith(
+                                backgroundColor: Colors.transparent,
+                                surfaceTintColor: Colors.transparent,
+                                elevation: 0,
+                                scrolledUnderElevation: 0,
+                              ),
+                            ),
+                            child: IndexedStack(
+                              index: _currentIndex,
+                              children: _screens,
+                            ),
+                          ),
                         ),
+                      ),
                     ],
                   ),
                 ),
-                // Bottom icons
-                _SideNavItem(
-                  icon: Icons.settings_outlined,
-                  activeIcon: Icons.settings_rounded,
-                  label: '设置',
-                  isActive: _currentIndex == 4,
-                  onTap: () => _onTap(4),
-                ),
-                const SizedBox(height: 8),
-                // Theme toggle dot
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: isDark ? AppColors.darkElevated : Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [AppShadows.light()],
-                  ),
-                  child: Icon(
-                    isDark ? Icons.dark_mode : Icons.light_mode,
-                    size: 14,
-                    color: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-            ),
-          ),
-        ),
-        // Content area
-        Expanded(
-          child: IndexedStack(
-            index: _currentIndex,
-            children: _screens,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRobotAvatar(bool isConnected, bool isDogConnected) {
-    return Stack(
-      alignment: Alignment.bottomRight,
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            gradient: AppColors.brandGradient,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              AppShadows.glow(AppColors.primary, blur: 12),
-            ],
-          ),
-          child: const Icon(Icons.smart_toy, color: Colors.white, size: 22),
-        ),
-        // Status dot
-        Positioned(
-          right: -2,
-          bottom: -2,
-          child: Container(
-            width: 14,
-            height: 14,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isConnected
-                  ? AppColors.online
-                  : isDogConnected
-                      ? AppColors.connecting
-                      : AppColors.offline,
-              border: Border.all(color: Colors.white, width: 2),
+              ),
             ),
           ),
         ),
@@ -207,30 +180,154 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  手机: 底部导航栏 — 浮动胶囊样式
+  //  SIDEBAR — Glass, 96px wide, matching HTML reference
+  // ═══════════════════════════════════════════════════════════════
+  Widget _buildSidebar(
+      BuildContext context, bool isConnected, bool isDogConnected, bool dark) {
+    return Container(
+      width: 96,
+      decoration: BoxDecoration(
+        color: dark
+            ? Colors.white.withValues(alpha: 0.03)
+            : Colors.white.withValues(alpha: 0.2),
+        border: Border(
+          right: BorderSide(
+            color: dark
+                ? Colors.white.withValues(alpha: 0.06)
+                : Colors.white.withValues(alpha: 0.3),
+          ),
+        ),
+      ),
+      child: SafeArea(
+        child: Column(
+          children: [
+            const SizedBox(height: 32),
+
+            // ── Robot avatar ──
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                gradient: AppColors.brandGradient,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withValues(alpha: 0.35),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.smart_toy_rounded, color: Colors.white, size: 28),
+            ),
+
+            const SizedBox(height: 40),
+
+            // ── Main nav items (0-3) ──
+            Expanded(
+              child: Column(
+                children: [
+                  for (int i = 0; i < _mainNavItems.length; i++) ...[
+                    _SideNavItem(
+                      icon: _mainNavItems[i].icon,
+                      activeIcon: _mainNavItems[i].activeIcon,
+                      label: _mainNavItems[i].label,
+                      isActive: _currentIndex == i,
+                      onTap: () => _onTap(i),
+                    ),
+                    SizedBox(height: i < _mainNavItems.length - 1 ? 20 : 0),
+                  ],
+                ],
+              ),
+            ),
+
+            // ── Settings (bottom, separated) ──
+            _SideNavItem(
+              icon: Icons.settings_outlined,
+              activeIcon: Icons.settings_rounded,
+              label: 'Settings',
+              isActive: _currentIndex == 4,
+              onTap: () => _onTap(4),
+            ),
+            const SizedBox(height: 20),
+
+            // ── User avatar with status dot ──
+            Stack(
+              alignment: Alignment.bottomRight,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: dark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : const Color(0xFFE8E5F0),
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.06),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    Icons.person_rounded,
+                    size: 24,
+                    color: dark ? Colors.white54 : context.subtitleColor,
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isConnected
+                          ? AppColors.success
+                          : isDogConnected
+                              ? AppColors.connecting
+                              : AppColors.offline,
+                      border: Border.all(color: Colors.white, width: 2.5),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  BOTTOM NAV — Mobile floating pill
   // ═══════════════════════════════════════════════════════════════
   Widget _buildBottomNav(
       BuildContext context, bool isConnected, bool isDogConnected) {
-    final isDark = context.isDark;
-
+    final dark = context.isDark;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
         child: Container(
           height: 64,
           decoration: BoxDecoration(
-            color: isDark ? AppColors.darkCard : Colors.white,
+            color: dark ? AppColors.darkCard : Colors.white,
             borderRadius: BorderRadius.circular(32),
-            boxShadow: AppShadows.elevated(isDark: isDark),
+            boxShadow: AppShadows.elevated(isDark: dark),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              for (int i = 0; i < _navItems.length; i++)
+              for (int i = 0; i < _allNavItems.length; i++)
                 _BottomNavItem(
-                  icon: _navItems[i].icon,
-                  activeIcon: _navItems[i].activeIcon,
-                  label: _navItems[i].label,
+                  icon: _allNavItems[i].icon,
+                  activeIcon: _allNavItems[i].activeIcon,
+                  label: _allNavItems[i].label,
                   isActive: _currentIndex == i,
                   badge: i == 1 && (isConnected || isDogConnected),
                   badgeColor: isConnected ? AppColors.online : AppColors.connecting,
@@ -242,10 +339,25 @@ class _MainShellScreenState extends State<MainShellScreen> {
       ),
     );
   }
+
+  // ── Blob helper ──
+  Widget _posBlob({double? top, double? bottom, double? left, double? right,
+      required Color color, required double size}) {
+    return Positioned(
+      top: top, bottom: bottom, left: left, right: right,
+      child: Container(
+        width: size, height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(colors: [color, color.withValues(alpha: 0)]),
+        ),
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Helper types
+//  Helper types
 // ─────────────────────────────────────────────────────────────────
 
 class _NavDef {
@@ -255,7 +367,10 @@ class _NavDef {
   const _NavDef(this.icon, this.activeIcon, this.label);
 }
 
-/// Sidebar nav item with purple active indicator
+// ─────────────────────────────────────────────────────────────────
+//  Sidebar nav item — glass active state (white bg + shadow)
+// ─────────────────────────────────────────────────────────────────
+
 class _SideNavItem extends StatelessWidget {
   final IconData icon;
   final IconData activeIcon;
@@ -273,34 +388,35 @@ class _SideNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = context.isDark;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Tooltip(
-          message: label,
-          child: AnimatedContainer(
-            duration: AppDurations.fast,
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: isActive
-                  ? (isDark
-                      ? AppColors.primary.withValues(alpha: 0.15)
-                      : AppColors.primary.withValues(alpha: 0.1))
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              isActive ? activeIcon : icon,
-              size: 22,
-              color: isActive
-                  ? AppColors.primary
-                  : (isDark ? AppColors.textSecondaryDark : AppColors.textSecondary),
-            ),
+    final dark = context.isDark;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Tooltip(
+        message: label,
+        child: AnimatedContainer(
+          duration: AppDurations.fast,
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: isActive
+                ? (dark ? Colors.white.withValues(alpha: 0.12) : Colors.white.withValues(alpha: 0.8))
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: isActive
+                ? [BoxShadow(
+                    color: Colors.black.withValues(alpha: dark ? 0.15 : 0.08),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  )]
+                : null,
+          ),
+          child: Icon(
+            isActive ? activeIcon : icon,
+            size: 24,
+            color: isActive
+                ? AppColors.primary
+                : (dark ? AppColors.textSecondaryDark : AppColors.textSecondary),
           ),
         ),
       ),
@@ -308,7 +424,10 @@ class _SideNavItem extends StatelessWidget {
   }
 }
 
-/// Bottom nav item with active pill indicator
+// ─────────────────────────────────────────────────────────────────
+//  Bottom nav item (mobile)
+// ─────────────────────────────────────────────────────────────────
+
 class _BottomNavItem extends StatelessWidget {
   final IconData icon;
   final IconData activeIcon;
@@ -354,9 +473,7 @@ class _BottomNavItem extends StatelessWidget {
                   child: Icon(
                     isActive ? activeIcon : icon,
                     size: 22,
-                    color: isActive
-                        ? AppColors.primary
-                        : context.subtitleColor,
+                    color: isActive ? AppColors.primary : context.subtitleColor,
                   ),
                 ),
                 if (badge)

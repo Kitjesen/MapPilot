@@ -838,7 +838,7 @@ class OtaGateway extends ChangeNotifier {
                 artifactName: e.artifactName,
                 fromVersion: e.fromVersion,
                 toVersion: e.toVersion,
-                status: e.success ? 'success' : 'failed',
+                status: e.status,
               ))
           .toList();
       notifyListeners();

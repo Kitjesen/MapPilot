@@ -539,14 +539,14 @@ class MockRobotClient implements RobotClientBase {
           ..artifactName = 'navigation_firmware'
           ..fromVersion = '0.9.0'
           ..toVersion = '1.0.0'
-          ..success = true,
+          ..status = 'success',
         UpgradeHistoryEntry()
           ..timestamp = DateTime.now().subtract(const Duration(days: 3)).toIso8601String()
           ..action = 'install'
           ..artifactName = 'yolov8n'
           ..fromVersion = '8.0.0'
           ..toVersion = '8.0.1'
-          ..success = true,
+          ..status = 'success',
       ]);
   }
 
