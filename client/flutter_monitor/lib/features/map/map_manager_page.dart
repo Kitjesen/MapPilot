@@ -41,13 +41,47 @@ class _MapManagerPageState extends State<MapManagerPage> {
     if (name == null) return;
     final saveName = _normalizeMapSaveName(name);
     if (saveName == null) return;
+
+    // 覆盖保护: 检查同名是否已存在
+    final gateway = context.read<MapGateway>();
+    if (gateway.mapNameExists(saveName)) {
+      final overwrite = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('地图已存在'),
+          content: Text('"$saveName" 已存在，要覆盖吗？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('覆盖', style: TextStyle(color: AppColors.error)),
+            ),
+          ],
+        ),
+      );
+      if (overwrite != true) return;
+      // 先删除旧的，再保存新的
+      final (delOk, delMsg) = await gateway.deleteMap('/maps/$saveName');
+      if (!delOk) {
+        _snack('无法覆盖: $delMsg', err: true);
+        return;
+      }
+    }
+
     HapticFeedback.lightImpact();
-    final (ok, msg) =
-        await context.read<MapGateway>().saveMap('/maps/$saveName');
+    final (ok, msg) = await gateway.saveMap('/maps/$saveName');
     _snack(ok ? '已保存 $saveName' : msg, err: !ok);
   }
 
   Future<void> _loadMap(MapInfo m) async {
+    // 格式感知: 只有 PCD 可用于 relocalize
+    if (!MapGateway.canRelocalize(m)) {
+      _snack('${_fmtExt(m.name)} 格式不支持加载定位，仅 PCD 可用', err: true);
+      return;
+    }
     final ok = await _relocalizeDialog(m);
     if (ok != true) return;
     final validationError = _validateRelocalizeInputs();
@@ -93,23 +127,49 @@ class _MapManagerPageState extends State<MapManagerPage> {
 
   Future<void> _download(MapInfo m) async {
     HapticFeedback.lightImpact();
-    _snack('正在下载 ${m.name}...');
     final gateway = context.read<MapGateway>();
-    final bytes = await gateway.downloadMap(m.path);
-    if (bytes == null || !mounted) {
-      _snack('下载失败', err: true);
-      return;
-    }
+
+    // 显示进度对话框
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text('下载 ${m.name}'),
+        content: ValueListenableBuilder<double>(
+          valueListenable: gateway.downloadProgressNotifier,
+          builder: (_, progress, __) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(value: progress > 0 ? progress : null),
+              const SizedBox(height: 8),
+              Text(
+                progress > 0
+                    ? '${(progress * 100).toStringAsFixed(0)}%'
+                    : '准备中...',
+                style: TextStyle(fontSize: 12, color: context.subtitleColor),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
     try {
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/${m.name}');
-      await file.writeAsBytes(bytes);
+      final bytes = await gateway.downloadMapToFile(m.path, file);
+      if (mounted) Navigator.of(context).pop(); // 关闭进度对话框
+      if (bytes == null || !mounted) {
+        _snack('下载失败', err: true);
+        return;
+      }
       if (mounted) {
-        final sizeMB = (bytes.length / (1024 * 1024)).toStringAsFixed(1);
-        _snack('已下载 ${m.name} (${sizeMB} MB) → ${file.path}');
+        final sizeMB = (bytes / (1024 * 1024)).toStringAsFixed(1);
+        _snack('已下载 ${m.name} ($sizeMB MB) → ${file.path}');
       }
     } catch (e) {
-      _snack('保存失败: $e', err: true);
+      if (mounted) Navigator.of(context).pop();
+      _snack('下载失败: $e', err: true);
     }
   }
 
@@ -296,6 +356,9 @@ class _MapManagerPageState extends State<MapManagerPage> {
   }
 
   Widget _mapRow(MapInfo m, {bool isLast = false}) {
+    final canLoad = MapGateway.canRelocalize(m);
+    final ext = _fmtExt(m.name);
+
     return Container(
       decoration: BoxDecoration(
         color: context.isDark ? AppColors.darkCard : Colors.white,
@@ -315,15 +378,52 @@ class _MapManagerPageState extends State<MapManagerPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(m.name, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: context.titleColor)),
+                    Row(children: [
+                      Flexible(
+                        child: Text(
+                          m.name,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: canLoad
+                                ? context.titleColor
+                                : context.subtitleColor,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (!canLoad) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: context.isDark
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : Colors.black.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            ext.toUpperCase(),
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: context.subtitleColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ]),
                     const SizedBox(height: 3),
                     Text(
                       [
                         _fmtSize(m.sizeBytes),
                         if (m.pointCount > 0) '${_fmtPts(m.pointCount)} 点',
-                        if (m.modifiedAt.isNotEmpty) m.modifiedAt.split('T').first,
+                        if (m.modifiedAt.isNotEmpty)
+                          m.modifiedAt.split('T').first,
                       ].join('  ·  '),
-                      style: TextStyle(fontSize: 12, color: context.subtitleColor),
+                      style: TextStyle(
+                          fontSize: 12, color: context.subtitleColor),
                     ),
                   ],
                 ),
@@ -332,16 +432,26 @@ class _MapManagerPageState extends State<MapManagerPage> {
               PopupMenuButton<String>(
                 iconSize: 18,
                 padding: EdgeInsets.zero,
-                icon: Icon(Icons.more_horiz, size: 18, color: context.subtitleColor),
+                icon: Icon(Icons.more_horiz, size: 18,
+                    color: context.subtitleColor),
                 onSelected: (v) {
+                  if (v == 'load') _loadMap(m);
                   if (v == 'download') _download(m);
                   if (v == 'rename') _rename(m);
                   if (v == 'delete') _delete(m);
                 },
                 itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'download', child: Text('下载到本机')),
-                  const PopupMenuItem(value: 'rename', child: Text('重命名')),
-                  const PopupMenuItem(value: 'delete', child: Text('删除', style: TextStyle(color: AppColors.error))),
+                  if (canLoad)
+                    const PopupMenuItem(
+                        value: 'load', child: Text('加载定位')),
+                  const PopupMenuItem(
+                      value: 'download', child: Text('下载到本机')),
+                  const PopupMenuItem(
+                      value: 'rename', child: Text('重命名')),
+                  const PopupMenuItem(
+                      value: 'delete',
+                      child: Text('删除',
+                          style: TextStyle(color: AppColors.error))),
                 ],
               ),
             ],
@@ -353,4 +463,5 @@ class _MapManagerPageState extends State<MapManagerPage> {
 
   String _fmtSize(Int64 b) { final mb = b.toDouble() / (1024 * 1024); return mb >= 1024 ? '${(mb / 1024).toStringAsFixed(1)} GB' : mb >= 1 ? '${mb.toStringAsFixed(1)} MB' : '${(b.toDouble() / 1024).toStringAsFixed(0)} KB'; }
   String _fmtPts(int c) => c >= 1000000 ? '${(c / 1000000).toStringAsFixed(1)}M' : c >= 1000 ? '${(c / 1000).toStringAsFixed(0)}K' : '$c';
+  String _fmtExt(String name) { final dot = name.lastIndexOf('.'); return dot >= 0 ? name.substring(dot + 1) : ''; }
 }

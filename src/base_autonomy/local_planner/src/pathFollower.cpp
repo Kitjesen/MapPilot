@@ -121,6 +121,10 @@ public:
     autonomySpeed_ = get_parameter("autonomySpeed").as_double();
     joyToSpeedDelay_ = get_parameter("joyToSpeedDelay").as_double();
 
+    // --- Dynamic Parameter Callback ---
+    param_cb_handle_ = add_on_set_parameters_callback(
+        std::bind(&PathFollower::onParamChange, this, std::placeholders::_1));
+
     // --- ROS Interfaces ---
     subOdom_ = create_subscription<nav_msgs::msg::Odometry>(
         "/Odometry", 5, std::bind(&PathFollower::odomHandler, this, std::placeholders::_1));
@@ -190,6 +194,51 @@ private:
   bool autonomyMode_ = false;
   double autonomySpeed_ = 1.0;
   double joyToSpeedDelay_ = 2.0;
+
+  // --- Dynamic Parameter Callback ---
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
+
+  rcl_interfaces::msg::SetParametersResult
+  onParamChange(const std::vector<rclcpp::Parameter> &params) {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    for (const auto &p : params) {
+      const auto &name = p.get_name();
+      if (name == "yawRateGain") yawRateGain_ = p.as_double();
+      else if (name == "stopYawRateGain") stopYawRateGain_ = p.as_double();
+      else if (name == "maxYawRate") maxYawRate_ = p.as_double();
+      else if (name == "maxSpeed") maxSpeed_ = p.as_double();
+      else if (name == "maxAccel") maxAccel_ = p.as_double();
+      else if (name == "lookAheadDis") lookAheadDis_ = p.as_double();
+      else if (name == "baseLookAheadDis") baseLookAheadDis_ = p.as_double();
+      else if (name == "lookAheadRatio") lookAheadRatio_ = p.as_double();
+      else if (name == "minLookAheadDis") minLookAheadDis_ = p.as_double();
+      else if (name == "maxLookAheadDis") maxLookAheadDis_ = p.as_double();
+      else if (name == "switchTimeThre") switchTimeThre_ = p.as_double();
+      else if (name == "dirDiffThre") dirDiffThre_ = p.as_double();
+      else if (name == "inclRateThre") inclRateThre_ = p.as_double();
+      else if (name == "slowRate1") slowRate1_ = p.as_double();
+      else if (name == "slowRate2") slowRate2_ = p.as_double();
+      else if (name == "slowRate3") slowRate3_ = p.as_double();
+      else if (name == "slowTime1") slowTime1_ = p.as_double();
+      else if (name == "slowTime2") slowTime2_ = p.as_double();
+      else if (name == "inclThre") inclThre_ = p.as_double();
+      else if (name == "stopTime") stopTime_ = p.as_double();
+      else if (name == "stopDisThre") stopDisThre_ = p.as_double();
+      else if (name == "slowDwnDisThre") slowDwnDisThre_ = p.as_double();
+      else if (name == "autonomySpeed") autonomySpeed_ = p.as_double();
+      else if (name == "pubSkipNum") pubSkipNum_ = p.as_int();
+      else if (name == "useInclRateToSlow") useInclRateToSlow_ = p.as_bool();
+      else if (name == "useInclToStop") useInclToStop_ = p.as_bool();
+      else if (name == "noRotAtStop") noRotAtStop_ = p.as_bool();
+      else if (name == "noRotAtGoal") noRotAtGoal_ = p.as_bool();
+      else if (name == "twoWayDrive") twoWayDrive_ = p.as_bool();
+      else {
+        RCLCPP_WARN(get_logger(), "Unknown dynamic param: %s", name.c_str());
+      }
+    }
+    return result;
+  }
 
   // --- State Variables ---
   float joySpeed_ = 0;

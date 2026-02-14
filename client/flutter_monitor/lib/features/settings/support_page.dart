@@ -7,6 +7,9 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 class SupportPage extends StatelessWidget {
   const SupportPage({super.key});
 
+  static const _appVersion = String.fromEnvironment('APP_VERSION', defaultValue: '1.2.0');
+  static const _buildNumber = String.fromEnvironment('BUILD_NUMBER', defaultValue: '1');
+
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
@@ -128,7 +131,7 @@ class SupportPage extends StatelessWidget {
 
     final info = StringBuffer();
     info.writeln('=== 大算机器人 设备信息 ===');
-    info.writeln('APP 版本: v1.0.0 (Build 1)');
+    info.writeln('APP 版本: v$_appVersion (Build $_buildNumber)');
     info.writeln('协议: gRPC + WebRTC');
     info.writeln('连接状态: ${provider.isConnected ? "已连接" : "未连接"}');
     if (slow != null) {

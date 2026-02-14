@@ -146,7 +146,12 @@ class _ControlScreenState extends State<ControlScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final gw = context.watch<ControlGateway>();
+    // 使用 select 代替 watch，避免摇杆速度更新触发全树重建。
+    // 只在 hasLease / useDogDirect / dogClient 变化时重建。
+    final gw = context.read<ControlGateway>();
+    final hasLease = context.select<ControlGateway, bool>((g) => g.hasLease);
+    final useDogDirect = context.select<ControlGateway, bool>((g) => g.useDogDirect);
+    final dogClientRef = context.select<ControlGateway, DogDirectClient?>((g) => g.dogClient);
     final provider = context.watch<RobotConnectionProvider>();
     final client = provider.client;
     final isDogConnected = provider.isDogConnected;
@@ -225,7 +230,7 @@ class _ControlScreenState extends State<ControlScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   blurSigma: 10,
-                  color: gw.useDogDirect
+                  color: useDogDirect
                       ? AppColors.warning.withValues(alpha: 0.2)
                       : Colors.grey.withValues(alpha: 0.1),
                   child: Row(
@@ -235,15 +240,15 @@ class _ControlScreenState extends State<ControlScreen> {
                         Icons.pets,
                         size: 14,
                         color:
-                            gw.useDogDirect ? AppColors.warning : Colors.grey,
+                            useDogDirect ? AppColors.warning : Colors.grey,
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        gw.useDogDirect ? 'DOG' : 'NAV',
+                        useDogDirect ? 'DOG' : 'NAV',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: gw.useDogDirect
+                          color: useDogDirect
                               ? AppColors.warning
                               : Colors.grey,
                         ),
@@ -261,23 +266,23 @@ class _ControlScreenState extends State<ControlScreen> {
                 borderRadius: 20,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                color: gw.hasLease
+                color: hasLease
                     ? AppColors.success.withValues(alpha: 0.2)
                     : Colors.grey.withValues(alpha: 0.2),
                 child: Row(
                   children: [
                     Icon(
-                      gw.hasLease ? Icons.lock_open : Icons.lock,
+                      hasLease ? Icons.lock_open : Icons.lock,
                       size: 16,
-                      color: gw.hasLease ? AppColors.success : Colors.grey,
+                      color: hasLease ? AppColors.success : Colors.grey,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      gw.hasLease ? 'LEASE ACTIVE' : 'NO LEASE',
+                      hasLease ? 'LEASE ACTIVE' : 'NO LEASE',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: gw.hasLease ? AppColors.success : Colors.grey,
+                        color: hasLease ? AppColors.success : Colors.grey,
                       ),
                     ),
                   ],
@@ -346,8 +351,8 @@ class _ControlScreenState extends State<ControlScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         // Mode Selection / Dog Control
-                        if (gw.useDogDirect)
-                          _buildDogControlButtons(gw.dogClient)
+                        if (useDogDirect)
+                          _buildDogControlButtons(dogClientRef)
                         else
                           GlassCard(
                             padding: const EdgeInsets.all(4),
@@ -398,23 +403,26 @@ class _ControlScreenState extends State<ControlScreen> {
                           ),
                         ),
                         const Spacer(),
-                        // Status Text
-                        GlassCard(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          child: Text(
-                            gw.useDogDirect
-                                ? 'X: ${gw.linearX.toStringAsFixed(2)}  Y: ${gw.linearY.toStringAsFixed(2)}  Z: ${gw.angularZ.toStringAsFixed(2)}'
-                                : 'Vx: ${gw.linearX.toStringAsFixed(2)}  Vy: ${gw.linearY.toStringAsFixed(2)}  Wz: ${gw.angularZ.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontFamily: 'monospace',
-                              fontFeatures: const [
-                                FontFeature.tabularFigures()
-                              ],
-                              color: context.isDark
-                                  ? Colors.white70
-                                  : Colors.black.withValues(alpha: 0.6),
+                        // Status Text — 独立更新，不触发整棵树重建
+                        ValueListenableBuilder<({double vx, double vy, double wz})>(
+                          valueListenable: gw.velocityNotifier,
+                          builder: (_, vel, __) => GlassCard(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            child: Text(
+                              useDogDirect
+                                  ? 'X: ${vel.vx.toStringAsFixed(2)}  Y: ${vel.vy.toStringAsFixed(2)}  Z: ${vel.wz.toStringAsFixed(2)}'
+                                  : 'Vx: ${vel.vx.toStringAsFixed(2)}  Vy: ${vel.vy.toStringAsFixed(2)}  Wz: ${vel.wz.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontFamily: 'monospace',
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures()
+                                ],
+                                color: context.isDark
+                                    ? Colors.white70
+                                    : Colors.black.withValues(alpha: 0.6),
+                              ),
                             ),
                           ),
                         ),

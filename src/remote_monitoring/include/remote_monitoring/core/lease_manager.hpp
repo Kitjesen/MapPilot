@@ -29,6 +29,9 @@ public:
 
   // 检查是否有任何活跃租约（未过期）
   bool HasActiveLease();
+
+  // 强制释放当前租约 (用于 Logout / 断联降级)
+  void ForceRelease();
   
   // 检查超时（定期调用）
   void CheckTimeout();

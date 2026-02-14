@@ -12,9 +12,9 @@ HealthMonitor::HealthMonitor(rclcpp::Node *node)
 
   node_->declare_parameter<double>("health_rate_window_sec", 2.0);
   node_->declare_parameter<double>("health_eval_hz", 5.0);
-  node_->declare_parameter<std::string>("health_odom_topic", "/Odometry");
-  node_->declare_parameter<std::string>("health_terrain_topic", "/terrain_map");
-  node_->declare_parameter<std::string>("health_path_topic", "/path");
+  node_->declare_parameter<std::string>("health_odom_topic", "/nav/odometry");
+  node_->declare_parameter<std::string>("health_terrain_topic", "/nav/terrain_map");
+  node_->declare_parameter<std::string>("health_path_topic", "/nav/local_path");
   node_->declare_parameter<std::string>("health_tf_map", "map");
   node_->declare_parameter<std::string>("health_tf_odom", "odom");
   node_->declare_parameter<std::string>("health_tf_body", "body");
@@ -41,17 +41,25 @@ HealthMonitor::HealthMonitor(rclcpp::Node *node)
       path_topic, 5,
       std::bind(&HealthMonitor::PathTick, this, std::placeholders::_1));
 
-  // 定位质量 (ICP fitness score)
+  // 定位质量 (ICP fitness score) — 话题名可通过参数覆盖
+  if (!node_->has_parameter("health_localization_quality_topic"))
+    node_->declare_parameter<std::string>(
+        "health_localization_quality_topic", "/nav/localization_quality");
+  const auto loc_quality_topic =
+      node_->get_parameter("health_localization_quality_topic").as_string();
   sub_localization_quality_ =
       node_->create_subscription<std_msgs::msg::Float32>(
-          "/localization_quality", 10,
+          loc_quality_topic, 10,
           std::bind(&HealthMonitor::LocalizationQualityCallback, this,
                     std::placeholders::_1));
 
   // 发布
   pub_health_ =
       node_->create_publisher<std_msgs::msg::String>("/robot_health", 5);
-  pub_stop_ = node_->create_publisher<std_msgs::msg::Int8>("/stop", 5);
+  if (!node_->has_parameter("health_stop_topic"))
+    node_->declare_parameter<std::string>("health_stop_topic", "/nav/stop");
+  pub_stop_ = node_->create_publisher<std_msgs::msg::Int8>(
+      node_->get_parameter("health_stop_topic").as_string(), 5);
 
   // 频率重置定时器
   rate_timer_ = node_->create_wall_timer(
@@ -79,8 +87,9 @@ RobotHealth HealthMonitor::GetHealth() const {
 bool HealthMonitor::CheckTf(const std::string &target,
                             const std::string &source) {
   try {
+    // 非阻塞: timeout=0 避免卡死 ROS 执行器线程 (30Hz 调用时 0.1s 超时是灾难)
     return tf_buffer_.canTransform(target, source, tf2::TimePointZero,
-                                   tf2::durationFromSec(0.1));
+                                   tf2::durationFromSec(0.0));
   } catch (...) {
     return false;
   }

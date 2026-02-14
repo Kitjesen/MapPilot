@@ -14,6 +14,8 @@ abstract class RobotClientBase {
   Stream<DataChunk> subscribeToResource(ResourceId resourceId);
 
   Future<bool> acquireLease();
+  Future<bool> ensureLease();
+  bool get hasLease;
   Future<void> releaseLease();
   Stream<TeleopFeedback> streamTeleop(Stream<Twist> velocityStream);
   Future<bool> setMode(RobotMode mode);
@@ -50,6 +52,14 @@ abstract class RobotClientBase {
 
   /// 查询任务状态
   Future<GetTaskStatusResponse> getTaskStatus({required String taskId});
+
+  // ==================== 航点管理 ====================
+
+  /// 查询当前活跃航点 (来源/列表/进度)
+  Future<GetActiveWaypointsResponse> getActiveWaypoints();
+
+  /// 清除所有航点并立即停车
+  Future<ClearWaypointsResponse> clearWaypoints();
 
   // ==================== 地图管理 ====================
 
@@ -134,6 +144,18 @@ abstract class RobotClientBase {
   Future<ValidateSystemVersionResponse> validateSystemVersion({
     String expectedSystemVersion = '',
     List<ComponentVersion> expectedComponents = const [],
+  });
+
+  // ==================== 运行参数配置 ====================
+
+  /// 获取当前运行参数 (JSON 格式)
+  Future<GetRuntimeConfigResponse> getRuntimeConfig();
+
+  /// 设置运行参数 (JSON 格式, 增量推送)
+  Future<SetRuntimeConfigResponse> setRuntimeConfig({
+    required String configJson,
+    int expectedVersion = 0,
+    List<String> changedFields = const [],
   });
 
   // ==================== 系统信息 ====================

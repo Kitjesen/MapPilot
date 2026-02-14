@@ -50,20 +50,24 @@ void main() {
           anyOf(DeployPhase.completed, DeployPhase.failed));
     });
 
-    test('cancelDeploy sets phase to failed', () async {
+    test('cancelDeploy clears active deployment after settling', () async {
       await mockClient.connect();
       gateway.updateClient(mockClient);
 
       // Start deployment (don't await)
-      gateway.deployFromLocal(
+      final future = gateway.deployFromLocal(
         List<int>.filled(100, 0),
         'test_firmware.bin',
       );
 
-      // Cancel it
+      // Cancel it — sets _cancelled flag internally
       gateway.cancelDeploy();
 
-      expect(gateway.activeDeployment?.phase, DeployPhase.failed);
+      // Wait for the future to settle (orchestrator clears deployment)
+      await future;
+
+      // After cancellation the orchestrator nulls out _activeDeployment
+      expect(gateway.activeDeployment, isNull);
     });
 
     test('connection drop during deployment marks failure', () async {
@@ -107,8 +111,9 @@ void main() {
     });
 
     test('fetchInstalledVersions throws when disconnected', () async {
-      expect(
-        () => gateway.fetchInstalledVersions(),
+      // Uses expectLater for async exception
+      await expectLater(
+        gateway.fetchInstalledVersions(),
         throwsException,
       );
     });

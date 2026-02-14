@@ -95,6 +95,12 @@ void LeaseManager::CheckTimeout() {
   }
 }
 
+void LeaseManager::ForceRelease() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  current_token_.clear();
+  current_holder_.clear();
+}
+
 std::string LeaseManager::GenerateToken() {
   std::random_device rd;
   std::mt19937_64 gen(rd());

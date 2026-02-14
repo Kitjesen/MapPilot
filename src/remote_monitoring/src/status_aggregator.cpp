@@ -1,6 +1,8 @@
 #include "remote_monitoring/status_aggregator.hpp"
+#include "remote_monitoring/core/flight_recorder.hpp"
 #include "remote_monitoring/core/geofence_monitor.hpp"
 #include "remote_monitoring/core/health_monitor.hpp"
+#include "remote_monitoring/core/localization_scorer.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -34,10 +36,10 @@ StatusAggregator::StatusAggregator(rclcpp::Node *node)
   node_->declare_parameter<double>("fast_state_hz", 30.0);
   node_->declare_parameter<double>("slow_state_hz", 1.0);
   node_->declare_parameter<double>("rate_window_sec", 2.0);
-  node_->declare_parameter<std::string>("odom_topic", "/Odometry");
-  node_->declare_parameter<std::string>("terrain_map_topic", "/terrain_map");
-  node_->declare_parameter<std::string>("path_topic", "/path");
-  node_->declare_parameter<std::string>("slow_down_topic", "/slow_down");
+  node_->declare_parameter<std::string>("odom_topic", "/nav/odometry");
+  node_->declare_parameter<std::string>("terrain_map_topic", "/nav/terrain_map");
+  node_->declare_parameter<std::string>("path_topic", "/nav/local_path");
+  node_->declare_parameter<std::string>("slow_down_topic", "/nav/slow_down");
   node_->declare_parameter<std::string>("tf_map_frame", "map");
   node_->declare_parameter<std::string>("tf_odom_frame", "odom");
   node_->declare_parameter<std::string>("tf_body_frame", "body");
@@ -75,12 +77,22 @@ StatusAggregator::StatusAggregator(rclcpp::Node *node)
   // 模拟电池初始化
   battery_sim_start_ = std::chrono::steady_clock::now();
 
+  // 后台线程: /proc 系统资源采样 (避免在 ROS executor 上做阻塞 I/O)
+  sys_resource_thread_ = std::thread([this]() { UpdateSysResourcesBackground(); });
+
   rate_timer_ = node_->create_wall_timer(
     std::chrono::duration<double>(window_sec_), [this]() { update_rates(); });
   fast_state_timer_ = node_->create_wall_timer(
     std::chrono::duration<double>(1.0 / std::max(fast_hz_, 0.1)), [this]() { update_fast_state(); });
   slow_state_timer_ = node_->create_wall_timer(
     std::chrono::duration<double>(1.0 / std::max(slow_hz_, 0.1)), [this]() { update_slow_state(); });
+}
+
+StatusAggregator::~StatusAggregator() {
+  sys_resource_stop_.store(true, std::memory_order_relaxed);
+  if (sys_resource_thread_.joinable()) {
+    sys_resource_thread_.join();
+  }
 }
 
 void StatusAggregator::SetModeProvider(ModeProvider provider) {
@@ -127,28 +139,30 @@ void StatusAggregator::update_rates() {
 
 bool StatusAggregator::check_tf(const std::string &target, const std::string &source) {
   try {
+    // 非阻塞: timeout=0 避免在 ROS 执行器线程上阻塞 (之前 0.1s 会卡死执行器)
     return tf_buffer_.canTransform(target, source, tf2::TimePointZero,
-                                   tf2::durationFromSec(0.1));
+                                   tf2::durationFromSec(0.0));
   } catch (...) {
     return false;
   }
 }
 
-robot::v1::FastState StatusAggregator::GetFastState() {
+std::shared_ptr<const robot::v1::FastState> StatusAggregator::GetFastState() {
   std::lock_guard<std::mutex> lock(fast_mutex_);
-  return latest_fast_state_;
+  return latest_fast_state_;  // shared_ptr 拷贝 = 原子引用计数，几乎免费
 }
 
-robot::v1::SlowState StatusAggregator::GetSlowState() {
+std::shared_ptr<const robot::v1::SlowState> StatusAggregator::GetSlowState() {
   std::lock_guard<std::mutex> lock(slow_mutex_);
   return latest_slow_state_;
 }
 
 void StatusAggregator::update_fast_state() {
-  robot::v1::FastState state;
+  // 复用 scratch protobuf 内部缓冲区 — Clear() 不释放已分配的子消息内存
+  scratch_fast_state_.Clear();
   
   // 设置 header
-  auto *header = state.mutable_header();
+  auto *header = scratch_fast_state_.mutable_header();
   const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
   header->mutable_timestamp()->set_seconds(now_ns / 1000000000);
@@ -157,7 +171,7 @@ void StatusAggregator::update_fast_state() {
   
   // 从 latest_odom_ 提取位姿和速度
   if (latest_odom_) {
-    auto *pose = state.mutable_pose();
+    auto *pose = scratch_fast_state_.mutable_pose();
     pose->mutable_position()->set_x(latest_odom_->pose.pose.position.x);
     pose->mutable_position()->set_y(latest_odom_->pose.pose.position.y);
     pose->mutable_position()->set_z(latest_odom_->pose.pose.position.z);
@@ -166,7 +180,7 @@ void StatusAggregator::update_fast_state() {
     pose->mutable_orientation()->set_z(latest_odom_->pose.pose.orientation.z);
     pose->mutable_orientation()->set_w(latest_odom_->pose.pose.orientation.w);
     
-    auto *vel = state.mutable_velocity();
+    auto *vel = scratch_fast_state_.mutable_velocity();
     vel->mutable_linear()->set_x(latest_odom_->twist.twist.linear.x);
     vel->mutable_linear()->set_y(latest_odom_->twist.twist.linear.y);
     vel->mutable_linear()->set_z(latest_odom_->twist.twist.linear.z);
@@ -182,57 +196,120 @@ void StatusAggregator::update_fast_state() {
     tf2::Matrix3x3 m(q);
     double roll, pitch, yaw;
     m.getRPY(roll, pitch, yaw);
-    state.mutable_rpy_deg()->set_x(roll * 180.0 / M_PI);
-    state.mutable_rpy_deg()->set_y(pitch * 180.0 / M_PI);
-    state.mutable_rpy_deg()->set_z(yaw * 180.0 / M_PI);
+    scratch_fast_state_.mutable_rpy_deg()->set_x(roll * 180.0 / M_PI);
+    scratch_fast_state_.mutable_rpy_deg()->set_y(pitch * 180.0 / M_PI);
+    scratch_fast_state_.mutable_rpy_deg()->set_z(yaw * 180.0 / M_PI);
   }
   
   // TF 状态
   const bool tf_ok = check_tf(tf_map_frame_, tf_odom_frame_) &&
                      check_tf(tf_odom_frame_, tf_body_frame_);
-  state.set_tf_ok(tf_ok);
+  scratch_fast_state_.set_tf_ok(tf_ok);
+  cached_tf_ok_.store(tf_ok, std::memory_order_relaxed);
 
   // 从 RobotState 提取：关节角度 + IMU (加速度 / 角速度)
   {
     std::lock_guard<std::mutex> rs_lock(robot_state_mutex_);
     if (latest_robot_state_) {
-      // ── 关节角度 ──
-      // 12 DOF -> 16 个值 (每条腿增加一个 foot=0)
-      // 顺序: FR(hip,thigh,calf) FL(hip,thigh,calf) RR(hip,thigh,calf) RL(hip,thigh,calf)
-      state.clear_joint_angles();
       for (int leg = 0; leg < 4; ++leg) {
-        state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 0]); // hip
-        state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 1]); // thigh
-        state.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 2]); // calf
-        state.add_joint_angles(0.0f); // foot (no physical joint)
+        scratch_fast_state_.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 0]);
+        scratch_fast_state_.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 1]);
+        scratch_fast_state_.add_joint_angles(latest_robot_state_->joint_positions[leg * 3 + 2]);
+        scratch_fast_state_.add_joint_angles(0.0f);
       }
 
-      // ── IMU 线加速度 (m/s²) from imu_accelerometer[3] ──
-      state.mutable_linear_acceleration()->set_x(
+      scratch_fast_state_.mutable_linear_acceleration()->set_x(
           static_cast<double>(latest_robot_state_->imu_accelerometer[0]));
-      state.mutable_linear_acceleration()->set_y(
+      scratch_fast_state_.mutable_linear_acceleration()->set_y(
           static_cast<double>(latest_robot_state_->imu_accelerometer[1]));
-      state.mutable_linear_acceleration()->set_z(
+      scratch_fast_state_.mutable_linear_acceleration()->set_z(
           static_cast<double>(latest_robot_state_->imu_accelerometer[2]));
 
-      // ── IMU 角速度 (rad/s) from imu_gyroscope[3] ──
-      state.mutable_angular_velocity()->set_x(
+      scratch_fast_state_.mutable_angular_velocity()->set_x(
           static_cast<double>(latest_robot_state_->imu_gyroscope[0]));
-      state.mutable_angular_velocity()->set_y(
+      scratch_fast_state_.mutable_angular_velocity()->set_y(
           static_cast<double>(latest_robot_state_->imu_gyroscope[1]));
-      state.mutable_angular_velocity()->set_z(
+      scratch_fast_state_.mutable_angular_velocity()->set_z(
           static_cast<double>(latest_robot_state_->imu_gyroscope[2]));
     }
   }
 
-  std::lock_guard<std::mutex> lock(fast_mutex_);
-  latest_fast_state_ = state;
+  // 定位健康评分 (由 LocalizationScorer 以 10Hz 计算)
+  if (localization_scorer_) {
+    scratch_fast_state_.set_localization_score(localization_scorer_->GetScore());
+    scratch_fast_state_.set_speed_scale(localization_scorer_->GetSpeedScale());
+  }
+
+  // O(1) Swap 替代深拷贝 — 将 scratch 转为 shared_ptr<const> 发布给所有客户端
+  auto new_state = std::make_shared<robot::v1::FastState>();
+  new_state->Swap(&scratch_fast_state_);
+  {
+    std::lock_guard<std::mutex> lock(fast_mutex_);
+    latest_fast_state_ = std::move(new_state);
+  }
+
+  // 黑盒录制: 将当前帧推入 FlightRecorder 环形缓冲
+  if (flight_recorder_) {
+    core::FlightSnapshot snap{};
+    snap.timestamp_sec = static_cast<double>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count()) / 1e6;
+
+    if (latest_odom_) {
+      snap.x = static_cast<float>(latest_odom_->pose.pose.position.x);
+      snap.y = static_cast<float>(latest_odom_->pose.pose.position.y);
+      snap.z = static_cast<float>(latest_odom_->pose.pose.position.z);
+      snap.vx = static_cast<float>(latest_odom_->twist.twist.linear.x);
+      snap.vy = static_cast<float>(latest_odom_->twist.twist.linear.y);
+      snap.wz = static_cast<float>(latest_odom_->twist.twist.angular.z);
+    }
+
+    // RPY 来自已计算的 new_state (swap 后读取 latest_fast_state_)
+    {
+      std::lock_guard<std::mutex> fsl(fast_mutex_);
+      if (latest_fast_state_ && latest_fast_state_->has_rpy_deg()) {
+        snap.roll  = static_cast<float>(latest_fast_state_->rpy_deg().x());
+        snap.pitch = static_cast<float>(latest_fast_state_->rpy_deg().y());
+        snap.yaw   = static_cast<float>(latest_fast_state_->rpy_deg().z());
+      }
+    }
+
+    if (localization_scorer_) {
+      snap.loc_health_score = localization_scorer_->GetScore();
+      snap.icp_fitness = -1.0f;  // 由 scorer 内部管理
+    }
+    // 电池: 复用 SlowState 的逻辑 (真实 > 模拟)
+    {
+      std::lock_guard<std::mutex> rs_lock(robot_state_mutex_);
+      if (!use_simulated_battery_ && latest_robot_state_) {
+        snap.battery_percent =
+            static_cast<float>(latest_robot_state_->battery.percentage);
+      } else {
+        snap.battery_percent = static_cast<float>(simulated_battery_);
+      }
+    }
+    snap.cpu_temp =
+        static_cast<float>(cached_cpu_temp_.load(std::memory_order_relaxed));
+    snap.tf_ok = tf_ok ? 1 : 0;
+    const auto current_mode =
+        mode_provider_ ? mode_provider_() : robot::v1::ROBOT_MODE_IDLE;
+    snap.mode = static_cast<uint8_t>(current_mode);
+    snap.estop =
+        (current_mode == robot::v1::ROBOT_MODE_ESTOP) ? uint8_t{1} : uint8_t{0};
+    if (health_monitor_) {
+      snap.health_level =
+          static_cast<uint8_t>(health_monitor_->GetOverallLevel());
+    }
+
+    flight_recorder_->RecordSnapshot(snap);
+  }
 }
 
 void StatusAggregator::update_slow_state() {
-  robot::v1::SlowState state;
+  scratch_slow_state_.Clear();
   
-  auto *header = state.mutable_header();
+  auto *header = scratch_slow_state_.mutable_header();
   const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
   header->mutable_timestamp()->set_seconds(now_ns / 1000000000);
@@ -243,23 +320,23 @@ void StatusAggregator::update_slow_state() {
   if (mode_provider_) {
     const auto mode = mode_provider_();
     switch (mode) {
-      case robot::v1::ROBOT_MODE_IDLE:       state.set_current_mode("idle"); break;
-      case robot::v1::ROBOT_MODE_MANUAL:     state.set_current_mode("manual"); break;
-      case robot::v1::ROBOT_MODE_TELEOP:     state.set_current_mode("teleop"); break;
-      case robot::v1::ROBOT_MODE_AUTONOMOUS: state.set_current_mode("autonomous"); break;
-      case robot::v1::ROBOT_MODE_MAPPING:    state.set_current_mode("mapping"); break;
-      case robot::v1::ROBOT_MODE_ESTOP:      state.set_current_mode("estop"); break;
-      default:                               state.set_current_mode("unknown"); break;
+      case robot::v1::ROBOT_MODE_IDLE:       scratch_slow_state_.set_current_mode("idle"); break;
+      case robot::v1::ROBOT_MODE_MANUAL:     scratch_slow_state_.set_current_mode("manual"); break;
+      case robot::v1::ROBOT_MODE_TELEOP:     scratch_slow_state_.set_current_mode("teleop"); break;
+      case robot::v1::ROBOT_MODE_AUTONOMOUS: scratch_slow_state_.set_current_mode("autonomous"); break;
+      case robot::v1::ROBOT_MODE_MAPPING:    scratch_slow_state_.set_current_mode("mapping"); break;
+      case robot::v1::ROBOT_MODE_ESTOP:      scratch_slow_state_.set_current_mode("estop"); break;
+      default:                               scratch_slow_state_.set_current_mode("unknown"); break;
     }
   } else {
-    state.set_current_mode("idle");
+    scratch_slow_state_.set_current_mode("idle");
   }
 
-  // 系统资源
-  auto *resources = state.mutable_resources();
-  resources->set_cpu_percent(ReadCpuUsage());
-  resources->set_mem_percent(ReadMemUsage());
-  resources->set_cpu_temp(ReadCpuTemp());
+  // 系统资源 — 从后台线程缓存读取, 不阻塞 executor
+  auto *resources = scratch_slow_state_.mutable_resources();
+  resources->set_cpu_percent(cached_cpu_percent_.load(std::memory_order_relaxed));
+  resources->set_mem_percent(cached_mem_percent_.load(std::memory_order_relaxed));
+  resources->set_cpu_temp(cached_cpu_temp_.load(std::memory_order_relaxed));
 
   // 电池电量：优先使用 RobotState.battery，否则使用模拟值
   {
@@ -291,7 +368,7 @@ void StatusAggregator::update_slow_state() {
   }
   
   // 话题频率
-  auto *rates = state.mutable_topic_rates();
+  auto *rates = scratch_slow_state_.mutable_topic_rates();
   rates->set_odom_hz(odom_rate_.rate_hz());
   rates->set_terrain_map_hz(terrain_rate_.rate_hz());
   rates->set_path_hz(path_rate_.rate_hz());
@@ -300,7 +377,7 @@ void StatusAggregator::update_slow_state() {
   // 健康状态
   if (health_monitor_) {
     auto robot_health = health_monitor_->GetHealth();
-    auto *health_status = state.mutable_health();
+    auto *health_status = scratch_slow_state_.mutable_health();
 
     const char *level_names[] = {"OK", "DEGRADED", "CRITICAL", "FAULT"};
     health_status->set_overall_level(
@@ -318,7 +395,7 @@ void StatusAggregator::update_slow_state() {
 
   // 围栏状态
   if (geofence_monitor_) {
-    auto *geofence = state.mutable_geofence();
+    auto *geofence = scratch_slow_state_.mutable_geofence();
     geofence->set_has_fence(geofence_monitor_->HasFence());
     geofence->set_margin_distance(geofence_monitor_->GetMarginDistance());
 
@@ -338,60 +415,71 @@ void StatusAggregator::update_slow_state() {
     }
   }
   
-  std::lock_guard<std::mutex> lock(slow_mutex_);
-  latest_slow_state_ = state;
+  // 运行参数 (JSON)
+  if (config_provider_) {
+    auto [config_json, version] = config_provider_();
+    if (!config_json.empty()) {
+      scratch_slow_state_.set_config_json(std::move(config_json));
+      scratch_slow_state_.set_config_version(version);
+    }
+  }
+
+  auto new_state = std::make_shared<robot::v1::SlowState>();
+  new_state->Swap(&scratch_slow_state_);
+  {
+    std::lock_guard<std::mutex> lock(slow_mutex_);
+    latest_slow_state_ = std::move(new_state);
+  }
 }
 
 // ==================== 系统资源读取（Linux /proc） ====================
+//
+// 这些方法在后台线程中以 ~1Hz 调用, 结果写入 atomic 缓存。
+// ROS executor 线程只读取 atomic, 不做文件 I/O。
+
+void StatusAggregator::UpdateSysResourcesBackground() {
+  while (!sys_resource_stop_.load(std::memory_order_relaxed)) {
+    cached_cpu_percent_.store(ReadCpuUsage(), std::memory_order_relaxed);
+    cached_mem_percent_.store(ReadMemUsage(), std::memory_order_relaxed);
+    cached_cpu_temp_.store(ReadCpuTemp(), std::memory_order_relaxed);
+
+    // 1 秒采样周期, 可中断退出
+    for (int i = 0; i < 10 && !sys_resource_stop_.load(std::memory_order_relaxed); ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }
+}
 
 double StatusAggregator::ReadCpuUsage() {
-  // 读取 /proc/stat 计算整体 CPU 使用率
-  // 格式: cpu user nice system idle iowait irq softirq steal guest guest_nice
   std::ifstream file("/proc/stat");
-  if (!file.is_open()) {
-    return 0.0;
-  }
+  if (!file.is_open()) return 0.0;
 
   std::string label;
   uint64_t user, nice, system, idle, iowait, irq, softirq, steal;
   file >> label >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal;
-  if (label != "cpu") {
-    return 0.0;
-  }
+  if (label != "cpu") return 0.0;
 
   const uint64_t total = user + nice + system + idle + iowait + irq + softirq + steal;
   const uint64_t idle_total = idle + iowait;
 
-  // 首次调用无法计算差值，返回 0
-  // 注意：这是一个简化实现，static 变量在多实例时有问题，
-  // 但本系统只有一个 StatusAggregator 实例。
-  static uint64_t s_prev_total = 0;
-  static uint64_t s_prev_idle = 0;
-
-  if (s_prev_total == 0) {
-    s_prev_total = total;
-    s_prev_idle = idle_total;
+  if (prev_cpu_total_ == 0) {
+    prev_cpu_total_ = total;
+    prev_cpu_idle_ = idle_total;
     return 0.0;
   }
 
-  const uint64_t d_total = total - s_prev_total;
-  const uint64_t d_idle = idle_total - s_prev_idle;
-  s_prev_total = total;
-  s_prev_idle = idle_total;
+  const uint64_t d_total = total - prev_cpu_total_;
+  const uint64_t d_idle = idle_total - prev_cpu_idle_;
+  prev_cpu_total_ = total;
+  prev_cpu_idle_ = idle_total;
 
-  if (d_total == 0) {
-    return 0.0;
-  }
-
+  if (d_total == 0) return 0.0;
   return 100.0 * static_cast<double>(d_total - d_idle) / static_cast<double>(d_total);
 }
 
 double StatusAggregator::ReadMemUsage() {
-  // 读取 /proc/meminfo
   std::ifstream file("/proc/meminfo");
-  if (!file.is_open()) {
-    return 0.0;
-  }
+  if (!file.is_open()) return 0.0;
 
   uint64_t mem_total = 0, mem_available = 0;
   std::string line;
@@ -405,25 +493,17 @@ double StatusAggregator::ReadMemUsage() {
       std::string key;
       iss >> key >> mem_available;
     }
-    if (mem_total > 0 && mem_available > 0) {
-      break;
-    }
+    if (mem_total > 0 && mem_available > 0) break;
   }
 
-  if (mem_total == 0) {
-    return 0.0;
-  }
-
+  if (mem_total == 0) return 0.0;
   return 100.0 * static_cast<double>(mem_total - mem_available)
        / static_cast<double>(mem_total);
 }
 
 double StatusAggregator::ReadCpuTemp() {
-  // 读取 /sys/class/thermal/thermal_zone0/temp（毫摄氏度）
   std::ifstream file("/sys/class/thermal/thermal_zone0/temp");
-  if (!file.is_open()) {
-    return 0.0;
-  }
+  if (!file.is_open()) return 0.0;
 
   int temp_milli = 0;
   file >> temp_milli;

@@ -1,0 +1,45 @@
+# Build artifacts
+build/
+install/
+log/
+.colcon/
+
+# IDE & OS
+.vscode/
+.cursor/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed at runtime)
+docs/
+*.md
+!README.md
+
+# Flutter client (built separately)
+client/
+
+# CI/CD
+.github/
+
+# 3rdparty test artifacts
+src/global_planning/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/docker/
+src/VLM/yolov5/utils/docker/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Temporary
+*.tmp
+*.bak
+dist/

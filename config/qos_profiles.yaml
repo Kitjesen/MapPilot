@@ -1,0 +1,171 @@
+# ═══════════════════════════════════════════════════════════════
+# ROS 2 QoS 场景化配置 — 3D NAV
+#
+# 此文件定义了不同链路的推荐 QoS 配置。
+# 在代码中通过 rclcpp::QoS 或 launch 参数应用。
+#
+# QoS 维度说明:
+#   reliability:  RELIABLE (保证送达) / BEST_EFFORT (允许丢包)
+#   durability:   VOLATILE (仅活跃连接) / TRANSIENT_LOCAL (补发给晚到订阅者)
+#   history:      KEEP_LAST(depth) / KEEP_ALL
+#   deadline:     发布者承诺的最大发布间隔
+#   liveliness:   存活检测策略
+#   lifespan:     消息过期时间 (过期丢弃, 不送达)
+# ═══════════════════════════════════════════════════════════════
+
+# ── 链路分类 ──────────────────────────────────────────────────
+
+profiles:
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 高频大数据: LiDAR 点云 (PointCloud2)
+  # 特点: ~1MB/帧, 10Hz, 丢 1 帧可接受
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  lidar_pointcloud:
+    topics:
+      - /nav/slam/cloud_registered
+      - /nav/terrain_map
+      - /nav/terrain_map_ext
+      - /nav/scan_cloud          # sensor_scan_generation 输出
+    qos:
+      reliability: BEST_EFFORT   # 丢帧可接受, 避免重传阻塞
+      durability: VOLATILE
+      history: KEEP_LAST
+      depth: 2                   # 最多缓 2 帧, 防止内存爆
+      lifespan: 200ms            # 超过 200ms 的点云无意义
+    rationale: >
+      点云是最大带宽消耗者。BEST_EFFORT 避免 NACK 重传风暴。
+      depth=2 确保订阅者永远拿到最新帧。lifespan 防积压。
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 高频小数据: Odometry, IMU
+  # 特点: ~200B, 100-200Hz, 丢 1 帧可接受
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  high_freq_state:
+    topics:
+      - /nav/odometry
+      - /nav/imu
+      - /localization_quality
+    qos:
+      reliability: BEST_EFFORT
+      durability: VOLATILE
+      history: KEEP_LAST
+      depth: 5
+      deadline: 20ms             # 期望 >= 50Hz
+      lifespan: 50ms
+    rationale: >
+      状态数据只关心最新值。deadline 帮助检测发布者掉线。
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 控制指令: cmd_vel, stop, way_point
+  # 特点: ~100B, 50Hz, 不能丢!!!
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  control_commands:
+    topics:
+      - /nav/cmd_vel
+      - /nav/stop
+      - /nav/way_point
+      - /nav/slow_down
+    qos:
+      reliability: RELIABLE       # 控制指令必须送达
+      durability: VOLATILE
+      history: KEEP_LAST
+      depth: 1                    # 只要最新指令
+      deadline: 50ms              # 期望 >= 20Hz
+    rationale: >
+      控制指令丢失导致失控。RELIABLE + depth=1 确保送达且不积压。
+      deadline 帮助检测 SafetyGate 是否正常工作。
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 全局路径: Path
+  # 特点: ~10KB, <1Hz, 不能丢
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  global_path:
+    topics:
+      - /nav/global_path
+      - /nav/local_path
+      - /nav/pct_path
+    qos:
+      reliability: RELIABLE
+      durability: TRANSIENT_LOCAL  # 晚到的订阅者也能拿到最新路径
+      history: KEEP_LAST
+      depth: 1
+    rationale: >
+      路径低频但关键。TRANSIENT_LOCAL 确保新启动的节点立即拿到当前路径。
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 状态/健康: 低频但必达
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  system_status:
+    topics:
+      - /nav/health_status
+      - /nav/geofence_status
+      - /robot_state
+      - /nav/mode
+    qos:
+      reliability: RELIABLE
+      durability: TRANSIENT_LOCAL
+      history: KEEP_LAST
+      depth: 1
+    rationale: >
+      状态数据低频但不能丢。TRANSIENT_LOCAL 让 gRPC gateway 重启后
+      立刻拿到当前状态, 不用等下一次发布。
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 围栏/目标: 事件驱动, 不能丢
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  geofence_events:
+    topics:
+      - /nav/geofence_boundary
+      - /nav/goal_pose
+    qos:
+      reliability: RELIABLE
+      durability: TRANSIENT_LOCAL
+      history: KEEP_LAST
+      depth: 1
+    rationale: >
+      围栏和目标点发布后必须被所有节点收到, 且晚加入的也能拿到。
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 图像/视频流: WebRTC 原始源
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  image_stream:
+    topics:
+      - /camera/image_raw/compressed
+      - /camera/image_raw
+    qos:
+      reliability: BEST_EFFORT
+      durability: VOLATILE
+      history: KEEP_LAST
+      depth: 1                    # 只要最新帧
+      lifespan: 100ms
+    rationale: >
+      视频流丢帧无关紧要。depth=1 + lifespan 确保不积压。
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # TF (tf2_ros): 使用 ROS 2 默认 QoS
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  tf:
+    topics:
+      - /tf
+      - /tf_static
+    qos:
+      # /tf: BEST_EFFORT + KEEP_LAST(100) (ROS 2 默认)
+      # /tf_static: RELIABLE + TRANSIENT_LOCAL (ROS 2 默认)
+      # 不要改这些, 否则 tf2_ros 行为异常
+      note: "使用 ROS 2 / tf2_ros 默认设置, 不要覆盖"
+
+# ── 带宽预算 ──────────────────────────────────────────────────
+
+bandwidth_budget:
+  # 估算各链路带宽消耗 (单机, 进程间通信)
+  lidar_10hz_1MB: "~10 MB/s"
+  odometry_100hz_200B: "~20 KB/s"
+  imu_200hz_200B: "~40 KB/s"
+  cmd_vel_50hz_100B: "~5 KB/s"
+  path_1hz_10KB: "~10 KB/s"
+  image_30hz_50KB: "~1.5 MB/s"
+  total_estimate: "~12 MB/s"
+  note: >
+    CycloneDDS 默认使用 UDP 组播。同主机 loopback 不走物理网卡,
+    带宽不是瓶颈。跨主机时 (如远程监控) 考虑限制 image_stream。

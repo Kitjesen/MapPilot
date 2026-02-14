@@ -300,10 +300,12 @@ grpc::Status ControlServiceImpl::StreamTeleop(
                              robot::v1::TeleopCommand> *stream) {
 
   robot::v1::TeleopCommand cmd;
+  robot::v1::TeleopFeedback feedback;  // 循环外声明，Clear() 复用内部缓冲
+
   while (!context->IsCancelled() && stream->Read(&cmd)) {
     // 验证租约
     if (!lease_mgr_->ValidateLease(cmd.lease_token())) {
-      robot::v1::TeleopFeedback feedback;
+      feedback.Clear();
       feedback.mutable_timestamp()->CopyFrom(cmd.timestamp());
       feedback.set_command_sequence(cmd.sequence());
       feedback.add_limit_reasons("invalid_lease");
@@ -313,18 +315,16 @@ grpc::Status ControlServiceImpl::StreamTeleop(
       return grpc::Status(grpc::PERMISSION_DENIED, "Lease required");
     }
 
-    // 通过 Safety Gate 处理
-    const auto limited_vel = safety_gate_->ProcessTeleopCommand(cmd);
-    const auto safety_status = safety_gate_->GetSafetyStatus();
-    const auto limit_reasons = safety_gate_->GetLimitReasons();
+    // 单次加锁完成处理 + 状态 + 原因 (消除 3× lock/unlock)
+    auto result = safety_gate_->ProcessTeleopFull(cmd);
 
-    robot::v1::TeleopFeedback feedback;
+    feedback.Clear();
     feedback.mutable_timestamp()->CopyFrom(cmd.timestamp());
     feedback.set_command_sequence(cmd.sequence());
-    *feedback.mutable_actual_velocity() = limited_vel;
-    *feedback.mutable_safety_status() = safety_status;
-    for (const auto &reason : limit_reasons) {
-      feedback.add_limit_reasons(reason);
+    *feedback.mutable_actual_velocity() = std::move(result.velocity);
+    *feedback.mutable_safety_status() = std::move(result.safety_status);
+    for (auto &reason : result.limit_reasons) {
+      feedback.add_limit_reasons(std::move(reason));
     }
     FillControlLatency(cmd.timestamp(), feedback.mutable_control_latency());
 
@@ -355,6 +355,28 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
     response->mutable_base()->set_error_message("Task manager not available");
+    return grpc::Status::OK;
+  }
+
+  // 模式守卫: 仅 AUTONOMOUS 模式允许启动导航任务
+  if (mode_manager_) {
+    const auto current_mode = mode_manager_->GetCurrentMode();
+    if (current_mode != robot::v1::ROBOT_MODE_AUTONOMOUS) {
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_MODE_CONFLICT);
+      response->mutable_base()->set_error_message(
+          "StartTask requires AUTONOMOUS mode (current: " +
+          std::to_string(static_cast<int>(current_mode)) + ")");
+      return grpc::Status::OK;
+    }
+  }
+
+  // Lease 守卫: 需要有活跃的 Lease
+  if (lease_mgr_ && !lease_mgr_->HasActiveLease()) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_LEASE_CONFLICT);
+    response->mutable_base()->set_error_message(
+        "StartTask requires an active lease — call AcquireLease first");
     return grpc::Status::OK;
   }
 
@@ -397,6 +419,9 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
       w.label = wp.label();
       params.waypoints.push_back(w);
     }
+    if (fp.tracking_tolerance() > 0.0) {
+      params.tracking_tolerance = fp.tracking_tolerance();
+    }
     has_structured_params = true;
   }
 
@@ -416,6 +441,18 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
         if (std::getline(point_stream, val, ',')) wp.label = val;
         params.waypoints.push_back(wp);
       }
+    }
+  }
+
+  // 建图参数透传
+  if (request->has_mapping_params()) {
+    const auto &mp = request->mapping_params();
+    if (!mp.map_name().empty()) {
+      params.map_name = mp.map_name();
+    }
+    params.save_on_complete = mp.save_on_complete();
+    if (mp.resolution() > 0.0) {
+      params.resolution = mp.resolution();
     }
   }
 
@@ -483,18 +520,44 @@ ControlServiceImpl::CancelTask(grpc::ServerContext *,
     return grpc::Status::OK;
   }
 
-  if (!task_manager_->CancelTask(request->task_id())) {
+  // Lease 守卫
+  if (lease_mgr_ && !lease_mgr_->HasActiveLease()) {
     response->mutable_base()->set_error_code(
-        robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+        robot::v1::ERROR_CODE_LEASE_CONFLICT);
     response->mutable_base()->set_error_message(
-        "Task not found or not active: " + request->task_id());
+        "CancelTask requires an active lease");
     return grpc::Status::OK;
   }
 
-  auto *task = response->mutable_task();
-  *task = task_manager_->GetCurrentTask();
-  task->set_status(robot::v1::TASK_STATUS_CANCELLED);
-  response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  // 建图任务: 以 COMPLETED (而非 CANCELLED) 结束，触发 App 侧自动保存
+  const auto current_task = task_manager_->GetCurrentTask();
+  if (current_task.type() == robot::v1::TASK_TYPE_MAPPING) {
+    auto mapping_result = task_manager_->StopMapping(request->task_id());
+    if (!mapping_result.ok) {
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+      response->mutable_base()->set_error_message(
+          "Mapping task not found or not active: " + request->task_id());
+      return grpc::Status::OK;
+    }
+    auto *task = response->mutable_task();
+    *task = task_manager_->GetCurrentTask();
+    task->set_status(robot::v1::TASK_STATUS_COMPLETED);
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  } else {
+    // 非建图任务: 正常取消
+    if (!task_manager_->CancelTask(request->task_id())) {
+      response->mutable_base()->set_error_code(
+          robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
+      response->mutable_base()->set_error_message(
+          "Task not found or not active: " + request->task_id());
+      return grpc::Status::OK;
+    }
+    auto *task = response->mutable_task();
+    *task = task_manager_->GetCurrentTask();
+    task->set_status(robot::v1::TASK_STATUS_CANCELLED);
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+  }
 
   // Cache Result
   std::string resp_str;
@@ -607,6 +670,83 @@ ControlServiceImpl::GetTaskStatus(grpc::ServerContext *,
 
   *response->mutable_task() = task;
   response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_OK);
+
+  return grpc::Status::OK;
+}
+
+// ================================================================
+//  航点管理
+// ================================================================
+
+grpc::Status ControlServiceImpl::GetActiveWaypoints(
+    grpc::ServerContext *,
+    const robot::v1::GetActiveWaypointsRequest *request,
+    robot::v1::GetActiveWaypointsResponse *response) {
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  if (!task_manager_) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+    response->mutable_base()->set_error_message("Task manager not available");
+    return grpc::Status::OK;
+  }
+
+  *response = task_manager_->GetActiveWaypoints();
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  return grpc::Status::OK;
+}
+
+grpc::Status ControlServiceImpl::ClearWaypoints(
+    grpc::ServerContext *,
+    const robot::v1::ClearWaypointsRequest *request,
+    robot::v1::ClearWaypointsResponse *response) {
+
+  // Idempotency Check
+  std::string cached_resp;
+  if (idempotency_cache_->TryGet(request->base().request_id(), &cached_resp)) {
+    if (response->ParseFromString(cached_resp)) {
+      return grpc::Status::OK;
+    }
+  }
+
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  if (!task_manager_) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
+    response->mutable_base()->set_error_message("Task manager not available");
+    return grpc::Status::OK;
+  }
+
+  // Lease 守卫
+  if (lease_mgr_ && !lease_mgr_->HasActiveLease()) {
+    response->mutable_base()->set_error_code(
+        robot::v1::ERROR_CODE_LEASE_CONFLICT);
+    response->mutable_base()->set_error_message(
+        "ClearWaypoints requires an active lease");
+    return grpc::Status::OK;
+  }
+
+  *response = task_manager_->ClearWaypoints();
+  response->mutable_base()->set_request_id(request->base().request_id());
+
+  if (event_buffer_) {
+    event_buffer_->AddEvent(
+        robot::v1::EVENT_TYPE_NAV_GOAL_REACHED,
+        robot::v1::EVENT_SEVERITY_INFO,
+        "Waypoints cleared by operator",
+        "Cleared " + std::to_string(response->cleared_count()) +
+            " waypoint(s), previous source: " +
+            std::to_string(static_cast<int>(response->previous_source())));
+  }
+
+  // Cache Result
+  std::string resp_str;
+  if (response->SerializeToString(&resp_str)) {
+    idempotency_cache_->Set(request->base().request_id(), resp_str);
+  }
 
   return grpc::Status::OK;
 }

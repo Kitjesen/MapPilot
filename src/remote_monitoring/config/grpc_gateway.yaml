@@ -1,11 +1,16 @@
 grpc_gateway:
   ros__parameters:
-    # gRPC 服务器端口
+    # ==================== 机器人参数 ====================
+    # 注意: 以下机器人物理参数的唯一来源为 config/robot_config.yaml
+    # 此处的值应与 robot_config.yaml 保持一致。
+    # launch 参数解耦后，优先修改 config/robot_config.yaml。
+
+    # gRPC 服务器端口 (对应 robot_config.yaml → grpc.port)
     grpc_port: 50051
     
-    # 机器人标识（可配置）
+    # 机器人标识 (对应 robot_config.yaml → robot.id / robot.firmware_version)
     robot_id: "robot_001"
-    firmware_version: "1.0.0"
+    firmware_version: "1.3.2"
     
     # 状态流频率
     fast_state_hz: 30.0
@@ -14,40 +19,61 @@ grpc_gateway:
     # 频率统计窗口（秒）
     rate_window_sec: 2.0
     
-    # ==================== 核心话题 ====================
+    # ==================== 核心话题 (标准接口契约 /nav/*) ====================
     # StatusAggregator 订阅的话题
-    odom_topic: "/Odometry"
-    terrain_map_topic: "/terrain_map"
-    path_topic: "/path"
-    slow_down_topic: "/slow_down"
+    odom_topic: "/nav/odometry"
+    terrain_map_topic: "/nav/terrain_map"
+    path_topic: "/nav/local_path"
+    slow_down_topic: "/nav/slow_down"
     
-    # 新增：丰富遥测的话题
-    cmd_vel_monitor_topic: "/cmd_vel"
-    planner_status_topic: "/pct_planner/status"
-    way_point_topic: "/way_point"
-    global_path_topic: "/pct_path"
-    lidar_topic: "/cloud_registered"
+    # 丰富遥测的话题
+    cmd_vel_monitor_topic: "/nav/cmd_vel"
+    planner_status_topic: "/nav/planner_status"
+    way_point_topic: "/nav/way_point"
+    global_path_topic: "/nav/global_path"
+    lidar_topic: "/nav/registered_cloud"
 
     # ==================== SystemService 服务 ====================
-    save_map_service: "/fastlio2/save_map"
+    save_map_service: "/nav/save_map"
+    relocalize_service: "/nav/relocalize"
 
     # ==================== SafetyGate 话题 ====================
-    safety_odom_topic: "/Odometry"
-    cmd_vel_topic: "/cmd_vel"
-    stop_topic: "/stop"
+    safety_odom_topic: "/nav/odometry"
+    cmd_vel_topic: "/nav/cmd_vel"
+    stop_topic: "/nav/stop"
 
     # ==================== ModeManager 话题 ====================
-    mode_stop_topic: "/stop"
-    mode_speed_topic: "/speed"
-    goal_pose_topic: "/goal_pose"
+    mode_stop_topic: "/nav/stop"
+    mode_speed_topic: "/nav/speed"
+    goal_pose_topic: "/nav/goal_pose"
+
+    # ==================== HealthMonitor 话题 ====================
+    health_odom_topic: "/nav/odometry"
+    health_terrain_topic: "/nav/terrain_map"
+    health_path_topic: "/nav/local_path"
+    health_localization_quality_topic: "/nav/localization_quality"
+
+    # ==================== LocalizationScorer ====================
+    localization_quality_topic: "/nav/localization_quality"
+
+    # ==================== TaskManager 话题 ====================
+    task_odom_topic: "/nav/odometry"
+    task_waypoint_in_topic: "/nav/waypoint"
+    task_global_path_topic: "/nav/global_path"
+    task_waypoint_out_topic: "/nav/way_point"
+    task_stop_topic: "/nav/stop"
+
+    # ==================== GeofenceMonitor ====================
+    geofence_odom_topic: "/nav/odometry"
+    geofence_stop_topic: "/nav/stop"
 
     # ==================== DataService 话题 ====================
     data_camera_topic: "/camera/color/image_raw/compressed"
     data_camera_fallback_topic: "/camera/color/compressed"
     data_map_topic: "/overall_map"
-    data_pointcloud_topic: "/cloud_registered"
-    data_terrain_topic: "/terrain_map_ext"
-    data_path_topic: "/path"
+    data_pointcloud_topic: "/nav/registered_cloud"
+    data_terrain_topic: "/nav/terrain_map_ext"
+    data_path_topic: "/nav/local_path"
     data_file_root: ""
     
     # 允许客户端访问的日志目录列表（用于从机器人拉取日志）
@@ -84,6 +110,23 @@ grpc_gateway:
     webrtc_stop_command: ""
     webrtc_offer_path: "/tmp/webrtc_offer_{session_id}.sdp"
     webrtc_ice_path: "/tmp/webrtc_ice_{session_id}.txt"
+
+    # ==================== 飞行记录 (Flight Recorder) ====================
+    # 之前硬编码在 grpc_gateway.cpp 中，现已提取为可配置项
+    flight_record_dir: "/opt/robot/flight_records"
+    flight_record_capacity: 300       # 飞行记录最大帧数
+    flight_record_post_trigger: 50    # 触发后继续记录帧数
+    event_buffer_size: 1000           # 事件环形缓冲区大小
+    event_persistence_path: "/opt/robot/logs/events.jsonl"
+    event_persistence_max_bytes: 10485760   # 10 MB
+
+    # ==================== 服务编排 (Service Orchestrator) ====================
+    service_check_interval_sec: 10.0  # 服务状态检查间隔 (s)
+    idle_grace_period_sec: 120.0      # 空闲优雅退出等待时间 (s)
+
+    # ==================== 健康监控 (Health Monitor) ====================
+    health_eval_hz: 5.0               # 健康评估频率 (Hz)
+    health_rate_window_sec: 2.0       # 频率统计窗口 (s)
     
     # ==================== TF 坐标系 ====================
     tf_map_frame: "map"
@@ -91,16 +134,17 @@ grpc_gateway:
     tf_body_frame: "body"
     
     # ==================== Safety Gate 配置 ====================
-    deadman_timeout_ms: 300.0
-    max_speed: 1.0
-    max_angular: 1.0
-    tilt_limit_deg: 30.0
+    # (对应 robot_config.yaml → safety.* / speed.* / geometry.*)
+    deadman_timeout_ms: 300.0    # safety.deadman_timeout_ms
+    max_speed: 1.0               # speed.max_linear
+    max_angular: 1.0             # speed.max_angular
+    tilt_limit_deg: 30.0         # safety.tilt_limit_deg
 
     # --- SafetyGate 近场避障 ---
-    obstacle_height_thre: 0.2    # 障碍物高度阈值 (m), 与 local_planner 一致
-    stop_distance: 0.8           # 急停距离 (m): 前方此范围内有障碍 → 线速度归零
-    slow_distance: 2.0           # 减速距离 (m): 前方此范围内有障碍 → 线性减速
-    vehicle_width: 0.6           # 车身宽度 (m)
+    obstacle_height_thre: 0.2    # safety.obstacle_height_thre
+    stop_distance: 0.8           # safety.stop_distance
+    slow_distance: 2.0           # safety.slow_distance
+    vehicle_width: 0.6           # geometry.vehicle_width
     vehicle_width_margin: 0.1    # 宽度安全裕度 (m), 实际检测半宽 = width/2 + margin
 
     # ==================== Han Dog Bridge 配置 ====================

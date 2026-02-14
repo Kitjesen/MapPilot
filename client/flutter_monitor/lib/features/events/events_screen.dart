@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -128,13 +129,14 @@ class _EventsScreenState extends State<EventsScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final locale = context.watch<LocaleProvider>();
 
     return Scaffold(
       appBar: AppBar(
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('事件日志'),
+            Text(locale.tr('事件日志', 'Event Log')),
             if (_events.isNotEmpty) ...[
               const SizedBox(width: 8),
               Text(
@@ -178,7 +180,7 @@ class _EventsScreenState extends State<EventsScreen>
                       size: 48, color: context.subtitleColor),
                   const SizedBox(height: 16),
                   Text(
-                    '暂无事件记录',
+                    locale.tr('暂无事件记录', 'No events recorded'),
                     style: TextStyle(
                       fontSize: 15,
                       color: context.subtitleColor,
@@ -201,8 +203,8 @@ class _EventsScreenState extends State<EventsScreen>
                           const SizedBox(width: 8),
                           Text(
                             _retryCount > 0
-                                ? '重连中 (第 $_retryCount 次)...'
-                                : '连接中...',
+                                ? locale.tr('重连中 (第 $_retryCount 次)...', 'Reconnecting (attempt $_retryCount)...')
+                                : locale.tr('连接中...', 'Connecting...'),
                             style: TextStyle(
                               color: context.subtitleColor,
                               fontSize: 13,
@@ -232,7 +234,7 @@ class _EventsScreenState extends State<EventsScreen>
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: const Text('事件已确认'),
+                          content: Text(locale.tr('事件已确认', 'Event acknowledged')),
                           duration: const Duration(milliseconds: 500),
                           behavior: SnackBarBehavior.floating,
                           shape: RoundedRectangleBorder(

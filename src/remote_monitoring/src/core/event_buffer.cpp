@@ -3,8 +3,6 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
-#include <iomanip>
-#include <sstream>
 
 namespace remote_monitoring {
 namespace core {
@@ -12,7 +10,7 @@ namespace core {
 EventBuffer::EventBuffer(size_t max_size) : max_size_(max_size) {}
 
 EventBuffer::~EventBuffer() {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::lock_guard<std::mutex> lock(persist_mutex_);
   if (log_stream_.is_open()) {
     log_stream_.flush();
     log_stream_.close();
@@ -21,7 +19,7 @@ EventBuffer::~EventBuffer() {
 
 void EventBuffer::EnablePersistence(const std::string &log_path,
                                     size_t max_bytes) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::lock_guard<std::mutex> lock(persist_mutex_);
   log_path_ = log_path;
   log_max_bytes_ = max_bytes;
 
@@ -47,30 +45,37 @@ void EventBuffer::AddEvent(robot::v1::EventType type,
                            robot::v1::EventSeverity severity,
                            const std::string &title,
                            const std::string &description) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  
-  robot::v1::Event event;
-  event.set_event_id(GenerateEventId());
-  event.set_type(type);
-  event.set_severity(severity);
-  event.set_title(title);
-  event.set_description(description);
-  
-  const auto now = std::chrono::system_clock::now();
-  const auto now_sec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-  event.mutable_timestamp()->set_seconds(now_sec);
-  
-  buffer_.push_back(event);
-  
-  // 保持缓冲区大小
-  while (buffer_.size() > max_size_) {
-    buffer_.pop_front();
+  std::string persist_line;  // 在锁外执行 I/O
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    robot::v1::Event event;
+    event.set_event_id(GenerateEventId());
+    event.set_type(type);
+    event.set_severity(severity);
+    event.set_title(title);
+    event.set_description(description);
+
+    const auto now = std::chrono::system_clock::now();
+    const auto now_sec = std::chrono::duration_cast<std::chrono::seconds>(
+        now.time_since_epoch()).count();
+    event.mutable_timestamp()->set_seconds(now_sec);
+
+    buffer_.push_back(event);
+
+    // 保持缓冲区大小
+    while (buffer_.size() > max_size_) {
+      buffer_.pop_front();
+    }
+
+    // 在锁内序列化为字符串，锁外写磁盘
+    persist_line = FormatEventLine(event);
+
+    cv_.notify_all();
   }
-
-  // 持久化到磁盘 (best-effort)
-  PersistEventLocked(event);
-
-  cv_.notify_all();
+  // mutex_ 已释放 — 磁盘 I/O 不阻塞 ROS executor 线程上的其他回调
+  PersistLine(persist_line);
 }
 
 std::vector<robot::v1::Event> EventBuffer::GetEventsSince(const std::string &last_event_id) {
@@ -115,30 +120,32 @@ bool EventBuffer::WaitForEventAfter(const std::string &last_event_id,
     return false;
   }
 
+  size_t cached_idx = 0;  // 缓存 predicate 结果，避免二次 O(N) 扫描
+
   std::unique_lock<std::mutex> lock(mutex_);
   if (!cv_.wait_for(lock, timeout, [&]() {
-        return NextIndexLocked(last_event_id) != buffer_.size();
+        cached_idx = NextIndexLocked(last_event_id);
+        return cached_idx != buffer_.size();
       })) {
     return false;
   }
 
-  const size_t idx = NextIndexLocked(last_event_id);
-  if (idx >= buffer_.size()) {
-    return false;
+  if (cached_idx >= buffer_.size()) {
+    return false;  // 理论上不会到达，但防御性检查
   }
 
-  *event = buffer_[idx];
+  *event = buffer_[cached_idx];
   return true;
 }
 
 std::string EventBuffer::GenerateEventId() {
-  std::ostringstream oss;
-  const auto now = std::chrono::system_clock::now();
   const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now.time_since_epoch()).count();
-  oss << std::hex << std::setfill('0') << std::setw(12) << now_ms
-      << std::setw(6) << next_sequence_++;
-  return oss.str();
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  char buf[20];  // 12 hex + 6 hex + null = 19
+  std::snprintf(buf, sizeof(buf), "%012lx%06lx",
+                static_cast<unsigned long>(now_ms),
+                static_cast<unsigned long>(next_sequence_++));
+  return std::string(buf);
 }
 
 size_t EventBuffer::NextIndexLocked(const std::string &last_event_id) const {
@@ -165,55 +172,75 @@ size_t EventBuffer::NextIndexLocked(const std::string &last_event_id) const {
 //  持久化: 每个事件追加一行 JSONL 到磁盘
 // ================================================================
 
-void EventBuffer::PersistEventLocked(const robot::v1::Event &event) {
-  if (log_path_.empty() || !log_stream_.is_open()) return;
+// 纯函数: 将事件序列化为 JSONL 字符串 (无 I/O, 可在锁内调用)
+// 使用直接 string 拼接替代 ostringstream，避免 locale facet 分配。
+std::string EventBuffer::FormatEventLine(const robot::v1::Event &event) {
+  if (log_path_.empty()) return {};
+
+  static const char *sev_names[] = {
+      "UNSPECIFIED", "INFO", "WARNING", "ERROR", "CRITICAL"};
+  int sev_idx = static_cast<int>(event.severity());
+  if (sev_idx < 0 || sev_idx > 4) sev_idx = 0;
+
+  // 内联 JSON 转义，直接追加到 line，无中间 string 分配
+  auto append_escaped = [](std::string &out, const std::string &s) {
+    for (char c : s) {
+      switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        default:   out += c;      break;
+      }
+    }
+  };
+
+  std::string line;
+  line.reserve(128 + event.title().size() + event.description().size());
+
+  line += "{\"id\":\"";
+  line += event.event_id();
+  line += "\",\"ts\":";
+  // std::to_chars 需要 C++17 — 用 snprintf 到栈缓冲
+  char num_buf[24];
+  std::snprintf(num_buf, sizeof(num_buf), "%ld",
+                static_cast<long>(event.timestamp().seconds()));
+  line += num_buf;
+  line += ",\"type\":";
+  std::snprintf(num_buf, sizeof(num_buf), "%d",
+                static_cast<int>(event.type()));
+  line += num_buf;
+  line += ",\"severity\":\"";
+  line += sev_names[sev_idx];
+  line += "\",\"title\":\"";
+  append_escaped(line, event.title());
+  line += "\",\"desc\":\"";
+  append_escaped(line, event.description());
+  line += "\"}\n";
+
+  return line;
+}
+
+// 磁盘 I/O: 在 mutex_ 外调用, 不阻塞 ROS executor 的回调链
+void EventBuffer::PersistLine(const std::string &line) {
+  if (line.empty()) return;
+
+  // persist_mutex_ 保护 log_stream_ (独立于数据 mutex_)
+  std::lock_guard<std::mutex> lock(persist_mutex_);
+  if (!log_stream_.is_open()) return;
 
   try {
-    // 日志轮转检查
+    // 日志轮转
     if (log_max_bytes_ > 0 && log_current_bytes_ > log_max_bytes_) {
       RotateLogLocked();
     }
 
-    // severity → 字符串
-    static const char *sev_names[] = {
-        "UNSPECIFIED", "INFO", "WARNING", "ERROR", "CRITICAL"};
-    int sev_idx = static_cast<int>(event.severity());
-    if (sev_idx < 0 || sev_idx > 4) sev_idx = 0;
-
-    // 简单 JSON 序列化 (避免引入 JSON 库, 转义双引号和反斜杠)
-    auto escape_json = [](const std::string &s) -> std::string {
-      std::string out;
-      out.reserve(s.size() + 8);
-      for (char c : s) {
-        if (c == '"')
-          out += "\\\"";
-        else if (c == '\\')
-          out += "\\\\";
-        else if (c == '\n')
-          out += "\\n";
-        else if (c == '\r')
-          out += "\\r";
-        else
-          out += c;
-      }
-      return out;
-    };
-
-    std::ostringstream line;
-    line << "{\"id\":\"" << event.event_id() << "\""
-         << ",\"ts\":" << event.timestamp().seconds()
-         << ",\"type\":" << static_cast<int>(event.type())
-         << ",\"severity\":\"" << sev_names[sev_idx] << "\""
-         << ",\"title\":\"" << escape_json(event.title()) << "\""
-         << ",\"desc\":\"" << escape_json(event.description()) << "\""
-         << "}\n";
-
-    const std::string s = line.str();
-    log_stream_ << s;
-    log_stream_.flush();
-    log_current_bytes_ += s.size();
+    log_stream_ << line;
+    // 不再每次 flush — 依赖 OS page cache, 进程退出时 ~EventBuffer 负责 flush。
+    // 对于嵌入式系统, 丢失最后几条日志 (断电) 可接受, 换取零阻塞写入。
+    log_current_bytes_ += line.size();
   } catch (...) {
-    // best-effort: 持久化失败不影响内存事件
+    // best-effort
   }
 }
 

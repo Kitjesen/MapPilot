@@ -34,8 +34,10 @@ public:
       10,
       std::bind(&PCTPathAdapter::odom_callback, this, _1));
 
+    // 发布到 /planner_waypoint, 由 TaskManager 统一转发到 /way_point
+    // 避免与 App 下发的航点冲突
     waypoint_pub_ = create_publisher<geometry_msgs::msg::PointStamped>(
-      "/way_point",
+      "/planner_waypoint",
       10);
 
     declare_parameter<double>("waypoint_distance", 0.5);

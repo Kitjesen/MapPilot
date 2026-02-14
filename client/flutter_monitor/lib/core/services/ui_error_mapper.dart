@@ -9,6 +9,18 @@ class UiErrorMapper {
     if (raw.isEmpty) return '操作失败，请稍后重试';
 
     final lower = raw.toLowerCase();
+    if (lower.contains('error_code_lease_conflict') ||
+        lower.contains('lease_conflict') ||
+        lower.contains('租约冲突') ||
+        lower.contains('2001')) {
+      return '控制权冲突：当前有其他客户端占用控制租约';
+    }
+    if (lower.contains('error_code_mode_conflict') ||
+        lower.contains('mode_conflict') ||
+        lower.contains('模式冲突') ||
+        lower.contains('2004')) {
+      return '模式冲突：请先切换到允许当前操作的机器人模式';
+    }
     if (lower.contains('未连接') || lower.contains('not connected')) {
       return '未连接机器人';
     }

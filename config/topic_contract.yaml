@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════
+# 3d_NAV Topic Interface Contract
+#
+# 定义所有模块之间通信的标准话题名称。
+# 具体算法通过 launch profile 将自身话题 remap 到这些标准名称。
+# 高层模块 (grpc_gateway, StatusAggregator 等) 只依赖这些标准名称。
+#
+# 规则:
+#   - 所有标准话题以 /nav/ 为前缀
+#   - 添加新算法时, 只需创建对应的 launch profile 并 remap 到这些标准话题
+#   - 不要修改此文件中的话题名, 除非进行全量迁移
+# ═══════════════════════════════════════════════════════════════
+
+# ── 传感器层 ──
+sensor:
+  lidar_scan: /nav/lidar_scan           # livox_ros_driver2/CustomMsg 或 sensor_msgs/PointCloud2
+  imu: /nav/imu                         # sensor_msgs/Imu
+
+# ── SLAM 层 ──
+slam:
+  odometry: /nav/odometry               # nav_msgs/Odometry (里程计)
+  registered_cloud: /nav/registered_cloud  # sensor_msgs/PointCloud2 (机体坐标系)
+  map_cloud: /nav/map_cloud             # sensor_msgs/PointCloud2 (世界坐标系)
+  save_map_service: /nav/save_map       # interface/srv/SaveMaps
+
+# ── 定位层 ──
+localization:
+  quality: /nav/localization_quality    # std_msgs/Float32 (ICP 匹配质量)
+  relocalize_service: /nav/relocalize   # interface/srv/Relocalize
+
+# ── 全局规划层 ──
+planning:
+  global_path: /nav/global_path         # nav_msgs/Path (全局路径)
+  planner_status: /nav/planner_status   # std_msgs/String (规划器状态)
+  waypoint: /nav/waypoint               # geometry_msgs/PointStamped (适配后的局部航点)
+
+# ── 自主导航层 ──
+autonomy:
+  terrain_map: /nav/terrain_map         # sensor_msgs/PointCloud2 (基础地形图)
+  terrain_map_ext: /nav/terrain_map_ext # sensor_msgs/PointCloud2 (扩展地形图)
+  local_path: /nav/local_path           # nav_msgs/Path (局部路径)
+  cmd_vel: /nav/cmd_vel                 # geometry_msgs/TwistStamped (速度指令)
+  stop: /nav/stop                       # std_msgs/Int8 (急停)
+  slow_down: /nav/slow_down             # std_msgs/Int8 (减速)
+  way_point: /nav/way_point             # geometry_msgs/PointStamped (目标航点)
+  speed: /nav/speed                     # std_msgs/Float32 (速度倍率)
+
+# ── 高层控制 ──
+control:
+  goal_pose: /nav/goal_pose             # geometry_msgs/PoseStamped (导航目标)
+
+# ── TF 坐标系 ──
+tf:
+  map_frame: map
+  odom_frame: odom
+  body_frame: body

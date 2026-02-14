@@ -1,0 +1,150 @@
+# ═══════════════════════════════════════════════════════════════
+# 3d_NAV Robot Configuration — 机器人物理参数集中配置
+#
+# 此文件是所有机器人特定参数的唯一来源 (single source of truth)。
+# launch 文件和 grpc_gateway.yaml 中的默认值均从此处读取。
+# 切换机器人型号时，只需修改此文件即可。
+#
+# 注意:
+#   - launch 参数仍可通过命令行覆盖:
+#     ros2 launch navigation_run.launch.py maxSpeed:=1.5
+#   - 话题名称不在此文件中，请参考 config/topic_contract.yaml
+# ═══════════════════════════════════════════════════════════════
+
+# ── 机器人标识 ──
+robot:
+  id: "robot_001"
+  hw_id: "dog_v2"
+  firmware_version: "1.3.2"
+
+# ── 几何尺寸 (m) ──
+geometry:
+  vehicle_height: 0.5
+  vehicle_width: 0.6
+  vehicle_length: 1.0
+  sensor_offset_x: 0.3
+  sensor_offset_y: 0.0
+
+# ── 速度限制 (m/s, rad/s) ──
+speed:
+  max_linear: 1.0
+  max_angular: 1.0
+  max_speed: 0.875          # launch 层 maxSpeed 默认值
+  autonomy_speed: 0.875     # launch 层 autonomySpeed 默认值
+
+# ── 安全参数 ──
+safety:
+  obstacle_height_thre: 0.2   # 障碍物高度阈值 (m)
+  ground_height_thre: 0.1     # 地面高度阈值 (m)
+  stop_distance: 0.8          # 急停距离 (m)
+  slow_distance: 2.0          # 减速距离 (m)
+  deadman_timeout_ms: 300.0   # 遥控超时 (ms)
+  cmd_vel_timeout_ms: 200.0   # 底盘指令超时 (ms)
+  tilt_limit_deg: 30.0        # 倾斜限制 (deg)
+
+# ── 底盘驱动 ──
+driver:
+  dog_host: "127.0.0.1"
+  dog_port: 13145
+  control_rate: 50.0          # Hz
+  auto_enable: true
+  auto_standup: true
+  reconnect_interval: 3.0     # 秒
+
+# ── LiDAR 传感器 ──
+lidar:
+  frame_id: "livox_frame"
+  publish_freq: 10.0          # Hz
+
+# ── gRPC 服务 ──
+grpc:
+  port: 50051
+
+# ── 路径跟踪控制增益 ──
+control:
+  yaw_rate_gain: 7.5
+  stop_yaw_rate_gain: 7.5
+  max_yaw_rate: 45.0          # deg/s
+  max_accel: 1.0              # m/s^2
+
+# ── 路径跟随高级 (pathFollower) ──
+path_follower:
+  switch_time_thre: 1.0       # 方向切换延迟 (s)
+  dir_diff_thre: 0.1          # 方向差阈值 (rad)
+  incl_rate_thre: 120.0       # 倾斜变化率阈值 (°/s)
+  slow_rate_1: 0.25
+  slow_rate_2: 0.5
+  slow_rate_3: 0.75
+  slow_time_1: 2.0            # s
+  slow_time_2: 2.0            # s
+  incl_thre: 45.0             # 坡度停车阈值 (°)
+  stop_time: 5.0              # 停车等待时间 (s)
+  pub_skip_num: 1
+  use_incl_rate_to_slow: false
+  use_incl_to_stop: false
+  no_rot_at_stop: false
+  no_rot_at_goal: true
+
+# ── 地形分析高级 (terrainAnalysis) ──
+terrain:
+  quantile_z: 0.25
+  use_sorting: true
+  consider_drop: false
+  limit_ground_lift: false
+  max_ground_lift: 0.15       # m
+  clear_dy_obs: false
+  min_dy_obs_dis: 0.3         # m
+  abs_dy_obs_rel_z_thre: 0.2  # m
+  min_dy_obs_vfov: -16.0      # °
+  max_dy_obs_vfov: 16.0       # °
+  min_dy_obs_point_num: 1
+  no_data_obstacle: false
+  no_data_block_skip_num: 0
+  min_block_point_num: 10
+  voxel_point_update_thre: 100
+  voxel_time_update_thre: 2.0 # s
+  min_rel_z: -1.5             # m
+  max_rel_z: 0.2              # m
+  dis_ratio_z: 0.2
+  terrain_under_vehicle: -0.2 # m
+  terrain_conn_thre: 0.5      # m
+  ceiling_filtering_thre: 2.0 # m
+  check_collision: true
+
+# ── 局部规划高级 (localPlanner) ──
+local_planner:
+  two_way_drive: true
+  check_obstacle: true
+  check_rot_obstacle: false
+  cost_height_thre_1: 0.15    # m
+  cost_height_thre_2: 0.1     # m
+  use_cost: false
+  slow_path_num_thre: 5
+  slow_group_num_thre: 1
+  point_per_path_thre: 2
+  dir_weight: 0.02
+  dir_thre: 90.0              # °
+  dir_to_vehicle: false
+  min_path_range: 1.0         # m
+  path_range_step: 0.5        # m
+  path_range_by_speed: true
+  path_crop_by_goal: true
+  joy_to_speed_delay: 2.0     # s
+  joy_to_check_obstacle_delay: 5.0  # s
+  freeze_ang: 90.0            # °
+  freeze_time: 2.0            # s
+  goal_clear_range: 0.5       # m
+  goal_behind_range: 0.8      # m
+  laser_voxel_size: 0.05      # m
+
+# ── 围栏扩展 ──
+geofence:
+  check_hz: 20.0              # Hz
+  warn_margin: 3.0            # m
+  stop_margin: 0.5            # m
+  enabled: false
+
+# ── 健康监控 ──
+health:
+  eval_hz: 5.0                # Hz
+  rate_window_sec: 2.0        # s

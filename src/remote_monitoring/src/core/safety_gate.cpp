@@ -15,9 +15,9 @@ SafetyGate::SafetyGate(rclcpp::Node *node) : node_(node) {
   node_->declare_parameter<double>("max_speed", 1.0);
   node_->declare_parameter<double>("max_angular", 1.0);
   node_->declare_parameter<double>("tilt_limit_deg", 30.0);
-  node_->declare_parameter<std::string>("safety_odom_topic", "/Odometry");
-  node_->declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
-  node_->declare_parameter<std::string>("stop_topic", "/stop");
+  node_->declare_parameter<std::string>("safety_odom_topic", "/nav/odometry");
+  node_->declare_parameter<std::string>("cmd_vel_topic", "/nav/cmd_vel");
+  node_->declare_parameter<std::string>("stop_topic", "/nav/stop");
 
   // --- 近场避障参数 ---
   node_->declare_parameter<double>("obstacle_height_thre", 0.2);
@@ -108,6 +108,44 @@ robot::v1::SafetyStatus SafetyGate::GetSafetyStatus() {
 std::vector<std::string> SafetyGate::GetLimitReasons() {
   std::lock_guard<std::mutex> lock(mutex_);
   return limit_reasons_;
+}
+
+SafetyGate::TeleopResult SafetyGate::ProcessTeleopFull(
+    const robot::v1::TeleopCommand &cmd) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  // ── Process ──
+  last_teleop_time_ = std::chrono::system_clock::now();
+  limit_reasons_.clear();
+  TeleopResult result;
+  result.velocity = ApplyLimits(cmd.target_velocity());
+
+  // ── SafetyStatus (inline, same as GetSafetyStatus body) ──
+  result.safety_status.set_estop_active(estop_active_);
+  const auto mode = current_mode_.load();
+  if (mode == robot::v1::ROBOT_MODE_TELEOP) {
+    const auto now = std::chrono::system_clock::now();
+    result.safety_status.set_deadman_active(
+        (now - last_teleop_time_) > deadman_timeout_ms_);
+  } else {
+    result.safety_status.set_deadman_active(false);
+  }
+  const bool tilt_limit = std::abs(roll_deg_) > tilt_limit_deg_ ||
+                          std::abs(pitch_deg_) > tilt_limit_deg_;
+  result.safety_status.set_tilt_limit_active(tilt_limit);
+  result.safety_status.set_speed_limited(!limit_reasons_.empty());
+  result.safety_status.set_max_allowed_speed(max_speed_);
+  std::string msg;
+  for (const auto &reason : limit_reasons_) {
+    msg += reason + "; ";
+  }
+  result.safety_status.set_safety_message(msg);
+
+  // ── LimitReasons (move, 避免拷贝) ──
+  result.limit_reasons = std::move(limit_reasons_);
+  limit_reasons_.clear();  // move 后保持一致状态
+
+  return result;
 }
 
 void SafetyGate::SetEmergencyStop(bool active) {
@@ -285,7 +323,22 @@ robot::v1::Twist SafetyGate::ApplyLimits(const robot::v1::Twist &target) {
       std::copysign(max_angular_, target.angular().z()));
     limit_reasons_.push_back("max_angular");
   }
-  
+
+  // ── 定位健康评分驱动的自动降速 ──
+  if (loc_speed_scale_provider_) {
+    const float scale = loc_speed_scale_provider_();
+    if (scale < 1.0f) {
+      limited.mutable_linear()->set_x(limited.linear().x() * scale);
+      limited.mutable_linear()->set_y(limited.linear().y() * scale);
+      limited.mutable_angular()->set_z(limited.angular().z() * scale);
+      if (scale < 0.01f) {
+        limit_reasons_.push_back("loc_lost_stop");
+      } else {
+        limit_reasons_.push_back("loc_degraded_slow");
+      }
+    }
+  }
+
   // 倾斜限制
   const bool tilt_active = std::abs(roll_deg_) > tilt_limit_deg_ ||
                            std::abs(pitch_deg_) > tilt_limit_deg_;

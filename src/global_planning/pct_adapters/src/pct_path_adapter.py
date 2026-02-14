@@ -6,7 +6,7 @@ Role: Bridges the Global Planner (PCT) and the Local Planner via Closed-Loop Con
 
 1. Subscribes to `/pct_path` (Global Path, static sequence of poses)
 2. Subscribes to `/Odometry` (Robot state)
-3. Publishes `/way_point` (Single target) for the Local Planner
+3. Publishes `/planner_waypoint` (Single target) → TaskManager forwards to `/way_point`
 
 Logic:
 - Instead of blindly publishing all points time-based, it monitors robot progress.
@@ -54,9 +54,10 @@ class PCTPathAdapter(Node):
         
         # --- Publishers ---
         # Target for Local Planner
+        # 发布到 /planner_waypoint, 由 TaskManager 统一转发到 /way_point
         self.waypoint_pub = self.create_publisher(
             PointStamped,
-            '/way_point',
+            '/planner_waypoint',
             10
         )
         

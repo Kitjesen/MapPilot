@@ -1,0 +1,41 @@
+# 3d_NAV clang-tidy configuration
+# Focused on catching real bugs, not style nitpicking
+---
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-slicing,
+  misc-redundant-expression,
+  misc-unused-using-decls,
+  modernize-use-auto,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-loop-convert,
+  performance-for-range-copy,
+  performance-implicit-conversion-in-loop,
+  performance-move-const-arg,
+  performance-unnecessary-copy-initialization,
+  performance-unnecessary-value-param,
+  readability-container-size-empty,
+  readability-duplicate-include,
+  readability-redundant-smartptr-get,
+  readability-string-compare,
+
+WarningsAsErrors: >
+  bugprone-use-after-move,
+  bugprone-dangling-handle,
+
+CheckOptions:
+  - key: modernize-use-auto.MinTypeNameLength
+    value: '5'
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: 'rclcpp::*'
+
+# Don't check generated or vendored code
+HeaderFilterRegex: 'include/remote_monitoring/.*\.hpp$'
+
+# System headers are external
+SystemHeaders: false

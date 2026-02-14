@@ -14,6 +14,8 @@
 #include "remote_monitoring/core/mode_manager.hpp"
 #include "remote_monitoring/core/safety_gate.hpp"
 #include "remote_monitoring/core/service_orchestrator.hpp"
+#include "remote_monitoring/core/localization_scorer.hpp"
+#include "remote_monitoring/core/flight_recorder.hpp"
 #include "remote_monitoring/services/control_service.hpp"
 #include "remote_monitoring/services/data_service.hpp"
 #include "remote_monitoring/services/system_service.hpp"
@@ -68,17 +70,18 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
   // 注入转换守卫: 将各独立模块的状态查询接线到 ModeManager
   mode_manager_->SetTransitionGuards({
       .tf_ok =
-          [this]() { return aggregator_->GetFastState().tf_ok(); },
+          [this]() { return aggregator_->IsTfOk(); },
       .localization_valid =
           [this]() {
             // map→odom TF 由 Localizer/PGO 发布，有效即定位可用
-            return aggregator_->GetFastState().tf_ok();
+            return aggregator_->IsTfOk();
           },
       .has_lease =
           [this]() { return lease_mgr_->HasActiveLease(); },
       .slam_running =
           [this]() {
-            return aggregator_->GetSlowState().topic_rates().odom_hz() > 20.0f;
+            auto ss = aggregator_->GetSlowState();
+            return ss && ss->topic_rates().odom_hz() > 20.0f;
           },
       .estop_clear =
           [this]() {
@@ -104,17 +107,67 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
     return static_cast<int>(mode_manager_->GetCurrentMode());
   });
 
-  // 健康监控降级回调 → ModeManager 急停 (回调为 best-effort, 不是唯一停车路径)
+  // 健康监控降级回调 → ModeManager 急停 + FlightRecorder 黑盒 dump
   health_monitor_->SetDegradeCallback(
       [this](core::HealthLevel level, const std::string &reason) {
-        if (level == core::HealthLevel::FAULT && mode_manager_) {
-          mode_manager_->EmergencyStop("health: " + reason);
+        if (level == core::HealthLevel::FAULT) {
+          if (mode_manager_) {
+            mode_manager_->EmergencyStop("health: " + reason);
+          }
+          // 触发飞行数据 dump (事故记录)
+          if (flight_recorder_) {
+            flight_recorder_->TriggerDump("health_fault:" + reason);
+          }
         }
       });
+
+  // Layer 5: 定位健康评分器 (全新子系统)
+  localization_scorer_ = std::make_shared<core::LocalizationScorer>(node_);
+  localization_scorer_->SetEventBuffer(event_buffer_);
+  // 接入 SafetyGate: 定位降级时自动限速
+  safety_gate_->SetLocSpeedScaleProvider(
+      [this]() { return localization_scorer_->GetSpeedScale(); });
+
+  // Layer 5.5: 飞行数据记录器 / 黑盒 (全新子系统)
+  {
+    if (!node_->has_parameter("flight_record_dir"))
+      node_->declare_parameter<std::string>(
+          "flight_record_dir", "/opt/robot/flight_records");
+    if (!node_->has_parameter("flight_record_capacity"))
+      node_->declare_parameter<int>("flight_record_capacity", 300);
+    if (!node_->has_parameter("flight_record_post_trigger"))
+      node_->declare_parameter<int>("flight_record_post_trigger", 50);
+
+    const auto fdr_dir =
+        node_->get_parameter("flight_record_dir").as_string();
+    const int fdr_cap =
+        node_->get_parameter("flight_record_capacity").as_int();
+    const int fdr_post =
+        node_->get_parameter("flight_record_post_trigger").as_int();
+
+    flight_recorder_ = std::make_shared<core::FlightRecorder>(
+        static_cast<size_t>(fdr_cap), fdr_dir,
+        static_cast<size_t>(fdr_post));
+
+    RCLCPP_INFO(node_->get_logger(),
+                "[FlightRecorder] dir=%s, capacity=%d, post_trigger=%d",
+                fdr_dir.c_str(), fdr_cap, fdr_post);
+  }
 
   // 任务管理器
   task_manager_ = std::make_shared<core::TaskManager>(node_);
   task_manager_->SetEventBuffer(event_buffer_);
+
+  // 联动: ModeManager 模式切换/E-stop 时自动挂起/恢复任务
+  mode_manager_->SetTaskManager(task_manager_);
+
+  // 联动: E-stop → FlightRecorder 黑盒 dump
+  mode_manager_->SetEstopExtraCallback(
+      [this](const std::string &reason) {
+        if (flight_recorder_) {
+          flight_recorder_->TriggerDump("estop:" + reason);
+        }
+      });
 
   // 创建服务实现 (Phase 1.5: 传入配置化的 robot_id 和 firmware_version)
   {
@@ -127,6 +180,7 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
     std::string rid = node_->get_parameter("robot_id").as_string();
     std::string fwv = node_->get_parameter("firmware_version").as_string();
     system_service_ = std::make_shared<services::SystemServiceImpl>(node_, rid, fwv);
+    system_service_->SetLeaseManager(lease_mgr_);
   }
   control_service_ =
       std::make_shared<services::ControlServiceImpl>(
@@ -145,9 +199,20 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
   // 注入健康和围栏监控到 StatusAggregator (用于 SlowState 推送)
   aggregator_->SetHealthMonitor(health_monitor_);
   aggregator_->SetGeofenceMonitor(geofence_monitor_);
+  aggregator_->SetLocalizationScorer(localization_scorer_);
+  aggregator_->SetFlightRecorder(flight_recorder_);
 
-  // 断联降级: 发布 /slow_down
-  pub_slow_down_ = node_->create_publisher<std_msgs::msg::Int8>("/slow_down", 5);
+  // 注入运行参数提供者 (用于 SlowState.config_json 推送)
+  aggregator_->SetConfigProvider([this]() -> std::pair<std::string, uint64_t> {
+    return {system_service_->GetCurrentConfigJson(),
+            system_service_->GetConfigVersion()};
+  });
+
+  // 断联降级: 发布减速指令 (标准接口契约)
+  std::string slow_down_topic = "/nav/slow_down";
+  if (node_->has_parameter("slow_down_topic"))
+    slow_down_topic = node_->get_parameter("slow_down_topic").as_string();
+  pub_slow_down_ = node_->create_publisher<std_msgs::msg::Int8>(slow_down_topic, 5);
 
   // 崩溃恢复: 检查上次运行状态, 清理残留 nav 服务
   RecoverFromCrash();

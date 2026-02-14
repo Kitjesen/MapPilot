@@ -118,7 +118,7 @@ class FileGateway extends ChangeNotifier {
     if (lower.endsWith('.onnx') || lower.endsWith('.pt') ||
         lower.endsWith('.tflite') || lower.endsWith('.engine')) return 'model';
     if (lower.endsWith('.pcd') || lower.endsWith('.pgm') ||
-        lower.endsWith('.yaml') && lower.contains('map')) return 'map';
+        (lower.endsWith('.yaml') && lower.contains('map'))) return 'map';
     if (lower.endsWith('.bin') || lower.endsWith('.hex') ||
         lower.endsWith('.deb') || lower.endsWith('.img')) return 'firmware';
     if (lower.endsWith('.json') || lower.endsWith('.yaml') ||

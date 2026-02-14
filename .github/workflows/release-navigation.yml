@@ -81,10 +81,20 @@ jobs:
           # 安装签名依赖
           pip install cryptography
 
+      - name: Sync versions
+        run: bash scripts/sync_versions.sh
+
       - name: Build workspace
         run: |
           source /opt/ros/humble/setup.bash
           colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+      - name: Run unit tests
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --packages-select remote_monitoring --return-code-on-test-failure
+          colcon test-result --verbose
 
       - name: Package
         run: |

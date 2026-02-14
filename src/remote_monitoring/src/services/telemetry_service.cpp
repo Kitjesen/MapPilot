@@ -42,15 +42,25 @@ grpc::Status TelemetryServiceImpl::StreamFastState(
   grpc::ServerWriter<robot::v1::FastState> *writer) {
   
   double hz = request->desired_hz() > 0 ? request->desired_hz() : aggregator_->fast_state_hz();
-  if (hz > 60.0) hz = 60.0;  // 限制最大频率
-  const double period = 1.0 / hz;
+  if (hz > 60.0) hz = 60.0;   // 限制最大频率
+  if (hz < 0.5)  hz = 0.5;    // 限制最小频率，防止单客户端长 sleep 阻塞 gRPC 线程
+  const auto period = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::duration<double>(1.0 / hz));
   
   while (!context->IsCancelled()) {
-    const auto state = aggregator_->GetFastState();
-    if (!writer->Write(state)) {
+    auto state = aggregator_->GetFastState();
+    if (!state || !writer->Write(*state)) {
       break;
     }
-    std::this_thread::sleep_for(std::chrono::duration<double>(period));
+    // 可中断 sleep: 每 200ms 检查一次取消，避免客户端断开后长时间阻塞
+    auto remaining = period;
+    constexpr auto kCheckInterval = std::chrono::milliseconds(200);
+    while (remaining > std::chrono::milliseconds(0)) {
+      const auto chunk = std::min(remaining, kCheckInterval);
+      std::this_thread::sleep_for(chunk);
+      if (context->IsCancelled()) break;
+      remaining -= chunk;
+    }
   }
   
   return grpc::Status::OK;
@@ -61,14 +71,25 @@ grpc::Status TelemetryServiceImpl::StreamSlowState(
   const robot::v1::SlowStateRequest *,
   grpc::ServerWriter<robot::v1::SlowState> *writer) {
   
-  const double period = 1.0 / aggregator_->slow_state_hz();
+  double hz = aggregator_->slow_state_hz();
+  if (hz < 0.5) hz = 0.5;
+  const auto period = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::duration<double>(1.0 / hz));
   
   while (!context->IsCancelled()) {
-    const auto state = aggregator_->GetSlowState();
-    if (!writer->Write(state)) {
+    auto state = aggregator_->GetSlowState();
+    if (!state || !writer->Write(*state)) {
       break;
     }
-    std::this_thread::sleep_for(std::chrono::duration<double>(period));
+    // 可中断 sleep
+    auto remaining = period;
+    constexpr auto kCheckInterval = std::chrono::milliseconds(500);
+    while (remaining > std::chrono::milliseconds(0)) {
+      const auto chunk = std::min(remaining, kCheckInterval);
+      std::this_thread::sleep_for(chunk);
+      if (context->IsCancelled()) break;
+      remaining -= chunk;
+    }
   }
   
   return grpc::Status::OK;

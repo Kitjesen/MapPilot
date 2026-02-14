@@ -13,9 +13,9 @@ void main() {
   });
 
   group('FileGateway lifecycle', () {
-    test('initial state is empty', () {
+    test('initial state is empty with default directory', () {
       expect(gateway.files, isEmpty);
-      expect(gateway.currentDirectory, '/');
+      expect(gateway.currentDirectory, FileGateway.defaultDirectory);
       expect(gateway.totalSize, 0);
       expect(gateway.freeSpace, 0);
       expect(gateway.isLoading, isFalse);
@@ -24,12 +24,12 @@ void main() {
       expect(gateway.isDownloading, isFalse);
     });
 
-    test('updateClient(null) resets state', () {
+    test('updateClient(null) resets state to default directory', () {
       gateway.updateClient(mockClient);
       gateway.updateClient(null);
 
       expect(gateway.files, isEmpty);
-      expect(gateway.currentDirectory, '/');
+      expect(gateway.currentDirectory, FileGateway.defaultDirectory);
       expect(gateway.totalSize, 0);
       expect(gateway.freeSpace, 0);
     });
@@ -42,12 +42,14 @@ void main() {
 
       expect(gateway.isLoading, isFalse);
       expect(gateway.errorMessage, isNull);
-      // Mock client returns some files for root '/'
+      // Mock client returns some files
       expect(gateway.files, isNotNull);
     });
 
     test('openDirectory changes currentDirectory and lists', () async {
       gateway.updateClient(mockClient);
+      // Navigate to root first, then into a subdirectory
+      await gateway.listFiles('/');
       await gateway.openDirectory('models');
 
       expect(gateway.currentDirectory, '/models');
@@ -55,6 +57,7 @@ void main() {
 
     test('goUp navigates to parent directory', () async {
       gateway.updateClient(mockClient);
+      await gateway.listFiles('/');
       await gateway.openDirectory('models');
       expect(gateway.currentDirectory, '/models');
 
@@ -64,6 +67,7 @@ void main() {
 
     test('goUp from root stays at root', () async {
       gateway.updateClient(mockClient);
+      await gateway.listFiles('/');
       expect(gateway.currentDirectory, '/');
 
       await gateway.goUp();
@@ -72,6 +76,7 @@ void main() {
 
     test('breadcrumbs are computed correctly', () async {
       gateway.updateClient(mockClient);
+      await gateway.listFiles('/');
       await gateway.openDirectory('models');
       await gateway.openDirectory('v2');
 
@@ -82,6 +87,7 @@ void main() {
 
     test('navigateToBreadcrumb truncates path', () async {
       gateway.updateClient(mockClient);
+      await gateway.listFiles('/');
       await gateway.openDirectory('a');
       await gateway.openDirectory('b');
       await gateway.openDirectory('c');

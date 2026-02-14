@@ -8,6 +8,8 @@ import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
+import 'package:flutter_monitor/core/gateway/control_gateway.dart';
+import 'package:flutter_monitor/core/gateway/runtime_config_gateway.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/app/responsive.dart';
@@ -86,6 +88,18 @@ class _MapScreenState extends State<MapScreen>
   // ─── Waypoints ───
   final List<_Waypoint> _waypoints = [];
 
+  // ─── Active waypoints (from backend) ───
+  List<ActiveWaypoint> _activeWaypoints = [];
+  WaypointSource _waypointSource = WaypointSource.WAYPOINT_SOURCE_NONE;
+  int _activeWaypointCurrentIndex = 0;
+  Timer? _waypointPollTimer;
+  bool _wasRunning = false;
+
+  // ─── Geofence alert ───
+  StreamSubscription? _geofenceSub;
+  String _geofenceState = 'NO_FENCE';
+  double _geofenceMargin = 0;
+
   bool get _modeUsesGoalPoint => _selectedMode != TaskMode.mapping;
   String get _goalPointLabel =>
       _selectedMode == TaskMode.patrol ? '巡检目标点' : '导航目标点';
@@ -99,6 +113,9 @@ class _MapScreenState extends State<MapScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startListening();
       _subscribeToMaps();
+      // 从 RuntimeConfigGateway 同步速度限制
+      final rcGw = context.read<RuntimeConfigGateway>();
+      setState(() => _speedLimit = rcGw.config.maxSpeed);
     });
     final matrix = Matrix4.identity()
       ..translate(200.0, 300.0)
@@ -108,6 +125,8 @@ class _MapScreenState extends State<MapScreen>
 
   @override
   void dispose() {
+    _waypointPollTimer?.cancel();
+    _geofenceSub?.cancel();
     _fastSub?.cancel();
     _mapSubscription?.cancel();
     _pclSubscription?.cancel();
@@ -171,6 +190,19 @@ class _MapScreenState extends State<MapScreen>
         if (angles != null) setState(() => _currentJointAngles = angles);
       });
     }
+    // Subscribe to geofence data from SlowState
+    _geofenceSub = provider.slowStateStream.listen((ss) {
+      if (!mounted) return;
+      final g = ss.geofence;
+      final newState = g.state.isEmpty ? 'NO_FENCE' : g.state;
+      if (newState != _geofenceState || g.marginDistance != _geofenceMargin) {
+        setState(() {
+          _geofenceState = newState;
+          _geofenceMargin = g.marginDistance;
+        });
+      }
+    });
+
     _fastSub = provider.fastStateStream.listen((state) {
       if (!mounted) return;
       final now = DateTime.now();
@@ -257,6 +289,18 @@ class _MapScreenState extends State<MapScreen>
       return;
     }
 
+    // Check for active waypoints before starting a new task
+    final active = await tg.getActiveWaypoints();
+    if (active != null &&
+        active.source != WaypointSource.WAYPOINT_SOURCE_NONE &&
+        active.source != WaypointSource.WAYPOINT_SOURCE_UNSPECIFIED &&
+        active.totalCount > 0) {
+      if (!mounted) return;
+      final proceed = await _showActiveWaypointDialog(active);
+      if (!proceed) return;
+      await tg.clearWaypoints();
+    }
+
     HapticFeedback.mediumImpact();
     final missionName = _missionNameCtrl.text.trim();
     late final bool ok;
@@ -331,6 +375,79 @@ class _MapScreenState extends State<MapScreen>
     }
   }
 
+  // ─── Active waypoint polling ───
+  void _syncWaypointPolling(bool isRunning) {
+    if (isRunning && !_wasRunning) {
+      _startWaypointPolling();
+    } else if (!isRunning && _wasRunning) {
+      _stopWaypointPolling();
+    }
+    _wasRunning = isRunning;
+  }
+
+  void _startWaypointPolling() {
+    _waypointPollTimer?.cancel();
+    _pollActiveWaypoints(); // immediate first poll
+    _waypointPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _pollActiveWaypoints();
+    });
+  }
+
+  void _stopWaypointPolling() {
+    _waypointPollTimer?.cancel();
+    _waypointPollTimer = null;
+    if (mounted) {
+      setState(() {
+        _activeWaypoints = [];
+        _waypointSource = WaypointSource.WAYPOINT_SOURCE_NONE;
+        _activeWaypointCurrentIndex = 0;
+      });
+    }
+  }
+
+  Future<void> _pollActiveWaypoints() async {
+    final tg = context.read<TaskGateway>();
+    final resp = await tg.getActiveWaypoints();
+    if (resp != null && mounted) {
+      setState(() {
+        _activeWaypoints = resp.waypoints.toList();
+        _waypointSource = resp.source;
+        _activeWaypointCurrentIndex = resp.currentIndex;
+      });
+    }
+  }
+
+  // ─── Active waypoint check dialog ───
+  Future<bool> _showActiveWaypointDialog(GetActiveWaypointsResponse active) async {
+    final sourceLabel = switch (active.source) {
+      WaypointSource.WAYPOINT_SOURCE_APP => 'App 任务',
+      WaypointSource.WAYPOINT_SOURCE_PLANNER => '全局规划器',
+      _ => '未知',
+    };
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('存在活跃航点'),
+        content: Text(
+          '当前有 ${active.totalCount} 个来自「$sourceLabel」的航点正在执行。\n'
+          '进度: ${(active.progressPercent * 100).toStringAsFixed(0)}%\n\n'
+          '是否清除当前航点并启动新任务？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('清除并继续'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
   Future<void> _saveMap() async {
     HapticFeedback.mediumImpact();
     final name = 'map_${DateTime.now().millisecondsSinceEpoch}';
@@ -352,8 +469,14 @@ class _MapScreenState extends State<MapScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final isDesktop = !context.isMobile;
-    final conn = context.watch<RobotConnectionProvider>();
-    final online = conn.isConnected;
+    final online = context.select<RobotConnectionProvider, bool>((p) => p.isConnected);
+
+    // Sync waypoint polling lifecycle outside of build tree
+    final isRunning = context.watch<TaskGateway>().isRunning;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncWaypointPolling(isRunning);
+    });
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -381,8 +504,11 @@ class _MapScreenState extends State<MapScreen>
             children: [
               // Map toolbar
               _buildMapToolbar(context, online),
-              // Map view
-              Expanded(child: _buildMapArea(context)),
+              // Map view + task status overlay
+              Expanded(child: Stack(children: [
+                Positioned.fill(child: _buildMapArea(context)),
+                _buildTaskStatusBar(context),
+              ])),
               // Waypoint timeline
               _buildWaypointTimeline(context),
             ],
@@ -411,7 +537,7 @@ class _MapScreenState extends State<MapScreen>
                 shape: BoxShape.circle,
               )),
               const SizedBox(width: 8),
-              Text(context.watch<RobotProfileProvider>().current.name,
+              Text(context.select<RobotProfileProvider, String>((p) => p.current.name),
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: context.titleColor)),
             ]),
           ),
@@ -426,6 +552,8 @@ class _MapScreenState extends State<MapScreen>
           right: 16, bottom: 100,
           child: _buildFabColumn(context),
         ),
+        // Task status bar (mobile)
+        _buildTaskStatusBar(context),
         // Goal setting indicator
         if (_isSettingGoal) _buildGoalSettingBanner(context),
       ],
@@ -468,12 +596,15 @@ class _MapScreenState extends State<MapScreen>
               )),
               const Spacer(),
               GestureDetector(
-                onTap: () => setState(() {
-                  _missionNameCtrl.clear();
-                  _speedLimit = 1.5;
-                  _priority = 0;
-                  _obstacleOverride = false;
-                }),
+                onTap: () {
+                  final defaultSpeed = context.read<RuntimeConfigGateway>().config.maxSpeed;
+                  setState(() {
+                    _missionNameCtrl.clear();
+                    _speedLimit = defaultSpeed;
+                    _priority = 0;
+                    _obstacleOverride = false;
+                  });
+                },
                 child: Text('Reset\nDefaults', textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: AppColors.primary, height: 1.2)),
               ),
@@ -584,7 +715,7 @@ class _MapScreenState extends State<MapScreen>
   }
 
   Widget _buildRobotDropdown(BuildContext context) {
-    final name = context.watch<RobotProfileProvider>().current.name;
+    final name = context.select<RobotProfileProvider, String>((p) => p.current.name);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -602,18 +733,92 @@ class _MapScreenState extends State<MapScreen>
   }
 
   Widget _buildSpeedField(BuildContext context) {
+    final dark = context.isDark;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: context.borderColor),
+        color: dark
+            ? Colors.white.withValues(alpha: 0.04)
+            : Colors.white.withValues(alpha: 0.6),
       ),
-      child: Row(children: [
-        Text('${_speedLimit.toStringAsFixed(1)}',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.titleColor)),
-        const SizedBox(width: 4),
-        Text('m/s', style: TextStyle(fontSize: 11, color: context.subtitleColor)),
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Value display
+          Row(children: [
+            Text(
+              _speedLimit.toStringAsFixed(1),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: context.titleColor,
+                letterSpacing: -0.3,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text('m/s',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: context.subtitleColor,
+              ),
+            ),
+            const Spacer(),
+            // Speed icon
+            Icon(
+              _speedLimit > 1.2
+                  ? Icons.speed_rounded
+                  : _speedLimit > 0.6
+                      ? Icons.directions_walk_rounded
+                      : Icons.accessibility_new_rounded,
+              size: 16,
+              color: _speedLimit > 1.5
+                  ? AppColors.warning
+                  : AppColors.primary,
+            ),
+          ]),
+          // Slider
+          SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 4,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+              activeTrackColor: AppColors.primary,
+              inactiveTrackColor: dark
+                  ? Colors.white.withValues(alpha: 0.1)
+                  : const Color(0xFFE8E5F5),
+              thumbColor: Colors.white,
+              overlayColor: AppColors.primary.withValues(alpha: 0.12),
+            ),
+            child: Slider(
+              value: _speedLimit,
+              min: 0.3,
+              max: 2.0,
+              divisions: 17,
+              onChanged: (v) {
+                setState(() => _speedLimit = v);
+                // 同步到 RuntimeConfigGateway
+                context.read<RuntimeConfigGateway>().updateParam('max_speed', v);
+              },
+            ),
+          ),
+          // Range labels
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('0.3', style: TextStyle(fontSize: 9, color: context.hintColor)),
+                Text('2.0', style: TextStyle(fontSize: 9, color: context.hintColor)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+        ],
+      ),
     );
   }
 
@@ -780,6 +985,20 @@ class _MapScreenState extends State<MapScreen>
         // Goal setting banner
         if (_isSettingGoal) _buildGoalSettingBanner(context),
 
+        // Active waypoints overlay (while task runs)
+        if (_activeWaypoints.isNotEmpty && !_show3DModel)
+          Positioned.fill(child: IgnorePointer(child: CustomPaint(
+            painter: _ActiveWaypointPainter(
+              waypoints: _activeWaypoints,
+              currentIndex: _activeWaypointCurrentIndex,
+              transform: _transformController.value,
+            ),
+          ))),
+
+        // Geofence alert banner
+        if (_geofenceState == 'WARNING' || _geofenceState == 'VIOLATION')
+          _buildGeofenceAlertBanner(),
+
         // Desktop map controls (right side)
         if (!context.isMobile)
           Positioned(
@@ -852,35 +1071,84 @@ class _MapScreenState extends State<MapScreen>
   }
 
   Widget _buildFabColumn(BuildContext context) {
+    final tg = context.watch<TaskGateway>();
+    final cg = context.watch<ControlGateway>();
+    final isRunning = tg.isRunning;
+    final isMapping = isRunning && tg.activeTaskType == TaskType.TASK_TYPE_MAPPING;
+    final isEstop = cg.currentMode == RobotMode.ROBOT_MODE_ESTOP;
+
     return Column(mainAxisSize: MainAxisSize.min, children: [
-      _MapFab(
-        icon: _isSettingGoal ? Icons.close : Icons.add_location_alt_outlined,
-        tooltip: '设置$_goalPointLabel',
-        onPressed: () {
-          HapticFeedback.selectionClick();
-          if (!_modeUsesGoalPoint) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: const Text('建图模式无需设置目标点'),
-              backgroundColor: AppColors.warning,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ));
-            return;
-          }
-          setState(() {
-            _isSettingGoal = !_isSettingGoal;
-            if (!_isSettingGoal && _selectedMode == TaskMode.navigation) {
-              _navGoalPoint = null;
+      // Goal setting (hidden when task running)
+      if (!isRunning)
+        _MapFab(
+          icon: _isSettingGoal ? Icons.close : Icons.add_location_alt_outlined,
+          tooltip: '设置$_goalPointLabel',
+          onPressed: () {
+            HapticFeedback.selectionClick();
+            if (!_modeUsesGoalPoint) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('建图模式无需设置目标点'),
+                backgroundColor: AppColors.warning,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ));
+              return;
             }
-          });
-        },
-      ),
-      const SizedBox(height: 6),
-      _MapFab(
-        icon: Icons.navigation_outlined,
-        tooltip: '启动任务',
-        onPressed: _startSelectedTask,
-      ),
+            setState(() {
+              _isSettingGoal = !_isSettingGoal;
+              if (!_isSettingGoal && _selectedMode == TaskMode.navigation) {
+                _navGoalPoint = null;
+              }
+            });
+          },
+        ),
+      if (!isRunning) const SizedBox(height: 6),
+
+      // Start / Cancel task button
+      isRunning
+          ? _MapFab(
+              icon: isMapping ? Icons.save_rounded : Icons.stop_rounded,
+              tooltip: isMapping ? '停止建图' : '取消任务',
+              color: isMapping ? AppColors.success : AppColors.error,
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: Text(isMapping ? '停止建图' : '取消任务'),
+                    content: Text(isMapping
+                        ? '停止建图后将自动保存地图。'
+                        : '确定要取消当前任务吗？'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('返回')),
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: isMapping ? AppColors.success : AppColors.error),
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        child: Text(isMapping ? '停止并保存' : '取消任务'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true) {
+                  await tg.cancelTask();
+                  _stopWaypointPolling();
+                }
+              },
+            )
+          : _MapFab(
+              icon: Icons.navigation_outlined,
+              tooltip: isEstop ? '急停中，无法启动' : '启动任务',
+              color: isEstop ? Colors.grey : null,
+              onPressed: isEstop ? () {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: const Text('急停状态，请先解除急停'),
+                  backgroundColor: AppColors.error,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ));
+              } : _startSelectedTask,
+            ),
+
       const SizedBox(height: 6),
       _MapFab(icon: Icons.folder_outlined, tooltip: '地图管理',
         onPressed: () => Navigator.of(context).pushNamed('/map-manager')),
@@ -888,6 +1156,192 @@ class _MapScreenState extends State<MapScreen>
       _MapFab(icon: Icons.save_outlined, tooltip: '保存地图',
         onPressed: _saveMap),
     ]);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  TASK STATUS BAR — overlay when task is running
+  // ═══════════════════════════════════════════════════════════
+  Widget _buildTaskStatusBar(BuildContext context) {
+    final tg = context.watch<TaskGateway>();
+    if (!tg.isRunning) return const SizedBox.shrink();
+
+    final dark = context.isDark;
+    final taskLabel = switch (tg.activeTaskType) {
+      TaskType.TASK_TYPE_NAVIGATION => 'NAVIGATION',
+      TaskType.TASK_TYPE_MAPPING => 'MAPPING',
+      TaskType.TASK_TYPE_INSPECTION => 'PATROL',
+      TaskType.TASK_TYPE_FOLLOW_PATH => 'FOLLOW',
+      _ => 'TASK',
+    };
+    final progress = tg.progress;
+    final sourceLabel = switch (_waypointSource) {
+      WaypointSource.WAYPOINT_SOURCE_APP => 'App',
+      WaypointSource.WAYPOINT_SOURCE_PLANNER => 'Planner',
+      _ => null,
+    };
+    final waypointInfo = _activeWaypoints.isNotEmpty
+        ? '${sourceLabel != null ? '[$sourceLabel] ' : ''}Waypoint ${_activeWaypointCurrentIndex + 1}/${_activeWaypoints.length}'
+        : null;
+
+    return Positioned(
+      left: 16, right: 16, top: MediaQuery.of(context).padding.top + 8,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+        decoration: BoxDecoration(
+          color: dark
+              ? const Color(0xE0222222)
+              : const Color(0xE0FFFFFF),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: tg.isPaused
+                ? AppColors.warning.withValues(alpha: 0.5)
+                : AppColors.primary.withValues(alpha: 0.3),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 12, offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Top row: label + waypoint info + buttons
+            Row(
+              children: [
+                // Task type badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: tg.isPaused
+                        ? AppColors.warning.withValues(alpha: 0.15)
+                        : AppColors.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    tg.isPaused ? '$taskLabel (PAUSED)' : taskLabel,
+                    style: TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5,
+                      color: tg.isPaused ? AppColors.warning : AppColors.primary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                // Waypoint progress
+                if (waypointInfo != null)
+                  Text(waypointInfo, style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w500, color: context.titleColor,
+                  )),
+                const Spacer(),
+                // Pause / Resume
+                _statusBarBtn(
+                  icon: tg.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                  tooltip: tg.isPaused ? '恢复' : '暂停',
+                  onTap: () => tg.isPaused ? tg.resumeTask() : tg.pauseTask(),
+                ),
+                const SizedBox(width: 4),
+                // Cancel / Stop Mapping
+                Builder(builder: (ctx) {
+                  final isMappingTask = tg.activeTaskType == TaskType.TASK_TYPE_MAPPING;
+                  return _statusBarBtn(
+                    icon: isMappingTask ? Icons.save_rounded : Icons.close_rounded,
+                    tooltip: isMappingTask ? '停止建图' : '取消任务',
+                    color: isMappingTask ? AppColors.success : AppColors.error,
+                    onTap: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: Text(isMappingTask ? '停止建图' : '取消任务'),
+                          content: Text(isMappingTask
+                              ? '停止建图后将自动保存地图。'
+                              : '确定要取消当前任务吗？'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('返回')),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: isMappingTask ? AppColors.success : AppColors.error),
+                              onPressed: () => Navigator.of(ctx).pop(true),
+                              child: Text(isMappingTask ? '停止并保存' : '取消任务'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        await tg.cancelTask();
+                        _stopWaypointPolling();
+                      }
+                    },
+                  );
+                }),
+                const SizedBox(width: 4),
+                // Clear waypoints
+                _statusBarBtn(
+                  icon: Icons.delete_sweep_rounded,
+                  tooltip: '清除航点',
+                  color: AppColors.warning,
+                  onTap: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('清除航点'),
+                        content: const Text('清除所有航点并立即停车？'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('返回')),
+                          FilledButton(
+                            style: FilledButton.styleFrom(backgroundColor: AppColors.warning),
+                            onPressed: () => Navigator.of(ctx).pop(true),
+                            child: const Text('清除并停车'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      await tg.clearWaypoints();
+                    }
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Progress bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: progress.clamp(0.0, 1.0),
+                minHeight: 4,
+                backgroundColor: dark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.06),
+                valueColor: AlwaysStoppedAnimation(
+                  tg.isPaused ? AppColors.warning : AppColors.primary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statusBarBtn({
+    required IconData icon, required String tooltip,
+    Color? color, required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 32, height: 32,
+          decoration: BoxDecoration(
+            color: (color ?? context.subtitleColor).withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 18, color: color ?? context.subtitleColor),
+        ),
+      ),
+    );
   }
 
   Widget _buildGoalSettingBanner(BuildContext context) {
@@ -904,6 +1358,47 @@ class _MapScreenState extends State<MapScreen>
           color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600,
         )),
       )),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  GEOFENCE ALERT — top banner when WARNING or VIOLATION
+  // ═══════════════════════════════════════════════════════════
+  Widget _buildGeofenceAlertBanner() {
+    final isViolation = _geofenceState == 'VIOLATION';
+    final color = isViolation ? AppColors.error : AppColors.warning;
+    final label = isViolation ? '围栏越界' : '围栏警告';
+    final marginText = _geofenceMargin > 0
+        ? '  (余量: ${_geofenceMargin.toStringAsFixed(1)}m)'
+        : '';
+
+    return Positioned(
+      top: 8, left: 16, right: 16,
+      child: SafeArea(
+        child: Material(
+          elevation: 4,
+          borderRadius: BorderRadius.circular(10),
+          color: color.withValues(alpha: 0.92),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(children: [
+              Icon(
+                isViolation ? Icons.error_outline : Icons.warning_amber_rounded,
+                color: Colors.white, size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                '$label$marginText',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              )),
+            ]),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1120,12 +1615,14 @@ class _MapFab extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
+  final Color? color;
 
-  const _MapFab({required this.icon, required this.tooltip, required this.onPressed});
+  const _MapFab({required this.icon, required this.tooltip, required this.onPressed, this.color});
 
   @override
   Widget build(BuildContext context) {
     final dark = context.isDark;
+    final c = color;
     return Tooltip(
       message: tooltip,
       child: GestureDetector(
@@ -1133,11 +1630,15 @@ class _MapFab extends StatelessWidget {
         child: Container(
           width: 40, height: 40,
           decoration: BoxDecoration(
-            color: dark ? AppColors.darkCard : Colors.white,
+            color: c != null
+                ? c.withValues(alpha: dark ? 0.2 : 0.1)
+                : (dark ? AppColors.darkCard : Colors.white),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: context.borderColor),
+            border: Border.all(
+              color: c?.withValues(alpha: 0.5) ?? context.borderColor,
+            ),
           ),
-          child: Icon(icon, size: 18, color: context.subtitleColor),
+          child: Icon(icon, size: 18, color: c ?? context.subtitleColor),
         ),
       ),
     );
@@ -1169,6 +1670,108 @@ class _NavGoalPainter extends CustomPainter {
       goalPoint != old.goalPoint || transform != old.transform;
 }
 
+class _ActiveWaypointPainter extends CustomPainter {
+  final List<ActiveWaypoint> waypoints;
+  final int currentIndex;
+  final Matrix4 transform;
+
+  _ActiveWaypointPainter({
+    required this.waypoints, required this.currentIndex, required this.transform,
+  });
+
+  Offset _toScreen(double x, double y) {
+    final m = transform;
+    return Offset(
+      m[0] * x + m[4] * (-y) + m[12],
+      m[1] * x + m[5] * (-y) + m[13],
+    );
+  }
+
+  // 缓存所有 Paint 对象，避免每帧 ~15-60 次堆分配
+  static final Paint _linePaint = Paint()
+    ..color = const Color(0xFF007AFF).withValues(alpha: 0.4)
+    ..strokeWidth = 2
+    ..style = PaintingStyle.stroke;
+  // Current waypoint
+  static final Paint _curFill = Paint()
+    ..color = const Color(0xFF34C759).withValues(alpha: 0.25);
+  static final Paint _curStroke = Paint()
+    ..color = const Color(0xFF34C759)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5;
+  static final Paint _curDot = Paint()
+    ..color = const Color(0xFF34C759);
+  // Completed waypoint
+  static final Paint _doneFill = Paint()
+    ..color = const Color(0xFF999999).withValues(alpha: 0.3);
+  static final Paint _doneDot = Paint()
+    ..color = const Color(0xFF999999);
+  // Future waypoint
+  static final Paint _futureFill = Paint()
+    ..color = const Color(0xFF007AFF).withValues(alpha: 0.15);
+  static final Paint _futureStroke = Paint()
+    ..color = const Color(0xFF007AFF)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.5;
+  static final Paint _futureDot = Paint()
+    ..color = const Color(0xFF007AFF);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (waypoints.isEmpty) return;
+
+    // Convert waypoint positions to screen coordinates
+    final points = <Offset>[];
+    for (final wp in waypoints) {
+      points.add(_toScreen(wp.position.x, wp.position.y));
+    }
+
+    // Draw connecting lines
+    if (points.length >= 2) {
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (var i = 1; i < points.length; i++) {
+        path.lineTo(points[i].dx, points[i].dy);
+      }
+      canvas.drawPath(path, _linePaint);
+    }
+
+    // Draw waypoint markers
+    for (var i = 0; i < points.length; i++) {
+      final center = points[i];
+      final isCurrent = i == currentIndex;
+
+      if (isCurrent) {
+        canvas.drawCircle(center, 14, _curFill);
+        canvas.drawCircle(center, 14, _curStroke);
+        canvas.drawCircle(center, 5, _curDot);
+      } else if (i < currentIndex) {
+        canvas.drawCircle(center, 8, _doneFill);
+        canvas.drawCircle(center, 3, _doneDot);
+      } else {
+        canvas.drawCircle(center, 10, _futureFill);
+        canvas.drawCircle(center, 10, _futureStroke);
+        canvas.drawCircle(center, 4, _futureDot);
+      }
+
+      // Draw index number
+      final tp = TextPainter(
+        text: TextSpan(text: '${i + 1}', style: TextStyle(
+          color: isCurrent ? const Color(0xFF34C759) : const Color(0xFF007AFF),
+          fontSize: 10, fontWeight: FontWeight.w700,
+        )),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, center + Offset(-tp.width / 2, isCurrent ? 18 : 14));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ActiveWaypointPainter old) =>
+      waypoints.length != old.waypoints.length ||
+      currentIndex != old.currentIndex ||
+      transform != old.transform;
+}
+
 class TrajectoryPainter extends CustomPainter {
   final List<Offset> path;
   final Pose? currentPose;
@@ -1179,6 +1782,26 @@ class TrajectoryPainter extends CustomPainter {
   final int _pathLength;
   final double? _poseX;
   final double? _poseY;
+
+  // ── 缓存 Paint 对象，避免每帧 10+ 次堆分配 ──
+  static final _globalMapPaint = Paint()
+    ..color = Colors.black12..strokeWidth = 0.1..strokeCap = StrokeCap.round;
+  static final _localCloudPaint = Paint()
+    ..color = Colors.red.withValues(alpha: 0.3)..strokeWidth = 0.05..strokeCap = StrokeCap.round;
+  static final _trajectoryPaint = Paint()
+    ..color = const Color(0xFF007AFF).withValues(alpha: 0.6)
+    ..strokeWidth = 0.1..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round;
+  static final _robotPaint = Paint()
+    ..color = const Color(0xFFFF3B30)..style = PaintingStyle.fill;
+  static final _headingPaint = Paint()
+    ..color = Colors.black.withValues(alpha: 0.5)..strokeWidth = 0.05;
+  static final _goalStrokePaint = Paint()
+    ..color = const Color(0xFF34C759)..style = PaintingStyle.stroke..strokeWidth = 0.08;
+  static final _goalFillPaint = Paint()
+    ..color = const Color(0xFF34C759)..style = PaintingStyle.fill;
+  static final _axisPaint = Paint()
+    ..strokeWidth = 0.05..color = Colors.grey.withValues(alpha: 0.5);
 
   TrajectoryPainter({
     required this.path, this.currentPose,
@@ -1193,20 +1816,15 @@ class TrajectoryPainter extends CustomPainter {
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(1.0, -1.0);
     if (globalPoints.isNotEmpty) {
-      canvas.drawPoints(ui.PointMode.points, globalPoints, Paint()
-        ..color = Colors.black12..strokeWidth = 0.1..strokeCap = StrokeCap.round);
+      canvas.drawPoints(ui.PointMode.points, globalPoints, _globalMapPaint);
     }
     if (localPoints.isNotEmpty) {
-      canvas.drawPoints(ui.PointMode.points, localPoints, Paint()
-        ..color = Colors.red.withValues(alpha: 0.3)..strokeWidth = 0.05..strokeCap = StrokeCap.round);
+      canvas.drawPoints(ui.PointMode.points, localPoints, _localCloudPaint);
     }
     if (path.isNotEmpty) {
       final p = Path()..moveTo(path.first.dx, path.first.dy);
       for (var i = 1; i < path.length; i++) p.lineTo(path[i].dx, path[i].dy);
-      canvas.drawPath(p, Paint()
-        ..color = const Color(0xFF007AFF).withValues(alpha: 0.6)
-        ..strokeWidth = 0.1..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round..strokeJoin = StrokeJoin.round);
+      canvas.drawPath(p, _trajectoryPaint);
     }
     if (currentPose != null) {
       final pos = currentPose!.position;
@@ -1217,25 +1835,22 @@ class TrajectoryPainter extends CustomPainter {
       canvas.rotate(yaw);
       canvas.drawPath(
         Path()..moveTo(0.25, 0)..lineTo(-0.25, 0.15)..lineTo(-0.25, -0.15)..close(),
-        Paint()..color = const Color(0xFFFF3B30)..style = PaintingStyle.fill,
+        _robotPaint,
       );
-      canvas.drawLine(Offset.zero, const Offset(1.0, 0), Paint()
-        ..color = Colors.black.withValues(alpha: 0.5)..strokeWidth = 0.05);
+      canvas.drawLine(Offset.zero, const Offset(1.0, 0), _headingPaint);
       canvas.restore();
     }
     if (navGoalPoint != null) {
       canvas.save();
       canvas.translate(navGoalPoint!.dx, navGoalPoint!.dy);
-      final gp = Paint()..color = const Color(0xFF34C759)..style = PaintingStyle.stroke..strokeWidth = 0.08;
-      canvas.drawCircle(Offset.zero, 0.5, gp);
-      canvas.drawCircle(Offset.zero, 0.15, Paint()..color = const Color(0xFF34C759)..style = PaintingStyle.fill);
-      canvas.drawLine(const Offset(-0.3, 0), const Offset(0.3, 0), gp);
-      canvas.drawLine(const Offset(0, -0.3), const Offset(0, 0.3), gp);
+      canvas.drawCircle(Offset.zero, 0.5, _goalStrokePaint);
+      canvas.drawCircle(Offset.zero, 0.15, _goalFillPaint);
+      canvas.drawLine(const Offset(-0.3, 0), const Offset(0.3, 0), _goalStrokePaint);
+      canvas.drawLine(const Offset(0, -0.3), const Offset(0, 0.3), _goalStrokePaint);
       canvas.restore();
     }
-    final op = Paint()..strokeWidth = 0.05;
-    canvas.drawLine(const Offset(-1, 0), const Offset(1, 0), op..color = Colors.grey.withValues(alpha: 0.5));
-    canvas.drawLine(const Offset(0, -1), const Offset(0, 1), op..color = Colors.grey.withValues(alpha: 0.5));
+    canvas.drawLine(const Offset(-1, 0), const Offset(1, 0), _axisPaint);
+    canvas.drawLine(const Offset(0, -1), const Offset(0, 1), _axisPaint);
   }
 
   @override

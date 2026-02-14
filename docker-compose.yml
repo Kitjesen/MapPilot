@@ -1,0 +1,99 @@
+# ═══════════════════════════════════════════════════════════════
+# 3d_NAV Docker Compose — 生产部署
+#
+# 用法:
+#   docker compose up -d           # 启动所有服务
+#   docker compose logs -f nav     # 查看导航日志
+#   docker compose down            # 停止并清理
+#
+# 场景:
+#   建图模式:  ENABLE_PLANNING=false docker compose up -d
+#   导航模式:  docker compose up -d (默认)
+#   仅 gRPC:   docker compose up nav-grpc
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─────────────────────────────────────────────
+  # 导航全栈 (LiDAR + SLAM + Planning + gRPC)
+  # ─────────────────────────────────────────────
+  nav-stack:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: runtime
+    image: 3dnav:${NAV_VERSION:-latest}
+    container_name: nav-stack
+    hostname: nav-stack
+
+    # 硬件访问: 需要宿主机网络 (LiDAR UDP, DDS 发现)
+    network_mode: host
+
+    # 设备透传
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0    # 机器人串口
+      - /dev/ttyACM0:/dev/ttyACM0    # pathFollower
+    # 如果使用摇杆:
+    #  - /dev/input/js0:/dev/input/js0
+
+    # LiDAR 网络配置需要 NET_ADMIN
+    cap_add:
+      - NET_ADMIN
+
+    environment:
+      # 子系统开关
+      ENABLE_LIDAR: ${ENABLE_LIDAR:-true}
+      ENABLE_SLAM: ${ENABLE_SLAM:-true}
+      ENABLE_AUTONOMY: ${ENABLE_AUTONOMY:-true}
+      ENABLE_PLANNING: ${ENABLE_PLANNING:-true}
+      ENABLE_OTA: ${ENABLE_OTA:-true}
+      # LiDAR 网络
+      SETUP_LIDAR_NET: ${SETUP_LIDAR_NET:-true}
+      LIDAR_INTERFACE: ${LIDAR_INTERFACE:-eth0}
+      LIDAR_HOST_IP: ${LIDAR_HOST_IP:-192.168.1.5}
+      # 规划参数
+      NAV_MAP_PATH: ${NAV_MAP_PATH:-}
+      NAV_INIT_X: ${NAV_INIT_X:-0.0}
+      NAV_INIT_Y: ${NAV_INIT_Y:-0.0}
+      NAV_INIT_Z: ${NAV_INIT_Z:-0.0}
+      NAV_INIT_YAW: ${NAV_INIT_YAW:-0.0}
+      # ROS
+      ROS_DISTRO: humble
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+
+    volumes:
+      # 持久化数据
+      - nav-logs:/opt/robot/logs
+      - nav-flight-records:/opt/robot/flight_records
+      - nav-ota:/opt/robot/ota
+      - nav-bags:/opt/robot/bags
+      # 地图 (宿主机目录, 双向读写)
+      - ${HOST_MAP_DIR:-./maps}:/opt/nav/maps
+      # 规划环境 (可选)
+      - ${HOST_PLANNING_ENV:-/dev/null}:/etc/nav/planning.env:ro
+
+    restart: unless-stopped
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 2G
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  nav-logs:
+    driver: local
+  nav-flight-records:
+    driver: local
+  nav-ota:
+    driver: local
+  nav-bags:
+    driver: local

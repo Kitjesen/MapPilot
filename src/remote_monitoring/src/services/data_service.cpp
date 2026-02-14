@@ -331,11 +331,11 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   safe_declare_str("data_camera_topic", "/camera/color/image_raw/compressed");
   safe_declare_str("data_camera_fallback_topic", "/camera/color/compressed");
   safe_declare_str("data_map_topic", "/overall_map");
-  safe_declare_str("data_pointcloud_topic", "/cloud_registered");
-  safe_declare_str("data_terrain_topic", "/terrain_map_ext");
-  safe_declare_str("data_path_topic", "/path");
+  safe_declare_str("data_pointcloud_topic", "/nav/registered_cloud");
+  safe_declare_str("data_terrain_topic", "/nav/terrain_map_ext");
+  safe_declare_str("data_path_topic", "/nav/local_path");
   safe_declare_str("data_free_paths_topic", "/free_paths");
-  safe_declare_str("data_pct_path_topic", "/pct_path");
+  safe_declare_str("data_pct_path_topic", "/nav/global_path");
   safe_declare_str("data_file_root", "");
   // OTA 参数已迁移到 ota_daemon (:50052), 此处不再声明
   safe_declare_bool("webrtc_enabled", false);

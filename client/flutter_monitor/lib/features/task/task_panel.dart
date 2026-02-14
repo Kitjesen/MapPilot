@@ -25,6 +25,10 @@ class _TaskPanelState extends State<TaskPanel> {
   final TextEditingController _mapNameCtrl = TextEditingController();
   bool _saveOnComplete = true;
 
+  // ─── Backend waypoint state ───
+  GetActiveWaypointsResponse? _activeWpResp;
+  bool _wpLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -37,11 +41,57 @@ class _TaskPanelState extends State<TaskPanel> {
     super.dispose();
   }
 
+  // ── Waypoint queries ──
+
+  Future<void> _fetchActiveWaypoints() async {
+    if (_wpLoading) return;
+    setState(() => _wpLoading = true);
+    final resp = await context.read<TaskGateway>().getActiveWaypoints();
+    if (mounted) setState(() { _activeWpResp = resp; _wpLoading = false; });
+  }
+
+  Future<void> _clearWaypoints() async {
+    final ok = await context.read<TaskGateway>().clearWaypoints();
+    if (ok && mounted) {
+      _snack('航点已清除');
+      _fetchActiveWaypoints();
+    }
+  }
+
   // ── Actions (delegate to TaskGateway) ──
 
   Future<void> _start() async {
     HapticFeedback.lightImpact();
     final gw = context.read<TaskGateway>();
+
+    // Pre-start: check for active waypoints from backend
+    if (_selectedType != TaskType.TASK_TYPE_MAPPING) {
+      final active = await gw.getActiveWaypoints();
+      if (active != null && active.totalCount > 0 && mounted) {
+        final sourceLabel = switch (active.source) {
+          WaypointSource.WAYPOINT_SOURCE_APP => 'App 任务',
+          WaypointSource.WAYPOINT_SOURCE_PLANNER => '全局规划器',
+          _ => '未知',
+        };
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('存在活跃航点'),
+            content: Text(
+              '当前有 ${active.totalCount} 个来自「$sourceLabel」的航点正在执行。\n'
+              '进度: ${(active.progressPercent * 100).toStringAsFixed(0)}%\n\n'
+              '是否清除当前航点并启动新任务？',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
+              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('清除并继续')),
+            ],
+          ),
+        );
+        if (proceed != true) return;
+        await gw.clearWaypoints();
+      }
+    }
 
     if (_selectedType == TaskType.TASK_TYPE_MAPPING) {
       final ok = await gw.startTask(
@@ -357,6 +407,11 @@ class _TaskPanelState extends State<TaskPanel> {
   // ════════════════════════════════════════════
 
   Widget _runningView(TaskGateway gw) {
+    // Auto-fetch backend waypoints on first build
+    if (_activeWpResp == null && !_wpLoading) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _fetchActiveWaypoints());
+    }
+
     final name = switch (_selectedType) {
       TaskType.TASK_TYPE_NAVIGATION => '导航',
       TaskType.TASK_TYPE_MAPPING => '建图',
@@ -410,6 +465,9 @@ class _TaskPanelState extends State<TaskPanel> {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+          // Backend waypoint info
+          _backendWaypointCard(),
           const Spacer(flex: 3),
           // Controls
           Row(
@@ -441,6 +499,69 @@ class _TaskPanelState extends State<TaskPanel> {
           ),
           const SizedBox(height: 40),
         ],
+      ),
+    );
+  }
+
+  Widget _backendWaypointCard() {
+    final resp = _activeWpResp;
+    if (_wpLoading) {
+      return _card(
+        child: const Padding(
+          padding: EdgeInsets.all(14),
+          child: Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+        ),
+      );
+    }
+    if (resp == null || resp.totalCount == 0) {
+      return const SizedBox.shrink();
+    }
+    final sourceLabel = switch (resp.source) {
+      WaypointSource.WAYPOINT_SOURCE_APP => 'App',
+      WaypointSource.WAYPOINT_SOURCE_PLANNER => '规划器',
+      _ => '未知',
+    };
+    return _card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('航点 ($sourceLabel)', style: TextStyle(fontSize: 13, color: context.subtitleColor)),
+                Text('${resp.currentIndex + 1} / ${resp.totalCount}',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.titleColor)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _outlineBtn('刷新', onTap: _fetchActiveWaypoints),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: SizedBox(
+                    height: 36,
+                    child: TextButton(
+                      onPressed: _clearWaypoints,
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.error,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(color: AppColors.error.withValues(alpha: 0.3)),
+                        ),
+                      ),
+                      child: const Text('清除航点', style: TextStyle(fontSize: 12)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

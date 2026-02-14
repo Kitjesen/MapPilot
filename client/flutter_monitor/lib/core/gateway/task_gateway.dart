@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
+import 'package:flutter_monitor/core/services/app_logger.dart';
 import 'package:robot_proto/src/common.pb.dart';
 import 'package:robot_proto/src/control.pb.dart';
 
@@ -48,6 +49,9 @@ class TaskGateway extends ChangeNotifier {
   TaskStatus _taskStatus = TaskStatus.TASK_STATUS_UNSPECIFIED;
   String? _statusMessage;
   Timer? _statusTimer;
+  int _pollFailCount = 0;
+  static const _pollWarnThreshold = 3;
+  static const _pollErrorThreshold = 5;
 
   bool get isRunning => _isRunning;
   bool get isPaused => _isPaused;
@@ -61,6 +65,54 @@ class TaskGateway extends ChangeNotifier {
   void clearStatusMessage() {
     _statusMessage = null;
     notifyListeners();
+  }
+
+  /// 重连后恢复任务状态。
+  ///
+  /// 如果断线前有活跃任务，重新查询后端状态并恢复轮询。
+  /// 如果没有活跃任务，查询后端航点来源以同步显示。
+  Future<void> recoverState() async {
+    final client = _client;
+    if (client == null) return;
+
+    // 如果断线前有 activeTaskId，尝试恢复
+    if (_activeTaskId != null) {
+      try {
+        final r = await client.getTaskStatus(taskId: _activeTaskId!);
+        _taskStatus = r.task.status;
+        _progress = r.task.progressPercent;
+        final terminal =
+            _taskStatus == TaskStatus.TASK_STATUS_COMPLETED ||
+            _taskStatus == TaskStatus.TASK_STATUS_FAILED ||
+            _taskStatus == TaskStatus.TASK_STATUS_CANCELLED;
+        if (terminal) {
+          _isRunning = false;
+          _isPaused = false;
+          _stopPolling();
+
+          // 断线期间任务结束 → 补发回调 (否则建图保存等联动逻辑会丢失)
+          if (_taskStatus == TaskStatus.TASK_STATUS_COMPLETED &&
+              _activeTaskType == TaskType.TASK_TYPE_MAPPING) {
+            AppLogger.task.info(
+                'Recovery: mapping completed during disconnect → firing onMappingComplete');
+            onMappingComplete?.call();
+          }
+          onTaskTerminated?.call(_activeTaskType, _taskStatus);
+        } else {
+          _isRunning = true;
+          _isPaused = _taskStatus == TaskStatus.TASK_STATUS_PAUSED;
+          _startPolling();
+        }
+        notifyListeners();
+      } catch (_) {
+        // 查不到就清除本地状态
+        _isRunning = false;
+        _isPaused = false;
+        _activeTaskId = null;
+        _stopPolling();
+        notifyListeners();
+      }
+    }
   }
 
   // ================================================================
@@ -114,7 +166,50 @@ class TaskGateway extends ChangeNotifier {
   /// Whether current task execution should block cold OTA actions.
   bool get blocksColdOta => _isRunning;
 
+  // ================================================================
+  // 航点管理
+  // ================================================================
+
+  /// 查询当前活跃航点 (来源 / 列表 / 进度)
+  Future<GetActiveWaypointsResponse?> getActiveWaypoints() async {
+    final client = _client;
+    if (client == null) return null;
+    try {
+      return await client.getActiveWaypoints();
+    } catch (e) {
+      _statusMessage = '查询航点失败: $e';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// 清除所有航点并立即停车
+  Future<bool> clearWaypoints() async {
+    final client = _client;
+    if (client == null) return false;
+    try {
+      final resp = await client.clearWaypoints();
+      if (resp.base.errorCode == ErrorCode.ERROR_CODE_OK) {
+        _statusMessage = '已清除 ${resp.clearedCount} 个航点';
+        notifyListeners();
+        return true;
+      } else {
+        _statusMessage = resp.base.errorMessage;
+        notifyListeners();
+        return false;
+      }
+    } catch (e) {
+      _statusMessage = '清除航点失败: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
   /// 启动任务
+  ///
+  /// 内部自动完成前置条件:
+  /// - 建图模式 → SetMode(MAPPING)
+  /// - 导航/巡检/循迹 → AcquireLease + SetMode(AUTONOMOUS)
   Future<bool> startTask(
     TaskType type, {
     NavigationParams? navigationParams,
@@ -129,9 +224,28 @@ class TaskGateway extends ChangeNotifier {
     }
 
     try {
-      // 建图模式需要先切换到 MAPPING mode
       if (type == TaskType.TASK_TYPE_MAPPING) {
-        await client.setMode(RobotMode.ROBOT_MODE_MAPPING);
+        // 建图模式 → 切换到 MAPPING mode
+        final modeOk = await client.setMode(RobotMode.ROBOT_MODE_MAPPING);
+        if (!modeOk) {
+          _statusMessage = '切换建图模式失败';
+          notifyListeners();
+          return false;
+        }
+      } else {
+        // 导航/巡检/循迹 → 需要 Lease + AUTONOMOUS
+        final leaseOk = await client.ensureLease();
+        if (!leaseOk) {
+          _statusMessage = '获取控制租约失败（可能其他客户端正在控制）';
+          notifyListeners();
+          return false;
+        }
+        final modeOk = await client.setMode(RobotMode.ROBOT_MODE_AUTONOMOUS);
+        if (!modeOk) {
+          _statusMessage = '切换自主模式失败';
+          notifyListeners();
+          return false;
+        }
       }
 
       final resp = await client.startTask(
@@ -224,6 +338,7 @@ class TaskGateway extends ChangeNotifier {
 
   void _startPolling() {
     _stopPolling();
+    _pollFailCount = 0;
     _statusTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (_activeTaskId == null || _client == null) return;
       try {
@@ -250,9 +365,20 @@ class TaskGateway extends ChangeNotifier {
             onTaskTerminated?.call(_activeTaskType, _taskStatus);
           }
         }
+        _pollFailCount = 0; // 成功时重置
         notifyListeners();
-      } catch (_) {
-        // 网络抖动时静默忽略，下次轮询重试
+      } catch (e) {
+        _pollFailCount++;
+        if (_pollFailCount == _pollWarnThreshold) {
+          AppLogger.task.warning('Task polling failed $_pollFailCount times: $e');
+        }
+        if (_pollFailCount >= _pollErrorThreshold) {
+          AppLogger.task.error(
+              'Task polling failed $_pollFailCount consecutive times, '
+              'status sync may be stale: $e');
+          _statusMessage = '状态同步异常，请检查网络连接';
+          notifyListeners();
+        }
       }
     });
   }

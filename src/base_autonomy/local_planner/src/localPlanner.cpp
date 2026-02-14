@@ -143,6 +143,49 @@ public:
     goalX_ = get_parameter("goalX").as_double();
     goalY_ = get_parameter("goalY").as_double();
 
+    // --- Dynamic Parameter Callback ---
+    param_cb_handle_ = add_on_set_parameters_callback(
+        [this](const std::vector<rclcpp::Parameter> &params) {
+          rcl_interfaces::msg::SetParametersResult result;
+          result.successful = true;
+          for (const auto &p : params) {
+            const auto &n = p.get_name();
+            if (n == "twoWayDrive") twoWayDrive_ = p.as_bool();
+            else if (n == "checkObstacle") checkObstacle_ = p.as_bool();
+            else if (n == "checkRotObstacle") checkRotObstacle_ = p.as_bool();
+            else if (n == "useTerrainAnalysis") useTerrainAnalysis_ = p.as_bool();
+            else if (n == "useCost") useCost_ = p.as_bool();
+            else if (n == "pathScaleBySpeed") pathScaleBySpeed_ = p.as_bool();
+            else if (n == "pathRangeBySpeed") pathRangeBySpeed_ = p.as_bool();
+            else if (n == "pathCropByGoal") pathCropByGoal_ = p.as_bool();
+            else if (n == "pathScale") pathScale_ = p.as_double();
+            else if (n == "minPathScale") minPathScale_ = p.as_double();
+            else if (n == "pathScaleStep") pathScaleStep_ = p.as_double();
+            else if (n == "minPathRange") minPathRange_ = p.as_double();
+            else if (n == "pathRangeStep") pathRangeStep_ = p.as_double();
+            else if (n == "maxSpeed") maxSpeed_ = p.as_double();
+            else if (n == "dirWeight") dirWeight_ = p.as_double();
+            else if (n == "dirThre") dirThre_ = p.as_double();
+            else if (n == "obstacleHeightThre") obstacleHeightThre_ = p.as_double();
+            else if (n == "groundHeightThre") groundHeightThre_ = p.as_double();
+            else if (n == "adjacentRange") adjacentRange_ = p.as_double();
+            else if (n == "costHeightThre1") costHeightThre1_ = p.as_double();
+            else if (n == "costHeightThre2") costHeightThre2_ = p.as_double();
+            else if (n == "laserVoxelSize") laserVoxelSize_ = p.as_double();
+            else if (n == "terrainVoxelSize") terrainVoxelSize_ = p.as_double();
+            else if (n == "minRelZ") minRelZ_ = p.as_double();
+            else if (n == "maxRelZ") maxRelZ_ = p.as_double();
+            else if (n == "goalClearRange") goalClearRange_ = p.as_double();
+            else if (n == "goalBehindRange") goalBehindRange_ = p.as_double();
+            else if (n == "freezeAng") freezeAng_ = p.as_double();
+            else if (n == "freezeTime") freezeTime_ = p.as_double();
+            else {
+              RCLCPP_WARN(get_logger(), "Unknown dynamic param: %s", n.c_str());
+            }
+          }
+          return result;
+        });
+
     // --- ROS Interface ---
     subOdometry_ = create_subscription<nav_msgs::msg::Odometry>(
         "/Odometry", 5, std::bind(&LocalPlanner::odometryHandler, this, std::placeholders::_1));
@@ -234,6 +277,9 @@ public:
   }
 
 private:
+  // --- Dynamic Parameter Callback Handle ---
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
+
   // --- Parameters & Constants ---
   std::string pathFolder_;
   double vehicleLength_ = 0.6;

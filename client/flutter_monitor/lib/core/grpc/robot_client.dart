@@ -173,6 +173,15 @@ class RobotClient implements RobotClientBase {
     return _dataClient.subscribe(request);
   }
 
+  /// 是否已持有有效租约
+  bool get hasLease => _currentLeaseToken != null;
+
+  /// 确保持有租约。若已有则直接返回 true，否则尝试获取。
+  Future<bool> ensureLease() async {
+    if (_currentLeaseToken != null) return true;
+    return acquireLease();
+  }
+
   /// 获取租约
   Future<bool> acquireLease() async {
     try {
@@ -307,6 +316,35 @@ class RobotClient implements RobotClientBase {
     return RequestBase()
       ..requestId = const Uuid().v4()
       ..clientTimestamp = Timestamp.fromDateTime(DateTime.now());
+  }
+
+  // ==================== 运行参数配置 ====================
+
+  @override
+  Future<GetRuntimeConfigResponse> getRuntimeConfig() async {
+    final request = GetRuntimeConfigRequest()
+      ..base = _createRequestBase();
+    return await _systemClient.getRuntimeConfig(
+      request,
+      options: CallOptions(timeout: const Duration(seconds: 5)),
+    );
+  }
+
+  @override
+  Future<SetRuntimeConfigResponse> setRuntimeConfig({
+    required String configJson,
+    int expectedVersion = 0,
+    List<String> changedFields = const [],
+  }) async {
+    final request = SetRuntimeConfigRequest()
+      ..base = _createRequestBase()
+      ..configJson = configJson
+      ..expectedVersion = Int64(expectedVersion)
+      ..changedFields.addAll(changedFields);
+    return await _systemClient.setRuntimeConfig(
+      request,
+      options: CallOptions(timeout: const Duration(seconds: 5)),
+    );
   }
 
   /// 获取机器人信息
@@ -454,6 +492,22 @@ class RobotClient implements RobotClientBase {
       ..base = _createRequestBase()
       ..taskId = taskId;
     return await _controlClient.getTaskStatus(request);
+  }
+
+  // ==================== 航点管理 ====================
+
+  @override
+  Future<GetActiveWaypointsResponse> getActiveWaypoints() async {
+    final request = GetActiveWaypointsRequest()
+      ..base = _createRequestBase();
+    return await _controlClient.getActiveWaypoints(request);
+  }
+
+  @override
+  Future<ClearWaypointsResponse> clearWaypoints() async {
+    final request = ClearWaypointsRequest()
+      ..base = _createRequestBase();
+    return await _controlClient.clearWaypoints(request);
   }
 
   // ==================== 地图管理 ====================

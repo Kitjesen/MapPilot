@@ -10,6 +10,7 @@ import 'package:flutter_monitor/features/control/control_screen.dart';
 import 'package:flutter_monitor/features/map/map_screen.dart';
 import 'package:flutter_monitor/features/events/events_screen.dart';
 import 'package:flutter_monitor/features/files/file_browser_screen.dart';
+import 'package:flutter_monitor/features/status/health_status_page.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
@@ -277,6 +278,12 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
         onTap: () => _pushScreen(const EventsScreen()),
       ),
       FeatureCard(
+        icon: Icons.health_and_safety_outlined,
+        title: '系统健康',
+        subtitle: _buildHealthSubtitle(slowState),
+        onTap: () => _pushScreen(const HealthStatusPage()),
+      ),
+      FeatureCard(
         icon: Icons.folder_outlined,
         title: '文件管理',
         subtitle: '模型/地图/固件',
@@ -536,6 +543,13 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
     final cpu = slowState.resources?.cpuPercent ?? 0.0;
     final mem = slowState.resources?.memPercent ?? 0.0;
     return 'CPU ${cpu.toStringAsFixed(0)}% · MEM ${mem.toStringAsFixed(0)}%';
+  }
+
+  String _buildHealthSubtitle(dynamic slowState) {
+    if (slowState == null) return '等待数据...';
+    final level = slowState.health?.overallLevel ?? '';
+    if (level.isEmpty) return '暂无健康数据';
+    return level;
   }
 
   String _poseText(dynamic fastState) {

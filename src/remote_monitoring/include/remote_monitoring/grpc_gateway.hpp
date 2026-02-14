@@ -23,6 +23,8 @@ class HealthMonitor;
 class ModeManager;
 class TaskManager;
 class ServiceOrchestrator;
+class LocalizationScorer;
+class FlightRecorder;
 }
 
 namespace services {
@@ -57,6 +59,8 @@ private:
   std::shared_ptr<core::HealthMonitor> health_monitor_;
   std::shared_ptr<core::TaskManager> task_manager_;
   std::shared_ptr<core::ServiceOrchestrator> service_orchestrator_;
+  std::shared_ptr<core::LocalizationScorer> localization_scorer_;
+  std::shared_ptr<core::FlightRecorder> flight_recorder_;
   
   // 服务实现
   std::shared_ptr<services::SystemServiceImpl> system_service_;

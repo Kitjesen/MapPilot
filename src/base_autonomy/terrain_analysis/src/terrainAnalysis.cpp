@@ -132,6 +132,41 @@ public:
     maxRelZ_ = get_parameter("maxRelZ").as_double();
     disRatioZ_ = get_parameter("disRatioZ").as_double();
 
+    // --- Dynamic Parameter Callback ---
+    param_cb_handle_ = add_on_set_parameters_callback(
+        [this](const std::vector<rclcpp::Parameter> &params) {
+          rcl_interfaces::msg::SetParametersResult result;
+          result.successful = true;
+          for (const auto &p : params) {
+            const auto &n = p.get_name();
+            if (n == "obstacleHeightThre") obstacleHeightThre_ = p.as_double();
+            else if (n == "useSorting") useSorting_ = p.as_bool();
+            else if (n == "quantileZ") quantileZ_ = p.as_double();
+            else if (n == "considerDrop") considerDrop_ = p.as_bool();
+            else if (n == "limitGroundLift") limitGroundLift_ = p.as_bool();
+            else if (n == "maxGroundLift") maxGroundLift_ = p.as_double();
+            else if (n == "clearDyObs") clearDyObs_ = p.as_bool();
+            else if (n == "minDyObsDis") minDyObsDis_ = p.as_double();
+            else if (n == "absDyObsRelZThre") absDyObsRelZThre_ = p.as_double();
+            else if (n == "noDataObstacle") noDataObstacle_ = p.as_bool();
+            else if (n == "scanVoxelSize") {
+              scanVoxelSize_ = p.as_double();
+              downSizeFilter_.setLeafSize(scanVoxelSize_, scanVoxelSize_, scanVoxelSize_);
+            }
+            else if (n == "decayTime") decayTime_ = p.as_double();
+            else if (n == "noDecayDis") noDecayDis_ = p.as_double();
+            else if (n == "clearingDis") clearingDis_ = p.as_double();
+            else if (n == "vehicleHeight") vehicleHeight_ = p.as_double();
+            else if (n == "minRelZ") minRelZ_ = p.as_double();
+            else if (n == "maxRelZ") maxRelZ_ = p.as_double();
+            else if (n == "disRatioZ") disRatioZ_ = p.as_double();
+            else {
+              RCLCPP_WARN(get_logger(), "Unknown dynamic param: %s", n.c_str());
+            }
+          }
+          return result;
+        });
+
     // --- Data Structure Initialization ---
     // Allocate memory for point clouds
     laserCloud_.reset(new pcl::PointCloud<pcl::PointXYZI>());
@@ -682,6 +717,9 @@ private:
   }
 
   // --- Member Variables and Parameters ---
+
+  // Dynamic Parameter Callback Handle
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 
   // ROS Parameters
   double scanVoxelSize_;

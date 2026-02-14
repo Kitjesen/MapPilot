@@ -1,0 +1,75 @@
+# 3d_NAV C++ Code Style
+# Based on Google style with ROS2-friendly adjustments
+---
+Language: Cpp
+BasedOnStyle: Google
+
+# Indentation
+IndentWidth: 2
+ContinuationIndentWidth: 4
+ColumnLimit: 100
+TabWidth: 2
+UseTab: Never
+
+# Braces
+BreakBeforeBraces: Attach
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Includes
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Project headers
+  - Regex: '^"remote_monitoring/'
+    Priority: 1
+  - Regex: '^"interface/'
+    Priority: 2
+  # ROS2 headers
+  - Regex: '^"rclcpp/'
+    Priority: 3
+  - Regex: '^"(nav_msgs|sensor_msgs|geometry_msgs|std_msgs|tf2)/'
+    Priority: 4
+  # Protobuf generated
+  - Regex: '\.pb\.h"$'
+    Priority: 5
+  # gRPC
+  - Regex: '^<grpc'
+    Priority: 6
+  # System / STL
+  - Regex: '^<'
+    Priority: 7
+
+SortIncludes: CaseSensitive
+
+# Alignment
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignOperands: Align
+AlignTrailingComments: true
+
+# Pointer/Reference
+DerivePointerAlignment: false
+PointerAlignment: Right
+
+# Namespace
+NamespaceIndentation: None
+CompactNamespaces: false
+FixNamespaceComments: true
+
+# Misc
+SpaceAfterCStyleCast: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpacesInAngles: false
+ReflowComments: true
+SortUsingDeclarations: true
+
+# Penalty tuning
+PenaltyBreakBeforeFirstCallParameter: 19
+PenaltyBreakComment: 300
+PenaltyBreakString: 1000
+PenaltyExcessCharacter: 1000000
+PenaltyReturnTypeOnItsOwnLine: 60

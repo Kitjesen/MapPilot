@@ -28,6 +28,8 @@ class ControlGateway extends ChangeNotifier {
       _linearX = 0;
       _linearY = 0;
       _angularZ = 0;
+      velocityNotifier.value = (vx: 0.0, vy: 0.0, wz: 0.0);
+      _currentMode = RobotMode.ROBOT_MODE_UNSPECIFIED;
     }
 
     // 如果只有 Dog Board 连上了，自动切换
@@ -45,14 +47,21 @@ class ControlGateway extends ChangeNotifier {
   bool _useDogDirect = false;
   bool _hasLease = false;
   bool _isTeleopActive = false;
+  RobotMode _currentMode = RobotMode.ROBOT_MODE_UNSPECIFIED;
   double _linearX = 0.0;
   double _linearY = 0.0;
   double _angularZ = 0.0;
   String? _statusMessage;
 
+  /// 速度值独立通知器 — 避免摇杆输入触发整棵 widget 树重建。
+  /// ControlScreen 应使用 ValueListenableBuilder 订阅此字段，而非 context.watch。
+  final ValueNotifier<({double vx, double vy, double wz})> velocityNotifier =
+      ValueNotifier((vx: 0.0, vy: 0.0, wz: 0.0));
+
   bool get useDogDirect => _useDogDirect;
   bool get hasLease => _hasLease;
   bool get isTeleopActive => _isTeleopActive;
+  RobotMode get currentMode => _currentMode;
   double get linearX => _linearX;
   double get linearY => _linearY;
   double get angularZ => _angularZ;
@@ -195,7 +204,10 @@ class ControlGateway extends ChangeNotifier {
         _velocityController!.add(twist);
       }
     }
-    notifyListeners();
+
+    // 仅更新速度显示，不触发 notifyListeners()。
+    // 这避免了摇杆 30-60Hz 输入导致 ControlScreen 全树 (含 WebRTC/Camera) 重建。
+    velocityNotifier.value = (vx: _linearX, vy: _linearY, wz: _angularZ);
   }
 
   /// 停止速度（归零）
@@ -214,6 +226,10 @@ class ControlGateway extends ChangeNotifier {
 
     try {
       final success = await client.setMode(mode);
+      if (success) {
+        _currentMode = mode;
+        notifyListeners();
+      }
       return (success, success ? '模式已切换: $mode' : '模式切换失败');
     } catch (e) {
       return (false, '$e');
@@ -240,6 +256,7 @@ class ControlGateway extends ChangeNotifier {
       await _client!.emergencyStop(hardStop: false);
     }
 
+    _currentMode = RobotMode.ROBOT_MODE_ESTOP;
     _statusMessage = '紧急停止已触发';
     notifyListeners();
   }
@@ -279,6 +296,29 @@ class ControlGateway extends ChangeNotifier {
   }
 
   // ================================================================
+  // 状态同步
+  // ================================================================
+
+  /// 从 SlowState 的 current_mode 字符串同步模式。
+  ///
+  /// 在重连后由 main.dart 的 onReconnected 回调触发。
+  void syncModeFromString(String modeStr) {
+    final mapped = switch (modeStr.toLowerCase()) {
+      'idle' => RobotMode.ROBOT_MODE_IDLE,
+      'manual' => RobotMode.ROBOT_MODE_MANUAL,
+      'teleop' => RobotMode.ROBOT_MODE_TELEOP,
+      'autonomous' => RobotMode.ROBOT_MODE_AUTONOMOUS,
+      'mapping' => RobotMode.ROBOT_MODE_MAPPING,
+      'estop' => RobotMode.ROBOT_MODE_ESTOP,
+      _ => RobotMode.ROBOT_MODE_UNSPECIFIED,
+    };
+    if (_currentMode != mapped) {
+      _currentMode = mapped;
+      notifyListeners();
+    }
+  }
+
+  // ================================================================
   // Cleanup
   // ================================================================
 
@@ -290,6 +330,7 @@ class ControlGateway extends ChangeNotifier {
   @override
   void dispose() {
     _stopTeleop();
+    velocityNotifier.dispose();
     super.dispose();
   }
 }

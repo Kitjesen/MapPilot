@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -37,6 +38,15 @@ public:
   // 返回最近一次限幅原因，供 TeleopFeedback 透传。
   std::vector<std::string> GetLimitReasons();
 
+  /// 合并调用: 单次加锁完成 ProcessTeleopCommand + GetSafetyStatus + GetLimitReasons。
+  /// 消除 teleop 热路径上的 3 次 lock/unlock (10-30Hz)。
+  struct TeleopResult {
+    robot::v1::Twist velocity;
+    robot::v1::SafetyStatus safety_status;
+    std::vector<std::string> limit_reasons;
+  };
+  TeleopResult ProcessTeleopFull(const robot::v1::TeleopCommand &cmd);
+
   // 设置急停状态（true: 急停，false: 清除）。
   void SetEmergencyStop(bool active);
   
@@ -45,6 +55,12 @@ public:
 
   // 设置当前运行模式（由 ModeManager 调用）
   void SetCurrentMode(robot::v1::RobotMode mode);
+
+  /// 注入定位健康评分速度缩放 (由 LocalizationScorer 提供)
+  /// SafetyGate 在 ApplyLimits 中乘以此因子限速
+  void SetLocSpeedScaleProvider(std::function<float()> provider) {
+    loc_speed_scale_provider_ = std::move(provider);
+  }
 
 private:
   void OdomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
@@ -96,6 +112,9 @@ private:
   bool deadman_event_sent_{false};   // 避免重复发送
   bool tilt_event_sent_{false};
   bool obstacle_event_sent_{false};  // 避免障碍物事件重复发送
+
+  // 定位健康评分速度缩放 (由 LocalizationScorer 注入)
+  std::function<float()> loc_speed_scale_provider_;
 };
 
 }  // namespace core

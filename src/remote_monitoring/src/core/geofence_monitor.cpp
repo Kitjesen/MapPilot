@@ -12,10 +12,10 @@ GeofenceMonitor::GeofenceMonitor(rclcpp::Node *node) : node_(node) {
   node_->declare_parameter<double>("geofence_warn_margin_m", 3.0);
   node_->declare_parameter<double>("geofence_stop_margin_m", 0.5);
   node_->declare_parameter<double>("geofence_check_hz", 20.0);
-  node_->declare_parameter<std::string>("geofence_odom_topic", "/Odometry");
+  node_->declare_parameter<std::string>("geofence_odom_topic", "/nav/odometry");
   node_->declare_parameter<std::string>("geofence_boundary_topic",
                                         "/navigation_boundary");
-  node_->declare_parameter<std::string>("geofence_stop_topic", "/stop");
+  node_->declare_parameter<std::string>("geofence_stop_topic", "/nav/stop");
 
   margin_warn_m_ = node_->get_parameter("geofence_warn_margin_m").as_double();
   margin_stop_m_ = node_->get_parameter("geofence_stop_margin_m").as_double();

@@ -32,6 +32,14 @@ class _MapGoalPickerState extends State<MapGoalPicker> {
   int _mapDataVersion = 0;
   Offset? _selectedPoint; // 选中的地图坐标
 
+  // 节流: 限制 FastState 驱动的重建频率 (10 fps)
+  DateTime _lastSetState = DateTime(2000);
+  static const _setStateInterval = Duration(milliseconds: 100);
+  bool _pendingUpdate = false;
+
+  // 轨迹点上限, 防止长时间运行内存增长
+  static const _maxPathPoints = 5000;
+
   @override
   void initState() {
     super.initState();
@@ -56,14 +64,35 @@ class _MapGoalPickerState extends State<MapGoalPicker> {
     final provider = context.read<RobotConnectionProvider>();
     _fastSub = provider.fastStateStream.listen((state) {
       if (!mounted) return;
+
+      // 更新内部数据 (无 setState)
+      _currentPose = state.pose;
       final point = Offset(state.pose.position.x, state.pose.position.y);
-      setState(() {
-        _currentPose = state.pose;
-        if (_path.isEmpty || (_path.last - point).distance > 0.05) {
-          _path.add(point);
-          _mapDataVersion++;
+      if (_path.isEmpty || (_path.last - point).distance > 0.05) {
+        _path.add(point);
+        // 超过上限时移除头部 10%, 避免频繁移位
+        if (_path.length > _maxPathPoints) {
+          _path.removeRange(0, _maxPathPoints ~/ 10);
         }
-      });
+        _mapDataVersion++;
+      }
+
+      // 节流重建: 最多 10fps
+      final now = DateTime.now();
+      if (now.difference(_lastSetState) >= _setStateInterval) {
+        _lastSetState = now;
+        _pendingUpdate = false;
+        setState(() {});
+      } else if (!_pendingUpdate) {
+        _pendingUpdate = true;
+        Future.delayed(_setStateInterval, () {
+          if (mounted && _pendingUpdate) {
+            _pendingUpdate = false;
+            _lastSetState = DateTime.now();
+            setState(() {});
+          }
+        });
+      }
     });
   }
 
@@ -263,6 +292,18 @@ class _NavGoalPainter extends CustomPainter {
 
   _NavGoalPainter({required this.goalPoint, required this.transform});
 
+  // 缓存 Paint 对象，避免每帧堆分配
+  static final Paint _fillPaint = Paint()
+    ..color = const Color(0xFFFF3B30).withValues(alpha: 0.2)
+    ..style = PaintingStyle.fill;
+  static final Paint _strokePaint = Paint()
+    ..color = const Color(0xFFFF3B30)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2;
+  static final Paint _dotPaint = Paint()
+    ..color = const Color(0xFFFF3B30)
+    ..style = PaintingStyle.fill;
+
   @override
   void paint(Canvas canvas, Size size) {
     final m = transform;
@@ -270,25 +311,9 @@ class _NavGoalPainter extends CustomPainter {
     final screenY = m[1] * goalPoint.dx + m[5] * (-goalPoint.dy) + m[13];
     final center = Offset(screenX, screenY);
 
-    canvas.drawCircle(
-      center, 16,
-      Paint()
-        ..color = const Color(0xFFFF3B30).withValues(alpha:0.2)
-        ..style = PaintingStyle.fill,
-    );
-    canvas.drawCircle(
-      center, 16,
-      Paint()
-        ..color = const Color(0xFFFF3B30)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2,
-    );
-    canvas.drawCircle(
-      center, 5,
-      Paint()
-        ..color = const Color(0xFFFF3B30)
-        ..style = PaintingStyle.fill,
-    );
+    canvas.drawCircle(center, 16, _fillPaint);
+    canvas.drawCircle(center, 16, _strokePaint);
+    canvas.drawCircle(center, 5, _dotPaint);
   }
 
   @override

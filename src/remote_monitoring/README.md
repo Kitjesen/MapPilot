@@ -2,9 +2,9 @@
 
 机器人远程监控与控制系统 | ROS 2 + gRPC
 
-**版本**: 1.1.0  
-**日期**: 2026-02-06  
-**状态**: Phase 1+ 完成（DataService 图像流已实现）
+**版本**: 1.2.2  
+**日期**: 2026-02-12  
+**状态**: Phase 2 完成（航点管理 + Flutter 集成 + 重连恢复 + 质量收口）
 
 ---
 
@@ -182,10 +182,15 @@ ROS 2 话题订阅 → Protobuf 状态消息转换：
 | RPC | 类型 | 说明 |
 |-----|------|------|
 | `Login` | Unary | 登录（当前简化实现，接受任何用户名） |
-| `Logout` | Unary | 登出，可选释放 Lease |
+| `Logout` | Unary | 登出，可选释放 Lease（`release_lease=true` 调用 `LeaseManager::ForceRelease`） |
 | `Heartbeat` | Unary | 心跳，返回 RTT 和活跃会话数 |
 | `GetRobotInfo` | Unary | 机器人 ID、固件版本、软件版本 |
 | `GetCapabilities` | Unary | 支持的资源（camera/front, pointcloud/lidar 等）和任务类型 |
+| `Relocalize` | Unary | 重定位：加载指定地图并设置初始位姿（调用 ROS `/relocalize` 服务） |
+| `SaveMap` | Unary | 保存当前地图到指定路径（调用 ROS `/save_map` 服务，支持 `save_patches`） |
+| `ListMaps` | Unary | 列出 `maps_directory` 下所有地图文件，返回名称/大小/创建时间 |
+| `DeleteMap` | Unary | 删除指定地图文件 |
+| `RenameMap` | Unary | 重命名地图文件 |
 
 ### 3.8 ControlService（控制服务）
 
@@ -197,10 +202,32 @@ ROS 2 话题订阅 → Protobuf 状态消息转换：
 | `RenewLease` | Unary | 续约（推荐 2Hz 调用） |
 | `ReleaseLease` | Unary | 释放租约 |
 | `SetMode` | Unary | 切换模式（idle/manual/teleop/autonomous/mapping/estop） |
-| `EmergencyStop` | Unary | 急停（软/硬），触发 Safety Gate |
+| `EmergencyStop` | Unary | 急停（软/硬），触发 Safety Gate + 挂起 TaskManager |
 | `StreamTeleop` | **双向流** | 遥操作：客户端发 TeleopCommand ← → 服务端返回 TeleopFeedback |
-| `StartTask` | Unary | 启动任务（占位实现） |
-| `CancelTask` | Unary | 取消任务（占位实现） |
+| `StartTask` | Unary | 启动任务（需 Lease + AUTONOMOUS 模式） |
+| `CancelTask` | Unary | 取消任务（需 Lease） |
+| `PauseTask` | Unary | 暂停任务 |
+| `ResumeTask` | Unary | 恢复任务 |
+| `GetTaskStatus` | Unary | 查询任务进度 |
+| `GetActiveWaypoints` | Unary | 查询当前活跃航点（来源/列表/进度） |
+| `ClearWaypoints` | Unary | 清除所有航点并立即停车（需 Lease） |
+
+**航点管理流程**（App 端推荐调用顺序）：
+1. `GetActiveWaypoints` → 查看当前航点（来源: APP/PLANNER/NONE）
+2. `ClearWaypoints` → 清除旧航点（可选，发布 /stop=2 立即停车）
+3. `AcquireLease` → 获取操作租约（如果还没有）
+4. `SetMode(AUTONOMOUS)` → 确保自主模式
+5. `StartTask` → 发送航点任务
+
+**航点来源说明**：
+- `WAYPOINT_SOURCE_APP` — 由 App 通过 StartTask 下发的航点列表
+- `WAYPOINT_SOURCE_PLANNER` — 全局规划器（pct_path_adapter）发布的航点
+- `WAYPOINT_SOURCE_NONE` — 无活跃航点
+
+**安全联动**：
+- E-stop / 切 TELEOP / 切 IDLE → TaskManager 自动挂起任务
+- 回 AUTONOMOUS → 自动恢复系统挂起的任务（用户手动暂停的不受影响）
+- 单航点超时（默认 300s）→ 任务自动 FAILED
 
 **遥操作关键约束**：
 - 必须携带有效 `lease_token`，否则拒绝
@@ -270,7 +297,7 @@ ROS 2 话题订阅 → Protobuf 状态消息转换：
 | 文件 | 内容 |
 |------|------|
 | `common.proto` | Vector3, Quaternion, Pose, Twist, Header, RequestBase/ResponseBase, ErrorCode, OperatorLease, Event, Resource, Task, ConnectionQuality |
-| `system.proto` | SystemService (Login, Logout, Heartbeat, GetRobotInfo, GetCapabilities) |
+| `system.proto` | SystemService (Login, Logout, Heartbeat, GetRobotInfo, GetCapabilities, Relocalize, SaveMap, ListMaps, DeleteMap, RenameMap) |
 | `control.proto` | ControlService (Lease, SetMode, EmergencyStop, StreamTeleop, Task), RobotMode, SafetyStatus |
 | `telemetry.proto` | TelemetryService (StreamFastState, StreamSlowState, StreamEvents, AckEvent), FastState, SlowState |
 | `data.proto` | DataService (ListResources, Subscribe, Unsubscribe, DownloadFile, StartCamera, StopCamera, WebRTCSignaling), DataChunk, FileChunk, WebRTCSignal |
@@ -553,7 +580,7 @@ teleopStream.sink.add(TeleopCommand()
 
 - [x] Proto 接口契约（5 个文件，~750 行）
 - [x] gRPC Gateway：4 服务注册、单端口对外
-- [x] SystemService：Login / Heartbeat / GetRobotInfo / GetCapabilities
+- [x] SystemService：Login / Logout / Heartbeat / GetRobotInfo / GetCapabilities / Relocalize / SaveMap / ListMaps / DeleteMap / RenameMap
 - [x] ControlService：Lease / EmergencyStop / StreamTeleop（含幂等缓存）
 - [x] TelemetryService：FastState / SlowState / Events（含回放）
 - [x] DataService：图像流（gRPC Subscribe 方式）
@@ -562,7 +589,11 @@ teleopStream.sink.add(TeleopCommand()
 
 ### Phase 2 - 控制与任务产品化 ⏳ 待完成
 
-- [ ] SetMode / StartTask / CancelTask 接入实际 ROS 2 Action/Service
+- [x] SetMode / StartTask / CancelTask 接入实际 ROS 2 (通过 ModeManager + TaskManager)
+- [x] GetActiveWaypoints / ClearWaypoints 航点管理 RPC
+- [x] TaskManager 成为唯一 /way_point 发布者 (map→odom tf2 变换)
+- [x] 安全联动: E-stop / 模式切换自动挂起/恢复任务
+- [x] 操作守卫: StartTask 需 Lease + AUTONOMOUS 模式
 - [ ] Lease 续约/抢占规则完善（多客户端）
 - [ ] 事件系统与 `/diagnostics` 集成
 - [ ] 弱网断连恢复流程（含 teleop 失联停车验证）
@@ -589,7 +620,7 @@ teleopStream.sink.add(TeleopCommand()
 
 ```
 proto/common.proto       共享类型：向量、位姿、错误码、租约、事件、任务
-proto/system.proto       SystemService：登录/心跳/信息/能力
+proto/system.proto       SystemService：登录/登出/心跳/信息/能力/重定位/保存地图/地图管理
 proto/control.proto      ControlService：租约/模式/急停/遥操作/任务
 proto/telemetry.proto    TelemetryService：快慢状态流/事件流
 proto/data.proto         DataService：资源订阅/文件下载/WebRTC信令

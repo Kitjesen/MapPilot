@@ -36,8 +36,10 @@ class _ConnectionStatusBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<RobotConnectionProvider>();
-    final status = provider.status;
+    final (:status, :errorMessage) = context.select<RobotConnectionProvider,
+        ({ConnectionStatus status, String? errorMessage})>(
+      (p) => (status: p.status, errorMessage: p.errorMessage),
+    );
 
     // Only show for non-normal states when previously connected
     final shouldShow = status == ConnectionStatus.reconnecting ||
@@ -93,7 +95,7 @@ class _ConnectionStatusBanner extends StatelessWidget {
                   child: Text(
                     isReconnecting
                         ? '正在重新连接…'
-                        : '连接已断开: ${provider.errorMessage ?? "未知错误"}',
+                        : '连接已断开: ${errorMessage ?? "未知错误"}',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -194,8 +196,9 @@ class _EmergencyStopFABState extends State<_EmergencyStopFAB>
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<RobotConnectionProvider>();
-    final isConnected = provider.isConnected || provider.isDogConnected;
+    final isConnected = context.select<RobotConnectionProvider, bool>(
+      (p) => p.isConnected || p.isDogConnected,
+    );
 
     // Don't show if not connected
     if (!isConnected) return const SizedBox.shrink();

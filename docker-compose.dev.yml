@@ -1,0 +1,125 @@
+# ═══════════════════════════════════════════════════════════════
+# 3d_NAV Docker Compose — 开发环境 overlay
+#
+# 用法:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up dev
+#
+# 特点:
+#   - 源码挂载 (实时编辑, 不用重建镜像)
+#   - ccache 缓存 (加速增量编译)
+#   - 调试工具 (gdb, valgrind, htop, rviz2)
+#   - UID 映射 (避免权限问题)
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─────────────────────────────────────────────
+  # 开发容器 (交互式)
+  # ─────────────────────────────────────────────
+  dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+      args:
+        ROS_DISTRO: humble
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+    image: 3dnav-dev:latest
+    container_name: nav-dev
+    hostname: nav-dev
+
+    network_mode: host
+
+    # 开发时需要更多权限
+    cap_add:
+      - NET_ADMIN
+      - SYS_PTRACE    # gdb attach
+
+    # 安全选项: 允许 gdb
+    security_opt:
+      - seccomp:unconfined
+
+    environment:
+      ROS_DISTRO: humble
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      DISPLAY: ${DISPLAY:-}
+      # 调试模式: colcon build with Debug
+      CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE:-RelWithDebInfo}
+
+    volumes:
+      # 源码挂载 (实时编辑)
+      - .:/ws:cached
+      # ccache 持久化 (加速增量编译)
+      - nav-ccache:/ws/.ccache
+      # colcon build 产物 (容器内, 避免跨平台问题)
+      - nav-build:/ws/build
+      - nav-install:/ws/install
+      - nav-log:/ws/log
+      # 运行时数据
+      - nav-logs:/opt/robot/logs
+      - nav-flight-records:/opt/robot/flight_records
+      # 地图
+      - ${HOST_MAP_DIR:-./maps}:/ws/maps
+      # X11 (可选, 用于 rviz2)
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      - /dev/ttyACM0:/dev/ttyACM0
+
+    stdin_open: true
+    tty: true
+
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  # ─────────────────────────────────────────────
+  # 快速编译服务 (非交互, 用于 CI 或批量编译)
+  # ─────────────────────────────────────────────
+  build-only:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: build
+    image: 3dnav-build:latest
+    container_name: nav-build
+    volumes:
+      - .:/ws:cached
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release &&
+               colcon test --packages-select remote_monitoring --return-code-on-test-failure &&
+               colcon test-result --verbose"
+
+  # ─────────────────────────────────────────────
+  # 测试运行器
+  # ─────────────────────────────────────────────
+  test:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: test
+    image: 3dnav-test:latest
+    container_name: nav-test
+
+volumes:
+  nav-ccache:
+    driver: local
+  nav-build:
+    driver: local
+  nav-install:
+    driver: local
+  nav-log:
+    driver: local
+  nav-logs:
+    driver: local
+  nav-flight-records:
+    driver: local

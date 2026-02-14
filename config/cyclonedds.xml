@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS 配置 — 3D NAV 导航系统
+  用法: export CYCLONEDDS_URI=file://$(pwd)/config/cyclonedds.xml
+  或在 launch 中: os.environ['CYCLONEDDS_URI'] = 'file://' + config_path
+
+  文档: https://cyclonedds.io/docs/cyclonedds/latest/config.html
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+
+    <!-- ═══ 通用设置 ═══ -->
+    <General>
+      <!-- 网络接口: 指定机器人使用的网卡, 避免多网卡发现混乱 -->
+      <!-- 部署时改为实际接口名 (如 eth0, wlan0) -->
+      <Interfaces>
+        <NetworkInterface autodetermine="true" priority="default" />
+      </Interfaces>
+
+      <!-- 允许组播 (同一子网内发现) -->
+      <AllowMulticast>default</AllowMulticast>
+
+      <!-- 最大消息大小: PointCloud2 单帧可达 ~1MB -->
+      <MaxMessageSize>65500B</MaxMessageSize>
+      <FragmentSize>4096B</FragmentSize>
+    </General>
+
+    <!-- ═══ 发现 (Discovery) ═══ -->
+    <Discovery>
+      <!-- 参与者发现间隔: 默认 30s 太慢, 机器人场景 5s 足够 -->
+      <ParticipantIndex>auto</ParticipantIndex>
+
+      <!-- 对等发现超时: 新节点加入后多快能被发现 -->
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+    </Discovery>
+
+    <!-- ═══ 内部线程 ═══ -->
+    <Internal>
+      <!-- 写缓冲区: PointCloud2 大消息需要足够空间 -->
+      <WriterLingerDuration>1s</WriterLingerDuration>
+
+      <!-- 接收端缓冲: 适配 LiDAR 10Hz 大数据 -->
+      <SocketReceiveBufferSize min="1MB" />
+
+      <!-- 发现协议收敛加速 -->
+      <BuiltinEndpointSet>writers</BuiltinEndpointSet>
+
+      <!-- 避免 CPU 空转 -->
+      <RetransmitMerging>adaptive</RetransmitMerging>
+    </Internal>
+
+    <!-- ═══ 追踪/调试 (生产环境注释掉) ═══ -->
+    <Tracing>
+      <Verbosity>warning</Verbosity>
+      <!-- 调试时可改为 config/fine/finer/finest -->
+      <!-- <OutputFile>/tmp/cyclonedds.log</OutputFile> -->
+    </Tracing>
+
+    <!-- ═══ 共享内存 (同主机零拷贝, 需 iceoryx) ═══ -->
+    <!--
+    <SharedMemory>
+      <Enable>true</Enable>
+      <LogLevel>warning</LogLevel>
+    </SharedMemory>
+    -->
+
+  </Domain>
+</CycloneDDS>

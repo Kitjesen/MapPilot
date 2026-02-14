@@ -2,8 +2,10 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -38,15 +40,22 @@ using ModeProvider = std::function<robot::v1::RobotMode()>;
 namespace core {
 class HealthMonitor;
 class GeofenceMonitor;
+class LocalizationScorer;
+class FlightRecorder;
 }  // namespace core
 
 class StatusAggregator {
 public:
   explicit StatusAggregator(rclcpp::Node *node);
+  ~StatusAggregator();
 
-  // 获取最新状态
-  robot::v1::FastState GetFastState();
-  robot::v1::SlowState GetSlowState();
+  // 获取最新状态 — 返回 shared_ptr 避免 protobuf 深拷贝 (30Hz 热路径)
+  std::shared_ptr<const robot::v1::FastState> GetFastState();
+  std::shared_ptr<const robot::v1::SlowState> GetSlowState();
+
+  /// 快速 TF 状态查询 — 无锁，无 protobuf 拷贝。
+  /// 用于 ModeManager 转换守卫等仅需一个 bool 的场景。
+  bool IsTfOk() const { return cached_tf_ok_.load(std::memory_order_relaxed); }
   
   double fast_state_hz() const { return fast_hz_; }
   double slow_state_hz() const { return slow_hz_; }
@@ -61,6 +70,18 @@ public:
   void SetGeofenceMonitor(std::shared_ptr<core::GeofenceMonitor> monitor) {
     geofence_monitor_ = std::move(monitor);
   }
+  void SetLocalizationScorer(std::shared_ptr<core::LocalizationScorer> scorer) {
+    localization_scorer_ = std::move(scorer);
+  }
+  void SetFlightRecorder(std::shared_ptr<core::FlightRecorder> recorder) {
+    flight_recorder_ = std::move(recorder);
+  }
+
+  /// 设置运行参数提供者 (由 GrpcGateway 注入, 从 SystemService 读取)
+  using ConfigProvider = std::function<std::pair<std::string, uint64_t>()>;
+  void SetConfigProvider(ConfigProvider provider) {
+    config_provider_ = std::move(provider);
+  }
 
 private:
   void OdomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr msg);
@@ -74,10 +95,11 @@ private:
   void update_slow_state();
   bool check_tf(const std::string &target, const std::string &source);
 
-  // 读取 /proc 系统资源（Linux）
-  static double ReadCpuUsage();
-  static double ReadMemUsage();
-  static double ReadCpuTemp();
+  // 读取 /proc 系统资源 — 在后台线程缓存, 不阻塞 ROS executor
+  double ReadCpuUsage();
+  double ReadMemUsage();
+  double ReadCpuTemp();
+  void UpdateSysResourcesBackground();  // 后台采样, 由独立线程调用
 
   rclcpp::Node *node_;
   double fast_hz_{30.0};
@@ -110,8 +132,15 @@ private:
 
   std::mutex fast_mutex_;
   std::mutex slow_mutex_;
-  robot::v1::FastState latest_fast_state_;
-  robot::v1::SlowState latest_slow_state_;
+  std::shared_ptr<const robot::v1::FastState> latest_fast_state_;
+  std::shared_ptr<const robot::v1::SlowState> latest_slow_state_;
+
+  // scratch protobuf — update_*_state() 用 Clear()+重填+Swap 复用内部缓冲区
+  robot::v1::FastState scratch_fast_state_;
+  robot::v1::SlowState scratch_slow_state_;
+
+  // 无锁 TF 状态缓存
+  std::atomic<bool> cached_tf_ok_{false};
   
   // 缓存最新 odom
   nav_msgs::msg::Odometry::ConstSharedPtr latest_odom_;
@@ -131,13 +160,25 @@ private:
   // 模式提供者
   ModeProvider mode_provider_;
 
+  // 配置提供者 (返回 JSON + version)
+  ConfigProvider config_provider_;
+
   // 健康和围栏监控 (用于 SlowState 扩展)
   std::shared_ptr<core::HealthMonitor> health_monitor_;
   std::shared_ptr<core::GeofenceMonitor> geofence_monitor_;
+  std::shared_ptr<core::LocalizationScorer> localization_scorer_;
+  std::shared_ptr<core::FlightRecorder> flight_recorder_;
 
-  // CPU 使用率计算所需的上一次采样值
-  mutable uint64_t prev_cpu_total_{0};
-  mutable uint64_t prev_cpu_idle_{0};
+  // CPU 使用率计算所需的上一次采样值 (由后台线程写入)
+  uint64_t prev_cpu_total_{0};
+  uint64_t prev_cpu_idle_{0};
+
+  // /proc 读取结果缓存 (由后台线程更新, ROS 线程只读 atomic)
+  std::atomic<double> cached_cpu_percent_{0.0};
+  std::atomic<double> cached_mem_percent_{0.0};
+  std::atomic<double> cached_cpu_temp_{0.0};
+  std::thread sys_resource_thread_;
+  std::atomic<bool> sys_resource_stop_{false};
 };
 
 }  // namespace remote_monitoring

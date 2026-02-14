@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_monitor/app/theme.dart';
 
+/// App 版本号 — 与 pubspec.yaml 保持一致
+const String kAppVersion = '1.3.2';
+
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -71,7 +74,7 @@ class _SplashScreenState extends State<SplashScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Animated logo with purple glow
+              // Branded logo — "DS" monogram with gradient
               AnimatedBuilder(
                 animation: _scaleAnimation,
                 builder: (context, child) {
@@ -80,19 +83,26 @@ class _SplashScreenState extends State<SplashScreen>
                     child: Opacity(
                       opacity: _fadeAnimation.value,
                       child: Container(
-                        width: 80,
-                        height: 80,
+                        width: 88,
+                        height: 88,
                         decoration: BoxDecoration(
                           gradient: AppColors.brandGradient,
-                          borderRadius: BorderRadius.circular(24),
+                          borderRadius: BorderRadius.circular(26),
                           boxShadow: [
-                            AppShadows.glow(AppColors.primary, blur: 24),
+                            AppShadows.glow(AppColors.primary, blur: 28),
                           ],
                         ),
-                        child: const Icon(
-                          Icons.smart_toy,
-                          color: Colors.white,
-                          size: 40,
+                        child: const Center(
+                          child: Text(
+                            'DS',
+                            style: TextStyle(
+                              fontSize: 36,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              letterSpacing: 2,
+                              height: 1,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -100,7 +110,7 @@ class _SplashScreenState extends State<SplashScreen>
                 },
               ),
               const SizedBox(height: 28),
-              // Animated text
+              // App name + tagline
               FadeTransition(
                 opacity: _textFadeAnimation,
                 child: Column(
@@ -114,7 +124,17 @@ class _SplashScreenState extends State<SplashScreen>
                         color: context.titleColor,
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 6),
+                    Text(
+                      '3D NAV',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 4,
+                        color: AppColors.primary.withValues(alpha: 0.7),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     Text(
                       '让每一台机器人都拥有智慧',
                       style: TextStyle(
@@ -122,6 +142,15 @@ class _SplashScreenState extends State<SplashScreen>
                         fontWeight: FontWeight.w400,
                         letterSpacing: 0.5,
                         color: context.subtitleColor,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'v$kAppVersion',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: context.hintColor,
                       ),
                     ),
                   ],

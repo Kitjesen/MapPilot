@@ -38,6 +38,14 @@ bool ICPLocalizer::loadMap(const std::string &path)
     {
         pcl::copyPointCloud(*cloud, *m_rough_tgt);
     }
+
+    // 预构建 KD-tree: setInputTarget 触发 O(N logN) 的 KD-tree 构建。
+    // 在 loadMap 时做一次, 而非每次 align() 都重复, 节省 10-50ms/帧。
+    m_rough_icp.setMaximumIterations(m_config.rough_max_iteration);
+    m_rough_icp.setInputTarget(m_rough_tgt);
+    m_refine_icp.setMaximumIterations(m_config.refine_max_iteration);
+    m_refine_icp.setInputTarget(m_refine_tgt);
+
     return true;
 }
 void ICPLocalizer::setInput(const CloudType::Ptr &cloud)
@@ -70,15 +78,12 @@ bool ICPLocalizer::align(M4F &guess)
     CloudType::Ptr aligned_cloud(new CloudType);
     if (m_refine_tgt->size() == 0 || m_rough_tgt->size() == 0)
         return false;
-    m_rough_icp.setMaximumIterations(m_config.rough_max_iteration);
+    // setInputTarget + setMaximumIterations 已在 loadMap() 中完成 (KD-tree 已缓存)
     m_rough_icp.setInputSource(m_rough_inp);
-    m_rough_icp.setInputTarget(m_rough_tgt);
     m_rough_icp.align(*aligned_cloud, guess);
     if (!m_rough_icp.hasConverged() || m_rough_icp.getFitnessScore() > m_config.rough_score_thresh)
         return false;
-    m_refine_icp.setMaximumIterations(m_config.refine_max_iteration);
     m_refine_icp.setInputSource(m_refine_inp);
-    m_refine_icp.setInputTarget(m_refine_tgt);
     m_refine_icp.align(*aligned_cloud, m_rough_icp.getFinalTransformation());
     m_last_fitness_score = m_refine_icp.getFitnessScore();
     if (!m_refine_icp.hasConverged() || m_last_fitness_score > m_config.refine_score_thresh)

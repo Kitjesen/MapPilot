@@ -46,19 +46,22 @@ public:
 private:
   std::string GenerateEventId();
   size_t NextIndexLocked(const std::string &last_event_id) const;
-  
-  /// 将单个事件写入磁盘日志 (调用者已持有 mutex_)
-  void PersistEventLocked(const robot::v1::Event &event);
+
+  /// 将事件序列化为 JSONL 字符串 (纯函数, 无 I/O, 可在 mutex_ 下调用)
+  std::string FormatEventLine(const robot::v1::Event &event);
+  /// 将字符串写入磁盘日志 (在 mutex_ 外调用, 不阻塞 ROS executor)
+  void PersistLine(const std::string &line);
   /// 日志轮转: 如果超过 max_bytes, 关闭旧文件并重命名
   void RotateLogLocked();
 
-  std::mutex mutex_;
+  std::mutex mutex_;             // 保护 buffer_, cv_, next_sequence_
   std::condition_variable cv_;
   std::deque<robot::v1::Event> buffer_;
   size_t max_size_;
   uint64_t next_sequence_{1};
 
-  // 持久化日志
+  // 持久化日志 (persist_mutex_ 独立于 mutex_, 避免磁盘 I/O 阻塞内存操作)
+  std::mutex persist_mutex_;
   std::string log_path_;
   size_t log_max_bytes_{0};
   std::ofstream log_stream_;

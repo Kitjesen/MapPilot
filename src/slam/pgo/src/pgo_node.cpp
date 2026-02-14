@@ -85,7 +85,7 @@ public:
     void syncCB(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &cloud_msg, const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg)
     {
 
-        std::lock_guard<std::mutex>(m_state.message_mutex);
+        std::lock_guard<std::mutex> msg_lock(m_state.message_mutex);
         CloudWithPose cp;
         cp.pose.setTime(cloud_msg->header.stamp.sec, cloud_msg->header.stamp.nanosec);
         if (cp.pose.second < m_state.last_message_time)
@@ -195,7 +195,7 @@ public:
         CloudWithPose cp = m_state.cloud_buffer.front();
         // 清理队列
         {
-            std::lock_guard<std::mutex>(m_state.message_mutex);
+            std::lock_guard<std::mutex> msg_lock(m_state.message_mutex);
             while (!m_state.cloud_buffer.empty())
             {
                 m_state.cloud_buffer.pop();

@@ -4,6 +4,33 @@
 
 ---
 
+## [Unreleased] — 2026-02-11
+
+### 运行参数在线配置 (Runtime Config Live Tuning)
+
+Flutter App 到导航系统的完整参数配置通道打通，130+ 参数实时可调。
+
+#### 通信链路
+
+- **robot_client_base.dart**: 新增 `getRuntimeConfig()` / `setRuntimeConfig()` 抽象接口
+- **robot_client.dart**: 通过 gRPC `SystemServiceClient` 发起真实 RPC 调用 (5s 超时)
+- **mock_robot_client.dart**: mock 实现保证离线开发不报错
+- **runtime_config_gateway.dart**: `fetchFromServer()` / `pushToServer()` 从 STUB 替换为真实 gRPC 调用，JSON 编解码 + `ErrorCode` 校验 + `SharedPreferences` 本地缓存
+- **main.dart**: 新增 `SlowState` → `RuntimeConfigGateway.updateFromHeartbeat()` 监听器，心跳自动回读配置版本
+
+#### Proto 存根
+
+- **system.pb.dart**: +4 个消息类 (`GetRuntimeConfigRequest/Response`, `SetRuntimeConfigRequest/Response`)，使用 JSON 字符串传输
+- **system.pbgrpc.dart**: +`getRuntimeConfig()` / `setRuntimeConfig()` 客户端 + 服务端方法
+- **telemetry.pb.dart**: `SlowState` +`configJson` (field 20) + `configVersion` (field 21)
+
+#### 配置模型
+
+- **runtime_config.dart**: ~130 个可配字段 (16 个分组: Motion / Safety / Geofence / PathFollow / Navigation / Terrain / LocalPlanner / SLAM / Localizer / GlobalPlanner / Patrol / Telemetry / Features / Geometry / Driver / HealthMonitor)
+- **runtime_params_page.dart**: 专用配置 UI — TabBar 分组 + Slider + 数值直接输入对话框 + 即时推送
+
+---
+
 ## [Unreleased] — 2026-02-08
 
 ### UI 全局极简风格统一 (Minimalist Design Overhaul)

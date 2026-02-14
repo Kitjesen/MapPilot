@@ -79,6 +79,17 @@ public:
                              const robot::v1::GetTaskStatusRequest *request,
                              robot::v1::GetTaskStatusResponse *response) override;
 
+  // 航点管理
+  grpc::Status GetActiveWaypoints(
+      grpc::ServerContext *context,
+      const robot::v1::GetActiveWaypointsRequest *request,
+      robot::v1::GetActiveWaypointsResponse *response) override;
+
+  grpc::Status ClearWaypoints(
+      grpc::ServerContext *context,
+      const robot::v1::ClearWaypointsRequest *request,
+      robot::v1::ClearWaypointsResponse *response) override;
+
   // 获取当前模式（委托给 ModeManager）
   robot::v1::RobotMode GetCurrentMode() const;
 

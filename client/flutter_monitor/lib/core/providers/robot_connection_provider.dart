@@ -81,10 +81,6 @@ class RobotConnectionProvider extends ChangeNotifier {
   // — Available resources —
   ListResourcesResponse? _resources;
 
-  // — Throttle for fast state notifications —
-  DateTime _lastFastStateNotify = DateTime(2000);
-  static const Duration _fastStateNotifyInterval = Duration(milliseconds: 100);
-
   // ============ Getters ============
 
   RobotClientBase? get client => _client;
@@ -196,19 +192,15 @@ class RobotConnectionProvider extends ChangeNotifier {
 
     if (_client == null || !_client!.isConnected) return;
 
-    // FastState stream
+    // FastState stream — 数据通过 broadcast stream 分发，不再触发 Provider rebuild
     _fastStateSub = _client!.streamFastState(desiredHz: 10.0).listen(
       (state) {
         _latestFastState = state;
         _lastFastStateTime = DateTime.now();
         _fastStateBroadcast.add(state);
-
-        // 节流通知：避免 10Hz 频率刷新 UI
-        final now = DateTime.now();
-        if (now.difference(_lastFastStateNotify) >= _fastStateNotifyInterval) {
-          _lastFastStateNotify = now;
-          notifyListeners();
-        }
+        // 注意: 不再调用 notifyListeners()
+        // 需要 FastState 的 widget 直接订阅 fastStateStream，
+        // 避免 10Hz 触发整棵 widget tree 重建
       },
       onError: (error) {
         debugPrint('[Provider] FastState stream error: $error');
@@ -220,15 +212,21 @@ class RobotConnectionProvider extends ChangeNotifier {
       },
     );
 
-    // SlowState stream
+    // SlowState stream — 同理，通过 broadcast stream 分发
     _slowStateSub = _client!.streamSlowState().listen(
       (state) {
         _latestSlowState = state;
         _slowStateBroadcast.add(state);
-        notifyListeners();
+        // 注意: 不再调用 notifyListeners()
+        // 需要 SlowState 的 widget 直接订阅 slowStateStream
       },
       onError: (error) {
         debugPrint('[Provider] SlowState stream error: $error');
+        _handleStreamError();
+      },
+      onDone: () {
+        debugPrint('[Provider] SlowState stream done');
+        _handleStreamError();
       },
     );
   }

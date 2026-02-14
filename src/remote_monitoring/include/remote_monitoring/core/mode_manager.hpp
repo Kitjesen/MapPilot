@@ -36,6 +36,7 @@ class SafetyGate;
 class EventBuffer;
 class GeofenceMonitor;
 class ServiceOrchestrator;
+class TaskManager;
 
 /// 转换守卫: 外部注入的条件查询函数
 struct TransitionGuards {
@@ -74,6 +75,10 @@ public:
     service_orchestrator_ = std::move(orch);
   }
 
+  void SetTaskManager(std::shared_ptr<TaskManager> task_manager) {
+    task_manager_ = std::move(task_manager);
+  }
+
   /// 注入转换守卫条件 (由 GrpcGateway 组装)
   void SetTransitionGuards(TransitionGuards guards) {
     guards_ = std::move(guards);
@@ -104,6 +109,11 @@ public:
     state_persist_path_ = path;
   }
 
+  /// 注入急停额外回调 (用于 FlightRecorder dump 等)
+  void SetEstopExtraCallback(std::function<void(const std::string &)> cb) {
+    estop_extra_callback_ = std::move(cb);
+  }
+
   /// 将当前模式写入持久化文件 (public: 供 GrpcGateway 崩溃恢复调用)
   void PersistState(robot::v1::RobotMode mode);
 
@@ -125,6 +135,7 @@ private:
   std::shared_ptr<EventBuffer> event_buffer_;
   std::shared_ptr<GeofenceMonitor> geofence_;
   std::shared_ptr<ServiceOrchestrator> service_orchestrator_;
+  std::shared_ptr<TaskManager> task_manager_;
 
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pub_stop_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_speed_;
@@ -136,6 +147,7 @@ private:
   TransitionGuards guards_;
 
   std::string state_persist_path_;  // 空=不持久化
+  std::function<void(const std::string &)> estop_extra_callback_;
 };
 
 }  // namespace core

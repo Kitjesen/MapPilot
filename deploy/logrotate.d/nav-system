@@ -1,0 +1,33 @@
+# Log rotation for 3d_NAV navigation system
+# Install: sudo cp deploy/logrotate.d/nav-system /etc/logrotate.d/nav-system
+#
+# Covers:
+#   - EventBuffer persistent logs
+#   - FlightRecorder dump cleanup
+#   - OTA daemon logs
+
+/opt/robot/logs/events.jsonl {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    size 20M
+    copytruncate
+}
+
+/opt/robot/logs/ota_daemon.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    size 10M
+    copytruncate
+}
+
+# FlightRecorder dumps: keep last 30 files, delete older
+# (logrotate doesn't natively handle binary files, use a cron helper)
+# See deploy/cron.d/nav-cleanup for automatic cleanup

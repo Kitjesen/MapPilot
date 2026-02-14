@@ -229,7 +229,7 @@ final ThemeData lightTheme = ThemeData(
   useMaterial3: true,
   brightness: Brightness.light,
   scaffoldBackgroundColor: AppColors.lightBackground,
-  fontFamily: 'Inter',
+  fontFamily: 'Microsoft YaHei',
   colorScheme: ColorScheme.fromSeed(
     seedColor: AppColors.primary,
     primary: AppColors.primary,
@@ -353,7 +353,7 @@ final ThemeData darkTheme = ThemeData(
   useMaterial3: true,
   brightness: Brightness.dark,
   scaffoldBackgroundColor: AppColors.darkBackground,
-  fontFamily: 'Inter',
+  fontFamily: 'Microsoft YaHei',
   colorScheme: ColorScheme.fromSeed(
     seedColor: AppColors.primary,
     primary: AppColors.primaryLight,

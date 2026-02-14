@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/app/responsive.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:flutter_monitor/features/home/home_screen.dart';
 import 'package:flutter_monitor/features/status/status_screen.dart';
 import 'package:flutter_monitor/features/map/map_screen.dart';
@@ -29,20 +30,20 @@ class _MainShellScreenState extends State<MainShellScreen> {
     AppSettingsScreen(),
   ];
 
-  // Main nav items (0-3), settings separate at bottom
-  static const _mainNavItems = [
-    _NavDef(Icons.dashboard_outlined, Icons.dashboard_rounded, 'Dashboard'),
-    _NavDef(Icons.grid_view_outlined, Icons.grid_view_rounded, 'Modules'),
-    _NavDef(Icons.map_outlined, Icons.map_rounded, 'Map'),
-    _NavDef(Icons.history_rounded, Icons.history_rounded, 'History'),
+  // Nav items — generated per locale
+  static List<_NavDef> _mainNavItems(LocaleProvider l) => [
+    _NavDef(Icons.dashboard_outlined, Icons.dashboard_rounded, l.tr('首页', 'Dashboard')),
+    _NavDef(Icons.grid_view_outlined, Icons.grid_view_rounded, l.tr('模块', 'Modules')),
+    _NavDef(Icons.map_outlined, Icons.map_rounded, l.tr('地图', 'Map')),
+    _NavDef(Icons.history_rounded, Icons.history_rounded, l.tr('历史', 'History')),
   ];
 
-  static const _allNavItems = [
-    _NavDef(Icons.dashboard_outlined, Icons.dashboard_rounded, '首页'),
-    _NavDef(Icons.grid_view_outlined, Icons.grid_view_rounded, '状态'),
-    _NavDef(Icons.map_outlined, Icons.map_rounded, '地图'),
-    _NavDef(Icons.history_rounded, Icons.history_rounded, '事件'),
-    _NavDef(Icons.settings_outlined, Icons.settings_rounded, '设置'),
+  static List<_NavDef> _allNavItems(LocaleProvider l) => [
+    _NavDef(Icons.dashboard_outlined, Icons.dashboard_rounded, l.tr('首页', 'Home')),
+    _NavDef(Icons.grid_view_outlined, Icons.grid_view_rounded, l.tr('状态', 'Status')),
+    _NavDef(Icons.map_outlined, Icons.map_rounded, l.tr('地图', 'Map')),
+    _NavDef(Icons.history_rounded, Icons.history_rounded, l.tr('事件', 'Events')),
+    _NavDef(Icons.settings_outlined, Icons.settings_rounded, l.tr('设置', 'Settings')),
   ];
 
   @override
@@ -63,9 +64,14 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<RobotConnectionProvider>();
-    final isConnected = provider.isConnected;
-    final isDogConnected = provider.isDogConnected;
+    // 收窄 select: 仅在连接状态变化时重建，心跳 RTT 等不触发
+    final isConnected = context.select<RobotConnectionProvider, bool>(
+      (p) => p.isConnected,
+    );
+    final isDogConnected = context.select<RobotConnectionProvider, bool>(
+      (p) => p.isDogConnected,
+    );
+    final locale = context.watch<LocaleProvider>();
     final useSide = context.useSideNav;
 
     // Listen for tab-switch notifications from children
@@ -74,14 +80,14 @@ class _MainShellScreenState extends State<MainShellScreen> {
         _onTap(n.tabIndex);
         return true;
       },
-      child: Scaffold(
+        child: Scaffold(
         extendBody: !useSide,
         body: useSide
-            ? _buildDesktopShell(context, isConnected, isDogConnected)
+            ? _buildDesktopShell(context, isConnected, isDogConnected, locale)
             : IndexedStack(index: _currentIndex, children: _screens),
         bottomNavigationBar: useSide
             ? null
-            : _buildBottomNav(context, isConnected, isDogConnected),
+            : _buildBottomNav(context, isConnected, isDogConnected, locale),
       ),
     );
   }
@@ -90,7 +96,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
   //  DESKTOP SHELL — Glass panel with sidebar
   // ═══════════════════════════════════════════════════════════════
   Widget _buildDesktopShell(
-      BuildContext context, bool isConnected, bool isDogConnected) {
+      BuildContext context, bool isConnected, bool isDogConnected, LocaleProvider locale) {
     final dark = context.isDark;
 
     return Stack(
@@ -142,7 +148,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                   child: Row(
                     children: [
                       // ── Sidebar ──
-                      _buildSidebar(context, isConnected, isDogConnected, dark),
+                      _buildSidebar(context, isConnected, isDogConnected, dark, locale),
 
                       // ── Content (transparent scaffold bg inside shell) ──
                       Expanded(
@@ -183,7 +189,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
   //  SIDEBAR — Glass, 96px wide, matching HTML reference
   // ═══════════════════════════════════════════════════════════════
   Widget _buildSidebar(
-      BuildContext context, bool isConnected, bool isDogConnected, bool dark) {
+      BuildContext context, bool isConnected, bool isDogConnected, bool dark, LocaleProvider locale) {
     return Container(
       width: 96,
       decoration: BoxDecoration(
@@ -203,7 +209,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
           children: [
             const SizedBox(height: 32),
 
-            // ── Robot avatar ──
+            // ── Brand Logo — "DS" monogram ──
             Container(
               width: 56,
               height: 56,
@@ -218,38 +224,101 @@ class _MainShellScreenState extends State<MainShellScreen> {
                   ),
                 ],
               ),
-              child: const Icon(Icons.smart_toy_rounded, color: Colors.white, size: 28),
+              child: const Center(
+                child: Text(
+                  'DS',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: 1,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'NAV',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 3,
+                color: dark
+                    ? AppColors.textSecondaryDark
+                    : AppColors.textSecondary,
+              ),
             ),
 
-            const SizedBox(height: 40),
+            const SizedBox(height: 32),
 
             // ── Main nav items (0-3) ──
             Expanded(
-              child: Column(
-                children: [
-                  for (int i = 0; i < _mainNavItems.length; i++) ...[
-                    _SideNavItem(
-                      icon: _mainNavItems[i].icon,
-                      activeIcon: _mainNavItems[i].activeIcon,
-                      label: _mainNavItems[i].label,
-                      isActive: _currentIndex == i,
-                      onTap: () => _onTap(i),
-                    ),
-                    SizedBox(height: i < _mainNavItems.length - 1 ? 20 : 0),
+              child: Builder(builder: (context) {
+                final items = _mainNavItems(locale);
+                return Column(
+                  children: [
+                    for (int i = 0; i < items.length; i++) ...[
+                      _SideNavItem(
+                        icon: items[i].icon,
+                        activeIcon: items[i].activeIcon,
+                        label: items[i].label,
+                        isActive: _currentIndex == i,
+                        onTap: () => _onTap(i),
+                      ),
+                      SizedBox(height: i < items.length - 1 ? 20 : 0),
+                    ],
                   ],
-                ],
-              ),
+                );
+              }),
             ),
 
             // ── Settings (bottom, separated) ──
             _SideNavItem(
               icon: Icons.settings_outlined,
               activeIcon: Icons.settings_rounded,
-              label: 'Settings',
+              label: locale.tr('设置', 'Settings'),
               isActive: _currentIndex == 4,
               onTap: () => _onTap(4),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
+
+            // ── Language toggle ──
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                locale.toggle();
+              },
+              child: Tooltip(
+                message: locale.tr('切换至英文', 'Switch to Chinese'),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: dark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.white.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: dark
+                          ? Colors.white.withValues(alpha: 0.1)
+                          : Colors.white.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      locale.isEn ? 'EN' : '中',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
 
             // ── User avatar with status dot ──
             Stack(
@@ -308,8 +377,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
   //  BOTTOM NAV — Mobile floating pill
   // ═══════════════════════════════════════════════════════════════
   Widget _buildBottomNav(
-      BuildContext context, bool isConnected, bool isDogConnected) {
+      BuildContext context, bool isConnected, bool isDogConnected, LocaleProvider locale) {
     final dark = context.isDark;
+    final items = _allNavItems(locale);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
@@ -323,11 +393,11 @@ class _MainShellScreenState extends State<MainShellScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              for (int i = 0; i < _allNavItems.length; i++)
+              for (int i = 0; i < items.length; i++)
                 _BottomNavItem(
-                  icon: _allNavItems[i].icon,
-                  activeIcon: _allNavItems[i].activeIcon,
-                  label: _allNavItems[i].label,
+                  icon: items[i].icon,
+                  activeIcon: items[i].activeIcon,
+                  label: items[i].label,
                   isActive: _currentIndex == i,
                   badge: i == 1 && (isConnected || isDogConnected),
                   badgeColor: isConnected ? AppColors.online : AppColors.connecting,

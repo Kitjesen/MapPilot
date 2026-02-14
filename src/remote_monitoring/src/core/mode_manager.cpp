@@ -2,6 +2,7 @@
 #include "remote_monitoring/core/event_buffer.hpp"
 #include "remote_monitoring/core/safety_gate.hpp"
 #include "remote_monitoring/core/service_orchestrator.hpp"
+#include "remote_monitoring/core/task_manager.hpp"
 
 #include <chrono>
 #include <fstream>
@@ -10,9 +11,9 @@ namespace remote_monitoring {
 namespace core {
 
 ModeManager::ModeManager(rclcpp::Node *node) : node_(node) {
-  node_->declare_parameter<std::string>("mode_stop_topic", "/stop");
-  node_->declare_parameter<std::string>("mode_speed_topic", "/speed");
-  node_->declare_parameter<std::string>("goal_pose_topic", "/goal_pose");
+  node_->declare_parameter<std::string>("mode_stop_topic", "/nav/stop");
+  node_->declare_parameter<std::string>("mode_speed_topic", "/nav/speed");
+  node_->declare_parameter<std::string>("goal_pose_topic", "/nav/goal_pose");
 
   const auto stop_topic = node_->get_parameter("mode_stop_topic").as_string();
   const auto speed_topic = node_->get_parameter("mode_speed_topic").as_string();
@@ -124,6 +125,11 @@ TransitionResult ModeManager::SwitchMode(robot::v1::RobotMode new_mode) {
   // 进入新状态
   EnterState(new_mode);
 
+  // 通知 TaskManager 模式变更 (挂起/恢复任务)
+  if (task_manager_) {
+    task_manager_->OnModeChanged(static_cast<int>(new_mode));
+  }
+
   // 更新状态
   current_mode_.store(new_mode);
 
@@ -158,13 +164,19 @@ void ModeManager::EmergencyStop(const std::string &reason) {
   stop_msg.data = 2;  // Level 2: 全停
   pub_stop_->publish(stop_msg);
 
-  // 3. 更新模式 (atomic, 不需要锁)
+  // 3. 挂起 TaskManager (防止 E-stop 期间推进航点)
+  if (task_manager_) {
+    task_manager_->OnModeChanged(
+        static_cast<int>(robot::v1::ROBOT_MODE_ESTOP));
+  }
+
+  // 4. 更新模式 (atomic, 不需要锁)
   const auto old_mode = current_mode_.exchange(robot::v1::ROBOT_MODE_ESTOP);
 
   // 持久化 (best-effort)
   PersistState(robot::v1::ROBOT_MODE_ESTOP);
 
-  // 4. 事件通知 (尽力而为, 不影响停车)
+  // 5. 事件通知 (尽力而为, 不影响停车)
   if (event_buffer_ && old_mode != robot::v1::ROBOT_MODE_ESTOP) {
     event_buffer_->AddEvent(
         robot::v1::EVENT_TYPE_SAFETY_ESTOP,
@@ -172,6 +184,13 @@ void ModeManager::EmergencyStop(const std::string &reason) {
         "Emergency stop: " + reason,
         "Automatic ESTOP triggered. Reason: " + reason +
             ". Previous mode: " + std::to_string(static_cast<int>(old_mode)));
+  }
+
+  // 6. 额外回调 (FlightRecorder dump 等, best-effort)
+  if (estop_extra_callback_) {
+    try {
+      estop_extra_callback_(reason);
+    } catch (...) {}
   }
 
   RCLCPP_ERROR(node_->get_logger(), "EMERGENCY STOP: %s (was mode %d)",

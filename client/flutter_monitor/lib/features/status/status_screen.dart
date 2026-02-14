@@ -9,6 +9,7 @@ import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/app/responsive.dart';
 import 'package:flutter_monitor/core/grpc/dog_direct_client.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 
 class StatusScreen extends StatefulWidget {
   const StatusScreen({super.key});
@@ -38,6 +39,8 @@ class _StatusScreenState extends State<StatusScreen>
 
   @override
   bool get wantKeepAlive => true;
+
+  LocaleProvider get _locale => context.read<LocaleProvider>();
 
   @override
   void initState() {
@@ -109,13 +112,14 @@ class _StatusScreenState extends State<StatusScreen>
     super.build(context);
 
     final provider = context.watch<RobotConnectionProvider>();
+    context.watch<LocaleProvider>();
     final dogClient = provider.dogClient;
     final isDogConnected = provider.isDogConnected;
     final hasAnyData = _latestFastState != null || isDogConnected;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('状态总览'),
+        title: Text(_locale.tr('状态总览', 'Status Overview')),
         leading: Navigator.canPop(context)
             ? IconButton(
                 icon: const Icon(Icons.arrow_back_ios_new, size: 20),
@@ -166,7 +170,7 @@ class _StatusScreenState extends State<StatusScreen>
                             child: _buildMetricCard(
                               icon: Icons.battery_charging_full,
                               iconColor: AppColors.success,
-                              label: 'BATTERY',
+                              label: _locale.tr('电池', 'BATTERY'),
                               value: (_latestSlowState?.resources.batteryPercent ?? 0)
                                   .toStringAsFixed(0),
                               unit: '%',
@@ -201,7 +205,7 @@ class _StatusScreenState extends State<StatusScreen>
                             child: _buildMetricCard(
                               icon: Icons.thermostat,
                               iconColor: AppColors.warning,
-                              label: 'TEMP',
+                              label: _locale.tr('温度', 'TEMP'),
                               value: (_latestSlowState?.resources.cpuTemp ?? 0)
                                   .toStringAsFixed(1),
                               unit: '°C',
@@ -218,7 +222,7 @@ class _StatusScreenState extends State<StatusScreen>
                             child: _buildMetricCard(
                               icon: Icons.bolt,
                               iconColor: const Color(0xFFFFCC00),
-                              label: 'VOLTAGE',
+                              label: _locale.tr('电压', 'VOLTAGE'),
                               value: (_latestSlowState?.resources.batteryVoltage ?? 0)
                                   .toStringAsFixed(1),
                               unit: 'V',
@@ -239,7 +243,7 @@ class _StatusScreenState extends State<StatusScreen>
                             child: _buildMetricCard(
                               icon: Icons.sd_storage_outlined,
                               iconColor: AppColors.secondary,
-                              label: 'MEMORY',
+                              label: _locale.tr('内存', 'MEMORY'),
                               value: (_latestSlowState?.resources.memPercent ?? 0)
                                   .toStringAsFixed(0),
                               unit: '%',
@@ -249,7 +253,23 @@ class _StatusScreenState extends State<StatusScreen>
                           ),
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(child: SizedBox()), // Placeholder for symmetry
+                        Expanded(
+                          child: RepaintBoundary(
+                            child: _buildMetricCard(
+                              icon: Icons.gps_fixed,
+                              iconColor: _getLocScoreColor(
+                                  _latestFastState?.localizationScore ?? 0),
+                              label: _locale.tr('定位', 'LOC HEALTH'),
+                              value: (_latestFastState?.localizationScore ?? 0)
+                                  .toStringAsFixed(0),
+                              unit: _getLocQualityLabel(
+                                  _latestFastState?.localizationScore ?? 0),
+                              progress: (_latestFastState?.localizationScore ?? 0) / 100,
+                              progressColor: _getLocScoreColor(
+                                  _latestFastState?.localizationScore ?? 0),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 14),
@@ -360,6 +380,22 @@ class _StatusScreenState extends State<StatusScreen>
     if (temp < 50) return AppColors.warning;
     if (temp < 70) return const Color(0xFFFF6B00);
     return AppColors.error;
+  }
+
+  Color _getLocScoreColor(double score) {
+    if (score >= 80) return AppColors.success;
+    if (score >= 60) return const Color(0xFF4CAF50);
+    if (score >= 40) return AppColors.warning;
+    if (score >= 20) return const Color(0xFFFF6B00);
+    return AppColors.error;
+  }
+
+  String _getLocQualityLabel(double score) {
+    if (score >= 80) return _locale.tr('优秀', 'Excellent');
+    if (score >= 60) return _locale.tr('良好', 'Good');
+    if (score >= 40) return _locale.tr('降级', 'Degraded');
+    if (score >= 20) return _locale.tr('差', 'Poor');
+    return _locale.tr('丢失', 'Lost');
   }
 
   Widget _buildStatusBadge() {
@@ -611,7 +647,7 @@ class _StatusScreenState extends State<StatusScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'MOTION',
+            _locale.tr('运动', 'MOTION'),
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
@@ -624,14 +660,14 @@ class _StatusScreenState extends State<StatusScreen>
             children: [
               Expanded(
                 child: _buildMotionValue(
-                  Icons.arrow_forward, 'Linear',
+                  Icons.arrow_forward, _locale.tr('线速度', 'Linear'),
                   linear.toStringAsFixed(2), 'm/s', AppColors.primary,
                 ),
               ),
               Container(width: 1, height: 48, color: context.dividerColor),
               Expanded(
                 child: _buildMotionValue(
-                  Icons.rotate_right, 'Angular',
+                  Icons.rotate_right, _locale.tr('角速度', 'Angular'),
                   angular.toStringAsFixed(2), 'rad/s', AppColors.accent,
                 ),
               ),
@@ -698,7 +734,7 @@ class _StatusScreenState extends State<StatusScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'TOPIC RATES',
+            _locale.tr('话题频率', 'TOPIC RATES'),
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
@@ -1262,7 +1298,7 @@ class _StatusScreenState extends State<StatusScreen>
               child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Text(
-                  '等待关节数据...',
+                  _locale.tr('等待关节数据...', 'Waiting for joint data...'),
                   style: TextStyle(color: context.subtitleColor),
                 ),
               ),
@@ -1342,7 +1378,7 @@ class _StatusScreenState extends State<StatusScreen>
           Row(
             children: [
               Text(
-                'NETWORK',
+                _locale.tr('网络', 'NETWORK'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
@@ -1366,10 +1402,10 @@ class _StatusScreenState extends State<StatusScreen>
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildNetStat('RTT', '${rtt.toStringAsFixed(0)}', 'ms', rttColor()),
-              _buildNetStat('丢包', '${loss.toStringAsFixed(1)}', '%',
+              _buildNetStat(_locale.tr('丢包', 'Loss'), '${loss.toStringAsFixed(1)}', '%',
                   loss < 1 ? AppColors.success : loss < 5 ? AppColors.warning : AppColors.error),
-              _buildNetStat('抖动', '${jitter.toStringAsFixed(0)}', 'ms', context.subtitleColor),
-              _buildNetStat('带宽', bw > 1000 ? '${(bw / 1000).toStringAsFixed(1)}' : '$bw',
+              _buildNetStat(_locale.tr('抖动', 'Jitter'), '${jitter.toStringAsFixed(0)}', 'ms', context.subtitleColor),
+              _buildNetStat(_locale.tr('带宽', 'Bandwidth'), bw > 1000 ? '${(bw / 1000).toStringAsFixed(1)}' : '$bw',
                   bw > 1000 ? 'Mbps' : 'Kbps', context.subtitleColor),
             ],
           ),
@@ -1379,7 +1415,7 @@ class _StatusScreenState extends State<StatusScreen>
               children: [
                 Icon(Icons.signal_cellular_alt, size: 14, color: context.subtitleColor),
                 const SizedBox(width: 6),
-                Text('信号强度: $signal dBm',
+                Text(_locale.tr('信号强度:', 'Signal:') + ' $signal dBm',
                     style: TextStyle(fontSize: 12, color: context.subtitleColor)),
               ],
             ),
@@ -1442,7 +1478,7 @@ class _StatusScreenState extends State<StatusScreen>
           Row(
             children: [
               Text(
-                'HEALTH',
+                _locale.tr('健康', 'HEALTH'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
@@ -1474,7 +1510,10 @@ class _StatusScreenState extends State<StatusScreen>
               children: [
                 Icon(Icons.my_location, size: 14, color: context.subtitleColor),
                 const SizedBox(width: 6),
-                Text('定位置信度: ${(health.localizationScore * 100).toStringAsFixed(0)}%',
+                // ICP fitness score: 越低越好 (< 0.1 优秀, < 0.3 良好, >= 0.3 差)
+                // 转换为定位质量百分比: (1 - score) * 100
+                Text(_locale.tr('定位质量:', 'Loc quality:') + ' ${((1.0 - health.localizationScore).clamp(0.0, 1.0) * 100).toStringAsFixed(0)}% '
+                     + _locale.tr('(偏差:', '(deviation:') + ' ${health.localizationScore.toStringAsFixed(3)})',
                     style: TextStyle(fontSize: 12, color: context.subtitleColor)),
               ],
             ),
@@ -1539,7 +1578,7 @@ class _StatusScreenState extends State<StatusScreen>
           Row(
             children: [
               Text(
-                'NAVIGATION',
+                _locale.tr('导航', 'NAVIGATION'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
@@ -1555,7 +1594,7 @@ class _StatusScreenState extends State<StatusScreen>
               ),
               const SizedBox(width: 4),
               Text(
-                nav.localizationValid ? '定位有效' : '定位无效',
+                nav.localizationValid ? _locale.tr('定位有效', 'Loc Valid') : _locale.tr('定位无效', 'Loc Invalid'),
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w500,
@@ -1566,22 +1605,22 @@ class _StatusScreenState extends State<StatusScreen>
           ),
           const SizedBox(height: 12),
           // Planner status
-          _buildNavRow(Icons.route, '规划器', nav.globalPlannerStatus.isNotEmpty
+          _buildNavRow(Icons.route, _locale.tr('规划器', 'Planner'), nav.globalPlannerStatus.isNotEmpty
               ? nav.globalPlannerStatus
               : 'N/A'),
           if (nav.hasGlobalPath) ...[
             const SizedBox(height: 6),
-            _buildNavRow(Icons.straighten, '路径长度',
+            _buildNavRow(Icons.straighten, _locale.tr('路径长度', 'Path Length'),
                 '${nav.globalPathLength.toStringAsFixed(1)} m'),
           ],
           if (nav.hasWaypoint) ...[
             const SizedBox(height: 6),
-            _buildNavRow(Icons.place, '当前航点',
+            _buildNavRow(Icons.place, _locale.tr('当前航点', 'Waypoint'),
                 '(${nav.currentWaypoint.x.toStringAsFixed(1)}, ${nav.currentWaypoint.y.toStringAsFixed(1)})'),
           ],
           if (nav.slowDownLevel > 0) ...[
             const SizedBox(height: 6),
-            _buildNavRow(Icons.speed, '减速等级', '${nav.slowDownLevel}'),
+            _buildNavRow(Icons.speed, _locale.tr('减速等级', 'Slowdown'), '${nav.slowDownLevel}'),
           ],
         ],
       ),
@@ -1640,7 +1679,7 @@ class _StatusScreenState extends State<StatusScreen>
           Row(
             children: [
               Text(
-                'GEOFENCE',
+                _locale.tr('围栏', 'GEOFENCE'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
@@ -1650,7 +1689,7 @@ class _StatusScreenState extends State<StatusScreen>
               ),
               const Spacer(),
               if (!geo.hasFence)
-                Text('未设置围栏',
+                Text(_locale.tr('未设置围栏', 'No fence set'),
                     style: TextStyle(fontSize: 11, color: context.subtitleColor))
               else ...[
                 Container(
@@ -1670,7 +1709,7 @@ class _StatusScreenState extends State<StatusScreen>
               children: [
                 Icon(Icons.fence, size: 14, color: context.subtitleColor),
                 const SizedBox(width: 6),
-                Text('边界距离: ${geo.marginDistance.toStringAsFixed(1)} m',
+                Text(_locale.tr('边界距离:', 'Margin:') + ' ${geo.marginDistance.toStringAsFixed(1)} m',
                     style: TextStyle(fontSize: 12, color: context.subtitleColor)),
               ],
             ),

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart' show Share, XFile;
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
+import 'package:flutter_monitor/core/gateway/file_gateway.dart';
 import 'package:flutter_monitor/core/services/state_logger_service.dart';
 
 class LogExportPage extends StatefulWidget {
@@ -573,24 +574,39 @@ class _LogExportPageState extends State<LogExportPage> {
 
         setState(() => _exportProgress = 0.7);
 
-        // 下载文件（通过 DownloadFile gRPC）
-        // ignore: unused_local_variable
+        // 通过 FileGateway 下载文件
+        final fileGw = context.read<FileGateway>();
+        final bytes = await fileGw.downloadFile(filePath);
+        if (bytes == null || bytes.isEmpty) {
+          setState(() {
+            _isExporting = false;
+            _errorMessage = '下载失败: ${fileGw.errorMessage ?? "无数据"}';
+          });
+          return;
+        }
+
+        // 保存到本地文档目录
         final dir = await getApplicationDocumentsDirectory();
-        // 由于 DownloadFile 返回的是 stream of FileChunk，
-        // 这里简化处理 - 列出文件信息即可
+        final localFile = File('${dir.path}/$filename');
+        await localFile.writeAsBytes(bytes);
+
         setState(() {
           _isExporting = false;
           _exportProgress = 1.0;
-          _exportedFilePath = null;
+          _exportedFilePath = localFile.path;
         });
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('找到日志: $filePath (${listResp.files.first.size} bytes)'),
+              content: Text('日志已下载: ${localFile.path}'),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
+              action: SnackBarAction(
+                label: '分享',
+                onPressed: () => Share.shareXFiles([XFile(localFile.path)]),
+              ),
             ),
           );
         }
@@ -617,7 +633,7 @@ class _LogExportPageState extends State<LogExportPage> {
             );
           }
         } else {
-          // 显示文件列表对话框
+          // 显示文件列表对话框，点击可下载
           if (mounted) {
             showDialog(
               context: context,
@@ -636,7 +652,12 @@ class _LogExportPageState extends State<LogExportPage> {
                         title: Text(f.filename, style: const TextStyle(fontSize: 14)),
                         subtitle: Text('$sizeKb KB · ${f.modifiedTime}',
                             style: const TextStyle(fontSize: 12)),
+                        trailing: const Icon(Icons.download, size: 18),
                         dense: true,
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _downloadSingleFile(f.path, f.filename);
+                        },
                       );
                     },
                   ),
@@ -656,6 +677,64 @@ class _LogExportPageState extends State<LogExportPage> {
       setState(() {
         _isExporting = false;
         _errorMessage = '拉取日志失败: $e';
+      });
+    }
+  }
+
+  /// Download a single file from the robot and save locally.
+  Future<void> _downloadSingleFile(String remotePath, String filename) async {
+    setState(() {
+      _isExporting = true;
+      _exportProgress = 0.3;
+      _errorMessage = null;
+      _exportedFilePath = null;
+    });
+
+    try {
+      final fileGw = context.read<FileGateway>();
+      
+      setState(() => _exportProgress = 0.5);
+      final bytes = await fileGw.downloadFile(remotePath);
+      
+      if (bytes == null || bytes.isEmpty) {
+        setState(() {
+          _isExporting = false;
+          _errorMessage = '下载失败: ${fileGw.errorMessage ?? "无数据"}';
+        });
+        return;
+      }
+
+      setState(() => _exportProgress = 0.8);
+
+      // 保存到本地文档目录
+      final dir = await getApplicationDocumentsDirectory();
+      final localFile = File('${dir.path}/$filename');
+      await localFile.writeAsBytes(bytes);
+
+      setState(() {
+        _isExporting = false;
+        _exportProgress = 1.0;
+        _exportedFilePath = localFile.path;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('日志已下载: $filename'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+            action: SnackBarAction(
+              label: '分享',
+              onPressed: () => Share.shareXFiles([XFile(localFile.path)]),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isExporting = false;
+        _errorMessage = '下载失败: $e';
       });
     }
   }

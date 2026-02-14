@@ -1,0 +1,12 @@
+# Automatic cleanup for 3d_NAV
+# Install: sudo cp deploy/cron.d/nav-cleanup /etc/cron.d/nav-cleanup
+SHELL=/bin/bash
+
+# FlightRecorder: keep latest 30 dump files, delete older ones
+0 3 * * * root find /opt/robot/flight_records -name '*.fdr' -type f | sort -r | tail -n +31 | xargs -r rm --
+
+# EventBuffer: rotate if > 50MB total
+0 4 * * * root find /opt/robot/logs -name 'events.jsonl.*' -mtime +30 -delete
+
+# ROS2 bag cleanup: delete bags older than 7 days
+0 5 * * 0 root find /opt/robot/bags -name '*.db3' -mtime +7 -delete 2>/dev/null

@@ -7,6 +7,8 @@ import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/app/responsive.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
+import 'package:flutter_monitor/shared/widgets/feature_showcase_banner.dart';
 import 'package:robot_proto/robot_proto.dart';
 
 // ═══════════════════════════════════════════════════════════════
@@ -78,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     final conn = context.watch<RobotConnectionProvider>();
     final profile = context.watch<RobotProfileProvider>().current;
+    final locale = context.watch<LocaleProvider>();
     final online = conn.isConnected;
     final pad = context.screenPadding;
     final dark = context.isDark;
@@ -113,23 +116,36 @@ class _HomeScreenState extends State<HomeScreen>
                   slivers: [
                     // ── Header ──
                     SliverToBoxAdapter(
-                      child: _anim(0, _buildHeader(context, profile, online, conn, pad)),
+                      child: _anim(0, _buildHeader(context, profile, online, conn, pad, locale)),
+                    ),
+
+                    // ── Showcase banner ──
+                    SliverToBoxAdapter(
+                      child: _anim(1, Padding(
+                        padding: EdgeInsets.fromLTRB(pad, 0, pad, 20),
+                        child: FeatureShowcaseBanner(
+                          locale: locale,
+                          onGetStarted: online
+                              ? () => MainShellTabNotification(2).dispatch(context)
+                              : () => Navigator.of(context).pushNamed('/scan'),
+                        ),
+                      )),
                     ),
 
                     // ── Connect prompt ──
                     if (!online)
                       SliverToBoxAdapter(
-                        child: _anim(1, Padding(
+                        child: _anim(2, Padding(
                           padding: EdgeInsets.fromLTRB(pad, 0, pad, 20),
-                          child: _buildConnectPrompt(context),
+                          child: _buildConnectPrompt(context, locale),
                         )),
                       ),
 
                     // ── Feature cards ──
                     SliverToBoxAdapter(
-                      child: _anim(online ? 1 : 2, Padding(
+                      child: _anim(online ? 2 : 3, Padding(
                         padding: EdgeInsets.symmetric(horizontal: pad),
-                        child: _buildCardGrid(context, online, conn),
+                        child: _buildCardGrid(context, online, conn, locale),
                       )),
                     ),
 
@@ -148,7 +164,7 @@ class _HomeScreenState extends State<HomeScreen>
   //  HEADER — Robot identity LEFT + KPI pills RIGHT
   // ═══════════════════════════════════════════════════════════
   Widget _buildHeader(BuildContext context, dynamic profile, bool online,
-      RobotConnectionProvider conn, double pad) {
+      RobotConnectionProvider conn, double pad, LocaleProvider locale) {
     final slow = conn.latestSlowState;
     final bat = slow?.resources.batteryPercent ?? 0.0;
     final cpu = slow?.resources.cpuPercent ?? 0.0;
@@ -167,14 +183,14 @@ class _HomeScreenState extends State<HomeScreen>
             children: [
               Text.rich(TextSpan(children: [
                 TextSpan(
-                  text: 'Robot ',
+                  text: locale.tr('大算 ', 'Dasuan '),
                   style: TextStyle(
                     fontSize: 26, fontWeight: FontWeight.w700,
                     color: context.titleColor, letterSpacing: -0.5,
                   ),
                 ),
                 TextSpan(
-                  text: 'ID #X-402',
+                  text: 'NAV',
                   style: TextStyle(
                     fontSize: 26, fontWeight: FontWeight.w700,
                     color: AppColors.primary, letterSpacing: -0.5,
@@ -188,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen>
           GestureDetector(
             onTap: () => Navigator.of(context).pushNamed('/robot-select'),
             child: Text(
-              'Model: ${profile.name} • Firmware v4.5.1',
+              locale.tr('型号: ${profile.name} • 固件 v4.5.1', 'Model: ${profile.name} • Firmware v4.5.1'),
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500,
                   color: context.subtitleColor),
             ),
@@ -204,20 +220,20 @@ class _HomeScreenState extends State<HomeScreen>
                 _KpiPill(
                   icon: Icons.battery_charging_full_rounded,
                   iconBg: const Color(0xFFF3E8FF), iconColor: AppColors.primary,
-                  label: 'BATTERY LEVEL',
+                  label: locale.tr('电池电量', 'BATTERY'),
                   value: '${bat.toStringAsFixed(0)}%',
                   progress: bat / 100, progressColor: AppColors.primary,
                 ),
                 _KpiPill(
                   icon: Icons.memory_rounded,
                   iconBg: const Color(0xFFE3F2FD), iconColor: AppColors.info,
-                  label: 'CPU LOAD',
+                  label: locale.tr('CPU 负载', 'CPU LOAD'),
                   value: '${cpu.toStringAsFixed(0)}%',
                 ),
                 _KpiPill(
                   icon: Icons.thermostat_rounded,
                   iconBg: const Color(0xFFFFF3E0), iconColor: const Color(0xFFEA580C),
-                  label: 'TEMP',
+                  label: locale.tr('温度', 'TEMP'),
                   value: '${temp.toStringAsFixed(0)}°C',
                 ),
               ],
@@ -244,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen>
   // ═══════════════════════════════════════════════════════════
   //  CONNECT PROMPT
   // ═══════════════════════════════════════════════════════════
-  Widget _buildConnectPrompt(BuildContext context) {
+  Widget _buildConnectPrompt(BuildContext context, LocaleProvider locale) {
     return GestureDetector(
       onTap: () {
         HapticFeedback.lightImpact();
@@ -267,11 +283,11 @@ class _HomeScreenState extends State<HomeScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('连接机器人', style: TextStyle(
+              Text(locale.tr('连接机器人', 'Connect Robot'), style: TextStyle(
                 fontSize: 15, fontWeight: FontWeight.w600, color: context.titleColor,
               )),
               const SizedBox(height: 2),
-              Text('扫描网络或蓝牙发现附近设备', style: TextStyle(
+              Text(locale.tr('扫描网络或蓝牙发现附近设备', 'Scan network or Bluetooth for nearby devices'), style: TextStyle(
                 fontSize: 12, color: context.subtitleColor,
               )),
             ],
@@ -285,18 +301,18 @@ class _HomeScreenState extends State<HomeScreen>
   // ═══════════════════════════════════════════════════════════
   //  CARD GRID — 3×2 with fixed 280px height
   // ═══════════════════════════════════════════════════════════
-  Widget _buildCardGrid(BuildContext context, bool online, RobotConnectionProvider conn) {
+  Widget _buildCardGrid(BuildContext context, bool online, RobotConnectionProvider conn, LocaleProvider locale) {
     final cols = context.isMobile ? 2 : 3;
     const gap = 20.0;
     const h = 280.0;
 
     final cards = [
-      _systemStatus(context, online),
-      _remoteControl(context, online),
-      _liveLocation(context, online),
-      _recentEventsCard(context),
-      _dataLogs(context),
-      _cameraFeed(context, online),
+      _systemStatus(context, online, locale),
+      _remoteControl(context, online, locale),
+      _liveLocation(context, online, locale),
+      _recentEventsCard(context, locale),
+      _dataLogs(context, locale),
+      _cameraFeed(context, online, locale),
     ];
 
     // Build rows manually for exact height control
@@ -317,13 +333,13 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ───────────── System Status ─────────────
-  Widget _systemStatus(BuildContext context, bool online) {
+  Widget _systemStatus(BuildContext context, bool online, LocaleProvider locale) {
     return _GlassFeatureCard(
       glowColor: const Color(0xFF4ADE80),
       icon: Icons.check_circle_rounded,
       iconColor: AppColors.success,
       topRight: Icon(Icons.open_in_new_rounded, size: 18, color: context.hintColor),
-      title: 'System Status',
+      title: locale.tr('系统状态', 'System Status'),
       onTap: () {
         HapticFeedback.selectionClick();
         MainShellTabNotification(1).dispatch(context);
@@ -333,13 +349,12 @@ class _HomeScreenState extends State<HomeScreen>
         children: [
           Text(
             online
-                ? 'All subsystems are functioning within normal parameters. Last diagnostic run 2m ago.'
-                : '未连接 — 无法获取状态',
+                ? locale.tr('所有子系统运行正常。上次诊断于 2 分钟前。', 'All subsystems functioning normally. Last diagnostic 2m ago.')
+                : locale.tr('未连接 — 无法获取状态', 'Not connected — unable to get status'),
             style: TextStyle(fontSize: 13, color: context.subtitleColor, height: 1.5),
             maxLines: 2, overflow: TextOverflow.ellipsis,
           ),
           const Spacer(),
-          // Status dot
           Row(children: [
             Container(width: 8, height: 8, decoration: BoxDecoration(
               color: online ? AppColors.success : context.hintColor,
@@ -347,20 +362,19 @@ class _HomeScreenState extends State<HomeScreen>
             )),
             const SizedBox(width: 6),
             Text(
-              online ? 'Operational' : 'Offline',
+              online ? locale.tr('运行中', 'Operational') : locale.tr('离线', 'Offline'),
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
                   color: online ? const Color(0xFF15803D) : context.hintColor),
             ),
           ]),
           const SizedBox(height: 8),
-          // Glass bar
           Container(
             height: 40,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: _glassSurface(context, radius: 14),
             alignment: Alignment.centerLeft,
             child: Text(
-              online ? 'Next maintenance in 48h' : '—',
+              online ? locale.tr('下次维护还有 48 小时', 'Next maintenance in 48h') : '—',
               style: TextStyle(fontSize: 12, color: context.hintColor),
             ),
           ),
@@ -370,7 +384,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ───────────── Remote Control ─────────────
-  Widget _remoteControl(BuildContext context, bool online) {
+  Widget _remoteControl(BuildContext context, bool online, LocaleProvider locale) {
     return _GlassFeatureCard(
       glowColor: const Color(0xFF818CF8),
       icon: Icons.sports_esports_rounded,
@@ -382,19 +396,19 @@ class _HomeScreenState extends State<HomeScreen>
                 color: const Color(0xFFE0E7FF),
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: const Text('MANUAL', style: TextStyle(
+              child: Text(locale.tr('手动', 'MANUAL'), style: const TextStyle(
                 fontSize: 10, fontWeight: FontWeight.w700,
                 color: Color(0xFF4338CA), letterSpacing: 0.3,
               )),
             )
           : null,
-      title: 'Remote Control',
+      title: locale.tr('遥控操作', 'Remote Control'),
       onTap: null,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Take manual control of the unit for precision navigation.',
+            locale.tr('手动控制机器人进行精确导航。', 'Take manual control of the unit for precision navigation.'),
             style: TextStyle(fontSize: 13, color: context.subtitleColor, height: 1.5),
           ),
           const Spacer(),
@@ -414,7 +428,7 @@ class _HomeScreenState extends State<HomeScreen>
                         : null,
                   ),
                   alignment: Alignment.center,
-                  child: Text('Engage', style: TextStyle(
+                  child: Text(locale.tr('开始操控', 'Engage'), style: TextStyle(
                     fontSize: 14, fontWeight: FontWeight.w600,
                     color: online ? Colors.white : context.hintColor,
                   )),
@@ -443,7 +457,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ───────────── Live Location ─────────────
-  Widget _liveLocation(BuildContext context, bool online) {
+  Widget _liveLocation(BuildContext context, bool online, LocaleProvider locale) {
     return _GlassFeatureCard(
       glowColor: const Color(0xFF60A5FA),
       icon: Icons.near_me_rounded,
@@ -456,16 +470,15 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         child: Icon(Icons.fullscreen_rounded, size: 16, color: context.subtitleColor),
       ),
-      title: 'Live Location',
+      title: locale.tr('实时位置', 'Live Location'),
       onTap: () { HapticFeedback.selectionClick(); MainShellTabNotification(2).dispatch(context); },
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Sector 7 • Warehouse B', style: TextStyle(
+          Text(locale.tr('区域 7 • 仓库 B', 'Sector 7 • Warehouse B'), style: TextStyle(
             fontSize: 13, color: context.subtitleColor, height: 1.5,
           )),
           const Spacer(),
-          // Speed badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
@@ -480,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen>
               Icon(Icons.speed_rounded, size: 14, color: AppColors.primary),
               const SizedBox(width: 6),
               Text(
-                online ? 'Moving at 1.2 m/s' : 'No data',
+                online ? locale.tr('速度 1.2 m/s', 'Moving at 1.2 m/s') : locale.tr('暂无数据', 'No data'),
                 style: TextStyle(fontSize: 12, color: context.subtitleColor),
               ),
             ]),
@@ -491,7 +504,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ───────────── Recent Events ─────────────
-  Widget _recentEventsCard(BuildContext context) {
+  Widget _recentEventsCard(BuildContext context, LocaleProvider locale) {
     return _GlassFeatureCard(
       glowColor: const Color(0xFFFB923C),
       icon: Icons.notifications_active_rounded,
@@ -506,10 +519,10 @@ class _HomeScreenState extends State<HomeScreen>
               )),
             )
           : null,
-      title: 'Recent Events',
+      title: locale.tr('最近事件', 'Recent Events'),
       onTap: () { HapticFeedback.selectionClick(); Navigator.of(context).pushNamed('/events'); },
       body: _recentEvents.isEmpty
-          ? Center(child: Text('暂无最近事件', style: TextStyle(fontSize: 13, color: context.hintColor)))
+          ? Center(child: Text(locale.tr('暂无最近事件', 'No recent events'), style: TextStyle(fontSize: 13, color: context.hintColor)))
           : Column(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -552,26 +565,26 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ───────────── Data Logs ─────────────
-  Widget _dataLogs(BuildContext context) {
+  Widget _dataLogs(BuildContext context, LocaleProvider locale) {
     return _GlassFeatureCard(
       glowColor: const Color(0xFFA78BFA),
       icon: Icons.folder_open_rounded,
       iconColor: const Color(0xFF8B5CF6),
       topRight: Icon(Icons.download_rounded, size: 18, color: context.hintColor),
-      title: 'Data Logs',
+      title: locale.tr('数据日志', 'Data Logs'),
       onTap: () { HapticFeedback.selectionClick(); MainShellTabNotification(3).dispatch(context); },
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Access sensor logs, telemetry data, and visual records.',
+            locale.tr('查看传感器日志、遥测数据和视觉记录。', 'Access sensor logs, telemetry data, and visual records.'),
             style: TextStyle(fontSize: 13, color: context.subtitleColor, height: 1.5),
           ),
           const Spacer(),
           Row(children: [
-            Expanded(child: _dataBox(context, 'LIDAR', '1.2 GB')),
+            Expanded(child: _dataBox(context, locale.tr('激光雷达', 'LIDAR'), '1.2 GB')),
             const SizedBox(width: 12),
-            Expanded(child: _dataBox(context, 'Visual', '4.5 GB')),
+            Expanded(child: _dataBox(context, locale.tr('视觉', 'Visual'), '4.5 GB')),
           ]),
         ],
       ),
@@ -595,7 +608,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ───────────── Camera Feed ─────────────
-  Widget _cameraFeed(BuildContext context, bool online) {
+  Widget _cameraFeed(BuildContext context, bool online, LocaleProvider locale) {
     return GestureDetector(
       onTap: () { HapticFeedback.selectionClick(); Navigator.of(context).pushNamed('/camera'); },
       child: ClipRRect(
@@ -607,7 +620,6 @@ class _HomeScreenState extends State<HomeScreen>
             border: Border.all(color: const Color(0xFF333340)),
           ),
           child: Stack(children: [
-            // Dark gradient overlay
             Positioned.fill(child: Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -616,7 +628,6 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             )),
-            // Content
             Padding(
               padding: const EdgeInsets.all(24),
               child: Column(
@@ -640,17 +651,17 @@ class _HomeScreenState extends State<HomeScreen>
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: const Color(0x60EF4444)),
                       ),
-                      child: const Text('LIVE', style: TextStyle(
+                      child: Text(locale.tr('直播', 'LIVE'), style: const TextStyle(
                         fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.5,
                       )),
                     ),
                   ]),
                   const SizedBox(height: 14),
-                  const Text('Camera Feed', style: TextStyle(
+                  Text(locale.tr('摄像头画面', 'Camera Feed'), style: const TextStyle(
                     fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: -0.2,
                   )),
                   const SizedBox(height: 4),
-                  Text('Front Optical Sensor', style: TextStyle(
+                  Text(locale.tr('前置光学传感器', 'Front Optical Sensor'), style: TextStyle(
                     fontSize: 13, color: Colors.white.withValues(alpha: 0.5),
                   )),
                   const Spacer(),

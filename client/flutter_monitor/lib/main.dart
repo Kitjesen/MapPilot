@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -20,16 +21,22 @@ import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:flutter_monitor/core/gateway/control_gateway.dart';
+import 'package:flutter_monitor/core/gateway/runtime_config_gateway.dart';
+import 'package:flutter_monitor/core/models/runtime_config.dart';
 import 'package:flutter_monitor/core/gateway/file_gateway.dart';
+import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
 import 'package:flutter_monitor/features/task/task_panel.dart';
 import 'package:flutter_monitor/features/map/map_manager_page.dart';
 import 'package:flutter_monitor/features/map/map_goal_picker.dart';
 import 'package:flutter_monitor/features/camera/camera_screen.dart';
 import 'package:flutter_monitor/features/files/file_browser_screen.dart';
 import 'package:flutter_monitor/features/events/events_screen.dart';
+import 'package:flutter_monitor/features/status/health_status_page.dart';
+import 'package:flutter_monitor/features/settings/runtime_params_page.dart';
 
 import 'package:flutter_monitor/core/services/notification_service.dart';
 import 'package:flutter_monitor/core/services/app_logger.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:flutter_monitor/shared/widgets/global_safety_overlay.dart';
 import 'package:flutter_monitor/shared/widgets/error_boundary.dart';
 
@@ -71,6 +78,8 @@ class RobotMonitorApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => MapGateway()),
         ChangeNotifierProvider(create: (_) => TaskGateway()),
         ChangeNotifierProvider(create: (_) => ControlGateway()),
+        ChangeNotifierProvider(create: (_) => RuntimeConfigGateway()),
+        ChangeNotifierProvider(create: (_) => LocaleProvider()),
         ChangeNotifierProvider(create: (_) => FileGateway()),
         ChangeNotifierProvider(create: (_) => AlertMonitorService()),
         ChangeNotifierProvider(create: (_) => StateLoggerService()),
@@ -86,13 +95,30 @@ class _AppWithBindings extends StatefulWidget {
   State<_AppWithBindings> createState() => _AppWithBindingsState();
 }
 
-class _AppWithBindingsState extends State<_AppWithBindings> {
+class _AppWithBindingsState extends State<_AppWithBindings>
+    with WidgetsBindingObserver {
   bool _bound = false;
   StreamSubscription<AlertRecord>? _alertSub;
 
   /// 全局 ScaffoldMessenger key，用于从任意位置弹 SnackBar
   final GlobalKey<ScaffoldMessengerState> _messengerKey =
       GlobalKey<ScaffoldMessengerState>();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 应用进入后台或被销毁时，释放 Lease 防止阻塞其他客户端
+    if (state == AppLifecycleState.detached) {
+      final conn = context.read<RobotConnectionProvider>();
+      conn.disconnect();
+      AppLogger.system.info('App detached → disconnected & released lease');
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -118,6 +144,7 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
       final taskGateway = context.read<TaskGateway>();
       final fileGateway = context.read<FileGateway>();
       final controlGateway = context.read<ControlGateway>();
+      final runtimeConfigGateway = context.read<RuntimeConfigGateway>();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         otaGateway.updateClient(connProvider.client);
@@ -129,27 +156,69 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
           client: connProvider.client,
           dogClient: connProvider.dogClient,
         );
+        runtimeConfigGateway.updateClient(connProvider.client);
       });
 
       // 监听连接变化，自动同步所有 Gateway 的 client 引用
+      // 使用 client identity 守卫，避免重复调用 (Provider 可能因非连接变化触发)
+      RobotClientBase? _lastClient;
       connProvider.addListener(() {
-        otaGateway.updateClient(connProvider.client);
-        mapGateway.updateClient(connProvider.client);
-        taskGateway.updateClient(connProvider.client);
-        fileGateway.updateClient(connProvider.client);
+        final currentClient = connProvider.client;
+        if (identical(currentClient, _lastClient)) return;
+        _lastClient = currentClient;
+        otaGateway.updateClient(currentClient);
+        mapGateway.updateClient(currentClient);
+        taskGateway.updateClient(currentClient);
+        fileGateway.updateClient(currentClient);
         controlGateway.updateClients(
-          client: connProvider.client,
+          client: currentClient,
           dogClient: connProvider.dogClient,
         );
+        runtimeConfigGateway.updateClient(currentClient);
       });
 
       // ── Cross-Gateway Orchestration ──
 
       // 1. Mapping auto-save: when mapping task completes → save map
-      taskGateway.onMappingComplete = () {
+      taskGateway.onMappingComplete = () async {
         AppLogger.system.info('Mapping complete → auto-saving map');
-        mapGateway.saveMap('auto_${DateTime.now().millisecondsSinceEpoch}.pcd');
+        final fileName = 'auto_${DateTime.now().millisecondsSinceEpoch}.pcd';
+        final savePath = '/maps/$fileName';
+        try {
+          await mapGateway.saveMap(savePath);
+          AppLogger.system.info('Map auto-saved: $savePath');
+          _messengerKey.currentState?.showSnackBar(const SnackBar(
+            content: Text('地图已自动保存'),
+            backgroundColor: AppColors.success,
+            duration: Duration(seconds: 3),
+          ));
+        } catch (e) {
+          AppLogger.system.error('Map auto-save failed: $e');
+          _messengerKey.currentState?.showSnackBar(SnackBar(
+            content: Text('地图自动保存失败: $e'),
+            backgroundColor: AppColors.error,
+            duration: Duration(seconds: 5),
+          ));
+        }
       };
+
+      // 1.5 SlowState → RuntimeConfig heartbeat read-back
+      connProvider.slowStateStream.listen((ss) {
+        if (ss.hasConfigJson() && ss.configJson.isNotEmpty) {
+          try {
+            final json = jsonDecode(ss.configJson) as Map<String, dynamic>;
+            final config = RuntimeConfig.fromJson(json);
+            final version = ss.hasConfigVersion()
+                ? ss.configVersion.toInt()
+                : 0;
+            runtimeConfigGateway.updateFromHeartbeat(config, version);
+          } catch (e) {
+            AppLogger.system.warning(
+              'Failed to parse config from SlowState: $e',
+            );
+          }
+        }
+      });
 
       // 2. Disconnect recovery: on reconnect → re-query gateway states
       connProvider.onReconnected = () {
@@ -158,6 +227,12 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
         otaGateway.fetchInstalledVersions().catchError((_) {});
         // Re-query maps
         mapGateway.refreshMaps().catchError((_) {});
+        // Re-query task state (resume polling if task was active)
+        taskGateway.recoverState().catchError((_) {});
+        // Sync mode from first SlowState after reconnect
+        connProvider.slowStateStream.first.then((ss) {
+          controlGateway.syncModeFromString(ss.currentMode);
+        }).catchError((_) {});
       };
 
       // 2.1 Task terminal callback: refresh OTA-relevant state after task ends.
@@ -290,6 +365,7 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _alertSub?.cancel();
     super.dispose();
   }
@@ -300,7 +376,7 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
       builder: (context, themeProvider, _) {
         return MaterialApp(
           scaffoldMessengerKey: _messengerKey,
-          title: '大算机器人',
+          title: '大算 3D NAV',
           debugShowCheckedModeBanner: false,
           theme: lightTheme,
           darkTheme: darkTheme,
@@ -349,6 +425,10 @@ class _AppWithBindingsState extends State<_AppWithBindings> {
         page = const FileBrowserScreen();
       case '/events':
         page = const EventsScreen();
+      case '/health':
+        page = const HealthStatusPage();
+      case '/runtime-params':
+        page = const RuntimeParamsPage();
       default:
         page = const MainShellScreen();
     }

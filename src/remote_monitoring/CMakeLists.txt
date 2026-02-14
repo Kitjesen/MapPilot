@@ -67,6 +67,8 @@ set(GATEWAY_SOURCES
   src/core/health_monitor.cpp
   src/core/task_manager.cpp
   src/core/service_orchestrator.cpp
+  src/core/localization_scorer.cpp
+  src/core/flight_recorder.cpp
   src/services/system_service.cpp
   src/services/control_service.cpp
   src/services/telemetry_service.cpp
@@ -130,5 +132,48 @@ install(DIRECTORY config/
 install(FILES README.md
   DESTINATION share/${PROJECT_NAME}
 )
+
+# ---- Unit Tests (gtest) ----
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  # Test: IdempotencyCache (pure C++, no ROS dependency)
+  ament_add_gtest(test_idempotency_cache
+    test/test_idempotency_cache.cpp
+  )
+  target_include_directories(test_idempotency_cache PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_link_libraries(test_idempotency_cache robot_proto::robot_proto)
+
+  # Test: FlightRecorder (pure C++, no ROS dependency)
+  ament_add_gtest(test_flight_recorder
+    test/test_flight_recorder.cpp
+    src/core/flight_recorder.cpp
+  )
+  target_include_directories(test_flight_recorder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+
+  # Test: EventBuffer (pure C++, needs protobuf)
+  ament_add_gtest(test_event_buffer
+    test/test_event_buffer.cpp
+    src/core/event_buffer.cpp
+  )
+  target_include_directories(test_event_buffer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_link_libraries(test_event_buffer robot_proto::robot_proto)
+
+  # Test: LeaseManager (needs protobuf for OperatorLease)
+  ament_add_gtest(test_lease_manager
+    test/test_lease_manager.cpp
+    src/core/lease_manager.cpp
+  )
+  target_include_directories(test_lease_manager PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_link_libraries(test_lease_manager robot_proto::robot_proto)
+endif()
 
 ament_package()

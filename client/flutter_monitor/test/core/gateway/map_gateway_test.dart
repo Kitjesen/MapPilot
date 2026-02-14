@@ -41,11 +41,10 @@ void main() {
       expect(gateway.maps, isNotEmpty);
     });
 
-    test('refreshMaps throws when disconnected', () async {
-      expect(
-        () => gateway.refreshMaps(),
-        throwsException,
-      );
+    test('refreshMaps when disconnected sets error gracefully', () async {
+      // No client set — should not throw, but set error
+      await gateway.refreshMaps();
+      expect(gateway.error, '未连接');
     });
 
     test('saveMap works when connected', () async {

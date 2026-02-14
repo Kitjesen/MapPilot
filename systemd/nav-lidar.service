@@ -7,8 +7,8 @@ Requires=nav-lidar-network.service
 Type=simple
 User=sunrise
 Group=sunrise
-WorkingDirectory=/home/sunrise/data/SLAM/navigation
-ExecStart=/bin/bash /home/sunrise/data/SLAM/navigation/scripts/services/nav-lidar.sh
+WorkingDirectory=/opt/nav
+ExecStart=/bin/bash /opt/nav/scripts/services/nav-lidar.sh
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
@@ -16,11 +16,9 @@ KillMode=mixed
 KillSignal=SIGINT
 SuccessExitStatus=130 SIGINT
 
-# 环境
 Environment=HOME=/home/sunrise
 Environment=LANG=en_US.UTF-8
 
-# 日志
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nav-lidar

@@ -74,7 +74,9 @@ class MockRobotClient implements RobotClientBase {
         ..linearAcceleration = (Vector3()..z = 9.8)
         ..angularVelocity = (Vector3()..z = 0.5)
         ..rpyDeg = (Vector3()..z = yaw * 180 / math.pi)
-        ..tfOk = true;
+        ..tfOk = true
+        ..localizationScore = 85.0
+        ..speedScale = 1.0;
     });
   }
 
@@ -163,6 +165,15 @@ class MockRobotClient implements RobotClientBase {
           ..compression = CompressionType.COMPRESSION_TYPE_NONE;
       });
     }
+  }
+
+  @override
+  bool get hasLease => _hasLease;
+
+  @override
+  Future<bool> ensureLease() async {
+    if (_hasLease) return true;
+    return acquireLease();
   }
 
   @override
@@ -317,6 +328,26 @@ class MockRobotClient implements RobotClientBase {
         ..type = _mockTaskType
         ..status = _mockTaskStatus
         ..progressPercent = _mockTaskProgress);
+  }
+
+  // ==================== 航点管理 Mock ====================
+
+  @override
+  Future<GetActiveWaypointsResponse> getActiveWaypoints() async {
+    return GetActiveWaypointsResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..source = WaypointSource.WAYPOINT_SOURCE_NONE
+      ..totalCount = 0
+      ..currentIndex = 0
+      ..progressPercent = 0.0;
+  }
+
+  @override
+  Future<ClearWaypointsResponse> clearWaypoints() async {
+    return ClearWaypointsResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..clearedCount = 0
+      ..previousSource = WaypointSource.WAYPOINT_SOURCE_NONE;
   }
 
   // ==================== 地图管理 Mock ====================
@@ -668,6 +699,28 @@ class MockRobotClient implements RobotClientBase {
 
   @override
   DataServiceClient? get dataServiceClient => null;
+
+  // ── RuntimeConfig Mock ──
+
+  @override
+  Future<GetRuntimeConfigResponse> getRuntimeConfig() async {
+    return GetRuntimeConfigResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..configJson = '{}'
+      ..configVersion = Int64(0);
+  }
+
+  @override
+  Future<SetRuntimeConfigResponse> setRuntimeConfig({
+    required String configJson,
+    int expectedVersion = 0,
+    List<String> changedFields = const [],
+  }) async {
+    return SetRuntimeConfigResponse()
+      ..base = (ResponseBase()..errorCode = ErrorCode.ERROR_CODE_OK)
+      ..appliedConfigJson = configJson
+      ..newVersion = Int64(expectedVersion + 1);
+  }
 
   Header _header() {
     return Header()

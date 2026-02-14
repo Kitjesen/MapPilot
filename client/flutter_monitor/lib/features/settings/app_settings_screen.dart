@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
 import 'package:flutter_monitor/shared/widgets/feature_card.dart';
+import 'package:flutter_monitor/features/connection/splash_screen.dart' show kAppVersion;
 import 'package:flutter_monitor/features/settings/saved_devices_page.dart';
 import 'package:flutter_monitor/features/settings/alert_settings_page.dart';
 import 'package:flutter_monitor/features/settings/firmware_ota_page.dart';
@@ -14,7 +15,10 @@ import 'package:flutter_monitor/features/settings/support_page.dart';
 import 'package:flutter_monitor/features/settings/version_detail_page.dart';
 import 'package:flutter_monitor/features/settings/cloud_config_page.dart';
 import 'package:flutter_monitor/features/settings/device_info_page.dart';
+import 'package:flutter_monitor/features/settings/runtime_params_page.dart';
 import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
+import 'package:flutter_monitor/core/gateway/runtime_config_gateway.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 
 /// Settings screen — every entry is a real, functional feature.
 class AppSettingsScreen extends StatelessWidget {
@@ -22,13 +26,14 @@ class AppSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final locale = context.watch<LocaleProvider>();
     final themeProvider = context.watch<ThemeProvider>();
     final settingsPrefs = context.watch<SettingsPreferences>();
     final otaGw = context.watch<OtaGateway>();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('设置'),
+        title: Text(locale.tr('设置', 'Settings')),
         leading: Navigator.canPop(context)
             ? IconButton(
                 icon: const Icon(Icons.arrow_back_ios_new, size: 20),
@@ -41,14 +46,35 @@ class AppSettingsScreen extends StatelessWidget {
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.only(top: 8, bottom: 40),
         children: [
+          // ==================== 语言 ====================
+          SettingsSection(
+            title: locale.tr('语言', 'Language'),
+            children: [
+              SettingsTile(
+                icon: Icons.language_outlined,
+                title: locale.tr('界面语言', 'Interface Language'),
+                subtitle: locale.tr('中文', 'English'),
+                trailing: SegmentedButton<AppLocale>(
+                  segments: const [
+                    ButtonSegment(value: AppLocale.zh, label: Text('中文')),
+                    ButtonSegment(value: AppLocale.en, label: Text('EN')),
+                  ],
+                  selected: {locale.locale},
+                  onSelectionChanged: (v) => locale.setLocale(v.first),
+                  style: ButtonStyle(visualDensity: VisualDensity.compact, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                ),
+              ),
+            ],
+          ),
+
           // ==================== 外观 ====================
           SettingsSection(
-            title: '外观',
+            title: locale.tr('外观', 'Appearance'),
             children: [
               SettingsTile(
                 icon: Icons.contrast_outlined,
-                title: '深色模式',
-                subtitle: _themeModeLabel(themeProvider.mode),
+                title: locale.tr('深色模式', 'Dark Mode'),
+                subtitle: _themeModeLabel(themeProvider.mode, locale),
                 trailing: _buildThemeSelector(context, themeProvider),
               ),
             ],
@@ -56,30 +82,30 @@ class AppSettingsScreen extends StatelessWidget {
 
           // ==================== 连接 ====================
           SettingsSection(
-            title: '连接',
+            title: locale.tr('连接', 'Connection'),
             children: [
               SettingsTile(
                 icon: Icons.devices_outlined,
-                title: '已保存的设备',
-                subtitle: '${settingsPrefs.savedDevices.length} 个设备',
+                title: locale.tr('已保存的设备', 'Saved Devices'),
+                subtitle: '${settingsPrefs.savedDevices.length} ${locale.tr('个设备', 'devices')}',
                 trailing: SettingsActionButton(
-                  label: '管理',
+                  label: locale.tr('管理', 'Manage'),
                   onTap: () => _push(context, const SavedDevicesPage()),
                 ),
                 onTap: () => _push(context, const SavedDevicesPage()),
               ),
               SettingsTile(
                 icon: Icons.timer_outlined,
-                title: '连接超时',
-                subtitle: '${settingsPrefs.connectionTimeoutSec} 秒',
-                onTap: () => _showTimeoutPicker(context, settingsPrefs),
+                title: locale.tr('连接超时', 'Connection Timeout'),
+                subtitle: '${settingsPrefs.connectionTimeoutSec} ${locale.tr('秒', 'sec')}',
+                onTap: () => _showTimeoutPicker(context, settingsPrefs, locale),
               ),
               SettingsTile(
                 icon: Icons.sync_outlined,
-                title: '自动重连',
+                title: locale.tr('自动重连', 'Auto Reconnect'),
                 subtitle: settingsPrefs.autoReconnect
-                    ? '断连后自动尝试重连'
-                    : '已关闭',
+                    ? locale.tr('断连后自动尝试重连', 'Auto retry after disconnection')
+                    : locale.tr('已关闭', 'Disabled'),
                 trailing: Switch(
                   value: settingsPrefs.autoReconnect,
                   onChanged: (v) => settingsPrefs.setAutoReconnect(v),
@@ -88,16 +114,53 @@ class AppSettingsScreen extends StatelessWidget {
             ],
           ),
 
+          // ==================== 运行参数 ====================
+          SettingsSection(
+            title: locale.tr('机器人参数', 'Robot Parameters'),
+            children: [
+              Builder(builder: (context) {
+                final rcGw = context.watch<RuntimeConfigGateway>();
+                return SettingsTile(
+                  icon: Icons.tune_rounded,
+                  title: locale.tr('运行参数', 'Runtime Parameters'),
+                  subtitle: rcGw.isDirty
+                      ? locale.tr('有未同步的修改', 'Unsaved changes')
+                      : '速度 ${rcGw.config.maxSpeed.toStringAsFixed(1)} m/s '
+                        '| 急停 ${rcGw.config.stopDistance.toStringAsFixed(1)} m',
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (rcGw.isDirty)
+                        Container(
+                          width: 8, height: 8,
+                          margin: const EdgeInsets.only(right: 8),
+                          decoration: const BoxDecoration(
+                            color: AppColors.warning,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      SettingsActionButton(
+                        label: locale.tr('配置', 'Configure'),
+                        onTap: () => _push(context, const RuntimeParamsPage()),
+                      ),
+                    ],
+                  ),
+                  onTap: () => _push(context, const RuntimeParamsPage()),
+                );
+              }),
+            ],
+          ),
+
           // ==================== 通知 ====================
           SettingsSection(
-            title: '通知',
+            title: locale.tr('通知', 'Notifications'),
             children: [
               SettingsTile(
                 icon: Icons.vibration_outlined,
-                title: '操作震动反馈',
+                title: locale.tr('操作震动反馈', 'Haptic Feedback'),
                 subtitle: settingsPrefs.hapticFeedback
-                    ? '控制操作时触觉反馈'
-                    : '已关闭',
+                    ? locale.tr('控制操作时触觉反馈', 'Vibration on control actions')
+                    : locale.tr('已关闭', 'Disabled'),
                 trailing: Switch(
                   value: settingsPrefs.hapticFeedback,
                   onChanged: (v) => settingsPrefs.setHapticFeedback(v),
@@ -105,10 +168,10 @@ class AppSettingsScreen extends StatelessWidget {
               ),
               SettingsTile(
                 icon: Icons.notifications_outlined,
-                title: '异常告警提醒',
-                subtitle: '电量/温度/通信异常',
+                title: locale.tr('异常告警提醒', 'Alert Notifications'),
+                subtitle: locale.tr('电量/温度/通信异常', 'Battery / Temp / Comm alerts'),
                 trailing: SettingsActionButton(
-                  label: '配置',
+                  label: locale.tr('配置', 'Configure'),
                   onTap: () => _push(context, const AlertSettingsPage()),
                 ),
                 onTap: () => _push(context, const AlertSettingsPage()),
@@ -118,36 +181,36 @@ class AppSettingsScreen extends StatelessWidget {
 
           // ==================== 设备与固件 ====================
           SettingsSection(
-            title: '设备与固件',
+            title: locale.tr('设备与固件', 'Device & Firmware'),
             children: [
               SettingsTile(
                 icon: Icons.system_update_outlined,
-                title: '固件升级 (OTA)',
-                subtitle: '查看/上传机器人固件',
+                title: locale.tr('固件升级 (OTA)', 'Firmware Update (OTA)'),
+                subtitle: locale.tr('查看/上传机器人固件', 'View / upload robot firmware'),
                 trailing: SettingsActionButton(
-                  label: '打开',
+                  label: locale.tr('打开', 'Open'),
                   onTap: () => _push(context, const FirmwareOtaPage()),
                 ),
                 onTap: () => _push(context, const FirmwareOtaPage()),
               ),
               SettingsTile(
                 icon: Icons.cloud_outlined,
-                title: '云端更新源',
+                title: locale.tr('云端更新源', 'Cloud Update Source'),
                 subtitle: otaGw.cloud.useCustomUrl
-                    ? '自定义 URL'
+                    ? locale.tr('自定义 URL', 'Custom URL')
                     : '${otaGw.cloud.owner}/${otaGw.cloud.repo}',
                 trailing: SettingsActionButton(
-                  label: '配置',
+                  label: locale.tr('配置', 'Configure'),
                   onTap: () => _push(context, const CloudConfigPage()),
                 ),
                 onTap: () => _push(context, const CloudConfigPage()),
               ),
               SettingsTile(
                 icon: Icons.description_outlined,
-                title: '导出机器人日志',
-                subtitle: '状态/事件/通信日志',
+                title: locale.tr('导出机器人日志', 'Export Robot Logs'),
+                subtitle: locale.tr('状态/事件/通信日志', 'Status / events / comm logs'),
                 trailing: SettingsActionButton(
-                  label: '导出',
+                  label: locale.tr('导出', 'Export'),
                   onTap: () => _push(context, const LogExportPage()),
                 ),
                 onTap: () => _push(context, const LogExportPage()),
@@ -157,7 +220,7 @@ class AppSettingsScreen extends StatelessWidget {
 
           // ==================== 数据与存储 ====================
           SettingsSection(
-            title: '数据与存储',
+            title: locale.tr('数据与存储', 'Data & Storage'),
             children: [
               _ClearCacheTile(),
             ],
@@ -165,35 +228,91 @@ class AppSettingsScreen extends StatelessWidget {
 
           // ==================== 关于 ====================
           SettingsSection(
-            title: '关于',
+            title: locale.tr('关于', 'About'),
             children: [
+              // ── 品牌信息卡 ──
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: context.softCardDecoration,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          gradient: AppColors.brandGradient,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'DS',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              letterSpacing: 1,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              locale.tr('大算 3D NAV', 'Dasuan 3D NAV'),
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: context.titleColor,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'v$kAppVersion',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: context.subtitleColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               SettingsTile(
                 icon: Icons.developer_board_outlined,
-                title: '设备管理',
-                subtitle: '设备信息、系统服务',
+                title: locale.tr('设备管理', 'Device Management'),
+                subtitle: locale.tr('设备信息、系统服务', 'Device info, system services'),
                 onTap: () => _push(context, const DeviceInfoPage()),
               ),
               SettingsTile(
                 icon: Icons.info_outlined,
-                title: '版本信息',
-                subtitle: 'v${const String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0')}'
+                title: locale.tr('版本信息', 'Version Info'),
+                subtitle: 'v$kAppVersion'
                     '${const String.fromEnvironment('BUILD_NUMBER').isNotEmpty ? ' (${const String.fromEnvironment('BUILD_NUMBER')})' : ''}',
                 onTap: () => _push(context, const VersionDetailPage()),
               ),
               SettingsTile(
                 icon: Icons.article_outlined,
-                title: '开源许可',
-                subtitle: '第三方库许可证',
+                title: locale.tr('开源许可', 'Open Source Licenses'),
+                subtitle: locale.tr('第三方库许可证', 'Third-party library licenses'),
                 onTap: () => showLicensePage(
                   context: context,
-                  applicationName: '大算机器人',
-                  applicationVersion: 'v${const String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0')}',
+                  applicationName: locale.tr('大算 3D NAV', 'Dasuan 3D NAV'),
+                  applicationVersion: 'v$kAppVersion',
                 ),
               ),
               SettingsTile(
                 icon: Icons.help_outline,
-                title: '反馈与支持',
-                subtitle: '技术支持/文档/FAQ',
+                title: locale.tr('反馈与支持', 'Feedback & Support'),
+                subtitle: locale.tr('技术支持/文档/FAQ', 'Tech support / Docs / FAQ'),
                 onTap: () => _push(context, const SupportPage()),
               ),
             ],
@@ -246,18 +365,18 @@ class AppSettingsScreen extends StatelessWidget {
     );
   }
 
-  String _themeModeLabel(ThemeMode mode) {
+  String _themeModeLabel(ThemeMode mode, LocaleProvider locale) {
     switch (mode) {
       case ThemeMode.light:
-        return '浅色';
+        return locale.tr('浅色', 'Light');
       case ThemeMode.dark:
-        return '深色';
+        return locale.tr('深色', 'Dark');
       case ThemeMode.system:
-        return '跟随系统';
+        return locale.tr('跟随系统', 'System');
     }
   }
 
-  void _showTimeoutPicker(BuildContext context, SettingsPreferences prefs) {
+  void _showTimeoutPicker(BuildContext context, SettingsPreferences prefs, LocaleProvider locale) {
     final isDark = context.isDark;
     final options = [3, 5, 10, 15];
 
@@ -284,7 +403,7 @@ class AppSettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  '连接超时',
+                  locale.tr('连接超时', 'Connection Timeout'),
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
@@ -293,7 +412,7 @@ class AppSettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '弱网环境下可调大超时以减少误判',
+                  locale.tr('弱网环境下可调大超时以减少误判', 'Increase timeout for weak networks to reduce false alarms'),
                   style: TextStyle(fontSize: 13, color: context.subtitleColor),
                 ),
                 const SizedBox(height: 16),
@@ -301,7 +420,7 @@ class AppSettingsScreen extends StatelessWidget {
                   final isSelected = sec == prefs.connectionTimeoutSec;
                   return ListTile(
                     title: Text(
-                      '$sec 秒',
+                      '$sec ${locale.tr('秒', 'sec')}',
                       style: TextStyle(
                         fontWeight:
                             isSelected ? FontWeight.w700 : FontWeight.normal,
@@ -338,7 +457,9 @@ class _ClearCacheTile extends StatefulWidget {
 }
 
 class _ClearCacheTileState extends State<_ClearCacheTile> {
-  String _cacheSize = '计算中...';
+  static const _calculating = '计算中...';
+  static const _unknown = '未知';
+  String _cacheSize = _calculating;
   bool _isClearing = false;
 
   @override
@@ -355,7 +476,7 @@ class _ClearCacheTileState extends State<_ClearCacheTile> {
         setState(() => _cacheSize = _formatBytes(size));
       }
     } catch (_) {
-      if (mounted) setState(() => _cacheSize = '未知');
+      if (mounted) setState(() => _cacheSize = _unknown);
     }
   }
 
@@ -383,21 +504,22 @@ class _ClearCacheTileState extends State<_ClearCacheTile> {
   }
 
   Future<void> _clearCache() async {
+    final locale = context.read<LocaleProvider>();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('清除缓存'),
-        content: Text('确定要清除本地缓存数据吗？\n\n当前缓存大小: $_cacheSize\n'
-            '（不会清除已保存的设备和设置）'),
+        title: Text(locale.tr('清除缓存', 'Clear Cache')),
+        content: Text('${locale.tr('确定要清除本地缓存数据吗？', 'Clear local cache data?')}\n\n${locale.tr('当前缓存大小:', 'Current cache size:')} ${_displayCacheSize(locale)}\n'
+            '${locale.tr('（不会清除已保存的设备和设置）', '(Saved devices and settings will not be cleared)')}'),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+              child: Text(locale.tr('取消', 'Cancel'))),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: AppColors.error),
-            child: const Text('清除'),
+            child: Text(locale.tr('清除', 'Clear')),
           ),
         ],
       ),
@@ -422,10 +544,11 @@ class _ClearCacheTileState extends State<_ClearCacheTile> {
       await _calculateCacheSize();
 
       if (mounted) {
+        final loc = context.read<LocaleProvider>();
         setState(() => _isClearing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('缓存已清除'),
+            content: Text(loc.tr('缓存已清除', 'Cache cleared')),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10)),
@@ -434,10 +557,11 @@ class _ClearCacheTileState extends State<_ClearCacheTile> {
       }
     } catch (e) {
       if (mounted) {
+        final loc = context.read<LocaleProvider>();
         setState(() => _isClearing = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('清除失败: $e'),
+            content: Text('${loc.tr('清除失败:', 'Clear failed:')} $e'),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10)),
@@ -447,12 +571,19 @@ class _ClearCacheTileState extends State<_ClearCacheTile> {
     }
   }
 
+  String _displayCacheSize(LocaleProvider locale) {
+    if (_cacheSize == _calculating) return locale.tr('计算中...', 'Calculating...');
+    if (_cacheSize == _unknown) return locale.tr('未知', 'Unknown');
+    return _cacheSize;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final locale = context.watch<LocaleProvider>();
     return SettingsTile(
       icon: Icons.delete_outline,
-      title: '清除缓存',
-      subtitle: _isClearing ? '正在清除...' : _cacheSize,
+      title: locale.tr('清除缓存', 'Clear Cache'),
+      subtitle: _isClearing ? locale.tr('正在清除...', 'Clearing...') : _displayCacheSize(locale),
       trailing: _isClearing
           ? const SizedBox(
               width: 18,
@@ -460,7 +591,7 @@ class _ClearCacheTileState extends State<_ClearCacheTile> {
               child: CircularProgressIndicator(strokeWidth: 1.5),
             )
           : SettingsActionButton(
-              label: '清除',
+              label: locale.tr('清除', 'Clear'),
               onTap: _clearCache,
             ),
       onTap: _isClearing ? null : _clearCache,
