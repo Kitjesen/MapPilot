@@ -122,6 +122,10 @@ class SemanticPerceptionNode(Node):
         self.declare_parameter("tracker.near_threshold", 1.5)
         self.declare_parameter("tracker.on_threshold", 0.3)
         self.declare_parameter("tracker.region_cluster_radius", 3.0)
+        # DovSG 增量更新参数 (动态场景图)
+        self.declare_parameter("tracker.incremental_update", True)   # 启用 update_local()
+        self.declare_parameter("tracker.update_radius", 5.0)         # 局部更新半径 (米)
+        self.declare_parameter("tracker.stale_remove_timeout", 30.0) # 失效物体超时 (秒)
         # 可配置阈值 (D13)
         self.declare_parameter("adaptive_blur_detection", False)
         # Room LLM 命名 (创新1 补强)
@@ -173,6 +177,12 @@ class SemanticPerceptionNode(Node):
             max_objects=self.get_parameter("scene_graph.max_objects").value,
             stale_timeout=self.get_parameter("tracker.stale_timeout").value,
         )
+
+        # DovSG 增量更新配置
+        self._incremental_update = self.get_parameter("tracker.incremental_update").value
+        self._update_radius = self.get_parameter("tracker.update_radius").value
+        self._stale_remove_timeout = self.get_parameter("tracker.stale_remove_timeout").value
+        self._robot_world_pos: Optional[np.ndarray] = None  # 最近一次的机器人世界坐标
 
         # 知识图谱注入 (ConceptBot / DovSG: 每个物体创建时查 KG 补属性)
         try:
@@ -843,8 +853,29 @@ class SemanticPerceptionNode(Node):
         if not detections_3d:
             return
 
+        # 记录机器人当前世界位置 (取相机位置近似)
+        self._robot_world_pos = tf_camera_to_world[:3, 3].copy()
+
         # 5. USS-Nav 双指标融合实例追踪
-        tracked_objs = self._tracker.update(detections_3d)
+        # DovSG 增量更新: update_local() 仅 CLIP-匹配 update_radius 内的物体，
+        # 并对远处物体做时间衰减 (减少不必要的计算)
+        if self._incremental_update and hasattr(self._tracker, "update_local"):
+            tracked_objs = self._tracker.update_local(
+                detections_3d,
+                robot_pos=self._robot_world_pos,
+                update_radius=self._update_radius,
+            )
+            # 周期性清理过期物体 (DovSG remove_stale_objects)
+            if self._frame_count % 30 == 0 and hasattr(self._tracker, "remove_stale_objects"):
+                removed = self._tracker.remove_stale_objects(
+                    stale_timeout_sec=self._stale_remove_timeout,
+                )
+                if removed:
+                    self.get_logger().debug(
+                        f"DovSG: removed {len(removed)} stale objects: {removed[:5]}"
+                    )
+        else:
+            tracked_objs = self._tracker.update(detections_3d)
 
         # 5.5 开放词汇: 未知物体 → KG 概念映射 (DovSG / LOVON)
         if self._knowledge_graph is not None:

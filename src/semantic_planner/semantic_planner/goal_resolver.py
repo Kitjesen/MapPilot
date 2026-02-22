@@ -477,17 +477,21 @@ class GoalResolver:
 
         # ── 距离衰减 (近距离目标优先) ──
         if robot_position:
-            pos = best_obj.get("position", {})
-            dx = pos.get("x", 0) - robot_position.get("x", 0)
-            dy = pos.get("y", 0) - robot_position.get("y", 0)
-            dist = math.sqrt(dx * dx + dy * dy)
+            def _get_xy(obj_dict):
+                """统一获取物体 x, y 坐标（支持 dict / list 格式）。"""
+                p = obj_dict.get("position", {})
+                if isinstance(p, (list, tuple)):
+                    return (p[0] if len(p) > 0 else 0), (p[1] if len(p) > 1 else 0)
+                return p.get("x", 0), p.get("y", 0)
+
+            bx, by = _get_xy(best_obj)
+            rx, ry = robot_position.get("x", 0), robot_position.get("y", 0)
+            dist = math.sqrt((bx - rx) ** 2 + (by - ry) ** 2)
             # 如果有相近分数但更近的候选, 考虑切换
             for obj2, sc2, _ in scored[1:3]:
                 if sc2 > best_score * 0.9:  # 分数差距 < 10%
-                    pos2 = obj2.get("position", {})
-                    dx2 = pos2.get("x", 0) - robot_position.get("x", 0)
-                    dy2 = pos2.get("y", 0) - robot_position.get("y", 0)
-                    dist2 = math.sqrt(dx2 * dx2 + dy2 * dy2)
+                    o2x, o2y = _get_xy(obj2)
+                    dist2 = math.sqrt((o2x - rx) ** 2 + (o2y - ry) ** 2)
                     if dist2 < dist * 0.5:  # 近一倍以上 → 切换
                         best_obj, best_score, best_reason = obj2, sc2, _
                         break
@@ -507,10 +511,19 @@ class GoalResolver:
             candidates_for_belief = []
             for obj_dict, fused_sc, _ in scored[:8]:
                 pos_d = obj_dict.get("position", {})
+                # 统一转换为 [x, y, z] 列表（支持 dict 和 list 格式）
+                if isinstance(pos_d, (list, tuple)):
+                    pos_xyz = [
+                        pos_d[0] if len(pos_d) > 0 else 0,
+                        pos_d[1] if len(pos_d) > 1 else 0,
+                        pos_d[2] if len(pos_d) > 2 else 0,
+                    ]
+                else:
+                    pos_xyz = [pos_d.get("x", 0), pos_d.get("y", 0), pos_d.get("z", 0)]
                 candidates_for_belief.append({
                     "id": obj_dict.get("id", -1),
                     "label": obj_dict.get("label", ""),
-                    "position": [pos_d.get("x", 0), pos_d.get("y", 0), pos_d.get("z", 0)],
+                    "position": pos_xyz,
                     "fused_score": fused_sc,
                     "belief": obj_dict.get("belief", {}),
                     "room_match": 0.5,

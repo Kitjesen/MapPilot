@@ -315,11 +315,10 @@ async def test_goal_resolver():
         from semantic_planner.llm_client import LLMConfig
 
         config = LLMConfig(
-            backend="openai",
-            model="kimi-k2.5",
+            backend="mock",   # Kimi API 欠费时用 mock 离线测试
+            model="mock",
             api_key_env="KIMI_API_KEY",
-            base_url="https://api.xiaocaseai.com/v1",
-            timeout_sec=30.0,  # 原来没设超时导致 567s
+            timeout_sec=5.0,
         )
 
         # fast_path_threshold 降到 0.5，匹配纯标签匹配的置信度水平（约 0.62）

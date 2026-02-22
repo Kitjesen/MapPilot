@@ -32,14 +32,22 @@ def extract_frontier_scene_data(scene_graph_json: str) -> Tuple[List[Dict], List
         if not isinstance(obj, dict):
             continue
         pos = obj.get("position", {})
-        if not isinstance(pos, dict):
-            continue
-        if "x" not in pos or "y" not in pos:
-            continue
 
         try:
-            x = float(pos.get("x", 0.0))
-            y = float(pos.get("y", 0.0))
+            # 支持 dict {"x": ..., "y": ...} 和 list/tuple [x, y, z] 两种格式
+            if isinstance(pos, (list, tuple)):
+                if len(pos) < 2:
+                    continue
+                x = float(pos[0])
+                y = float(pos[1])
+            elif isinstance(pos, dict):
+                if "x" not in pos or "y" not in pos:
+                    continue
+                x = float(pos.get("x", 0.0))
+                y = float(pos.get("y", 0.0))
+            else:
+                continue
+
             if not np.isfinite(x) or not np.isfinite(y):
                 continue
 

@@ -394,6 +394,148 @@ class MoonshotClient(OpenAIClient):
 
 
 # ================================================================
+#  Mock 客户端 (离线测试 / API 不可用时)
+# ================================================================
+
+class MockLLMClient(LLMClientBase):
+    """Mock LLM 客户端 — 无需 API Key，立即返回预设导航响应。
+
+    用途:
+      - 离线单元测试 (API 不可用 / 无余额时)
+      - CI/CD 环境中的 Slow Path 功能验证
+
+    响应策略:
+      - 解析指令中的房间/物体关键词
+      - 匹配场景图中的对应物体
+      - 返回合法 JSON 格式的导航结果
+    """
+
+    # 房间关键词 → 常见房间物体
+    _ROOM_HINTS: dict = {
+        "eat": ("kitchen", ["dining table", "refrigerator", "table"]),
+        "dining": ("kitchen", ["dining table", "refrigerator", "table"]),
+        "kitchen": ("kitchen", ["dining table", "refrigerator", "counter"]),
+        "cook": ("kitchen", ["stove", "refrigerator", "counter"]),
+        "sleep": ("bedroom", ["bed", "pillow", "wardrobe"]),
+        "bed": ("bedroom", ["bed"]),
+        "bedroom": ("bedroom", ["bed", "wardrobe"]),
+        "sit": ("living_room", ["sofa", "chair"]),
+        "relax": ("living_room", ["sofa", "tv"]),
+        "living": ("living_room", ["sofa", "tv", "chair"]),
+        "bathroom": ("bathroom", ["toilet", "sink", "bathtub"]),
+        "wash": ("bathroom", ["sink", "toilet"]),
+        "work": ("study", ["desk", "chair", "bookshelf"]),
+        "study": ("study", ["desk", "bookshelf"]),
+    }
+
+    def __init__(self, config: LLMConfig):
+        super().__init__(config)
+
+    def is_available(self) -> bool:
+        return True  # mock 永远可用
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+    ) -> str:
+        """返回与指令语义一致的 mock 导航 JSON。"""
+        import re, json as _json
+
+        # 拼接所有消息文本以提取关键信息
+        full_text = " ".join(m.get("content", "") for m in messages).lower()
+
+        # 1. 尝试从消息中解析场景图对象列表
+        objects: List[dict] = []
+        try:
+            for m in messages:
+                content = m.get("content", "")
+                # 找到第一个包含 "objects" 的 JSON 块
+                match = re.search(r'\{[\s\S]*?"objects"[\s\S]*?\}', content)
+                if match:
+                    sg = _json.loads(match.group(0))
+                    objects = sg.get("objects", [])
+                    if objects:
+                        break
+        except Exception:
+            pass
+
+        # 2. 确定目标物体
+        target_label = ""
+        target_x, target_y, target_z = 1.0, 0.0, 0.0
+        confidence = 0.72
+        reasoning = "Mock LLM: 根据语义推断导航目标"
+
+        # 按房间关键词匹配
+        room_match = None
+        preferred_labels: List[str] = []
+        for kw, (room, labels) in self._ROOM_HINTS.items():
+            if kw in full_text:
+                room_match = room
+                preferred_labels = labels
+                reasoning = (
+                    f"Mock LLM: 指令含'{kw}'关键词 → 推断目标区域为{room}，"
+                    f"优先匹配{labels}"
+                )
+                break
+
+        # 在场景图中查找最佳匹配物体
+        if objects and preferred_labels:
+            for pref in preferred_labels:
+                for obj in objects:
+                    if pref in obj.get("label", "").lower():
+                        pos = obj.get("position", {})
+                        if isinstance(pos, dict):
+                            target_x = float(pos.get("x", 1.0))
+                            target_y = float(pos.get("y", 0.0))
+                            target_z = float(pos.get("z", 0.0))
+                        elif isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                            target_x, target_y = float(pos[0]), float(pos[1])
+                            target_z = float(pos[2]) if len(pos) > 2 else 0.0
+                        target_label = obj.get("label", pref)
+                        confidence = 0.80
+                        break
+                if target_label:
+                    break
+
+        if not target_label:
+            # 直接在全文中找物体标签
+            common_objects = [
+                "chair", "table", "sofa", "bed", "door", "refrigerator",
+                "dining table", "counter", "desk", "tv",
+            ]
+            for name in common_objects:
+                if name in full_text:
+                    target_label = name
+                    # 从场景图找坐标
+                    for obj in objects:
+                        if name in obj.get("label", "").lower():
+                            pos = obj.get("position", {})
+                            if isinstance(pos, dict):
+                                target_x = float(pos.get("x", 1.0))
+                                target_y = float(pos.get("y", 0.0))
+                                target_z = float(pos.get("z", 0.0))
+                            elif isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                                target_x, target_y = float(pos[0]), float(pos[1])
+                                target_z = float(pos[2]) if len(pos) > 2 else 0.0
+                            break
+                    break
+
+        if not target_label:
+            target_label = "unknown"
+            reasoning = "Mock LLM: 未识别目标，建议探索"
+
+        response = {
+            "action": "navigate",
+            "target": {"x": target_x, "y": target_y, "z": target_z},
+            "target_label": target_label,
+            "confidence": confidence,
+            "reasoning": reasoning,
+        }
+        return _json.dumps(response, ensure_ascii=False)
+
+
+# ================================================================
 #  工厂函数
 # ================================================================
 
@@ -406,6 +548,9 @@ _BACKEND_ALIASES = {
     "dashscope": "qwen",
     "moonshot": "moonshot",
     "kimi": "moonshot",
+    "mock": "mock",
+    "offline": "mock",
+    "test": "mock",
 }
 
 
@@ -421,6 +566,8 @@ def create_llm_client(config: LLMConfig) -> LLMClientBase:
         return QwenClient(config)
     elif backend == "moonshot":
         return MoonshotClient(config)
+    elif backend == "mock":
+        return MockLLMClient(config)
     else:
         raise ValueError(
             f"Unknown LLM backend: '{config.backend}'. "

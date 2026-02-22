@@ -173,6 +173,20 @@ class AdaCoTModule(nn.Module):
             return 0.0
         return self._think_steps / self._total_steps
 
+    def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass: return trigger logits for given hidden state.
+
+        Enables nn.Module usage: ``adacot(x)`` → logits (batch, 2).
+        Use ``step()`` for full CoT decision + generation at inference time.
+
+        Args:
+            hidden_state: (batch, hidden_dim)
+        Returns:
+            logits: (batch, 2)  — index 0 = NO_THINK, index 1 = THINK
+        """
+        return self.trigger_head(hidden_state)
+
     def step(
         self,
         hidden_state: torch.Tensor,
