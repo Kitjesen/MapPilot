@@ -470,6 +470,21 @@ class SemanticPlannerNode(Node):
         self._pub_status = self.create_publisher(String, "status", 10)
         self._look_around_timer = None
 
+        # SCG 路径规划: 发布请求, 订阅结果
+        if self._scg_enable:
+            scg_req_topic = self.get_parameter("scg.request_topic").value
+            scg_res_topic = self.get_parameter("scg.result_topic").value
+            self._pub_scg_request = self.create_publisher(String, scg_req_topic, 10)
+            self._sub_scg_result = self.create_subscription(
+                String, scg_res_topic,
+                self._scg_result_callback,
+                10,
+            )
+            self.get_logger().info(
+                f"SCG path planning integration enabled: "
+                f"req={scg_req_topic}, res={scg_res_topic}"
+            )
+
         # ── 监控定时器 (C9: 参数化频率) ──
         monitor_period = 1.0 / max(self._monitor_hz, 0.1)
         self._monitor_timer = self.create_timer(monitor_period, self._monitor_callback)
@@ -1235,6 +1250,89 @@ class SemanticPlannerNode(Node):
                 f"Goal resolution exception: {e}\n{traceback.format_exc()}"
             )
             self._subgoal_failed(str(e))
+
+    # ================================================================
+    #  SCG 路径规划集成
+    # ================================================================
+
+    def _scg_result_callback(self, msg: String):
+        """接收 perception_node 返回的 SCG 规划结果。"""
+        try:
+            data = json.loads(msg.data)
+            self._scg_latest_result = data
+        except (json.JSONDecodeError, TypeError) as e:
+            self.get_logger().warn(f"SCG result JSON parse error: {e}")
+            self._scg_latest_result = {"success": False, "waypoints": [], "error": str(e)}
+        finally:
+            self._scg_result_event.set()
+
+    def _plan_with_scg(
+        self,
+        start_pos: dict,
+        goal_pos: tuple,
+    ) -> Optional[list]:
+        """
+        通过 SCG 规划多路径点路径。
+
+        Args:
+            start_pos: {"x": ..., "y": ..., "z": ...} 机器人当前位置
+            goal_pos: (x, y, z) 目标位置
+
+        Returns:
+            waypoints 列表 [{"x":..,"y":..,"z":..}, ...] 或 None (失败时)
+        """
+        if not self._scg_enable:
+            return None
+
+        start = [
+            start_pos.get("x", 0.0),
+            start_pos.get("y", 0.0),
+            start_pos.get("z", 0.0),
+        ]
+        goal = list(goal_pos)
+
+        request_data = json.dumps({"start": start, "goal": goal})
+        req_msg = String()
+        req_msg.data = request_data
+
+        # 清空旧结果, 重置事件
+        self._scg_latest_result = None
+        self._scg_result_event.clear()
+
+        # 发布请求
+        self._pub_scg_request.publish(req_msg)
+
+        # 等待结果 (带超时)
+        received = self._scg_result_event.wait(timeout=self._scg_timeout)
+        if not received or self._scg_latest_result is None:
+            self.get_logger().warn(
+                f"SCG plan request timed out after {self._scg_timeout}s"
+            )
+            return None
+
+        result = self._scg_latest_result
+        if not result.get("success", False):
+            self.get_logger().warn(
+                f"SCG plan failed: {result.get('error', 'unknown error')}"
+            )
+            return None
+
+        waypoints_raw = result.get("waypoints", [])
+        if not waypoints_raw:
+            return None
+
+        waypoints = [
+            {"x": float(wp[0]), "y": float(wp[1]), "z": float(wp[2])}
+            for wp in waypoints_raw
+            if len(wp) >= 3
+        ]
+
+        self.get_logger().info(
+            f"SCG path planned: {len(waypoints)} waypoints, "
+            f"distance={result.get('distance', 0.0):.2f}m, "
+            f"poly_count={result.get('poly_count', 0)}"
+        )
+        return waypoints
 
     def _handle_navigate_result(self, result: GoalResult):
         """处理导航结果 — 发布目标 (B5: 优先用 Nav2 action)。"""
