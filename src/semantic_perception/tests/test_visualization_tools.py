@@ -13,6 +13,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+import matplotlib
+matplotlib.use('Agg')  # 使用非交互式后端
+
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -51,6 +54,7 @@ def create_test_scg():
     """创建测试 SCG。"""
     from semantic_perception.scg_builder import SCGBuilder, SCGConfig
     from semantic_perception.polyhedron_expansion import Polyhedron
+    from scipy.spatial import ConvexHull
 
     config = SCGConfig()
     scg_builder = SCGBuilder(config)
@@ -61,11 +65,23 @@ def create_test_scg():
         center = vertices.mean(axis=0)
         radius = np.max(np.linalg.norm(vertices - center, axis=1))
 
+        # 计算凸包以获取面片
+        hull = ConvexHull(vertices)
+        faces = hull.simplices
+
+        # 创建种子点和采样点
+        seed_point = center.copy()
+        sample_points = vertices.copy()
+
         poly = Polyhedron(
+            poly_id=i,
             vertices=vertices,
+            faces=faces,
             center=center,
             radius=radius,
             volume=1.0,
+            seed_point=seed_point,
+            sample_points=sample_points,
         )
         scg_builder.add_polyhedron(poly)
 
