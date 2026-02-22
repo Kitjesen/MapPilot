@@ -33,7 +33,7 @@ class GeometryExtractor:
         """
         self.tomogram = tomogram
         self.resolution = tomogram.resolution
-        self.map_center = tomogram.center
+        self.map_center = getattr(tomogram, 'center', getattr(tomogram, 'map_center', np.array([0.0, 0.0])))
         self.map_dim_x = tomogram.map_dim_x
         self.map_dim_y = tomogram.map_dim_y
 
