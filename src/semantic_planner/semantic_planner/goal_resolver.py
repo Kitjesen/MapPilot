@@ -530,10 +530,18 @@ class GoalResolver:
                 )
 
         pos = best_obj.get("position", {})
+        # position 可能是 dict {"x":...} 或 list [x, y, z]，统一处理
+        if isinstance(pos, (list, tuple)):
+            px, py, pz = (pos[0] if len(pos) > 0 else 0,
+                          pos[1] if len(pos) > 1 else 0,
+                          pos[2] if len(pos) > 2 else 0)
+        else:
+            px, py, pz = pos.get("x", 0), pos.get("y", 0), pos.get("z", 0)
+
         logger.info(
             "⚡ Fast path hit: '%s' at (%.2f, %.2f), score=%.2f [%s]",
             best_obj.get("label", "?"),
-            pos.get("x", 0), pos.get("y", 0),
+            px, py,
             best_score, best_reason,
         )
 
@@ -542,9 +550,9 @@ class GoalResolver:
 
         return GoalResult(
             action="navigate",
-            target_x=pos.get("x", 0),
-            target_y=pos.get("y", 0),
-            target_z=pos.get("z", 0),
+            target_x=px,
+            target_y=py,
+            target_z=pz,
             target_label=best_obj.get("label", ""),
             confidence=best_score,
             reasoning=f"Fast path: {best_reason}",
