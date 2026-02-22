@@ -202,6 +202,13 @@ class SemanticPlannerNode(Node):
         self.declare_parameter("nav2.action_name", "navigate_to_pose")
         self.declare_parameter("nav2.action_timeout_sec", 120.0)
 
+        # SCG 路径规划集成 (默认关闭, 向后兼容)
+        self.declare_parameter("scg.enable", False)
+        self.declare_parameter("scg.request_topic", "/nav/scg/plan_request")
+        self.declare_parameter("scg.result_topic", "/nav/scg/plan_result")
+        self.declare_parameter("scg.timeout_sec", 2.0)
+        self.declare_parameter("scg.waypoint_interval_sec", 0.5)
+
         # 安全约束
         self.declare_parameter("safety.max_goal_distance", 50.0)
 
@@ -237,6 +244,11 @@ class SemanticPlannerNode(Node):
             timeout_sec=self.get_parameter("llm_fallback.timeout_sec").value,
             max_retries=self.get_parameter("llm_fallback.max_retries").value,
         )
+
+        # SCG 参数
+        self._scg_enable = self.get_parameter("scg.enable").value
+        self._scg_timeout = self.get_parameter("scg.timeout_sec").value
+        self._scg_waypoint_interval = self.get_parameter("scg.waypoint_interval_sec").value
 
         self._confidence_threshold = self.get_parameter(
             "goal_resolution.confidence_threshold"
@@ -345,6 +357,10 @@ class SemanticPlannerNode(Node):
         self._voi_enabled = True
         self._last_voi_reperception_time: float = 0.0
         self._last_voi_slow_time: float = 0.0
+
+        # SCG 路径规划内部状态
+        self._scg_result_event = threading.Event()
+        self._scg_latest_result: Optional[dict] = None
 
         # 跟随模式标记 (FOLLOW 动作通过现有导航闭环实现)
         self._follow_mode: bool = False

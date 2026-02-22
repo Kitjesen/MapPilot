@@ -497,6 +497,113 @@ class SemanticPerceptionNode(Node):
         """缓存最新 costmap (A5: 为 FrontierScorer 提供数据)。"""
         self._latest_costmap = msg
 
+        # 触发 SCG 边构建 (当 costmap 更新时同步更新 SCG 连通性)
+        if self._scg_enable and len(self._scg_builder.nodes) > 0:
+            try:
+                import numpy as np
+                width = int(msg.info.width)
+                height = int(msg.info.height)
+                if width > 0 and height > 0 and len(msg.data) == width * height:
+                    grid = np.asarray(msg.data, dtype=np.float32).reshape((height, width))
+                    # 归一化到 [0,1]: nav_msgs/OccupancyGrid 值域是 0-100, -1=未知
+                    grid = np.where(grid < 0, 1.0, grid / 100.0)
+                    # 扩展为 3D (z 轴单层)
+                    grid_3d = grid[:, :, np.newaxis]
+                    res = float(msg.info.resolution)
+                    ox = float(msg.info.origin.position.x)
+                    oy = float(msg.info.origin.position.y)
+                    origin = np.array([ox, oy, 0.0])
+                    self._scg_builder.build_edges(grid_3d, res, origin)
+            except Exception as e:
+                self.get_logger().debug(f"SCG edge build on costmap update failed: {e}")
+
+    def _scg_plan_request_callback(self, msg: String):
+        """
+        SCG 路径规划请求回调。
+
+        接收 JSON: {"start": [x, y, z], "goal": [x, y, z]}
+        发布 JSON: {"success": bool, "waypoints": [[x,y,z], ...],
+                    "poly_count": N, "distance": D, "error": "..."}
+        """
+        import json
+        import numpy as np
+
+        result_msg = String()
+
+        try:
+            data = json.loads(msg.data)
+            start_raw = data.get("start", [0.0, 0.0, 0.0])
+            goal_raw = data.get("goal", [0.0, 0.0, 0.0])
+            start = np.array(start_raw, dtype=np.float64)
+            goal = np.array(goal_raw, dtype=np.float64)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            result_msg.data = json.dumps({
+                "success": False,
+                "waypoints": [],
+                "poly_count": 0,
+                "distance": 0.0,
+                "error": f"Invalid request JSON: {e}",
+            })
+            self._pub_scg_result.publish(result_msg)
+            return
+
+        if len(self._scg_builder.nodes) == 0:
+            result_msg.data = json.dumps({
+                "success": False,
+                "waypoints": [],
+                "poly_count": 0,
+                "distance": 0.0,
+                "error": "SCG has no nodes (costmap not received or no polyhedra built)",
+            })
+            self._pub_scg_result.publish(result_msg)
+            return
+
+        try:
+            path = self._scg_planner.plan(start, goal)
+
+            if path.success:
+                # 收集所有路径点 (从所有 segments)
+                all_waypoints = []
+                seen = set()
+                for seg in path.segments:
+                    for pt in seg.waypoints:
+                        key = (round(pt[0], 4), round(pt[1], 4), round(pt[2], 4))
+                        if key not in seen:
+                            seen.add(key)
+                            all_waypoints.append([
+                                round(float(pt[0]), 4),
+                                round(float(pt[1]), 4),
+                                round(float(pt[2]), 4),
+                            ])
+
+                result_msg.data = json.dumps({
+                    "success": True,
+                    "waypoints": all_waypoints,
+                    "poly_count": len(path.polyhedron_sequence),
+                    "distance": round(path.total_distance, 4),
+                    "error": "",
+                })
+            else:
+                result_msg.data = json.dumps({
+                    "success": False,
+                    "waypoints": [],
+                    "poly_count": 0,
+                    "distance": 0.0,
+                    "error": "SCG planner could not find a path",
+                })
+
+        except Exception as e:
+            self.get_logger().warn(f"SCG plan failed: {e}")
+            result_msg.data = json.dumps({
+                "success": False,
+                "waypoints": [],
+                "poly_count": 0,
+                "distance": 0.0,
+                "error": str(e),
+            })
+
+        self._pub_scg_result.publish(result_msg)
+
     def _instruction_callback(self, msg: String):
         """
         缓存最新用户指令 (开放词汇: 用于动态合并检测类别)。
