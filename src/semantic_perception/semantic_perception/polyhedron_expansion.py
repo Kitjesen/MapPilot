@@ -502,8 +502,8 @@ class PolyhedronExpander:
         # 找到所有自由空间栅格
         free_indices = np.argwhere(occupancy_grid < 0.5)
 
-        # 转换为世界坐标
-        candidates = grid_origin + free_indices * grid_resolution
+        # 转换为世界坐标 (栅格中心 = index + 0.5)
+        candidates = grid_origin + (free_indices + 0.5) * grid_resolution
 
         # 下采样 (避免候选点过多)
         if len(candidates) > 1000:
