@@ -1,0 +1,138 @@
+{
+  "timestamp": "2026-02-21T01:07:05.380532",
+  "total": 10,
+  "passed": 3,
+  "results": [
+    {
+      "name": "Frontier Scorer (MTU3D)",
+      "passed": false,
+      "details": "__init__() got an unexpected keyword argument 'information_weight'",
+      "metrics": {},
+      "time_ms": 11.634349822998047
+    },
+    {
+      "name": "Topological Memory",
+      "passed": false,
+      "details": "cannot import name 'MemoryNode' from 'semantic_planner.topological_memory' (/home/bsrl/hongsenpang/habitat/MapPilot/src/semantic_planner/semantic_planner/topological_memory.py)",
+      "metrics": {},
+      "time_ms": 5.488157272338867
+    },
+    {
+      "name": "Instance Tracker (ConceptGraphs)",
+      "passed": false,
+      "details": "__init__() got an unexpected keyword argument 'distance_threshold'",
+      "metrics": {},
+      "time_ms": 23.418426513671875
+    },
+    {
+      "name": "CLIP Encoder",
+      "passed": false,
+      "details": "tuple index out of range",
+      "metrics": {},
+      "time_ms": 2.0093917846679688
+    },
+    {
+      "name": "VLA Model Components",
+      "passed": true,
+      "details": "2/3 components OK",
+      "metrics": {
+        "AdaCoT": {
+          "status": "FAIL",
+          "error": "Module [AdaCoTModule] is missing the required \"forward\" function"
+        },
+        "ActionHead": {
+          "status": "OK",
+          "output_shape": [
+            2,
+            5,
+            3
+          ]
+        },
+        "VLingMem": {
+          "status": "OK",
+          "max_entries": 100
+        }
+      },
+      "time_ms": 1330.108880996704
+    },
+    {
+      "name": "Training Pipeline",
+      "passed": true,
+      "details": "4/4 components OK",
+      "metrics": {
+        "NavTrajectoryDataset": "OK",
+        "SFT Trainer": "OK",
+        "RL Trainer": "OK",
+        "AdaCoT Annotator": "OK"
+      },
+      "time_ms": 1.6794204711914062
+    },
+    {
+      "name": "Exploration Strategy",
+      "passed": false,
+      "details": "cannot import name 'ExplorationStrategy' from 'semantic_planner.exploration_strategy' (/home/bsrl/hongsenpang/habitat/MapPilot/src/semantic_planner/semantic_planner/exploration_strategy.py)",
+      "metrics": {},
+      "time_ms": 5.936861038208008
+    },
+    {
+      "name": "YOLO-World Detection",
+      "passed": true,
+      "details": "YOLO-World loaded, 8 classes, detected 0 objects",
+      "metrics": {
+        "model": "yolov8l-world.pt",
+        "classes": [
+          "chair",
+          "table",
+          "sofa",
+          "bed",
+          "lamp",
+          "door",
+          "tv",
+          "refrigerator"
+        ],
+        "detections": 0
+      },
+      "time_ms": 7093.484163284302
+    },
+    {
+      "name": "Task Decomposer (SayCan)",
+      "passed": false,
+      "details": "TaskDecomposer() takes no arguments",
+      "metrics": {},
+      "time_ms": 16.41988754272461
+    },
+    {
+      "name": "Goal Resolver (Fast-Slow)",
+      "passed": false,
+      "details": "Fast: 0/3, Slow: OK",
+      "metrics": {
+        "fast_path_results": [
+          {
+            "instruction": "Go to the chair",
+            "success": null,
+            "target": null,
+            "time_ms": 4.926443099975586
+          },
+          {
+            "instruction": "Find the sofa",
+            "success": null,
+            "target": null,
+            "time_ms": 0.054836273193359375
+          },
+          {
+            "instruction": "Navigate to the bed",
+            "success": null,
+            "target": null,
+            "time_ms": 0.04076957702636719
+          }
+        ],
+        "slow_path": {
+          "instruction": "Go to the room where people usually eat",
+          "target": "dining table",
+          "time_ms": 92050.3466129303
+        }
+      },
+      "time_ms": 92057.03735351562
+    }
+  ]
+}

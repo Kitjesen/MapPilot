@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:aihabitat.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:paperswithcode.com)",
+      "WebFetch(domain:eval.ai)",
+      "WebFetch(domain:embodied-ai.org)"
+    ]
+  }
+}

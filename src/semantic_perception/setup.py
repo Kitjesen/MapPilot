@@ -13,14 +13,15 @@ setup(
     install_requires=[
         "setuptools",
         "numpy",
+        "scipy",
         "opencv-python",
         "open-clip-torch",
-        "ultralytics",
+        "ultralytics>=8.3.0",
     ],
     zip_safe=True,
     maintainer="3dNAV Team",
     maintainer_email="dev@3dnav.io",
-    description="Semantic perception for VLN: YOLO-World + CLIP + ConceptGraphs scene graph",
+    description="Semantic perception for VLN: USS-Nav pipeline (YOLO-E + Mobile-CLIP + point cloud fusion)",
     license="MIT",
     entry_points={
         "console_scripts": [

@@ -1,67 +1,80 @@
 # ═══════════════════════════════════════════════════════════════
-# semantic_perception_node 配置
+# semantic_perception_node 配置 (USS-Nav 风格 15Hz 管线)
 #
-# 感知方案对比:
-#   YOLO-World (CVPR 2024)   → 默认检测器, 10+ FPS on Jetson
-#   CLIP (OpenAI, 2021)      → 跨模态匹配, 替代纯字符串查询
-#   GroundingDINO (2023)     → 可选高精度后端, ~2 FPS on Jetson
+# USS-Nav pipeline:
+#   YOLO-E (2025)         → 实例分割 mask, 15+ FPS on Jetson
+#   Mobile-CLIP (2024)    → 文本标签编码, 缓存后零开销
+#   mask + depth → 点云   → 精确物体 3D 重建
+#   双指标融合            → 语义 + 几何优先级匹配
 #
-# 论文参考:
-#   LOVON:        YOLO + CLIP 二阶段 → 我们: YOLO-World + CLIP
-#   ConceptGraphs: SAM + CLIP 场景图  → 我们: instance_tracker + CLIP
-#   SG-Nav:       GroundingDINO      → 我们: 可选后端
+# 性能: 15Hz on Jetson Orin NX (vs 原 5Hz)
+#
+# 参考:
+#   USS-Nav (2026): YOLO-E + Mobile-CLIP + 点云融合
+#   YOLOE (2025):   Real-Time Seeing Anything
+#   MobileCLIP:     2.3x faster, CVPR 2024
 # ═══════════════════════════════════════════════════════════════
 
 semantic_perception_node:
   ros__parameters:
     # ── 检测器后端 ──
-    detector_type: "yolo_world"          # yolo_world (推荐) | grounding_dino (可选)
+    detector_type: "yoloe"               # yoloe (USS-Nav 默认) | yolo_world (legacy) | grounding_dino
 
-    # ── YOLO-World 参数 (默认) ──
-    yolo_world:
-      model_size: "l"                    # s (最快) / m / l (平衡) / x (最精确)
+    # ── YOLO-E 实例分割 (USS-Nav 默认) ──
+    yoloe:
+      model_size: "l"                    # s (最快) / m / l (平衡, 推荐)
       confidence: 0.3                    # 检测置信度阈值
       iou_threshold: 0.5                # NMS IoU 阈值
-      tensorrt: false                    # true = TensorRT 加速 (首次编译慢)
+      tensorrt: false                    # true = TensorRT FP16 加速 (首次编译慢)
+      max_detections: 30                 # 单帧最大检测数
 
-    # ── CLIP 特征 (跨模态语义匹配) ──
+    # ── YOLO-World 参数 (legacy fallback) ──
+    yolo_world:
+      model_size: "l"
+      confidence: 0.3
+      iou_threshold: 0.5
+      tensorrt: false
+
+    # ── 语义编码 (USS-Nav: text-only Mobile-CLIP) ──
     clip:
-      enable: true                       # true = 每个检测提取 CLIP 特征
-      model: "ViT-B/32"                 # ViT-B/32 (~0.4GB) | ViT-L/14 (~1.2GB)
+      enable: true
+      model: "ViT-B/32"                 # 文本编码器 (text-only 模式下仅加载文本分支)
+      text_only: true                    # USS-Nav: true = 仅编码标签文本 (15Hz)
+                                         #          false = 编码图像裁剪 (legacy, ~5Hz)
 
     # ── GroundingDINO 参数 (可选后端) ──
     grounding_dino:
-      config_path: ""                    # 空 = 自动查找 third_party/GroundingDINO
-      weights_path: ""                   # 空 = 自动查找 weights/
+      config_path: ""
+      weights_path: ""
       box_threshold: 0.35
       text_threshold: 0.25
 
     # ── 默认检测类别 (英文, 用 . 分隔) ──
     default_classes: "door . chair . fire extinguisher . person . desk . stairs . elevator . sign . trash can . sofa"
 
-    # ── Laplacian 模糊过滤 (参考 LOVON) ──
-    laplacian_threshold: 100.0           # 低于此方差的帧视为模糊, 跳过
+    # ── Laplacian 模糊过滤 ──
+    laplacian_threshold: 100.0
 
     # ── 3D 投影 ──
     depth_scale: 0.001                   # Orbbec depth 单位 → 米
     max_depth: 6.0                       # 超过此深度的检测忽略 (m)
     min_depth: 0.3                       # 过近的检测忽略 (m)
 
-    # ── 实例追踪 ──
-    iou_threshold: 0.3                   # IoU 匹配阈值
-    clip_similarity_threshold: 0.75      # CLIP 特征匹配阈值 (需 clip.enable: true)
-    merge_distance: 0.5                  # 世界坐标系中同一物体的合并距离 (m)
+    # ── USS-Nav 双指标融合 ──
+    iou_threshold: 0.3
+    clip_similarity_threshold: 0.75      # Ωsem 阈值 (USS-Nav Eq.2)
+    merge_distance: 0.5                  # fallback 距离阈值 (m)
 
     # ── 场景图 ──
     scene_graph:
       enable: true
-      publish_rate: 1.0                  # 场景图发布频率 (Hz)
-      max_objects: 200                   # 场景图最大物体数
+      publish_rate: 2.0                  # 场景图发布频率 (Hz), 提升至 2Hz
+      max_objects: 200
 
-    # ── 点云到语义地图渲染 ──
+    # ── 语义地图渲染 ──
     semantic_map:
-      enable: true                       # 发布 MarkerArray 到 semantic_map_markers (RViz 叠加)
+      enable: true
 
-    # ── 性能 ──
-    target_fps: 5.0                      # 目标处理帧率
-    skip_frames: 2                       # 每 N 帧处理一次
+    # ── 性能 (USS-Nav 15Hz) ──
+    target_fps: 15.0                     # USS-Nav: 15Hz on Jetson Orin NX
+    skip_frames: 1                       # 处理每帧 (不跳帧)

@@ -1,0 +1,159 @@
+{
+  "timestamp": "2026-02-21T01:10:10.221318",
+  "total": 10,
+  "passed": 8,
+  "pass_rate": "80%",
+  "results": [
+    {
+      "name": "Frontier Scorer (MTU3D)",
+      "passed": true,
+      "details": "FrontierScorer initialized with weights: grounding=0.3, distance=0.2, novelty=0.3, language=0.2",
+      "metrics": {
+        "grounding_weight": 0.3,
+        "distance_weight": 0.2,
+        "novelty_weight": 0.3,
+        "language_weight": 0.2
+      },
+      "time_ms": 7.136106491088867
+    },
+    {
+      "name": "Topological Memory",
+      "passed": false,
+      "details": "'TopologicalMemory' object has no attribute 'add_node'",
+      "metrics": {},
+      "time_ms": 7.703304290771484
+    },
+    {
+      "name": "Instance Tracker (ConceptGraphs)",
+      "passed": true,
+      "details": "InstanceTracker initialized with merge_distance=0.5, max_objects=100",
+      "metrics": {
+        "merge_distance": 0.5,
+        "iou_threshold": 0.3,
+        "max_objects": 100
+      },
+      "time_ms": 15.936613082885742
+    },
+    {
+      "name": "CLIP Encoder",
+      "passed": false,
+      "details": "Encoded 3 texts",
+      "metrics": {
+        "model": "ViT-B/32",
+        "texts_encoded": 3,
+        "feature_dim": 0
+      },
+      "time_ms": 0.40340423583984375
+    },
+    {
+      "name": "Task Decomposer (SayCan)",
+      "passed": true,
+      "details": "TaskDecomposer initialized, has_decompose=False",
+      "metrics": {
+        "methods": [
+          "CONVERSATIONAL_FIND_RE_EN",
+          "CONVERSATIONAL_FIND_RE_ZH",
+          "SIMPLE_EXPLORE_PATTERNS_ZH",
+          "SIMPLE_FIND_PATTERNS_ZH",
+          "SIMPLE_FOLLOW_PATTERNS_EN",
+          "SIMPLE_FOLLOW_PATTERNS_ZH",
+          "SIMPLE_INSPECT_PATTERNS_EN",
+          "SIMPLE_INSPECT_PATTERNS_ZH",
+          "SIMPLE_NAV_PATTERNS_EN",
+          "SIMPLE_NAV_PATTERNS_ZH"
+        ]
+      },
+      "time_ms": 12.850284576416016
+    },
+    {
+      "name": "VLA Model Components",
+      "passed": true,
+      "details": "3/3 components OK",
+      "metrics": {
+        "AdaCoT": {
+          "status": "OK",
+          "hidden_dim": 1024
+        },
+        "ActionHead": {
+          "status": "OK",
+          "output_shape": [
+            2,
+            5,
+            3
+          ]
+        },
+        "VLingMem": {
+          "status": "OK",
+          "max_entries": 100
+        }
+      },
+      "time_ms": 1305.5534362792969
+    },
+    {
+      "name": "Training Pipeline",
+      "passed": true,
+      "details": "4/4 components OK",
+      "metrics": {
+        "NavTrajectoryDataset": "OK",
+        "SFT Trainer": "OK",
+        "RL Trainer": "OK",
+        "AdaCoT Annotator": "OK"
+      },
+      "time_ms": 1.4417171478271484
+    },
+    {
+      "name": "YOLO-World Detection",
+      "passed": true,
+      "details": "YOLO-World loaded with 8 classes",
+      "metrics": {
+        "model": "yolov8l-world.pt",
+        "classes": 8
+      },
+      "time_ms": 5364.205598831177
+    },
+    {
+      "name": "Habitat Integration",
+      "passed": true,
+      "details": "NavMesh: 80.4m², Path: 15.4m",
+      "metrics": {
+        "navigable_area": "80.4 m²",
+        "path_found": true,
+        "path_length": "15.4 m"
+      },
+      "time_ms": 2915.393829345703
+    },
+    {
+      "name": "Goal Resolver (Fast-Slow)",
+      "passed": true,
+      "details": "Fast: 0/3, Slow: OK",
+      "metrics": {
+        "fast_path": [
+          {
+            "instruction": "Go to the chair",
+            "found": false,
+            "target": null,
+            "time_ms": 5.12
+          },
+          {
+            "instruction": "Find the sofa",
+            "found": false,
+            "target": null,
+            "time_ms": 0.05
+          },
+          {
+            "instruction": "Navigate to the bed",
+            "found": false,
+            "target": null,
+            "time_ms": 0.04
+          }
+        ],
+        "slow_path": {
+          "instruction": "Go to the room where people usually eat",
+          "target": "dining table",
+          "time_ms": 33813.0
+        }
+      },
+      "time_ms": 33825.89411735535
+    }
+  ]
+}
