@@ -347,16 +347,18 @@ class ViewNode:
 
 @dataclass
 class TrackedObject:
-    """全局跟踪的单个物体实例 (BA-HSG: 含概率信念状态)。"""
+    """全局跟踪的单个物体实例 (BA-HSG + USS-Nav 点云融合)。"""
     object_id: int
     label: str
-    position: np.ndarray          # [x, y, z] world frame (EMA 平滑)
+    position: np.ndarray          # [x, y, z] world frame (点云质心)
     best_score: float
     detection_count: int = 1
     last_seen: float = 0.0        # timestamp
     features: np.ndarray = field(default_factory=lambda: np.array([]))
     region_id: int = -1           # 所属区域 (SG-Nav 层次)
     extent: np.ndarray = field(default_factory=lambda: np.array([0.2, 0.2, 0.2]))
+    # USS-Nav: 物体累积点云 (N, 3) world frame
+    points: np.ndarray = field(default_factory=lambda: np.empty((0, 3)))
 
     # ── BA-HSG 信念状态 ──
     # Beta(α, β) 存在性分布: P(exists) ~ Beta(α, β)
@@ -385,23 +387,27 @@ class TrackedObject:
     safety_interact_threshold: float = 0.40  # 交互操作用的安全阈值
 
     def update(self, det: Detection3D, alpha: float = 0.3) -> None:
-        """用新检测更新位置、置信度和信念状态。"""
-        # ── 位置 Kalman 融合 (BA-HSG §3.4.2) ──
-        depth = float(np.linalg.norm(det.position[:2]))
-        obs_var = (BELIEF_SIGMA_BASE + BELIEF_SIGMA_DEPTH_COEFF * depth) ** 2
-        new_var = 1.0 / (1.0 / max(self.position_variance, 1e-6) + 1.0 / max(obs_var, 1e-6))
-        self.position = new_var * (
-            self.position / max(self.position_variance, 1e-6)
-            + det.position / max(obs_var, 1e-6)
-        )
-        self.position_variance = new_var
+        """用新检测更新位置、置信度、点云和信念状态 (USS-Nav + BA-HSG)。"""
+        # USS-Nav: 融合点云 → 更新质心位置
+        if hasattr(det, 'points') and det.points is not None and len(det.points) > 0:
+            self._fuse_pointcloud(det.points)
+            self.position = np.mean(self.points, axis=0) if len(self.points) > 0 else det.position.copy()
+            self.position_variance = max(0.01, self.position_variance * 0.8)
+        else:
+            depth = float(np.linalg.norm(det.position[:2]))
+            obs_var = (BELIEF_SIGMA_BASE + BELIEF_SIGMA_DEPTH_COEFF * depth) ** 2
+            new_var = 1.0 / (1.0 / max(self.position_variance, 1e-6) + 1.0 / max(obs_var, 1e-6))
+            self.position = new_var * (
+                self.position / max(self.position_variance, 1e-6)
+                + det.position / max(obs_var, 1e-6)
+            )
+            self.position_variance = new_var
 
         self.best_score = max(self.best_score, det.score)
         self.detection_count += 1
         self.last_seen = time.time()
         self.miss_streak = 0
 
-        # Beta 正面证据: 安全感知的增量 — 危险物体得到更多 α 提升 (保护性偏见)
         safety_scale = SAFETY_PRIOR_ALPHA_SCALE.get(self.safety_level, 1.0)
         self.belief_alpha += 1.0 * safety_scale
 
@@ -409,6 +415,24 @@ class TrackedObject:
             self.features = self._fuse_feature(det.features)
         self._update_extent(det)
         self._update_credibility()
+
+    def _fuse_pointcloud(
+        self, new_points: np.ndarray, max_total: int = 1024,
+    ) -> None:
+        """
+        USS-Nav: 增量融合新观测点云到物体累积点云。
+
+        策略: 合并 → 体素降采样 → 限制最大点数。
+        """
+        if new_points is None or len(new_points) == 0:
+            return
+        if self.points is None or len(self.points) == 0:
+            self.points = new_points.copy()
+        else:
+            self.points = np.vstack([self.points, new_points])
+
+        from .projection import _voxel_downsample, POINTCLOUD_VOXEL_SIZE
+        self.points = _voxel_downsample(self.points, POINTCLOUD_VOXEL_SIZE, max_total)
 
     def _fuse_feature(self, new_feature: np.ndarray) -> np.ndarray:
         """多视角 CLIP 特征融合 (ConceptGraphs 风格 EMA + L2 normalize)。
@@ -555,13 +579,22 @@ class TrackedObject:
 
 class InstanceTracker:
     """
-    维护全局物体实例表。
+    维护全局物体实例表 (USS-Nav 双指标优先级融合)。
 
-    匹配策略:
-      1. 同类别 + 空间距离 < merge_distance → 合并
-      2. (可选) CLIP 特征余弦相似度 > clip_threshold → 加强匹配
-      3. 否则 → 新建实例
+    匹配策略 (USS-Nav §IV-C):
+      优先级 1 (Semantic Match):
+        Ωsem(vi, vj) > sem_threshold (0.75) 且 Ωgeo(Ci, Cj) > geo_weak (0.1)
+      优先级 2 (Geometric Match):
+        Ωgeo(Ci, Cj) > geo_strong (0.5) 且 Ωgeo(Cj, Ci) > geo_strong (0.5)
+      Fallback: 同类别 + 空间距离 < merge_distance
     """
+
+    # USS-Nav 融合阈值 (§IV-C)
+    SEM_THRESHOLD = 0.75          # 语义匹配阈值
+    GEO_WEAK_THRESHOLD = 0.1     # 弱几何重叠 (语义匹配时的辅助条件)
+    GEO_STRONG_THRESHOLD = 0.5   # 强双向几何重叠
+    GEO_POINT_DIST_TAU = 0.05    # 点云匹配距离阈值 τ (m), USS-Nav Eq.1
+    CANDIDATE_RADIUS = 2.0       # ikd-tree 候选查询半径 (m)
 
     def __init__(
         self,
@@ -569,7 +602,7 @@ class InstanceTracker:
         iou_threshold: float = 0.3,
         clip_threshold: float = 0.75,
         max_objects: int = 200,
-        stale_timeout: float = 300.0,  # 5min 未见则清除
+        stale_timeout: float = 300.0,
         max_views: int = 300,
         knowledge_graph=None,
     ):
@@ -651,7 +684,10 @@ class InstanceTracker:
                 best_obj.update(det)
                 matched.append(best_obj)
             else:
-                # 新实例
+                # USS-Nav: 新实例含点云
+                init_points = np.empty((0, 3))
+                if hasattr(det, 'points') and det.points is not None and len(det.points) > 0:
+                    init_points = det.points.copy()
                 obj = TrackedObject(
                     object_id=self._next_id,
                     label=det.label,
@@ -659,8 +695,8 @@ class InstanceTracker:
                     best_score=det.score,
                     last_seen=time.time(),
                     features=det.features.copy() if det.features.size > 0 else np.array([]),
+                    points=init_points,
                 )
-                # KG 知识增强: 新物体创建时立即查询 KG
                 self._enrich_from_kg(obj)
                 self._objects[self._next_id] = obj
                 self._next_id += 1
@@ -765,27 +801,121 @@ class InstanceTracker:
         return labels
 
     def _find_match(self, det: Detection3D) -> Optional[TrackedObject]:
-        """在现有物体表中查找匹配。"""
-        best_match: Optional[TrackedObject] = None
-        best_dist = self.merge_distance
+        """
+        USS-Nav §IV-C: 双指标优先级融合匹配。
 
+        优先级 1 — Semantic Match:
+          Ωsem > 0.75 且 Ωgeo > 0.1 (语义强 + 几何弱)
+        优先级 2 — Geometric Match:
+          Ωgeo(Ci→Cj) > 0.5 且 Ωgeo(Cj→Ci) > 0.5 (双向几何强)
+        Fallback — Legacy:
+          同类别 + 空间距离 < merge_distance (无点云时的降级路径)
+        """
+        det_has_points = (
+            hasattr(det, 'points') and det.points is not None and len(det.points) > 0
+        )
+
+        # 空间预过滤: 只考虑 CANDIDATE_RADIUS 内的候选 (USS-Nav 用 ikd-tree 2m 半径)
+        candidates = []
         for obj in self._objects.values():
-            # 同类别匹配
-            if obj.label.lower() != det.label.lower():
+            dist = float(np.linalg.norm(obj.position - det.position))
+            if dist < self.CANDIDATE_RADIUS:
+                candidates.append((obj, dist))
+
+        if not candidates:
+            return None
+
+        # ── 优先级 1: Semantic Match (语义强 + 几何弱) ──
+        best_sem_match: Optional[TrackedObject] = None
+        best_sem_score = -1.0
+
+        for obj, dist in candidates:
+            # 语义相似度 Ωsem (USS-Nav Eq.2: text feature cosine similarity)
+            omega_sem = 0.0
+            if det.features.size > 0 and obj.features.size > 0:
+                omega_sem = self._cosine_similarity(det.features, obj.features)
+
+            if omega_sem <= self.SEM_THRESHOLD:
                 continue
 
-            dist = float(np.linalg.norm(obj.position - det.position))
+            # 几何相似度 Ωgeo (USS-Nav Eq.1: 点云重叠比)
+            omega_geo = 0.0
+            if det_has_points and len(obj.points) > 0:
+                omega_geo = self._geometric_similarity(det.points, obj.points)
+            else:
+                omega_geo = max(0.0, 1.0 - dist / self.merge_distance)
+
+            if omega_geo >= self.GEO_WEAK_THRESHOLD and omega_sem > best_sem_score:
+                best_sem_score = omega_sem
+                best_sem_match = obj
+
+        if best_sem_match is not None:
+            return best_sem_match
+
+        # ── 优先级 2: Geometric Match (双向几何强) ──
+        if det_has_points:
+            best_geo_match: Optional[TrackedObject] = None
+            best_geo_score = -1.0
+
+            for obj, dist in candidates:
+                if len(obj.points) == 0:
+                    continue
+
+                omega_geo_fwd = self._geometric_similarity(det.points, obj.points)
+                omega_geo_bwd = self._geometric_similarity(obj.points, det.points)
+
+                if (omega_geo_fwd >= self.GEO_STRONG_THRESHOLD
+                        and omega_geo_bwd >= self.GEO_STRONG_THRESHOLD):
+                    combined = omega_geo_fwd + omega_geo_bwd
+                    if combined > best_geo_score:
+                        best_geo_score = combined
+                        best_geo_match = obj
+
+            if best_geo_match is not None:
+                return best_geo_match
+
+        # ── Fallback: 同类别 + 空间距离 (无点云时的降级路径) ──
+        best_fallback: Optional[TrackedObject] = None
+        best_dist = self.merge_distance
+
+        for obj, dist in candidates:
+            if obj.label.lower() != det.label.lower():
+                continue
             if dist < best_dist:
-                # 可选: CLIP 特征验证
-                if det.features.size > 0 and obj.features.size > 0:
-                    sim = self._cosine_similarity(det.features, obj.features)
-                    if sim < self.clip_threshold:
-                        continue
-
                 best_dist = dist
-                best_match = obj
+                best_fallback = obj
 
-        return best_match
+        return best_fallback
+
+    @staticmethod
+    def _geometric_similarity(
+        cloud_a: np.ndarray,
+        cloud_b: np.ndarray,
+        tau: float = 0.05,
+    ) -> float:
+        """
+        USS-Nav Eq.1: 几何相似度 — 点云 A 中匹配点的比例。
+
+        Ω(Ci, Cj) = (1/|Ci|) Σ_{p∈Ci} I(min_{q∈Cj} ||p-q|| ≤ τ)
+
+        使用 scipy.spatial.cKDTree 加速最近邻查询。
+        """
+        if cloud_a is None or cloud_b is None:
+            return 0.0
+        if len(cloud_a) == 0 or len(cloud_b) == 0:
+            return 0.0
+
+        try:
+            from scipy.spatial import cKDTree
+            tree_b = cKDTree(cloud_b)
+            dists, _ = tree_b.query(cloud_a, k=1)
+            matched = np.sum(dists <= tau)
+            return float(matched) / len(cloud_a)
+        except ImportError:
+            diffs = cloud_a[:, None, :] - cloud_b[None, :, :]
+            min_dists = np.min(np.linalg.norm(diffs, axis=2), axis=1)
+            matched = np.sum(min_dists <= tau)
+            return float(matched) / len(cloud_a)
 
     def _prune_stale(self) -> None:
         """清除长时间未见的实例。"""

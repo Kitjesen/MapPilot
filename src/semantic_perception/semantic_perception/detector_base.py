@@ -14,7 +14,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -26,7 +26,8 @@ class Detection2D:
     score: float              # 检测置信度 0-1
     label: str                # 检测类别文本
     class_id: int = -1        # 可选类别 ID
-    features: np.ndarray = field(default_factory=lambda: np.array([]))  # CLIP 特征 (可选)
+    features: np.ndarray = field(default_factory=lambda: np.array([]))  # 语义特征 (可选)
+    mask: Optional[np.ndarray] = None  # HxW bool 实例分割 mask (USS-Nav: mask→点云)
 
 
 class DetectorBase(ABC):

@@ -56,6 +56,29 @@ class TopoNode:
     frontier_size: float = 0.0                       # 前沿宽度 (米)
     predicted_room_type: str = ""                     # 语义预测: 前沿那侧可能是什么房间
 
+    # ═══ 几何信息 (USS-Nav 融合) ═══
+    # 边界框 (AABB - Axis-Aligned Bounding Box)
+    bounding_box: Optional[Dict[str, float]] = None
+    # 格式: {"x_min": float, "x_max": float, "y_min": float, "y_max": float}
+
+    # 凸包 (2D 多边形顶点)
+    convex_hull: Optional[np.ndarray] = None
+    # 格式: (N, 2) 数组，顺时针或逆时针排列的顶点
+
+    # 可通行区域面积 (平方米)
+    traversable_area: float = 0.0
+
+    # 高度范围 (米)
+    height_range: Optional[Dict[str, float]] = None
+    # 格式: {"floor": float, "ceiling": float}
+
+    # 几何质量指标
+    geometry_confidence: float = 0.0
+    # 0.0-1.0，表示几何信息的可靠性
+
+    # 最后几何更新时间
+    geometry_updated: float = 0.0
+
     def __hash__(self):
         return self.node_id
 
@@ -144,7 +167,20 @@ class TopologySemGraph:
         # 语义联想缓存
         self._room_object_expectations: Dict[str, Dict[str, float]] = {}
 
+        # ═══ 几何提取器 (USS-Nav 融合) ═══
+        self._geometry_extractor = None
+
     # ── 图构建 ──────────────────────────────────────────────────
+
+    def set_geometry_extractor(self, geometry_extractor) -> None:
+        """
+        设置几何提取器 (连接到 Tomogram)。
+
+        Args:
+            geometry_extractor: GeometryExtractor 实例
+        """
+        self._geometry_extractor = geometry_extractor
+        logger.info("Geometry extractor connected to topology graph")
 
     def update_from_scene_graph(self, sg: Dict) -> None:
         """
@@ -183,6 +219,29 @@ class TopologySemGraph:
                 room_type=self._infer_room_type(name),
                 semantic_labels=labels[:12],
             )
+
+            # ═══ 几何信息提取 (USS-Nav 融合) ═══
+            if self._geometry_extractor is not None:
+                try:
+                    geometry = self._geometry_extractor.extract_room_geometry(
+                        room_center=center,
+                        search_radius=5.0,
+                        cost_threshold=0.5,
+                    )
+                    node.bounding_box = geometry["bounding_box"]
+                    node.convex_hull = geometry["convex_hull"]
+                    node.traversable_area = geometry["traversable_area"]
+                    node.height_range = geometry["height_range"]
+                    node.geometry_confidence = geometry["confidence"]
+                    node.geometry_updated = time.time()
+
+                    logger.debug(
+                        f"Extracted geometry for {name}: "
+                        f"area={geometry['traversable_area']:.2f}m², "
+                        f"confidence={geometry['confidence']:.2f}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to extract geometry for room {rid}: {e}")
 
             if rid in existing_visits:
                 node.visited, node.visit_count, node.last_visited, node.objects_found = (
@@ -759,6 +818,24 @@ class TopologySemGraph:
                         "dx": round(float(n.frontier_direction[0]), 2),
                         "dy": round(float(n.frontier_direction[1]), 2),
                     }
+
+            # ═══ 几何信息序列化 ═══
+            if n.bounding_box:
+                d["bounding_box"] = {
+                    k: round(float(v), 2) for k, v in n.bounding_box.items()
+                }
+            if n.convex_hull is not None:
+                d["convex_hull"] = [[round(float(x), 2), round(float(y), 2)]
+                                    for x, y in n.convex_hull]
+            if n.traversable_area > 0:
+                d["traversable_area"] = round(n.traversable_area, 2)
+            if n.height_range:
+                d["height_range"] = {
+                    k: round(float(v), 2) for k, v in n.height_range.items()
+                }
+            if n.geometry_confidence > 0:
+                d["geometry_confidence"] = round(n.geometry_confidence, 2)
+
             nodes_list.append(d)
 
         edges_list = []
@@ -801,6 +878,19 @@ class TopologySemGraph:
                 fd = nd.get("frontier_direction")
                 if fd:
                     node.frontier_direction = np.array([fd["dx"], fd["dy"]])
+
+            # ═══ 几何信息反序列化 ═══
+            if "bounding_box" in nd:
+                node.bounding_box = nd["bounding_box"]
+            if "convex_hull" in nd:
+                node.convex_hull = np.array(nd["convex_hull"], dtype=np.float64)
+            if "traversable_area" in nd:
+                node.traversable_area = nd["traversable_area"]
+            if "height_range" in nd:
+                node.height_range = nd["height_range"]
+            if "geometry_confidence" in nd:
+                node.geometry_confidence = nd["geometry_confidence"]
+
             tsg._nodes[nd["node_id"]] = node
 
         for ed in data.get("edges", []):
