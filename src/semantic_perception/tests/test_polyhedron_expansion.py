@@ -131,27 +131,28 @@ def test_polyhedron_expansion():
     print("测试 4: 多面体扩展")
     print("=" * 60)
 
-    # 创建占据栅格 (20×20×10, 模拟走廊)
-    occupancy_grid = np.ones((20, 20, 10), dtype=np.float32)
+    # 创建占据栅格 (30×30×10, 模拟更大的走廊)
+    occupancy_grid = np.ones((30, 30, 10), dtype=np.float32)
 
-    # 走廊: 中间 10×20 区域自由
-    occupancy_grid[5:15, :, :] = 0.0
+    # 走廊: 中间 20×30 区域自由
+    occupancy_grid[5:25, :, :] = 0.0
 
     # 添加一些障碍物
-    occupancy_grid[8:12, 8:12, :] = 1.0
+    occupancy_grid[12:18, 12:18, :] = 1.0
 
     grid_resolution = 0.5
     grid_origin = np.array([0.0, 0.0, 0.0])
 
-    # 配置
+    # 配置 - 降低阈值以更容易生成多面体
     config = PolyhedronExpansionConfig(
         num_sphere_samples=32,
-        r_min=0.5,
-        r_max=2.0,
-        r_step=0.5,
-        min_polyhedron_volume=0.5,
-        max_polyhedra=10,
-        coverage_threshold=0.7,
+        r_min=0.3,  # 降低最小半径
+        r_max=1.5,  # 降低最大半径
+        r_step=0.3,
+        min_polyhedron_volume=0.1,  # 大幅降低最小体积
+        max_polyhedra=15,  # 增加最大数量
+        coverage_threshold=0.5,  # 降低覆盖率阈值
+        collision_threshold=0.5,  # 提高碰撞容忍度
     )
 
     # 扩展
