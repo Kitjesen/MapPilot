@@ -531,7 +531,10 @@ class GoalResolver:
             self._belief_manager.init_from_candidates(candidates_for_belief, instruction)
 
             # 使用 Belief-GoalNav 多假设选择
-            robot_pos = [robot_position.get("x", 0), robot_position.get("y", 0)]
+            robot_pos = (
+                [robot_position.get("x", 0), robot_position.get("y", 0)]
+                if robot_position else None
+            )
             selected = self._belief_manager.select_next_target(robot_pos)
             if selected and not self._belief_manager.is_converged:
                 logger.info(
@@ -753,7 +756,17 @@ class GoalResolver:
                     t for t in zh_tokens if t not in stop_words and len(t) > 1
                 )
 
-        return list(set(all_keywords))
+        deduped = list(set(all_keywords))
+
+        # ── 双语扩展: 中文关键词 → 补英文, 英文关键词 → 补中文 ──
+        # 解决: YOLO 输出英文标签, 用户说中文 → Fast Path label 匹配断掉
+        try:
+            from .chinese_tokenizer import expand_bilingual
+            deduped = expand_bilingual(deduped)
+        except ImportError:
+            pass
+
+        return deduped
 
     def _parse_instruction_roles(
         self,
@@ -859,6 +872,22 @@ class GoalResolver:
             r'(?:去|到|找|找到|寻找)([\u4e00-\u9fff]+)',
         ]
 
+        # 双语扩展: 将中文捕获组扩展为英文, 以匹配英文场景标签
+        try:
+            from .chinese_tokenizer import translate_label as _tl
+        except ImportError:
+            _tl = None
+
+        def _match_label(text: str, lbl: str) -> bool:
+            """检查 text 和 lbl 是否匹配 (含双语扩展)。"""
+            if lbl in text or text in lbl:
+                return True
+            if _tl is not None:
+                for alias in _tl(text):
+                    if alias.lower() in lbl or lbl in alias.lower():
+                        return True
+            return False
+
         for i, pat in enumerate(zh_patterns):
             m = re.search(pat, inst_lower)
             if m:
@@ -866,16 +895,16 @@ class GoalResolver:
                     mod_str = m.group(1)
                     subj_str = m.group(2)
                     for lbl in scene_labels:
-                        if lbl in subj_str or subj_str in lbl:
+                        if _match_label(subj_str, lbl):
                             subjects.append(lbl)
-                        if lbl in mod_str or mod_str in lbl:
+                        if _match_label(mod_str, lbl):
                             modifiers.append(lbl)
                     if subjects:
                         return list(set(subjects)), list(set(modifiers))
                 else:
                     subj_str = m.group(1)
                     for lbl in scene_labels:
-                        if lbl in subj_str or subj_str in lbl:
+                        if _match_label(subj_str, lbl):
                             subjects.append(lbl)
                     if subjects:
                         return list(set(subjects)), []

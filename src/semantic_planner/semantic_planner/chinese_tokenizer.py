@@ -3,10 +3,14 @@
 
 参考: 报告第11.1节 P0任务
 目标: 替换简单regex分词，提升中文指令解析准确率
+
+扩展: 双语标签映射 (中↔英)
+  YOLO 检测器输出英文标签, 用户指令常为中文 → Fast Path 需要跨语言匹配。
+  映射表从 IndustrialKnowledgeGraph 概念提取, 覆盖室内/工业/户外场景常见物体。
 """
 
 import logging
-from typing import List, Set
+from typing import Dict, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,154 @@ STOP_WORDS: Set[str] = {
     # ── 否定 ──
     "不", "没", "没有", "别", "不要", "不用", "无",
 }
+
+
+# ── 双语标签映射 (中↔英) ──
+# 格式: concept_id → (names_zh, names_en)
+# 来源: IndustrialKnowledgeGraph 概念 (轻量子集, 避免跨包依赖)
+# 每个 concept 取主要别名, 不需要全部 (全量在 KG 中)
+_BILINGUAL_CONCEPTS: List[Tuple[List[str], List[str]]] = [
+    # ── 家具 ──
+    (["椅子", "办公椅", "座椅", "凳子"], ["chair", "office chair", "seat", "stool"]),
+    (["桌子", "办公桌", "书桌", "电脑桌"], ["desk", "table", "workstation"]),
+    (["柜子", "文件柜", "储物柜", "橱柜"], ["cabinet", "file cabinet", "storage cabinet", "locker"]),
+    (["架子", "书架", "货架", "置物架"], ["shelf", "bookshelf", "rack", "shelving"]),
+    (["沙发", "长椅"], ["sofa", "couch", "bench"]),
+    (["白板"], ["whiteboard", "board"]),
+    (["床", "床铺"], ["bed"]),
+    # ── 电子设备 ──
+    (["显示器", "屏幕", "电脑屏幕"], ["monitor", "screen", "display"]),
+    (["电脑", "计算机", "笔记本"], ["computer", "PC", "laptop", "desktop"]),
+    (["投影仪", "投影机"], ["projector"]),
+    (["打印机", "复印机"], ["printer", "copier"]),
+    (["电视", "电视机"], ["TV", "television"]),
+    (["微波炉"], ["microwave"]),
+    (["冰箱"], ["refrigerator", "fridge"]),
+    (["洗衣机"], ["washing machine"]),
+    # ── 安全设备 ──
+    (["灭火器"], ["fire extinguisher", "extinguisher"]),
+    (["消防栓", "消火栓"], ["fire hydrant", "fire hose cabinet"]),
+    (["火灾报警器", "烟感", "烟雾报警器"], ["fire alarm", "smoke detector"]),
+    (["安全出口", "紧急出口"], ["emergency exit", "fire exit", "exit sign"]),
+    (["急救箱", "急救包"], ["first aid kit", "medical kit"]),
+    (["安全标识", "警示牌"], ["safety sign", "warning sign"]),
+    (["AED", "除颤仪"], ["AED", "defibrillator"]),
+    # ── 建筑结构 ──
+    (["门", "房门", "大门", "玻璃门"], ["door", "gate", "glass door"]),
+    (["窗户", "窗", "玻璃窗"], ["window"]),
+    (["楼梯", "台阶"], ["stairs", "staircase", "steps"]),
+    (["电梯"], ["elevator", "lift"]),
+    (["栏杆", "扶手", "护栏"], ["railing", "handrail", "guardrail"]),
+    (["柱子", "立柱"], ["pillar", "column"]),
+    (["墙", "墙壁"], ["wall"]),
+    # ── 生活用品 ──
+    (["垃圾桶", "垃圾箱"], ["trash can", "trash bin", "garbage bin", "waste bin"]),
+    (["饮水机", "净水器"], ["water dispenser", "water cooler"]),
+    (["水瓶", "瓶子", "矿泉水"], ["bottle", "water bottle"]),
+    (["杯子", "茶杯", "咖啡杯", "水杯"], ["cup", "mug", "glass"]),
+    (["箱子", "纸箱", "盒子"], ["box", "carton", "package"]),
+    (["灯", "台灯", "落地灯"], ["lamp", "light", "desk lamp"]),
+    (["背包", "书包", "双肩包"], ["backpack", "bag", "rucksack"]),
+    (["植物", "盆栽", "绿植"], ["plant", "potted plant"]),
+    (["伞架", "雨伞架"], ["umbrella stand"]),
+    (["镜子"], ["mirror"]),
+    (["水槽", "洗手台"], ["sink", "basin"]),
+    (["马桶", "坐便器"], ["toilet"]),
+    # ── 工业 ──
+    (["配电箱", "电箱"], ["electrical panel", "distribution box"]),
+    (["充电桩", "充电站"], ["charging station", "charger"]),
+    (["叉车", "铲车"], ["forklift"]),
+    (["托盘", "栈板"], ["pallet"]),
+    (["传送带", "输送带"], ["conveyor", "conveyor belt"]),
+    (["阀门"], ["valve"]),
+    (["管道", "水管"], ["pipe", "pipeline"]),
+    (["控制面板", "操作台"], ["control panel"]),
+    # ── 户外 ──
+    (["树", "树木"], ["tree"]),
+    (["路锥", "锥桶"], ["traffic cone", "cone"]),
+    (["围栏", "栅栏"], ["fence", "barrier"]),
+    (["路灯", "灯柱"], ["street light", "lamp post"]),
+    (["井盖"], ["manhole cover"]),
+    (["公园长椅", "户外长椅"], ["park bench"]),
+    # ── 人 ──
+    (["人", "行人", "员工", "访客"], ["person", "people", "pedestrian"]),
+    # ── 房间 / 区域 (场景图 room label) ──
+    (["厨房"], ["kitchen"]),
+    (["卧室"], ["bedroom"]),
+    (["客厅", "起居室"], ["living room"]),
+    (["卫生间", "洗手间", "厕所", "浴室"], ["bathroom", "restroom", "toilet", "washroom"]),
+    (["办公室"], ["office"]),
+    (["会议室"], ["meeting room", "conference room"]),
+    (["走廊", "过道"], ["corridor", "hallway"]),
+    (["大厅", "大堂", "门厅"], ["lobby", "hall"]),
+    (["仓库"], ["warehouse", "storage room"]),
+    (["车库"], ["garage"]),
+]
+
+# 预构建查找索引: word(lower) → set of cross-language equivalents
+_ZH_TO_EN: Dict[str, Set[str]] = {}
+_EN_TO_ZH: Dict[str, Set[str]] = {}
+
+for _zh_names, _en_names in _BILINGUAL_CONCEPTS:
+    _en_set = {e.lower() for e in _en_names}
+    _zh_set = set(_zh_names)
+    for zh in _zh_names:
+        _ZH_TO_EN.setdefault(zh, set()).update(_en_set)
+    for en in _en_names:
+        _EN_TO_ZH.setdefault(en.lower(), set()).update(_zh_set)
+
+
+def expand_bilingual(keywords: List[str]) -> List[str]:
+    """
+    将关键词列表扩展为中英双语。
+
+    "桌子" → ["桌子", "desk", "table", "workstation"]
+    "chair" → ["chair", "椅子", "办公椅", "座椅", "凳子"]
+
+    只扩展匹配到的词, 其余原样保留。返回去重后的列表。
+    """
+    expanded: List[str] = list(keywords)
+    for kw in keywords:
+        kw_lower = kw.lower()
+        # zh → en
+        if kw in _ZH_TO_EN:
+            expanded.extend(_ZH_TO_EN[kw])
+        # en → zh
+        if kw_lower in _EN_TO_ZH:
+            expanded.extend(_EN_TO_ZH[kw_lower])
+    # 去重, 保序
+    seen: set = set()
+    result: List[str] = []
+    for w in expanded:
+        w_key = w.lower()
+        if w_key not in seen:
+            seen.add(w_key)
+            result.append(w)
+    return result
+
+
+def translate_label(label: str) -> List[str]:
+    """
+    将单个标签翻译为另一种语言的所有别名。
+
+    "desk" → ["桌子", "办公桌", "书桌", "电脑桌"]
+    "椅子" → ["chair", "office chair", "seat", "stool"]
+
+    未找到时返回空列表。
+    """
+    label_lower = label.lower()
+    if label in _ZH_TO_EN:
+        return sorted(_ZH_TO_EN[label])
+    if label_lower in _EN_TO_ZH:
+        return sorted(_EN_TO_ZH[label_lower])
+    # 子串匹配: "red chair" → 匹配 "chair" → 返回中文
+    for en_key, zh_set in _EN_TO_ZH.items():
+        if en_key in label_lower or label_lower in en_key:
+            return sorted(zh_set)
+    for zh_key, en_set in _ZH_TO_EN.items():
+        if zh_key in label or label in zh_key:
+            return sorted(en_set)
+    return []
 
 
 class ChineseTokenizer:
