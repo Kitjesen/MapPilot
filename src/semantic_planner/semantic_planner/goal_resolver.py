@@ -244,6 +244,9 @@ class GoalResolver:
         from .semantic_prior import SemanticPriorEngine
         self._semantic_prior_engine = SemanticPriorEngine()
 
+        # P1: 房间-物体知识图谱 (KG-backed room prediction)
+        self._room_object_kg = None
+
         # 创新5: 拓扑语义图 (Topology Semantic Graph)
         self._tsg: Optional["TopologySemGraph"] = None
         if TopologySemGraph is not None:
@@ -1371,14 +1374,37 @@ class GoalResolver:
             frame_id=frame_id,
         )
 
-    @staticmethod
-    def _predict_adjacent_room_type(current_room_type: str) -> str:
+    def _predict_adjacent_room_type(self, current_room_type: str) -> str:
         """
-        基于当前房间类型预测相邻房间类型 (空间常识)。
+        基于当前房间类型预测相邻房间类型。
+
+        P1 升级: 优先使用 RoomObjectKG 中学习到的邻接关系,
+        回退到 hand-coded 空间常识。
 
         返回最高概率的相邻类型。走廊是 hub 节点, 连接多种房间;
         功能房间通常与走廊相邻, 也可能与相近功能的房间相邻。
         """
+        # P1: 尝试从 KG 邻接数据预测
+        kg = getattr(self, '_room_object_kg', None)
+        if kg is not None:
+            adj_graph = kg.get_adjacency_graph()
+            if adj_graph:
+                # 找当前房间类型的所有邻接, 选 count 最高的
+                best_neighbor = None
+                best_count = 0
+                for edge in adj_graph:
+                    ft, tt = edge["from"], edge["to"]
+                    count = edge["count"]
+                    if ft == current_room_type and count > best_count:
+                        best_neighbor = tt
+                        best_count = count
+                    elif tt == current_room_type and count > best_count:
+                        best_neighbor = ft
+                        best_count = count
+                if best_neighbor is not None:
+                    return best_neighbor
+
+        # Fallback: hand-coded 空间常识
         adjacency_priors = {
             "corridor": "office",       # 走廊两侧最常见是办公室
             "office": "corridor",       # 办公室出门是走廊
@@ -1644,6 +1670,10 @@ class GoalResolver:
         self._visited_room_ids.clear()
         if self._tsg is not None:
             self._tsg = TopologySemGraph() if TopologySemGraph is not None else None
+
+    def set_room_object_kg(self, kg) -> None:
+        """注入房间-物体知识图谱 (P1: KG-backed room adjacency prediction)。"""
+        self._room_object_kg = kg
 
     def update_visited_room(self, room_id: int) -> None:
         """标记某房间已探索 (拓扑感知探索用)。"""

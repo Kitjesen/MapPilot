@@ -13,19 +13,24 @@ from .frontier_scorer import FrontierScorer
 from .goal_resolver import GoalResult
 
 
-def extract_frontier_scene_data(scene_graph_json: str) -> Tuple[List[Dict], List[Dict]]:
-    """从场景图中抽取 Frontier 评分需要的 objects/relations 子集。"""
+def extract_frontier_scene_data(
+    scene_graph_json: str,
+) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """从场景图中抽取 Frontier 评分需要的 objects/relations/rooms 子集。"""
     try:
         sg = json.loads(scene_graph_json)
     except (json.JSONDecodeError, TypeError):
-        return [], []
+        return [], [], []
 
     raw_objects = sg.get("objects", [])
     raw_relations = sg.get("relations", [])
+    raw_rooms = sg.get("rooms", sg.get("regions", []))
     if not isinstance(raw_objects, list):
         raw_objects = []
     if not isinstance(raw_relations, list):
         raw_relations = []
+    if not isinstance(raw_rooms, list):
+        raw_rooms = []
 
     objects: List[Dict] = []
     for obj in raw_objects:
@@ -63,7 +68,8 @@ def extract_frontier_scene_data(scene_graph_json: str) -> Tuple[List[Dict], List
             continue
 
     relations = [r for r in raw_relations if isinstance(r, dict)]
-    return objects, relations
+    rooms = [r for r in raw_rooms if isinstance(r, dict)]
+    return objects, relations, rooms
 
 
 def generate_frontier_goal(
@@ -81,13 +87,14 @@ def generate_frontier_goal(
     if not frontiers:
         return None
 
-    scene_objects, scene_relations = extract_frontier_scene_data(scene_graph_json)
+    scene_objects, scene_relations, scene_rooms = extract_frontier_scene_data(scene_graph_json)
     frontier_scorer.score_frontiers(
         instruction=instruction,
         robot_position=robot_xy,
         visited_positions=visited_positions,
         scene_objects=scene_objects,
         scene_relations=scene_relations,
+        scene_rooms=scene_rooms,
     )
     best = frontier_scorer.get_best_frontier()
     if best is None or best.score < score_threshold:

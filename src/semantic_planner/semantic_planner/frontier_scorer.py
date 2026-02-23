@@ -130,6 +130,12 @@ class FrontierScorer:
         self._origin_y: float = 0.0
         self._frontiers: List[Frontier] = []
 
+        # P0: Frontier 失败记忆 (避免重复探索失败位置)
+        # 参考 SEEK (RSS 2024): 探索失败 → 降低该方向优先级
+        self._failed_positions: List[np.ndarray] = []
+        self._failure_penalty_radius: float = 3.0  # 惩罚半径 (m)
+        self._failure_penalty_decay: float = 0.7   # 惩罚衰减系数
+
         # 创新3: 方向观测缓存
         self._directional_features: Dict[int, np.ndarray] = {}
         self._clip_encoder = None
@@ -137,6 +143,9 @@ class FrontierScorer:
         # 创新4: 语义先验引擎 (拓扑感知探索)
         self._semantic_prior_engine = None
         self._room_priors_cache: Dict[int, float] = {}  # room_id → prior_score
+
+        # P2: 房间-物体知识图谱 (SEEK-style P(target|room))
+        self._room_object_kg = None
 
     def update_costmap(
         self,
@@ -268,6 +277,51 @@ class FrontierScorer:
         if self.semantic_prior_weight <= 0.0:
             self.semantic_prior_weight = 0.2
             logger.info("Frontier semantic prior scoring enabled (weight=0.2)")
+
+    def set_room_object_kg(self, kg) -> None:
+        """注入房间-物体知识图谱 (P2: SEEK-style P(target|room))。"""
+        self._room_object_kg = kg
+
+    def record_frontier_failure(self, position: np.ndarray) -> None:
+        """
+        记录探索失败的 frontier 位置 (P0: 失败记忆)。
+
+        当机器人导航到某个 frontier 后未发现有价值信息时调用。
+        后续评分将惩罚该位置附近的 frontier, 避免重复探索死角。
+
+        参考 SEEK (RSS 2024): Dynamic Scene Graph + 失败记忆
+        """
+        pos = np.asarray(position[:2], dtype=np.float64)
+        self._failed_positions.append(pos)
+        logger.info(
+            "Frontier failure recorded at (%.2f, %.2f), total failures: %d",
+            pos[0], pos[1], len(self._failed_positions),
+        )
+
+    def _compute_failure_penalty(self, frontier_center: np.ndarray) -> float:
+        """
+        计算 frontier 与已失败位置的惩罚分 (P0)。
+
+        Returns:
+            [0, 1] — 0=无惩罚, 1=最大惩罚 (完全重叠)
+        """
+        if not self._failed_positions:
+            return 0.0
+
+        max_penalty = 0.0
+        for fp in self._failed_positions:
+            dist = float(np.linalg.norm(frontier_center - fp))
+            if dist < self._failure_penalty_radius:
+                # 越近惩罚越大, 线性衰减
+                penalty = self._failure_penalty_decay * (
+                    1.0 - dist / self._failure_penalty_radius
+                )
+                max_penalty = max(max_penalty, penalty)
+        return min(1.0, max_penalty)
+
+    def clear_failure_memory(self) -> None:
+        """清空失败记忆 (新任务时调用)。"""
+        self._failed_positions.clear()
 
     def update_room_priors(
         self,
@@ -480,6 +534,14 @@ class FrontierScorer:
                     frontier, robot_position, scene_rooms,
                 )
 
+            # ── 7. KG 目标-房间概率评分 (P2: SEEK-style) ──
+            # 如果附近物体暗示某种房间类型, 用 KG 查询目标在该房间的概率
+            kg_room_score = 0.0
+            if self._room_object_kg and nearby_labels:
+                kg_room_score = self._compute_kg_room_score(
+                    inst_keywords, nearby_labels,
+                )
+
             # ── 综合评分 ──
             total_w = (self.distance_weight + self.novelty_weight
                        + self.language_weight + self.grounding_weight
@@ -495,6 +557,14 @@ class FrontierScorer:
                 )
             else:
                 frontier.score = 0.0
+
+            # P2: KG room score 作为 additive bonus (不改变权重归一化)
+            frontier.score += 0.1 * kg_room_score
+
+            # P0: 失败记忆惩罚 (乘性, 在最终分上折扣)
+            failure_penalty = self._compute_failure_penalty(frontier.center_world)
+            if failure_penalty > 0:
+                frontier.score *= (1.0 - failure_penalty)
 
         self._frontiers.sort(key=lambda f: f.score, reverse=True)
         return self._frontiers
@@ -584,6 +654,51 @@ class FrontierScorer:
             # direction_alignment × semantic_prior
             score = cos_sim * prior
             best_score = max(best_score, score)
+
+        return min(1.0, best_score)
+
+    def _compute_kg_room_score(
+        self,
+        inst_keywords: Set[str],
+        nearby_labels: List[str],
+    ) -> float:
+        """
+        P2: 用 KG 推断 frontier 方向的房间类型, 查询目标在该房间的概率。
+
+        思路 (SEEK-style):
+          1. 从附近物体推断可能的房间类型 (通过 KG 反向查询)
+          2. 对每个推断出的房间类型, 查询指令目标在该房间的概率
+          3. 返回最高概率作为评分
+
+        这比 hand-coded 共现表更准确, 因为 KG 是从真实环境学来的。
+        """
+        if not self._room_object_kg:
+            return 0.0
+
+        # 1. 从附近物体推断房间类型
+        candidate_rooms: Dict[str, float] = {}  # room_type → max_probability
+        for lbl in nearby_labels:
+            rooms = self._room_object_kg.get_object_rooms(lbl)
+            for room_type, prob in rooms:
+                candidate_rooms[room_type] = max(
+                    candidate_rooms.get(room_type, 0.0), prob
+                )
+
+        if not candidate_rooms:
+            return 0.0
+
+        # 2. 对每个候选房间, 查询目标关键词在该房间的概率
+        priors = self._room_object_kg.to_room_object_priors(min_observations=1)
+        best_score = 0.0
+        for room_type, room_prob in candidate_rooms.items():
+            room_priors = priors.get(room_type, {})
+            for kw in inst_keywords:
+                kw_lower = kw.lower()
+                for obj_label, obj_prob in room_priors.items():
+                    if kw_lower in obj_label or obj_label in kw_lower:
+                        # P(target in room) = P(room|nearby_objects) × P(target|room)
+                        score = room_prob * obj_prob
+                        best_score = max(best_score, score)
 
         return min(1.0, best_score)
 

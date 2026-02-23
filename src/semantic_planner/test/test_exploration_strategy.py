@@ -31,16 +31,35 @@ class TestExtractFrontierSceneData(unittest.TestCase):
             ],
         })
 
-        objects, relations = extract_frontier_scene_data(sg)
+        objects, relations, rooms = extract_frontier_scene_data(sg)
 
         self.assertEqual(len(objects), 1)
         self.assertEqual(objects[0]["label"], "door")
         self.assertEqual(len(relations), 1)
+        self.assertEqual(len(rooms), 0)
 
     def test_extract_bad_json_returns_empty(self):
-        objects, relations = extract_frontier_scene_data("not-json")
+        objects, relations, rooms = extract_frontier_scene_data("not-json")
         self.assertEqual(objects, [])
         self.assertEqual(relations, [])
+        self.assertEqual(rooms, [])
+
+
+    def test_extract_rooms_from_scene_graph(self):
+        sg = json.dumps({
+            "objects": [
+                {"id": 1, "label": "desk", "position": {"x": 1.0, "y": 2.0}},
+            ],
+            "relations": [],
+            "rooms": [
+                {"room_id": 0, "name": "office", "center": {"x": 1.0, "y": 2.0}},
+            ],
+        })
+
+        objects, relations, rooms = extract_frontier_scene_data(sg)
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(len(rooms), 1)
+        self.assertEqual(rooms[0]["name"], "office")
 
 
 class TestGenerateFrontierGoal(unittest.TestCase):

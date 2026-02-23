@@ -248,6 +248,59 @@ class TestSemanticPriorIntegration(unittest.TestCase):
         self.assertIn("desk", engine._priors["office"])
 
 
+class TestKGBackedRoomPrediction(unittest.TestCase):
+    """P1: KG-backed 房间邻接预测测试。"""
+
+    def test_predict_adjacent_with_kg(self):
+        """有 KG 邻接数据时, 应使用学习到的邻接关系。"""
+        from semantic_planner.goal_resolver import GoalResolver
+        from semantic_planner.llm_client import LLMConfig
+
+        config = LLMConfig(backend="openai", model="gpt-4o-mini")
+        resolver = GoalResolver(config)
+
+        # 构建 KG 邻接: corridor ↔ lab (高频), corridor ↔ office (低频)
+        kg = RoomObjectKG()
+        for _ in range(10):
+            kg.observe_adjacency("corridor", "lab", "door")
+        for _ in range(3):
+            kg.observe_adjacency("corridor", "office", "door")
+
+        resolver.set_room_object_kg(kg)
+
+        # corridor 的邻接预测应该返回 lab (最高频次)
+        predicted = resolver._predict_adjacent_room_type("corridor")
+        self.assertEqual(predicted, "lab")
+
+    def test_predict_adjacent_without_kg_uses_hardcoded(self):
+        """无 KG 时回退到 hand-coded 邻接。"""
+        from semantic_planner.goal_resolver import GoalResolver
+        from semantic_planner.llm_client import LLMConfig
+
+        config = LLMConfig(backend="openai", model="gpt-4o-mini")
+        resolver = GoalResolver(config)
+
+        # 无 KG → hand-coded: office → corridor
+        predicted = resolver._predict_adjacent_room_type("office")
+        self.assertEqual(predicted, "corridor")
+
+    def test_predict_adjacent_kg_empty_uses_hardcoded(self):
+        """KG 存在但该房间类型无邻接数据时, 回退到 hand-coded。"""
+        from semantic_planner.goal_resolver import GoalResolver
+        from semantic_planner.llm_client import LLMConfig
+
+        config = LLMConfig(backend="openai", model="gpt-4o-mini")
+        resolver = GoalResolver(config)
+
+        # KG 只有 corridor ↔ lab, 查询 bathroom 应回退到 hand-coded
+        kg = RoomObjectKG()
+        kg.observe_adjacency("corridor", "lab", "door")
+        resolver.set_room_object_kg(kg)
+
+        predicted = resolver._predict_adjacent_room_type("bathroom")
+        self.assertEqual(predicted, "corridor")  # hand-coded fallback
+
+
 class TestTopologicalMemoryPersistence(unittest.TestCase):
     """拓扑记忆持久化测试。"""
 

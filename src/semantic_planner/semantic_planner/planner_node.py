@@ -572,6 +572,7 @@ class SemanticPlannerNode(Node):
         self._execution_context = ""
         self._task_start_time = time.time()
         self._resolver.reset_exploration()
+        self._frontier_scorer.clear_failure_memory()
         self._sgnav_reasoner.reset()
         self._fsm_mission_state = "searching_1"
         self._fsm_search_state = "had_searching_1"
@@ -1052,6 +1053,14 @@ class SemanticPlannerNode(Node):
 
     def _subgoal_failed(self, reason: str = ""):
         """当前子目标失败, 尝试重试或放弃。"""
+        # P0: 记录探索失败位置 → frontier 失败记忆
+        if self._state == PlannerState.EXPLORING and self._current_goal:
+            fail_pos = np.array([
+                self._current_goal.target_x,
+                self._current_goal.target_y,
+            ])
+            self._frontier_scorer.record_frontier_failure(fail_pos)
+
         failed_subgoal: Optional[SubGoal] = None
         if self._current_plan:
             active = self._current_plan.active_subgoal
@@ -2053,14 +2062,9 @@ class SemanticPlannerNode(Node):
         if not frontiers:
             return None
 
-        scene_objects, scene_relations = extract_frontier_scene_data(self._latest_scene_graph)
-        # 提取房间列表, 供语义先验评分使用
-        scene_rooms = None
-        try:
-            _sg = json.loads(self._latest_scene_graph)
-            scene_rooms = _sg.get("rooms")
-        except (json.JSONDecodeError, TypeError):
-            pass
+        scene_objects, scene_relations, scene_rooms = extract_frontier_scene_data(
+            self._latest_scene_graph
+        )
         scored_frontiers = self._frontier_scorer.score_frontiers(
             instruction=self._current_instruction or "",
             robot_position=robot_xy,
@@ -2436,6 +2440,10 @@ class SemanticPlannerNode(Node):
         if os.path.exists(kg_path):
             self._runtime_kg.load(kg_path)
         self._runtime_kg.start_new_session()
+
+        # 注入 KG 到 GoalResolver 和 FrontierScorer (P1+P2: KG-backed exploration)
+        self._resolver.set_room_object_kg(self._runtime_kg)
+        self._frontier_scorer.set_room_object_kg(self._runtime_kg)
 
         # 加载房间-物体 KG → 更新 SemanticPriorEngine
         if os.path.exists(kg_path):
