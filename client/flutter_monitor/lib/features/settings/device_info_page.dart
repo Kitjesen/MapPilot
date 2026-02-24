@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/services/app_logger.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:robot_proto/src/data.pb.dart';
 
 /// Page that displays robot device information and manages systemd services.
@@ -26,11 +27,12 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
   }
 
   Future<void> _fetchDeviceInfo() async {
+    final locale = context.read<LocaleProvider>();
     final client = context.read<RobotConnectionProvider>().client;
     if (client == null) {
       setState(() {
         _loading = false;
-        _error = '未连接到机器人';
+        _error = locale.tr('未连接到机器人', 'Not connected to robot');
       });
       return;
     }
@@ -45,11 +47,12 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
       if (mounted) setState(() { _info = info; _loading = false; });
     } catch (e) {
       AppLogger.system.error('Failed to fetch device info: $e');
-      if (mounted) setState(() { _loading = false; _error = '获取设备信息失败: $e'; });
+      if (mounted) setState(() { _loading = false; _error = locale.tr('获取设备信息失败: $e', 'Failed to get device info: $e'); });
     }
   }
 
   Future<void> _manageService(String serviceName, ServiceAction action) async {
+    final locale = context.read<LocaleProvider>();
     final client = context.read<RobotConnectionProvider>().client;
     if (client == null) return;
 
@@ -61,9 +64,10 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
         action: action,
       );
       if (mounted) {
+        final actionStr = _actionLabel(action);
         final msg = resp.success
-            ? '${_actionLabel(action)} $serviceName 成功'
-            : '${_actionLabel(action)} $serviceName 失败: ${resp.message}';
+            ? locale.tr('$actionStr $serviceName 成功', '$actionStr $serviceName succeeded')
+            : locale.tr('$actionStr $serviceName 失败: ${resp.message}', '$actionStr $serviceName failed: ${resp.message}');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(msg),
@@ -78,7 +82,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('操作失败: $e'),
+            content: Text(locale.tr('操作失败: $e', 'Operation failed: $e')),
             behavior: SnackBarBehavior.floating,
             backgroundColor: AppColors.error,
           ),
@@ -88,11 +92,12 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
   }
 
   String _actionLabel(ServiceAction action) {
+    final locale = context.read<LocaleProvider>();
     switch (action) {
-      case ServiceAction.SERVICE_ACTION_START: return '启动';
-      case ServiceAction.SERVICE_ACTION_STOP: return '停止';
-      case ServiceAction.SERVICE_ACTION_RESTART: return '重启';
-      default: return '操作';
+      case ServiceAction.SERVICE_ACTION_START: return locale.tr('启动', 'Start');
+      case ServiceAction.SERVICE_ACTION_STOP: return locale.tr('停止', 'Stop');
+      case ServiceAction.SERVICE_ACTION_RESTART: return locale.tr('重启', 'Restart');
+      default: return locale.tr('操作', 'Action');
     }
   }
 
@@ -116,10 +121,11 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
+    final locale = context.watch<LocaleProvider>();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('设备信息'),
+        title: Text(locale.tr('设备信息', 'Device Info')),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, size: 20),
           onPressed: () => Navigator.pop(context),
@@ -147,7 +153,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
                       const SizedBox(height: 16),
                       TextButton(
                         onPressed: _fetchDeviceInfo,
-                        child: const Text('重试'),
+                        child: Text(locale.tr('重试', 'Retry')),
                       ),
                     ],
                   ),
@@ -223,6 +229,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
   }
 
   Widget _buildInfoSection(bool isDark) {
+    final locale = context.read<LocaleProvider>();
     final info = _info!;
     return Container(
       decoration: BoxDecoration(
@@ -232,16 +239,16 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
       ),
       child: Column(
         children: [
-          _buildInfoRow('硬件 ID', info.hwId.isNotEmpty ? info.hwId : 'N/A'),
+          _buildInfoRow(locale.tr('硬件 ID', 'Hardware ID'), info.hwId.isNotEmpty ? info.hwId : 'N/A'),
           Divider(height: 0.5, indent: 16, color: context.dividerColor),
-          _buildInfoRow('操作系统', info.osVersion.isNotEmpty ? info.osVersion : 'N/A'),
+          _buildInfoRow(locale.tr('操作系统', 'OS'), info.osVersion.isNotEmpty ? info.osVersion : 'N/A'),
           Divider(height: 0.5, indent: 16, color: context.dividerColor),
           _buildInfoRow('OTA Daemon', info.otaDaemonVersion.isNotEmpty ? info.otaDaemonVersion : 'N/A'),
           Divider(height: 0.5, indent: 16, color: context.dividerColor),
-          _buildInfoRow('运行时间', _formatUptime(info.uptimeSeconds.toInt())),
+          _buildInfoRow(locale.tr('运行时间', 'Uptime'), _formatUptime(info.uptimeSeconds.toInt())),
           if (info.batteryPercent >= 0) ...[
             Divider(height: 0.5, indent: 16, color: context.dividerColor),
-            _buildInfoRow('电池电量', '${info.batteryPercent}%'),
+            _buildInfoRow(locale.tr('电池电量', 'Battery'), '${info.batteryPercent}%'),
           ],
         ],
       ),
@@ -272,6 +279,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
   }
 
   Widget _buildDiskSection(bool isDark) {
+    final locale = context.read<LocaleProvider>();
     final info = _info!;
     final total = info.diskTotalBytes.toInt();
     final free = info.diskFreeBytes.toInt();
@@ -288,7 +296,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('磁盘空间',
+          Text(locale.tr('磁盘空间', 'Disk Space'),
               style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w600,
                   color: context.subtitleColor)),
@@ -299,7 +307,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
                       color: context.titleColor)),
               const Spacer(),
-              Text('${_formatBytes(free)} 可用',
+              Text(locale.tr('${_formatBytes(free)} 可用', '${_formatBytes(free)} free'),
                   style: TextStyle(fontSize: 12, color: context.subtitleColor)),
             ],
           ),
@@ -325,12 +333,13 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
   }
 
   Widget _buildServicesSection(bool isDark) {
+    final locale = context.read<LocaleProvider>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 8),
-          child: Text('系统服务',
+          child: Text(locale.tr('系统服务', 'Services'),
               style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w600,
                   color: context.subtitleColor)),
@@ -403,7 +412,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
                   const SizedBox(width: 12),
                   Icon(Icons.replay, size: 12, color: context.subtitleColor),
                   const SizedBox(width: 4),
-                  Text('重启 ${svc.restartCount} 次',
+                  Text(context.read<LocaleProvider>().tr('重启 ${svc.restartCount} 次', '${svc.restartCount} restarts'),
                       style: TextStyle(fontSize: 11, color: context.subtitleColor)),
                 ],
               ],
@@ -416,7 +425,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
               _buildServiceAction(
                 svc.name,
                 Icons.play_arrow,
-                '启动',
+                context.read<LocaleProvider>().tr('启动', 'Start'),
                 ServiceAction.SERVICE_ACTION_START,
                 enabled: svc.state.toLowerCase() != 'active',
               ),
@@ -424,7 +433,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
               _buildServiceAction(
                 svc.name,
                 Icons.stop,
-                '停止',
+                context.read<LocaleProvider>().tr('停止', 'Stop'),
                 ServiceAction.SERVICE_ACTION_STOP,
                 enabled: svc.state.toLowerCase() == 'active',
               ),
@@ -432,7 +441,7 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
               _buildServiceAction(
                 svc.name,
                 Icons.refresh,
-                '重启',
+                context.read<LocaleProvider>().tr('重启', 'Restart'),
                 ServiceAction.SERVICE_ACTION_RESTART,
               ),
             ],

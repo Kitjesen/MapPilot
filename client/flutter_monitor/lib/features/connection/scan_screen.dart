@@ -14,6 +14,7 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
 import 'package:flutter_monitor/features/connection/ble_control_screen.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 
 // ═══════════════════════════════════════════════════════════════
 //  Robot Connection Manager — Network / Bluetooth / Manual
@@ -115,12 +116,12 @@ class _ScanScreenState extends State<ScanScreen>
         Navigator.of(context).pushReplacementNamed('/robot-detail');
       } else {
         if (Navigator.canPop(context)) Navigator.pop(context);
-        setState(() { _errorMessage = provider.errorMessage ?? '无法连接到机器人'; _isConnecting = false; });
+        setState(() { _errorMessage = provider.errorMessage ?? (context.read<LocaleProvider>().tr('无法连接到机器人', 'Cannot connect to robot')); _isConnecting = false; });
       }
     } catch (e) {
       if (!mounted) return;
       if (Navigator.canPop(context)) Navigator.pop(context);
-      setState(() { _errorMessage = '连接错误: $e'; _isConnecting = false; });
+      setState(() { _errorMessage = '${context.read<LocaleProvider>().tr('连接错误', 'Connection error')}: $e'; _isConnecting = false; });
     }
   }
 
@@ -188,6 +189,7 @@ class _ScanScreenState extends State<ScanScreen>
   @override
   Widget build(BuildContext context) {
     final dark = context.isDark;
+    final locale = context.watch<LocaleProvider>();
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(gradient: context.bgGradient),

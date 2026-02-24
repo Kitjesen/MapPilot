@@ -17,6 +17,7 @@ import 'package:flutter_monitor/shared/widgets/glass_widgets.dart';
 import 'package:flutter_monitor/features/map/robot_model_widget.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 
 // ═══════════════════════════════════════════════════════════════
 //  Mission Planner — Map Screen
@@ -31,6 +32,14 @@ enum TaskMode {
 }
 
 extension TaskModeX on TaskMode {
+  String localizedName(LocaleProvider locale) => switch (this) {
+    TaskMode.navigation => locale.tr('导航', 'Navigation'),
+    TaskMode.mapping => locale.tr('建图', 'Mapping'),
+    TaskMode.patrol => locale.tr('巡检', 'Patrol'),
+    TaskMode.semanticNav => locale.tr('语义', 'Semantic'),
+    TaskMode.followPerson => locale.tr('跟随', 'Follow'),
+  };
+
   String get displayName => switch (this) {
     TaskMode.navigation => 'Navigation',
     TaskMode.mapping => 'Mapping',
@@ -116,8 +125,10 @@ class _MapScreenState extends State<MapScreen>
       _selectedMode != TaskMode.mapping &&
       _selectedMode != TaskMode.semanticNav &&
       _selectedMode != TaskMode.followPerson;
-  String get _goalPointLabel =>
-      _selectedMode == TaskMode.patrol ? '巡检目标点' : '导航目标点';
+  String _goalPointLabel(LocaleProvider locale) =>
+      _selectedMode == TaskMode.patrol
+          ? locale.tr('巡检目标点', 'Patrol target')
+          : locale.tr('导航目标点', 'Nav target');
 
   @override
   bool get wantKeepAlive => true;
@@ -289,10 +300,11 @@ class _MapScreenState extends State<MapScreen>
 
   Future<void> _startSelectedTask() async {
     final tg = context.read<TaskGateway>();
+    final locale = context.read<LocaleProvider>();
     if (tg.isRunning) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('已有任务执行中'),
+          content: Text(locale.tr('已有任务执行中', 'A task is already running')),
           backgroundColor: AppColors.warning,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -310,7 +322,7 @@ class _MapScreenState extends State<MapScreen>
         _semanticInstructionCtrl.text.trim().isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('请输入导航指令'),
+          content: Text(locale.tr('请输入导航指令', 'Please enter a navigation instruction')),
           backgroundColor: AppColors.warning,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -344,7 +356,7 @@ class _MapScreenState extends State<MapScreen>
           label: missionName,
           maxSpeed: _speedLimit,
         );
-        okMsg = '导航任务已启动';
+        okMsg = locale.tr('导航任务已启动', 'Navigation task started');
         break;
       case TaskMode.mapping:
         final mapName = missionName.isNotEmpty
@@ -357,7 +369,7 @@ class _MapScreenState extends State<MapScreen>
             ..mapName = mapName
             ..saveOnComplete = true,
         );
-        okMsg = '建图任务已启动';
+        okMsg = locale.tr('建图任务已启动', 'Mapping task started');
         break;
       case TaskMode.patrol:
         final patrolGoals = _waypoints
@@ -374,7 +386,7 @@ class _MapScreenState extends State<MapScreen>
         if (patrolGoals.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: const Text('请先添加至少一个巡检航点'),
+              content: Text(locale.tr('请先添加至少一个巡检航点', 'Please add at least one patrol waypoint')),
               backgroundColor: AppColors.warning,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -390,14 +402,14 @@ class _MapScreenState extends State<MapScreen>
             ..loop = true
             ..maxSpeed = _speedLimit,
         );
-        okMsg = '巡检任务已启动';
+        okMsg = locale.tr('巡检任务已启动', 'Patrol task started');
         break;
       case TaskMode.semanticNav:
         ok = await tg.startSemanticNav(
           _semanticInstructionCtrl.text,
           exploreIfUnknown: _exploreIfUnknown,
         );
-        okMsg = '语义导航任务已启动';
+        okMsg = locale.tr('语义导航任务已启动', 'Semantic nav task started');
         if (ok) _semanticInstructionCtrl.clear();
         break;
       case TaskMode.followPerson:
@@ -407,7 +419,7 @@ class _MapScreenState extends State<MapScreen>
               : _followPersonTargetCtrl.text.trim(),
           followDistance: _followPersonDistance,
         );
-        okMsg = '跟随任务已启动';
+        okMsg = locale.tr('跟随任务已启动', 'Follow task started');
         break;
     }
 

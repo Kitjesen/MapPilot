@@ -7,7 +7,8 @@
       "WebFetch(domain:paperswithcode.com)",
       "WebFetch(domain:eval.ai)",
       "WebFetch(domain:embodied-ai.org)",
-      "WebSearch"
+      "WebSearch",
+      "Skill(ralph-loop:cancel-ralph)"
     ]
   }
 }

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_monitor/app/theme.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
 import 'package:flutter_monitor/core/gateway/cloud_ota_client.dart';
@@ -16,17 +17,18 @@ class FirmwareOtaPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
+    final locale = context.watch<LocaleProvider>();
     final provider = context.watch<RobotConnectionProvider>();
     final ota = context.watch<OtaGateway>();
     final taskGw = context.watch<TaskGateway>();
     final isConnected = provider.isConnected;
     final slowState = provider.latestSlowState;
-    final currentVersion = slowState?.currentMode ?? '未知';
+    final currentVersion = slowState?.currentMode ?? locale.tr('未知', 'Unknown');
     final battery = slowState?.resources.batteryPercent ?? 0.0;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('固件升级'),
+        title: Text(locale.tr('固件升级', 'Firmware Update')),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, size: 18),
           onPressed: () => Navigator.pop(context),
@@ -46,11 +48,11 @@ class FirmwareOtaPage extends StatelessWidget {
           const SizedBox(height: 24),
 
           // ===== 状态提示 =====
-          if (!isConnected) const _Notice(text: '请先连接机器人', type: NoticeType.warning),
+          if (!isConnected) _Notice(text: locale.tr('请先连接机器人', 'Please connect robot first'), type: NoticeType.warning),
           if (isConnected && battery < 30)
-            const _Notice(text: '电量低于 30%，建议充电后再升级', type: NoticeType.error),
+            _Notice(text: locale.tr('电量低于 30%，建议充电后再升级', 'Battery below 30%, charge before upgrading'), type: NoticeType.error),
           if (taskGw.isRunning)
-            const _Notice(text: '当前有任务执行中，暂不可执行固件部署', type: NoticeType.warning),
+            _Notice(text: locale.tr('当前有任务执行中，暂不可执行固件部署', 'Task in progress, firmware deploy unavailable'), type: NoticeType.warning),
           if (ota.statusMessage != null && ota.activeDeployment == null)
             _Notice(
               text: ota.statusMessage!.contains('失败')
@@ -76,7 +78,7 @@ class FirmwareOtaPage extends StatelessWidget {
           // Upload progress now handled by deployment transaction above
 
           // ===== 本地固件 =====
-          _SectionTitle(title: '本地固件'),
+          _SectionTitle(title: locale.tr('本地固件', 'Local Firmware')),
           const SizedBox(height: 8),
           _LocalFirmwareSection(
             isDark: isDark,
@@ -88,7 +90,7 @@ class FirmwareOtaPage extends StatelessWidget {
           const SizedBox(height: 28),
 
           // ===== 云端更新 =====
-          _SectionTitle(title: '云端更新'),
+          _SectionTitle(title: locale.tr('云端更新', 'Cloud Update')),
           const SizedBox(height: 8),
           _CloudSection(
             isDark: isDark,
@@ -100,19 +102,19 @@ class FirmwareOtaPage extends StatelessWidget {
           const SizedBox(height: 28),
 
           // ===== 已安装版本 =====
-          _SectionTitle(title: '已安装版本'),
+          _SectionTitle(title: locale.tr('已安装版本', 'Installed Versions')),
           const SizedBox(height: 8),
           _InstalledVersionsSection(isDark: isDark, isConnected: isConnected, ota: ota),
           const SizedBox(height: 28),
 
           // ===== 升级历史 =====
-          _SectionTitle(title: '升级历史'),
+          _SectionTitle(title: locale.tr('升级历史', 'Upgrade History')),
           const SizedBox(height: 8),
           _HistorySection(isDark: isDark, isConnected: isConnected, ota: ota),
           const SizedBox(height: 28),
 
           // ===== 升级须知 =====
-          _SectionTitle(title: '升级须知'),
+          _SectionTitle(title: locale.tr('升级须知', 'Upgrade Notes')),
           const SizedBox(height: 8),
           _InfoSection(isDark: isDark),
 
@@ -142,6 +144,7 @@ class _DeviceStatusSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final locale = context.watch<LocaleProvider>();
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -155,7 +158,7 @@ class _DeviceStatusSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('当前固件',
+                Text(locale.tr('当前固件', 'Current Firmware'),
                     style: TextStyle(fontSize: 12, color: context.subtitleColor)),
                 const SizedBox(height: 4),
                 Text(currentVersion,
@@ -171,7 +174,7 @@ class _DeviceStatusSection extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               _StatusDot(
-                  label: isConnected ? '已连接' : '未连接',
+                  label: isConnected ? locale.tr('已连接', 'Connected') : locale.tr('未连接', 'Disconnected'),
                   color: isConnected ? AppColors.success : const Color(0xFF86868B)),
               const SizedBox(width: 16),
               _StatusDot(
@@ -216,7 +219,7 @@ class _LocalFirmwareSection extends StatelessWidget {
 
     final file = result.files.first;
     if (file.bytes == null && file.path == null) {
-      _showError(context, '无法读取文件');
+      _showError(context, context.read<LocaleProvider>().tr('无法读取文件', 'Cannot read file'));
       return;
     }
 

@@ -14,6 +14,7 @@ import 'package:flutter_monitor/features/status/health_status_page.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 
 class RobotDetailScreen extends StatefulWidget {
@@ -34,21 +35,22 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
   }
 
   Future<void> _handleDisconnect() async {
+    final locale = context.read<LocaleProvider>();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('断开连接'),
-        content: const Text('确定要断开与机器人的连接吗？'),
+        title: Text(locale.tr('断开连接', 'Disconnect')),
+        content: Text(locale.tr('确定要断开与机器人的连接吗？', 'Disconnect from the robot?')),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(locale.tr('取消', 'Cancel')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: AppColors.error),
-            child: const Text('断开'),
+            child: Text(locale.tr('断开', 'Disconnect')),
           ),
         ],
       ),
@@ -66,6 +68,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
+    final locale = context.watch<LocaleProvider>();
 
     return Scaffold(
       body: Consumer<RobotConnectionProvider>(
@@ -127,7 +130,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                           ),
                           const SizedBox(width: 5),
                           Text(
-                            isConnected ? '已连接' : '未连接',
+                            isConnected ? locale.tr('已连接', 'Connected') : locale.tr('未连接', 'Disconnected'),
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w500,
@@ -178,7 +181,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
                   child: Text(
-                    '功能模块',
+                    locale.tr('功能模块', 'Modules'),
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -231,10 +234,11 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
     final cameraOk = caps == null ||
         caps.supportedResources.any((r) => r.toLowerCase().contains('camera'));
 
+    final locale = context.read<LocaleProvider>();
     return [
       FeatureCard(
         icon: Icons.dashboard_outlined,
-        title: '状态监控',
+        title: locale.tr('状态监控', 'Status'),
         subtitle: _buildStatusSubtitle(slowState),
         onTap: () => _pushScreen(const StatusScreen()),
         trailing: _buildMiniMetrics(slowState),
@@ -243,12 +247,12 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
         enabled: teleopOk,
         child: FeatureCard(
           icon: Icons.gamepad_outlined,
-          title: '遥控操作',
+          title: locale.tr('遥控操作', 'Teleop'),
           subtitle: !teleopOk
-              ? '不支持'
+              ? locale.tr('不支持', 'Unsupported')
               : provider.hasLease
-                  ? '控制中'
-                  : '点击获取控制权',
+                  ? locale.tr('控制中', 'Controlling')
+                  : locale.tr('点击获取控制权', 'Tap to take control'),
           onTap: teleopOk ? () => _pushScreen(const ControlScreen()) : null,
           badge: provider.hasLease
               ? _buildBadge('LIVE', AppColors.success)
@@ -259,42 +263,42 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
         enabled: mappingOk,
         child: FeatureCard(
           icon: Icons.map_outlined,
-          title: '地图导航',
+          title: locale.tr('地图导航', 'Map & Nav'),
           subtitle: !mappingOk
-              ? '不支持'
+              ? locale.tr('不支持', 'Unsupported')
               : mapGw.maps.isNotEmpty
-                  ? '${mapGw.maps.length} 张地图'
+                  ? locale.tr('${mapGw.maps.length} 张地图', '${mapGw.maps.length} maps')
                   : _poseText(fastState),
           onTap: mappingOk ? () => _pushScreen(const MapScreen()) : null,
           badge: taskGw.isRunning
-              ? _buildBadge('任务中', AppColors.warning)
+              ? _buildBadge(locale.tr('任务中', 'Running'), AppColors.warning)
               : null,
         ),
       ),
       FeatureCard(
         icon: Icons.notifications_outlined,
-        title: '事件日志',
-        subtitle: '查看系统事件',
+        title: locale.tr('事件日志', 'Events'),
+        subtitle: locale.tr('查看系统事件', 'View system events'),
         onTap: () => _pushScreen(const EventsScreen()),
       ),
       FeatureCard(
         icon: Icons.health_and_safety_outlined,
-        title: '系统健康',
+        title: locale.tr('系统健康', 'Health'),
         subtitle: _buildHealthSubtitle(slowState),
         onTap: () => _pushScreen(const HealthStatusPage()),
       ),
       FeatureCard(
         icon: Icons.folder_outlined,
-        title: '文件管理',
-        subtitle: '模型/地图/固件',
+        title: locale.tr('文件管理', 'Files'),
+        subtitle: locale.tr('模型/地图/固件', 'Models / Maps / Firmware'),
         onTap: () => _pushScreen(const FileBrowserScreen()),
       ),
       _gatedCard(
         enabled: cameraOk,
         child: FeatureCard(
           icon: Icons.videocam_outlined,
-          title: '相机画面',
-          subtitle: cameraOk ? '实时视频流' : '不支持',
+          title: locale.tr('相机画面', 'Camera'),
+          subtitle: cameraOk ? locale.tr('实时视频流', 'Live video') : locale.tr('不支持', 'Unsupported'),
           onTap: cameraOk ? () => Navigator.pushNamed(context, '/camera') : null,
         ),
       ),
@@ -322,11 +326,12 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
   }
 
   Widget _buildStatusBanner(RobotConnectionProvider provider) {
+    final locale = context.read<LocaleProvider>();
     final isReconnecting = provider.status == ConnectionStatus.reconnecting;
     final color = isReconnecting ? AppColors.warning : AppColors.error;
     final text = isReconnecting
-        ? '正在重新连接...'
-        : provider.errorMessage ?? '连接错误';
+        ? locale.tr('正在重新连接...', 'Reconnecting...')
+        : provider.errorMessage ?? locale.tr('连接错误', 'Connection error');
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -369,6 +374,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
 
   Widget _buildQuickStats(dynamic slowState, dynamic fastState) {
     final isDark = context.isDark;
+    final locale = context.read<LocaleProvider>();
     final battery = slowState?.resources?.batteryPercent ?? 0.0;
     final cpu = slowState?.resources?.cpuPercent ?? 0.0;
     final temp = slowState?.resources?.cpuTemp ?? 0.0;
@@ -385,7 +391,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
         children: [
           Expanded(
             child: _buildRingStatItem(
-              '电量',
+              locale.tr('电量', 'Battery'),
               '${battery.toStringAsFixed(0)}%',
               battery / 100.0,
               _batteryColor(battery),
@@ -405,7 +411,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
           ),
           Expanded(
             child: _buildRingStatItem(
-              '温度',
+              locale.tr('温度', 'Temp'),
               '${temp.toStringAsFixed(0)}°C',
               (temp / 100.0).clamp(0.0, 1.0),
               _tempColor(temp),
@@ -472,6 +478,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
   }
 
   Widget _buildModeStatItem(String mode, bool isDark) {
+    final locale = context.read<LocaleProvider>();
     return Column(
       children: [
         Container(
@@ -496,7 +503,7 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
         ),
         const SizedBox(height: 1),
         Text(
-          '模式',
+          locale.tr('模式', 'Mode'),
           style: TextStyle(fontSize: 11, color: context.subtitleColor),
         ),
       ],
@@ -539,21 +546,24 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
   }
 
   String _buildStatusSubtitle(dynamic slowState) {
-    if (slowState == null) return '等待数据...';
+    final locale = context.read<LocaleProvider>();
+    if (slowState == null) return locale.tr('等待数据...', 'Waiting for data...');
     final cpu = slowState.resources?.cpuPercent ?? 0.0;
     final mem = slowState.resources?.memPercent ?? 0.0;
     return 'CPU ${cpu.toStringAsFixed(0)}% · MEM ${mem.toStringAsFixed(0)}%';
   }
 
   String _buildHealthSubtitle(dynamic slowState) {
-    if (slowState == null) return '等待数据...';
+    final locale = context.read<LocaleProvider>();
+    if (slowState == null) return locale.tr('等待数据...', 'Waiting for data...');
     final level = slowState.health?.overallLevel ?? '';
-    if (level.isEmpty) return '暂无健康数据';
+    if (level.isEmpty) return locale.tr('暂无健康数据', 'No health data');
     return level;
   }
 
   String _poseText(dynamic fastState) {
-    if (fastState == null) return '等待位姿数据...';
+    final locale = context.read<LocaleProvider>();
+    if (fastState == null) return locale.tr('等待位姿数据...', 'Waiting for pose...');
     final x = fastState.pose?.position?.x ?? 0.0;
     final y = fastState.pose?.position?.y ?? 0.0;
     return 'X: ${x.toStringAsFixed(1)} Y: ${y.toStringAsFixed(1)}';
