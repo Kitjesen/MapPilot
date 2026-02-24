@@ -12,8 +12,9 @@
   输出: /nav/terrain_map, /nav/terrain_map_ext, /nav/local_path,
         /nav/cmd_vel, /nav/stop, /nav/slow_down
 
-注意: terrain_analysis 和 local_planner 源码内部订阅 /cloud_registered,
+注意: terrain_analysis / terrain_analysis_ext / local_planner 源码内部订阅 /cloud_map,
       通过 remap 对接到 /nav/map_cloud (世界坐标系点云)。
+      sensor_scan_generation 订阅 /cloud_registered (机体坐标系), 与此不同。
 
 对应 systemd 服务: nav-autonomy.service
 """
@@ -70,11 +71,11 @@ def generate_launch_description():
         ],
         remappings=[
             # 源码内 /Odometry → 标准接口
-            ("/Odometry",          "/nav/odometry"),
-            # 源码内 /cloud_registered → 标准接口 (世界坐标系)
-            ("/cloud_registered",  "/nav/map_cloud"),
+            ("/Odometry",     "/nav/odometry"),
+            # 源码内 /cloud_map → 标准接口 (世界坐标系点云, odom frame)
+            ("/cloud_map",    "/nav/map_cloud"),
             # 输出: 标准接口
-            ("/terrain_map",       "/nav/terrain_map"),
+            ("/terrain_map",  "/nav/terrain_map"),
         ],
     )
 
@@ -106,10 +107,10 @@ def generate_launch_description():
             }
         ],
         remappings=[
-            ("/Odometry",          "/nav/odometry"),
-            ("/cloud_registered",  "/nav/map_cloud"),
-            ("/terrain_map",       "/nav/terrain_map"),
-            ("/terrain_map_ext",   "/nav/terrain_map_ext"),
+            ("/Odometry",        "/nav/odometry"),
+            ("/cloud_map",       "/nav/map_cloud"),
+            ("/terrain_map",     "/nav/terrain_map"),
+            ("/terrain_map_ext", "/nav/terrain_map_ext"),
         ],
     )
 
@@ -138,6 +139,7 @@ def generate_launch_description():
                 "costHeightThre1": 0.15,
                 "costHeightThre2": 0.1,
                 "useCost": False,
+                "slopeWeight": 0.0,      # 地形坡度惩罚权重 (0=关闭; 四足建议 3~6)
                 "slowPathNumThre": 5,
                 "slowGroupNumThre": 1,
                 "pointPerPathThre": 2,
@@ -169,15 +171,15 @@ def generate_launch_description():
             }
         ],
         remappings=[
-            ("/Odometry",          "/nav/odometry"),
-            ("/cloud_registered",  "/nav/map_cloud"),
-            ("/terrain_map",       "/nav/terrain_map"),
-            ("/terrain_map_ext",   "/nav/terrain_map_ext"),
-            ("/way_point",         "/nav/way_point"),
-            ("/speed",             "/nav/speed"),
-            ("/path",              "/nav/local_path"),
-            ("/stop",              "/nav/stop"),
-            ("/slow_down",         "/nav/slow_down"),
+            ("/Odometry",        "/nav/odometry"),
+            ("/cloud_map",       "/nav/map_cloud"),
+            ("/terrain_map",     "/nav/terrain_map"),
+            ("/terrain_map_ext", "/nav/terrain_map_ext"),
+            ("/way_point",       "/nav/way_point"),
+            ("/speed",           "/nav/speed"),
+            ("/path",            "/nav/local_path"),
+            ("/stop",            "/nav/stop"),
+            ("/slow_down",       "/nav/slow_down"),
         ],
     )
 

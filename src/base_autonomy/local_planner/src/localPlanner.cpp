@@ -95,6 +95,7 @@ public:
     declare_parameter<double>("goalBehindRange", goalBehindRange_);
     declare_parameter<double>("goalX", goalX_);
     declare_parameter<double>("goalY", goalY_);
+    declare_parameter<double>("slopeWeight", slopeWeight_);
 
     // --- Parameter Getting ---
     pathFolder_ = get_parameter("pathFolder").as_string();
@@ -142,6 +143,7 @@ public:
     goalBehindRange_ = get_parameter("goalBehindRange").as_double();
     goalX_ = get_parameter("goalX").as_double();
     goalY_ = get_parameter("goalY").as_double();
+    slopeWeight_ = get_parameter("slopeWeight").as_double();
 
     // --- Dynamic Parameter Callback ---
     param_cb_handle_ = add_on_set_parameters_callback(
@@ -179,6 +181,7 @@ public:
             else if (n == "goalBehindRange") goalBehindRange_ = p.as_double();
             else if (n == "freezeAng") freezeAng_ = p.as_double();
             else if (n == "freezeTime") freezeTime_ = p.as_double();
+            else if (n == "slopeWeight") slopeWeight_ = p.as_double();
             else {
               RCLCPP_WARN(get_logger(), "Unknown dynamic param: %s", n.c_str());
             }
@@ -298,6 +301,7 @@ private:
   double costHeightThre1_ = 0.15;
   double costHeightThre2_ = 0.1;
   bool useCost_ = false;
+  double slopeWeight_ = 0.0;  // 地形坡度惩罚权重 (0=关闭, 建议范围 2~8)
   int slowPathNumThre_ = 5;
   int slowGroupNumThre_ = 1;
   const int laserCloudStackNum_ = 1;
@@ -1076,8 +1080,13 @@ private:
             else rotDirW = fabs(fabs(rotDir - 27) + 1);
             float groupDirW = 4  - fabs(pathList_[i % pathNum_] - 3);
             float dw = std::fabs(dirWeight_ * dirDiff);  // 防御负参数导致 NaN
-            float score = (1 - std::sqrt(std::sqrt(dw))) * rotDirW * rotDirW * rotDirW * rotDirW;
-            if (relativeGoalDis < omniDirGoalThre_) score = (1 - std::sqrt(std::sqrt(dw))) * groupDirW * groupDirW;
+            // 地形坡度惩罚: pathPenaltyList_ 存储路径上最大地形高度代价 (intensity)
+            // slopeWeight_ > 0 时, 高代价路径评分下降, 规划器倾向选择平坦方向
+            float terrainFactor = (slopeWeight_ > 0.0)
+                ? std::max(0.0f, 1.0f - (float)slopeWeight_ * pathPenaltyList_[i])
+                : 1.0f;
+            float score = (1 - std::sqrt(std::sqrt(dw))) * rotDirW * rotDirW * rotDirW * rotDirW * terrainFactor;
+            if (relativeGoalDis < omniDirGoalThre_) score = (1 - std::sqrt(std::sqrt(dw))) * groupDirW * groupDirW * terrainFactor;
             if (score > 0) {
               clearPathPerGroupScore_[groupNum_ * rotDir + pathList_[i % pathNum_]] += score;
               clearPathPerGroupNum_[groupNum_ * rotDir + pathList_[i % pathNum_]]++;
