@@ -1002,6 +1002,7 @@ private:
         const float kDiameterScaleSq  = (diameter  / pathScale_) * (diameter  / pathScale_);
         const float kGoalClearScaleSq = ((relativeGoalDis + goalClearRange_) / pathScale_)
                                        * ((relativeGoalDis + goalClearRange_) / pathScale_);
+        const float kRelGoalScaledSq  = (relativeGoalDis / pathScale_) * (relativeGoalDis / pathScale_);
         const float kHalfLenScale = vehicleLength_ / pathScale_ / 2.0f;
         const float kHalfWidScale = vehicleWidth_  / pathScale_ / 2.0f;
 
@@ -1135,7 +1136,8 @@ private:
         nav_msgs::msg::Path path;
         if (selectedGroupID >= 0) {
           int rotDir = int(selectedGroupID / groupNum_);
-          float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+          // O1: RotLUT 消除路径输出段 2 次 trig（每规划周期一次）
+          const float rc = kRotLUT.c[rotDir], rs = kRotLUT.s[rotDir];
 
           selectedGroupID = selectedGroupID % groupNum_;
           int selectedPathLength = startPaths_[selectedGroupID]->points.size();
@@ -1144,11 +1146,12 @@ private:
             float x = startPaths_[selectedGroupID]->points[i].x;
             float y = startPaths_[selectedGroupID]->points[i].y;
             float z = startPaths_[selectedGroupID]->points[i].z;
-            float dis = sqrt(x * x + y * y);
+            // O3: 平方距离比较，消除 sqrt
+            float disSq = x * x + y * y;
 
-            if (dis <= pathRange / pathScale_ && dis <= relativeGoalDis / pathScale_) {
-              path.poses[i].pose.position.x = pathScale_ * (cos(rotAng) * x - sin(rotAng) * y);
-              path.poses[i].pose.position.y = pathScale_ * (sin(rotAng) * x + cos(rotAng) * y);
+            if (disSq <= kPathRangeScaleSq && disSq <= kRelGoalScaledSq) {
+              path.poses[i].pose.position.x = pathScale_ * (rc * x - rs * y);
+              path.poses[i].pose.position.y = pathScale_ * (rs * x + rc * y);
               path.poses[i].pose.position.z = pathScale_ * z;
             } else {
               path.poses.resize(i);
@@ -1164,21 +1167,20 @@ private:
           freePaths_->clear();
           for (int i = 0; i < 36 * pathNum_; i++) {
             int rotDir = int(i / pathNum_);
-            float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
-            float rotDeg = 10.0 * rotDir;
-            if (rotDeg > 180.0) rotDeg -= 360.0;
-            float angDiff = fabs(joyDir_ - (10.0 * rotDir - 180.0));
-            if (angDiff > 180.0) {
-              angDiff = 360.0 - angDiff;
-            }
-            if ((angDiff > dirThre_ && !dirToVehicle_) || (fabs(10.0 * rotDir - 180.0) > dirThre_ && fabs(joyDir_) <= 90.0 && dirToVehicle_) ||
-                ((10.0 * rotDir > dirThre_ && 360.0 - 10.0 * rotDir > dirThre_) && fabs(joyDir_) > 90.0 && dirToVehicle_) || 
-                !((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+            // O1+O2: RotLUT + angDiffList 复用，消除可视化循环内全部 trig 调用
+            float rotAngDeg = 10.0f * rotDir - 180.0f;  // 与 RotLUT 索引对应
+            float rotDeg = 10.0f * rotDir;
+            if (rotDeg > 180.0f) rotDeg -= 360.0f;
+            float angDiff = angDiffList[rotDir];
+            if ((angDiff > dirThre_ && !dirToVehicle_) || (fabs(rotAngDeg) > dirThre_ && fabs(joyDir_) <= 90.0 && dirToVehicle_) ||
+                ((10.0 * rotDir > dirThre_ && 360.0 - 10.0 * rotDir > dirThre_) && fabs(joyDir_) > 90.0 && dirToVehicle_) ||
+                !((rotAngDeg > minObsAngCW && rotAngDeg < minObsAngCCW) ||
                 (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive_) || !checkRotObstacle_)) {
               continue;
             }
 
             if (clearPathList_[i] < pointPerPathThre_) {
+              const float rc = kRotLUT.c[rotDir], rs = kRotLUT.s[rotDir];
               int freePathLength = paths_[i % pathNum_]->points.size();
               for (int j = 0; j < freePathLength; j++) {
                 pcl::PointXYZI point = paths_[i % pathNum_]->points[j];
@@ -1187,10 +1189,11 @@ private:
                 float y = point.y;
                 float z = point.z;
 
-                float dis = sqrt(x * x + y * y);
-                if (dis <= pathRange / pathScale_ && (dis <= (relativeGoalDis + goalClearRange_) / pathScale_ || !pathCropByGoal_)) {
-                  point.x = pathScale_ * (cos(rotAng) * x - sin(rotAng) * y);
-                  point.y = pathScale_ * (sin(rotAng) * x + cos(rotAng) * y);
+                // O3: 平方距离比较，消除可视化循环内 sqrt
+                float disSq = x * x + y * y;
+                if (disSq <= kPathRangeScaleSq && (disSq <= kGoalClearScaleSq || !pathCropByGoal_)) {
+                  point.x = pathScale_ * (rc * x - rs * y);
+                  point.y = pathScale_ * (rs * x + rc * y);
                   point.z = pathScale_ * z;
                   point.intensity = 1.0;
 
