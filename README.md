@@ -26,13 +26,21 @@
 - 地形分析，知道哪能走哪不能走
 - 障碍物检测，动态的静态的都行
 - 可穿越性评估，草地、碎石、坡度都考虑
+- YOLO-E 实例分割 + Mobile-CLIP 语义编码，15Hz on Jetson Orin NX
 
 **🧭 规划**
 - PCT 全局规划，基于地形代价
 - base_autonomy 局部规划，实时避障
+- SCG（空间连通图）拓扑路径规划，无需预建地图
+
+**🗣️ 语义导航**
+- 自然语言指令导航（"找到餐桌"）
+- Fast-Slow 双路径：关键词快速匹配（~0.17ms）+ LLM 慢路径推理（~2s）
+- ConceptGraphs 场景图，动态增量更新
+- Frontier 探索 + 知识图谱房间预测，未知环境零样本导航
 
 **📱 远程监控**
-- gRPC 服务端
+- gRPC 服务端（端口 50051）
 - Flutter App，手机上看状态、发指令
 
 ## 🔧 硬件要求
@@ -54,49 +62,59 @@ source /opt/ros/humble/setup.bash
 colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 
-# 建图模式
+# 模式一：建图（手柄遥控，实时建 SLAM 地图）
 ./mapping.sh
+./save_map.sh   # 跑一圈后保存地图
 
-# 跑一圈后保存地图
-./save_map.sh
-
-# 导航模式（加载已有地图）
+# 模式二：导航（加载已有地图，自主导航到目标点）
 ./planning.sh
+
+# 模式三：探索（无需预建地图，未知环境语义导航）
+ros2 launch launch/navigation_explore.launch.py
+ros2 launch launch/navigation_explore.launch.py target:="找到餐桌"
 ```
 
-建图的时候手动遥控机器人走一遍环境，系统会自动构建地图。导航模式下给个目标点就能自己走过去。
+建图时手动遥控走一遍，系统自动构建地图。导航模式给目标点自己走过去。探索模式直接说目标，机器人边建图边找。
 
 ## 📁 项目结构
 
 ```
 src/
-├── slam/              # SLAM 相关
-│   ├── fastlio2/      # Fast-LIO2 前端
-│   ├── pgo/           # 位姿图优化
-│   └── localizer/     # 重定位
-├── base_autonomy/     # 局部规划 + 地形分析
-├── global_planning/   # PCT 全局规划器
-├── remote_monitoring/ # gRPC 服务
-└── drivers/           # 底盘驱动
+├── slam/                  # SLAM 相关
+│   ├── fastlio2/          # Fast-LIO2 前端
+│   ├── pgo/               # 位姿图优化
+│   └── localizer/         # ICP 重定位
+├── base_autonomy/         # 局部规划 + 地形分析
+├── global_planning/       # PCT 全局规划器
+├── semantic_perception/   # 语义感知：YOLO-E + CLIP + 场景图
+├── semantic_planner/      # 语义规划：Fast-Slow + 探索策略 + LLM
+├── remote_monitoring/     # gRPC 服务（端口 50051）
+└── drivers/               # 底盘驱动
 
 client/
-└── flutter_monitor/   # 手机 App 📱
+└── flutter_monitor/       # 手机 App 📱
 
-config/                # 参数配置
-launch/                # 启动文件
+config/                    # 参数配置
+launch/                    # 启动文件（三种模式）
 ```
 
 ## 🏗️ 系统架构
 
 ```
-激光雷达 → SLAM → 地形分析 → 路径规划 → 底盘控制
-                                ↓
-              手机 App ← gRPC ← 状态上报
+激光雷达 → SLAM → 地形分析 → PCT 规划 → 底盘控制
+                ↓                  ↑
+          深度相机 → YOLO-E        SCG 拓扑规划（探索模式）
+                ↓
+          场景图（ConceptGraphs）
+                ↓
+        语义规划器（Fast-Slow）← 自然语言指令
+                ↓
+          手机 App ← gRPC ← 状态上报
 ```
 
 我们用双板架构：
-- **Nav Board** 🧠: 跑导航算法（SLAM、规划、感知）
-- **Dog Board** 🦿: 跑运动控制（强化学习策略、电机驱动）
+- **Nav Board** 🧠: 导航算法（SLAM、规划、感知、语义）
+- **Dog Board** 🦿: 运动控制（强化学习策略、电机驱动）
 
 两块板子通过以太网通信，Nav Board 发速度指令，Dog Board 执行。
 
