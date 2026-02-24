@@ -29,6 +29,10 @@ class _TaskPanelState extends State<TaskPanel> {
   final TextEditingController _semanticInstructionCtrl = TextEditingController();
   bool _semanticExplore = true;
 
+  // ─── Follow person state ───
+  final TextEditingController _followPersonTargetCtrl = TextEditingController();
+  double _followPersonDistance = 1.5;
+
   // ─── Backend waypoint state ───
   GetActiveWaypointsResponse? _activeWpResp;
   bool _wpLoading = false;
@@ -43,6 +47,7 @@ class _TaskPanelState extends State<TaskPanel> {
   void dispose() {
     _mapNameCtrl.dispose();
     _semanticInstructionCtrl.dispose();
+    _followPersonTargetCtrl.dispose();
     super.dispose();
   }
 
@@ -107,6 +112,16 @@ class _TaskPanelState extends State<TaskPanel> {
       final ok = await gw.startSemanticNav(
         instruction,
         exploreIfUnknown: _semanticExplore,
+      );
+      _showStatus(gw, ok);
+      return;
+    }
+
+    if (_selectedType == TaskType.TASK_TYPE_FOLLOW_PERSON) {
+      final target = _followPersonTargetCtrl.text.trim();
+      final ok = await gw.startFollowPerson(
+        target.isEmpty ? 'person' : target,
+        followDistance: _followPersonDistance,
       );
       _showStatus(gw, ok);
       return;
@@ -224,6 +239,8 @@ class _TaskPanelState extends State<TaskPanel> {
         const SizedBox(height: 24),
         if (_selectedType == TaskType.TASK_TYPE_SEMANTIC_NAV)
           _semanticNavSection()
+        else if (_selectedType == TaskType.TASK_TYPE_FOLLOW_PERSON)
+          _followPersonSection()
         else if (_selectedType == TaskType.TASK_TYPE_MAPPING)
           _mappingSection()
         else
@@ -245,6 +262,7 @@ class _TaskPanelState extends State<TaskPanel> {
       (TaskType.TASK_TYPE_RETURN_HOME, '回家'),
       (TaskType.TASK_TYPE_FOLLOW_PATH, '循迹'),
       (TaskType.TASK_TYPE_SEMANTIC_NAV, '语义'),
+      (TaskType.TASK_TYPE_FOLLOW_PERSON, '跟随'),
     ];
     return _card(
       child: Row(
@@ -357,6 +375,53 @@ class _TaskPanelState extends State<TaskPanel> {
             const SizedBox(width: 8),
             Text('未知目标自动探索', style: TextStyle(fontSize: 13, color: context.subtitleColor)),
           ],
+        ),
+      ],
+    );
+  }
+
+  // ── Follow person config ──
+
+  Widget _followPersonSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label('跟随目标描述'),
+        const SizedBox(height: 6),
+        _card(
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: TextField(
+              controller: _followPersonTargetCtrl,
+              decoration: InputDecoration(
+                hintText: '例: "穿红衣服的人" 或 "person"（留空默认跟随最近的人）',
+                hintStyle: TextStyle(color: context.subtitleColor.withValues(alpha: 0.5), fontSize: 12),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                suffixIcon: _followPersonTargetCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.clear, size: 18, color: context.subtitleColor),
+                        onPressed: () => setState(() => _followPersonTargetCtrl.clear()),
+                      )
+                    : null,
+              ),
+              style: TextStyle(fontSize: 14, color: context.titleColor),
+              maxLines: 1,
+              textInputAction: TextInputAction.done,
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _label('跟随距离: ${_followPersonDistance.toStringAsFixed(1)} m'),
+        const SizedBox(height: 4),
+        Slider(
+          value: _followPersonDistance,
+          min: 0.5,
+          max: 4.0,
+          divisions: 7,
+          label: '${_followPersonDistance.toStringAsFixed(1)} m',
+          onChanged: (v) => setState(() => _followPersonDistance = v),
         ),
       ],
     );

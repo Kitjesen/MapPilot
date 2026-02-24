@@ -40,6 +40,7 @@ abstract class RobotClientBase {
     MappingParams? mappingParams,
     FollowPathParams? followPathParams,
     SemanticNavParams? semanticNavParams,
+    FollowPersonParams? followPersonParams,
   });
 
   /// 取消任务

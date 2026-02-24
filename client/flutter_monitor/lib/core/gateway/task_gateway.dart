@@ -233,6 +233,18 @@ class TaskGateway extends ChangeNotifier {
     );
   }
 
+  /// 启动人物跟随任务。
+  Future<bool> startFollowPerson(
+    String targetLabel, {
+    double followDistance = 0,
+    double timeoutSec = 0,
+  }) async {
+    final params = FollowPersonParams()..targetLabel = targetLabel.trim();
+    if (followDistance > 0) params.followDistance = followDistance;
+    if (timeoutSec > 0) params.timeoutSec = timeoutSec;
+    return startTask(TaskType.TASK_TYPE_FOLLOW_PERSON, followPersonParams: params);
+  }
+
   /// 启动任务
   ///
   /// 内部自动完成前置条件:
@@ -244,6 +256,7 @@ class TaskGateway extends ChangeNotifier {
     MappingParams? mappingParams,
     FollowPathParams? followPathParams,
     SemanticNavParams? semanticNavParams,
+    FollowPersonParams? followPersonParams,
   }) async {
     final client = _client;
     if (client == null) {
@@ -283,6 +296,7 @@ class TaskGateway extends ChangeNotifier {
         mappingParams: mappingParams,
         followPathParams: followPathParams,
         semanticNavParams: semanticNavParams,
+        followPersonParams: followPersonParams,
       );
 
       if (resp.base.errorCode == ErrorCode.ERROR_CODE_OK) {
@@ -432,6 +446,8 @@ class TaskGateway extends ChangeNotifier {
         return '循迹';
       case TaskType.TASK_TYPE_SEMANTIC_NAV:
         return '语义导航';
+      case TaskType.TASK_TYPE_FOLLOW_PERSON:
+        return '跟随';
       default:
         return '';
     }

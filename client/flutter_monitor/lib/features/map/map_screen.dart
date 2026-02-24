@@ -27,6 +27,7 @@ enum TaskMode {
   mapping,
   patrol,
   semanticNav,
+  followPerson,
 }
 
 extension TaskModeX on TaskMode {
@@ -35,6 +36,7 @@ extension TaskModeX on TaskMode {
     TaskMode.mapping => 'Mapping',
     TaskMode.patrol => 'Patrol',
     TaskMode.semanticNav => 'Semantic',
+    TaskMode.followPerson => 'Follow',
   };
 
   TaskType get taskType => switch (this) {
@@ -42,6 +44,7 @@ extension TaskModeX on TaskMode {
     TaskMode.mapping => TaskType.TASK_TYPE_MAPPING,
     TaskMode.patrol => TaskType.TASK_TYPE_INSPECTION,
     TaskMode.semanticNav => TaskType.TASK_TYPE_SEMANTIC_NAV,
+    TaskMode.followPerson => TaskType.TASK_TYPE_FOLLOW_PERSON,
   };
 }
 
@@ -83,11 +86,16 @@ class _MapScreenState extends State<MapScreen>
   TaskMode _selectedMode = TaskMode.navigation;
   final _missionNameCtrl = TextEditingController();
   final _semanticInstructionCtrl = TextEditingController();
+  bool _exploreIfUnknown = true;
   double _speedLimit = 1.5;
   // TODO(protocol): Add priority to task proto (or task metadata) and pass through startTask.
   int _priority = 0; // 0=Normal, 1=High, 2=Critical
   // TODO(protocol): Add obstacleOverride to navigation/mapping params once proto supports it.
   bool _obstacleOverride = false;
+
+  // ─── Follow Person state ───
+  final _followPersonTargetCtrl = TextEditingController();
+  double _followPersonDistance = 1.5;
 
   // ─── Waypoints ───
   final List<_Waypoint> _waypoints = [];
@@ -105,7 +113,9 @@ class _MapScreenState extends State<MapScreen>
   double _geofenceMargin = 0;
 
   bool get _modeUsesGoalPoint =>
-      _selectedMode != TaskMode.mapping && _selectedMode != TaskMode.semanticNav;
+      _selectedMode != TaskMode.mapping &&
+      _selectedMode != TaskMode.semanticNav &&
+      _selectedMode != TaskMode.followPerson;
   String get _goalPointLabel =>
       _selectedMode == TaskMode.patrol ? '巡检目标点' : '导航目标点';
 
@@ -139,6 +149,7 @@ class _MapScreenState extends State<MapScreen>
     _transformController.dispose();
     _missionNameCtrl.dispose();
     _semanticInstructionCtrl.dispose();
+    _followPersonTargetCtrl.dispose();
     super.dispose();
   }
 
@@ -384,9 +395,19 @@ class _MapScreenState extends State<MapScreen>
       case TaskMode.semanticNav:
         ok = await tg.startSemanticNav(
           _semanticInstructionCtrl.text,
+          exploreIfUnknown: _exploreIfUnknown,
         );
         okMsg = '语义导航任务已启动';
         if (ok) _semanticInstructionCtrl.clear();
+        break;
+      case TaskMode.followPerson:
+        ok = await tg.startFollowPerson(
+          _followPersonTargetCtrl.text.trim().isEmpty
+              ? 'person'
+              : _followPersonTargetCtrl.text.trim(),
+          followDistance: _followPersonDistance,
+        );
+        okMsg = '跟随任务已启动';
         break;
     }
 
@@ -644,11 +665,45 @@ class _MapScreenState extends State<MapScreen>
             _paramLabel('语义导航指令'),
             const SizedBox(height: 6),
             _buildSemanticInstructionInput(context),
+            const SizedBox(height: 10),
+            Row(children: [
+              SizedBox(
+                width: 20, height: 20,
+                child: Checkbox(
+                  value: _exploreIfUnknown,
+                  onChanged: (v) => setState(() => _exploreIfUnknown = v ?? true),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text('未知目标自动探索',
+                style: TextStyle(fontSize: 12, color: context.subtitleColor, height: 1.3))),
+            ]),
             const SizedBox(height: 16),
           ],
 
+          // Follow Person params (visible only in followPerson mode)
+          if (_selectedMode == TaskMode.followPerson) ...[
+            _paramLabel('跟随目标描述'),
+            const SizedBox(height: 6),
+            _paramInput(_followPersonTargetCtrl, '例: "穿红衣服的人" 或 "person"'),
+            const SizedBox(height: 16),
+            _paramLabel('跟随距离 (${_followPersonDistance.toStringAsFixed(1)} m)'),
+            const SizedBox(height: 6),
+            Slider(
+              value: _followPersonDistance,
+              min: 0.5,
+              max: 4.0,
+              divisions: 7,
+              label: '${_followPersonDistance.toStringAsFixed(1)} m',
+              onChanged: (v) => setState(() => _followPersonDistance = v),
+            ),
+            const SizedBox(height: 8),
+          ],
+
           // Mission Name
-          if (_selectedMode != TaskMode.semanticNav) ...[
+          if (_selectedMode != TaskMode.semanticNav && _selectedMode != TaskMode.followPerson) ...[
             _paramLabel('Mission Name'),
             const SizedBox(height: 6),
             _paramInput(_missionNameCtrl, 'e.g. Warehouse Alpha'),
@@ -703,6 +758,7 @@ class _MapScreenState extends State<MapScreen>
       (TaskMode.mapping, Icons.map_rounded, Color(0xFFEA580C)),
       (TaskMode.patrol, Icons.shield_rounded, Color(0xFF0EA5E9)),
       (TaskMode.semanticNav, Icons.chat_rounded, Color(0xFF10B981)),
+      (TaskMode.followPerson, Icons.directions_walk_rounded, Color(0xFFF59E0B)),
     ];
     return Wrap(
       spacing: 10,
