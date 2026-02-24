@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
+import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:robot_proto/src/common.pb.dart';
 import 'package:robot_proto/src/control.pb.dart';
 
@@ -63,7 +64,7 @@ class _TaskPanelState extends State<TaskPanel> {
   Future<void> _clearWaypoints() async {
     final ok = await context.read<TaskGateway>().clearWaypoints();
     if (ok && mounted) {
-      _snack('航点已清除');
+      _snack(context.read<LocaleProvider>().tr('航点已清除', 'Waypoints cleared'));
       _fetchActiveWaypoints();
     }
   }
@@ -73,28 +74,37 @@ class _TaskPanelState extends State<TaskPanel> {
   Future<void> _start() async {
     HapticFeedback.lightImpact();
     final gw = context.read<TaskGateway>();
+    final locale = context.read<LocaleProvider>();
 
     // Pre-start: check for active waypoints from backend
     if (_selectedType != TaskType.TASK_TYPE_MAPPING) {
       final active = await gw.getActiveWaypoints();
       if (active != null && active.totalCount > 0 && mounted) {
         final sourceLabel = switch (active.source) {
-          WaypointSource.WAYPOINT_SOURCE_APP => 'App 任务',
-          WaypointSource.WAYPOINT_SOURCE_PLANNER => '全局规划器',
-          _ => '未知',
+          WaypointSource.WAYPOINT_SOURCE_APP => locale.tr('App 任务', 'App task'),
+          WaypointSource.WAYPOINT_SOURCE_PLANNER => locale.tr('全局规划器', 'Global planner'),
+          _ => locale.tr('未知', 'Unknown'),
         };
+        final progressPct = (active.progressPercent * 100).toStringAsFixed(0);
         final proceed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('存在活跃航点'),
+            title: Text(locale.tr('存在活跃航点', 'Active waypoints exist')),
             content: Text(
-              '当前有 ${active.totalCount} 个来自「$sourceLabel」的航点正在执行。\n'
-              '进度: ${(active.progressPercent * 100).toStringAsFixed(0)}%\n\n'
-              '是否清除当前航点并启动新任务？',
+              locale.tr(
+                '当前有 ${active.totalCount} 个来自「$sourceLabel」的航点正在执行。\n'
+                '进度: $progressPct%\n\n'
+                '是否清除当前航点并启动新任务？',
+                '${active.totalCount} waypoints from "$sourceLabel" are running.\n'
+                'Progress: $progressPct%\n\n'
+                'Clear current waypoints and start a new task?',
+              ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
-              FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('清除并继续')),
+              TextButton(onPressed: () => Navigator.of(ctx).pop(false),
+                child: Text(locale.tr('取消', 'Cancel'))),
+              FilledButton(onPressed: () => Navigator.of(ctx).pop(true),
+                child: Text(locale.tr('清除并继续', 'Clear & continue'))),
             ],
           ),
         );
@@ -106,7 +116,7 @@ class _TaskPanelState extends State<TaskPanel> {
     if (_selectedType == TaskType.TASK_TYPE_SEMANTIC_NAV) {
       final instruction = _semanticInstructionCtrl.text.trim();
       if (instruction.isEmpty) {
-        _snack('请输入指令', err: true);
+        _snack(locale.tr('请输入指令', 'Please enter an instruction'), err: true);
         return;
       }
       final ok = await gw.startSemanticNav(
@@ -144,7 +154,7 @@ class _TaskPanelState extends State<TaskPanel> {
         return;
       }
       if (_waypoints.isEmpty) {
-        _snack('请先添加航点', err: true);
+        _snack(locale.tr('请先添加航点', 'Please add waypoints first'), err: true);
         return;
       }
       final ok = await gw.startTask(
@@ -160,15 +170,17 @@ class _TaskPanelState extends State<TaskPanel> {
   Future<void> _pause() async {
     HapticFeedback.selectionClick();
     final gw = context.read<TaskGateway>();
+    final locale = context.read<LocaleProvider>();
     final ok = await gw.pauseTask();
-    if (!ok) _snack(gw.statusMessage ?? '暂停失败', err: true);
+    if (!ok) _snack(gw.statusMessage ?? locale.tr('暂停失败', 'Pause failed'), err: true);
   }
 
   Future<void> _resume() async {
     HapticFeedback.selectionClick();
     final gw = context.read<TaskGateway>();
+    final locale = context.read<LocaleProvider>();
     final ok = await gw.resumeTask();
-    if (!ok) _snack(gw.statusMessage ?? '恢复失败', err: true);
+    if (!ok) _snack(gw.statusMessage ?? locale.tr('恢复失败', 'Resume failed'), err: true);
   }
 
   Future<void> _cancel() async {
@@ -208,19 +220,20 @@ class _TaskPanelState extends State<TaskPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final locale = context.watch<LocaleProvider>();
     final gw = context.watch<TaskGateway>();
 
     return Scaffold(
       backgroundColor: context.isDark ? AppColors.darkBackground : AppColors.lightBackground,
       appBar: AppBar(
-        title: const Text('任务控制'),
+        title: Text(locale.tr('任务控制', 'Task Control')),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, size: 17),
           onPressed: () => Navigator.pop(context),
         ),
       ),
       body: SafeArea(
-        child: gw.isRunning ? _runningView(gw) : _setupView(),
+        child: gw.isRunning ? _runningView(gw, locale) : _setupView(locale),
       ),
     );
   }
@@ -229,24 +242,24 @@ class _TaskPanelState extends State<TaskPanel> {
   //  Setup View
   // ════════════════════════════════════════════
 
-  Widget _setupView() {
+  Widget _setupView(LocaleProvider locale) {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       children: [
-        _label('任务类型'),
+        _label(locale.tr('任务类型', 'Task type')),
         const SizedBox(height: 6),
-        _typeSelector(),
+        _typeSelector(locale),
         const SizedBox(height: 24),
         if (_selectedType == TaskType.TASK_TYPE_SEMANTIC_NAV)
-          _semanticNavSection()
+          _semanticNavSection(locale)
         else if (_selectedType == TaskType.TASK_TYPE_FOLLOW_PERSON)
-          _followPersonSection()
+          _followPersonSection(locale)
         else if (_selectedType == TaskType.TASK_TYPE_MAPPING)
-          _mappingSection()
+          _mappingSection(locale)
         else
-          _navSection(),
+          _navSection(locale),
         const SizedBox(height: 32),
-        _startBtn(),
+        _startBtn(locale),
         const SizedBox(height: 80),
       ],
     );
@@ -254,15 +267,15 @@ class _TaskPanelState extends State<TaskPanel> {
 
   Widget _label(String t) => Text(t, style: TextStyle(fontSize: 12, color: context.subtitleColor, fontWeight: FontWeight.w500));
 
-  Widget _typeSelector() {
-    const items = [
-      (TaskType.TASK_TYPE_NAVIGATION, '导航'),
-      (TaskType.TASK_TYPE_MAPPING, '建图'),
-      (TaskType.TASK_TYPE_INSPECTION, '巡检'),
-      (TaskType.TASK_TYPE_RETURN_HOME, '回家'),
-      (TaskType.TASK_TYPE_FOLLOW_PATH, '循迹'),
-      (TaskType.TASK_TYPE_SEMANTIC_NAV, '语义'),
-      (TaskType.TASK_TYPE_FOLLOW_PERSON, '跟随'),
+  Widget _typeSelector(LocaleProvider locale) {
+    final items = [
+      (TaskType.TASK_TYPE_NAVIGATION, locale.tr('导航', 'Nav')),
+      (TaskType.TASK_TYPE_MAPPING, locale.tr('建图', 'Map')),
+      (TaskType.TASK_TYPE_INSPECTION, locale.tr('巡检', 'Patrol')),
+      (TaskType.TASK_TYPE_RETURN_HOME, locale.tr('回家', 'Home')),
+      (TaskType.TASK_TYPE_FOLLOW_PATH, locale.tr('循迹', 'Follow')),
+      (TaskType.TASK_TYPE_SEMANTIC_NAV, locale.tr('语义', 'Semantic')),
+      (TaskType.TASK_TYPE_FOLLOW_PERSON, locale.tr('跟随', 'Track')),
     ];
     return _card(
       child: GridView.count(
@@ -301,11 +314,11 @@ class _TaskPanelState extends State<TaskPanel> {
     '找最近的椅子', '看看垃圾桶', '去电梯', '找楼梯',
   ];
 
-  Widget _semanticNavSection() {
+  Widget _semanticNavSection(LocaleProvider locale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('自然语言指令'),
+        _label(locale.tr('自然语言指令', 'Natural language instruction')),
         const SizedBox(height: 6),
         _card(
           child: Padding(
@@ -313,7 +326,7 @@ class _TaskPanelState extends State<TaskPanel> {
             child: TextField(
               controller: _semanticInstructionCtrl,
               decoration: InputDecoration(
-                hintText: '例: 看一下灭火器在哪',
+                hintText: locale.tr('例: 看一下灭火器在哪', 'e.g. Find the fire extinguisher'),
                 hintStyle: TextStyle(color: context.subtitleColor.withValues(alpha: 0.5)),
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -332,7 +345,7 @@ class _TaskPanelState extends State<TaskPanel> {
           ),
         ),
         const SizedBox(height: 12),
-        _label('快捷指令'),
+        _label(locale.tr('快捷指令', 'Quick commands')),
         const SizedBox(height: 6),
         Wrap(
           spacing: 8,
@@ -375,7 +388,7 @@ class _TaskPanelState extends State<TaskPanel> {
               ),
             ),
             const SizedBox(width: 8),
-            Text('未知目标自动探索', style: TextStyle(fontSize: 13, color: context.subtitleColor)),
+            Text(locale.tr('未知目标自动探索', 'Auto-explore unknown targets'), style: TextStyle(fontSize: 13, color: context.subtitleColor)),
           ],
         ),
       ],
@@ -384,11 +397,11 @@ class _TaskPanelState extends State<TaskPanel> {
 
   // ── Follow person config ──
 
-  Widget _followPersonSection() {
+  Widget _followPersonSection(LocaleProvider locale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('跟随目标描述'),
+        _label(locale.tr('跟随目标描述', 'Follow target description')),
         const SizedBox(height: 6),
         _card(
           child: Padding(
@@ -396,7 +409,8 @@ class _TaskPanelState extends State<TaskPanel> {
             child: TextField(
               controller: _followPersonTargetCtrl,
               decoration: InputDecoration(
-                hintText: '例: "穿红衣服的人" 或 "person"（留空默认跟随最近的人）',
+                hintText: locale.tr('例: "穿红衣服的人" 或 "person"（留空默认跟随最近的人）',
+                    'e.g. "person in red" or "person" (empty = follow nearest)'),
                 hintStyle: TextStyle(color: context.subtitleColor.withValues(alpha: 0.5), fontSize: 12),
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -415,7 +429,8 @@ class _TaskPanelState extends State<TaskPanel> {
           ),
         ),
         const SizedBox(height: 16),
-        _label('跟随距离: ${_followPersonDistance.toStringAsFixed(1)} m'),
+        _label(locale.tr('跟随距离: ${_followPersonDistance.toStringAsFixed(1)} m',
+            'Follow distance: ${_followPersonDistance.toStringAsFixed(1)} m')),
         const SizedBox(height: 4),
         Slider(
           value: _followPersonDistance,
@@ -431,18 +446,18 @@ class _TaskPanelState extends State<TaskPanel> {
 
   // ── Navigation config ──
 
-  Widget _navSection() {
+  Widget _navSection(LocaleProvider locale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('航点'),
+        _label(locale.tr('航点', 'Waypoints')),
         const SizedBox(height: 6),
         if (_waypoints.isEmpty)
           _card(
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Center(
-                child: Text('暂无航点', style: TextStyle(fontSize: 13, color: context.subtitleColor)),
+                child: Text(locale.tr('暂无航点', 'No waypoints'), style: TextStyle(fontSize: 13, color: context.subtitleColor)),
               ),
             ),
           )
@@ -460,9 +475,9 @@ class _TaskPanelState extends State<TaskPanel> {
         const SizedBox(height: 8),
         Row(
           children: [
-            _outlineBtn('添加航点', onTap: _addWaypoint),
+            _outlineBtn(locale.tr('添加航点', 'Add waypoint'), onTap: _addWaypoint),
             const SizedBox(width: 8),
-            _outlineBtn('从地图选择', onTap: () {
+            _outlineBtn(locale.tr('从地图选择', 'Select from map'), onTap: () {
               Navigator.of(context).pushNamed('/map-select-goal').then((r) {
                 if (r is NavigationGoal) setState(() => _waypoints.add(r));
               });
@@ -470,10 +485,13 @@ class _TaskPanelState extends State<TaskPanel> {
           ],
         ),
         const SizedBox(height: 20),
-        _label('选项'),
+        _label(locale.tr('选项', 'Options')),
         const SizedBox(height: 6),
         _card(
-          child: _switchRow('循环执行', '到达最后航点后返回起点重复', _loop, (v) => setState(() => _loop = v)),
+          child: _switchRow(
+            locale.tr('循环执行', 'Loop'),
+            locale.tr('到达最后航点后返回起点重复', 'Return to start and repeat after reaching last waypoint'),
+            _loop, (v) => setState(() => _loop = v)),
         ),
       ],
     );
@@ -492,7 +510,7 @@ class _TaskPanelState extends State<TaskPanel> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  wp.label.isNotEmpty ? wp.label : '航点 ${i + 1}',
+                  wp.label.isNotEmpty ? wp.label : context.read<LocaleProvider>().tr('航点 ${i + 1}', 'Waypoint ${i + 1}'),
                   style: TextStyle(fontSize: 14, color: context.titleColor),
                 ),
                 Text(
@@ -513,11 +531,11 @@ class _TaskPanelState extends State<TaskPanel> {
 
   // ── Mapping config ──
 
-  Widget _mappingSection() {
+  Widget _mappingSection(LocaleProvider locale) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('建图参数'),
+        _label(locale.tr('建图参数', 'Mapping parameters')),
         const SizedBox(height: 6),
         _card(
           child: Column(
@@ -526,7 +544,7 @@ class _TaskPanelState extends State<TaskPanel> {
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 child: Row(
                   children: [
-                    Text('地图名称', style: TextStyle(fontSize: 14, color: context.titleColor)),
+                    Text(locale.tr('地图名称', 'Map name'), style: TextStyle(fontSize: 14, color: context.titleColor)),
                     const SizedBox(width: 16),
                     Expanded(
                       child: TextField(
@@ -534,7 +552,7 @@ class _TaskPanelState extends State<TaskPanel> {
                         textAlign: TextAlign.end,
                         style: TextStyle(fontSize: 14, color: context.titleColor),
                         decoration: InputDecoration(
-                          hintText: '自动生成',
+                          hintText: locale.tr('自动生成', 'Auto-generated'),
                           hintStyle: TextStyle(fontSize: 14, color: context.subtitleColor.withValues(alpha: 0.5)),
                           border: InputBorder.none,
                           isDense: true,
@@ -546,7 +564,10 @@ class _TaskPanelState extends State<TaskPanel> {
                 ),
               ),
               Divider(height: 1, color: context.dividerColor),
-              _switchRow('完成后自动保存', '停止建图时保存地图文件', _saveOnComplete, (v) => setState(() => _saveOnComplete = v)),
+              _switchRow(
+                locale.tr('完成后自动保存', 'Auto-save on complete'),
+                locale.tr('停止建图时保存地图文件', 'Save map file when mapping stops'),
+                _saveOnComplete, (v) => setState(() => _saveOnComplete = v)),
             ],
           ),
         ),
@@ -554,7 +575,10 @@ class _TaskPanelState extends State<TaskPanel> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2),
           child: Text(
-            '建图模式将启动 SLAM，遥控机器人移动来构建环境地图。',
+            locale.tr(
+              '建图模式将启动 SLAM，遥控机器人移动来构建环境地图。',
+              'Mapping mode starts SLAM. Drive the robot around to build an environment map.',
+            ),
             style: TextStyle(fontSize: 12, color: context.subtitleColor),
           ),
         ),
@@ -562,8 +586,10 @@ class _TaskPanelState extends State<TaskPanel> {
     );
   }
 
-  Widget _startBtn() {
-    final label = _selectedType == TaskType.TASK_TYPE_MAPPING ? '启动建图' : '启动任务';
+  Widget _startBtn(LocaleProvider locale) {
+    final label = _selectedType == TaskType.TASK_TYPE_MAPPING
+        ? locale.tr('启动建图', 'Start mapping')
+        : locale.tr('启动任务', 'Start task');
     return SizedBox(
       width: double.infinity,
       height: 44,
@@ -586,20 +612,20 @@ class _TaskPanelState extends State<TaskPanel> {
   //  Running View
   // ════════════════════════════════════════════
 
-  Widget _runningView(TaskGateway gw) {
+  Widget _runningView(TaskGateway gw, LocaleProvider locale) {
     // Auto-fetch backend waypoints on first build
     if (_activeWpResp == null && !_wpLoading) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _fetchActiveWaypoints());
     }
 
     final name = switch (_selectedType) {
-      TaskType.TASK_TYPE_NAVIGATION => '导航',
-      TaskType.TASK_TYPE_MAPPING => '建图',
-      TaskType.TASK_TYPE_INSPECTION => '巡检',
-      TaskType.TASK_TYPE_RETURN_HOME => '回家',
-      TaskType.TASK_TYPE_FOLLOW_PATH => '循迹',
-      TaskType.TASK_TYPE_SEMANTIC_NAV => '语义导航',
-      _ => '任务',
+      TaskType.TASK_TYPE_NAVIGATION => locale.tr('导航', 'Navigation'),
+      TaskType.TASK_TYPE_MAPPING => locale.tr('建图', 'Mapping'),
+      TaskType.TASK_TYPE_INSPECTION => locale.tr('巡检', 'Patrol'),
+      TaskType.TASK_TYPE_RETURN_HOME => locale.tr('回家', 'Return home'),
+      TaskType.TASK_TYPE_FOLLOW_PATH => locale.tr('循迹', 'Follow path'),
+      TaskType.TASK_TYPE_SEMANTIC_NAV => locale.tr('语义导航', 'Semantic nav'),
+      _ => locale.tr('任务', 'Task'),
     };
 
     return Padding(
@@ -609,7 +635,9 @@ class _TaskPanelState extends State<TaskPanel> {
           const Spacer(flex: 2),
           // Status
           Text(
-            gw.isPaused ? '$name 已暂停' : '$name 执行中',
+            gw.isPaused
+                ? locale.tr('$name 已暂停', '$name paused')
+                : locale.tr('$name 执行中', '$name running'),
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: context.titleColor),
           ),
           const SizedBox(height: 4),
@@ -628,7 +656,7 @@ class _TaskPanelState extends State<TaskPanel> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('进度', style: TextStyle(fontSize: 13, color: context.subtitleColor)),
+                      Text(locale.tr('进度', 'Progress'), style: TextStyle(fontSize: 13, color: context.subtitleColor)),
                       Text('${(gw.progress * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.titleColor)),
                     ],
                   ),
@@ -655,7 +683,7 @@ class _TaskPanelState extends State<TaskPanel> {
             children: [
               Expanded(
                 child: _outlineBtn(
-                  gw.isPaused ? '恢复' : '暂停',
+                  gw.isPaused ? locale.tr('恢复', 'Resume') : locale.tr('暂停', 'Pause'),
                   onTap: gw.isPaused ? _resume : _pause,
                 ),
               ),
@@ -672,7 +700,7 @@ class _TaskPanelState extends State<TaskPanel> {
                         side: BorderSide(color: AppColors.error.withValues(alpha: 0.3)),
                       ),
                     ),
-                    child: const Text('取消', style: TextStyle(fontSize: 14)),
+                    child: Text(locale.tr('取消', 'Cancel'), style: const TextStyle(fontSize: 14)),
                   ),
                 ),
               ),
@@ -685,6 +713,7 @@ class _TaskPanelState extends State<TaskPanel> {
   }
 
   Widget _backendWaypointCard() {
+    final locale = context.read<LocaleProvider>();
     final resp = _activeWpResp;
     if (_wpLoading) {
       return _card(
@@ -699,8 +728,8 @@ class _TaskPanelState extends State<TaskPanel> {
     }
     final sourceLabel = switch (resp.source) {
       WaypointSource.WAYPOINT_SOURCE_APP => 'App',
-      WaypointSource.WAYPOINT_SOURCE_PLANNER => '规划器',
-      _ => '未知',
+      WaypointSource.WAYPOINT_SOURCE_PLANNER => locale.tr('规划器', 'Planner'),
+      _ => locale.tr('未知', 'Unknown'),
     };
     return _card(
       child: Padding(
@@ -711,7 +740,7 @@ class _TaskPanelState extends State<TaskPanel> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('航点 ($sourceLabel)', style: TextStyle(fontSize: 13, color: context.subtitleColor)),
+                Text(locale.tr('航点 ($sourceLabel)', 'Waypoints ($sourceLabel)'), style: TextStyle(fontSize: 13, color: context.subtitleColor)),
                 Text('${resp.currentIndex + 1} / ${resp.totalCount}',
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: context.titleColor)),
               ],
@@ -720,7 +749,7 @@ class _TaskPanelState extends State<TaskPanel> {
             Row(
               children: [
                 Expanded(
-                  child: _outlineBtn('刷新', onTap: _fetchActiveWaypoints),
+                  child: _outlineBtn(locale.tr('刷新', 'Refresh'), onTap: _fetchActiveWaypoints),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -735,7 +764,7 @@ class _TaskPanelState extends State<TaskPanel> {
                           side: BorderSide(color: AppColors.error.withValues(alpha: 0.3)),
                         ),
                       ),
-                      child: const Text('清除航点', style: TextStyle(fontSize: 12)),
+                      child: Text(locale.tr('清除航点', 'Clear waypoints'), style: const TextStyle(fontSize: 12)),
                     ),
                   ),
                 ),
@@ -854,9 +883,9 @@ class _WaypointSheetState extends State<_WaypointSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('添加航点', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: context.titleColor)),
+          Text(context.read<LocaleProvider>().tr('添加航点', 'Add waypoint'), style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: context.titleColor)),
           const SizedBox(height: 16),
-          _field('标签', _lbl, '可选'),
+          _field(context.read<LocaleProvider>().tr('标签', 'Label'), _lbl, context.read<LocaleProvider>().tr('可选', 'Optional')),
           const SizedBox(height: 10),
           Row(children: [
             Expanded(child: _field('X', _x, '0.0', num: true)),
@@ -869,7 +898,7 @@ class _WaypointSheetState extends State<_WaypointSheet> {
           Row(children: [
             Expanded(child: _field('Yaw (rad)', _yaw, '0.0', num: true)),
             const SizedBox(width: 8),
-            Expanded(child: _field('半径 (m)', _rad, '1.0', num: true)),
+            Expanded(child: _field(context.read<LocaleProvider>().tr('半径 (m)', 'Radius (m)'), _rad, '1.0', num: true)),
           ]),
           const SizedBox(height: 18),
           SizedBox(
@@ -882,7 +911,7 @@ class _WaypointSheetState extends State<_WaypointSheet> {
                 backgroundColor: isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.04),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: context.borderColor)),
               ),
-              child: const Text('确定', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              child: Text(context.read<LocaleProvider>().tr('确定', 'OK'), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
             ),
           ),
         ],

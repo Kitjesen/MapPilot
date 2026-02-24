@@ -423,7 +423,7 @@ class _MapScreenState extends State<MapScreen>
         break;
     }
 
-    final msg = ok ? okMsg : (tg.statusMessage ?? '启动失败');
+    final msg = ok ? okMsg : (tg.statusMessage ?? locale.tr('启动失败', 'Failed to start'));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(ok ? msg : UiErrorMapper.fromMessage(msg)),
@@ -478,29 +478,35 @@ class _MapScreenState extends State<MapScreen>
 
   // ─── Active waypoint check dialog ───
   Future<bool> _showActiveWaypointDialog(GetActiveWaypointsResponse active) async {
+    final locale = context.read<LocaleProvider>();
     final sourceLabel = switch (active.source) {
-      WaypointSource.WAYPOINT_SOURCE_APP => 'App 任务',
-      WaypointSource.WAYPOINT_SOURCE_PLANNER => '全局规划器',
-      WaypointSource.WAYPOINT_SOURCE_SEMANTIC => '语义导航',
-      _ => '未知',
+      WaypointSource.WAYPOINT_SOURCE_APP => locale.tr('App 任务', 'App task'),
+      WaypointSource.WAYPOINT_SOURCE_PLANNER => locale.tr('全局规划器', 'Global planner'),
+      _ => locale.tr('未知', 'Unknown'),
     };
+    final progressPct = (active.progressPercent * 100).toStringAsFixed(0);
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('存在活跃航点'),
+        title: Text(locale.tr('存在活跃航点', 'Active waypoints exist')),
         content: Text(
-          '当前有 ${active.totalCount} 个来自「$sourceLabel」的航点正在执行。\n'
-          '进度: ${(active.progressPercent * 100).toStringAsFixed(0)}%\n\n'
-          '是否清除当前航点并启动新任务？',
+          locale.tr(
+            '当前有 ${active.totalCount} 个来自「$sourceLabel」的航点正在执行。\n'
+            '进度: $progressPct%\n\n'
+            '是否清除当前航点并启动新任务？',
+            '${active.totalCount} waypoints from "$sourceLabel" are running.\n'
+            'Progress: $progressPct%\n\n'
+            'Clear current waypoints and start a new task?',
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
+            child: Text(locale.tr('取消', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('清除并继续'),
+            child: Text(locale.tr('清除并继续', 'Clear & continue')),
           ),
         ],
       ),
@@ -510,11 +516,14 @@ class _MapScreenState extends State<MapScreen>
 
   Future<void> _saveMap() async {
     HapticFeedback.mediumImpact();
+    final locale = context.read<LocaleProvider>();
     final name = 'map_${DateTime.now().millisecondsSinceEpoch}';
     final (ok, msg) = await context.read<MapGateway>().saveMap('/maps/$name.pcd');
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ok ? '地图已保存: $name.pcd' : UiErrorMapper.fromMessage(msg)),
+        content: Text(ok
+            ? locale.tr('地图已保存: $name.pcd', 'Map saved: $name.pcd')
+            : UiErrorMapper.fromMessage(msg)),
         backgroundColor: ok ? AppColors.success : AppColors.error,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -528,6 +537,7 @@ class _MapScreenState extends State<MapScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final locale = context.watch<LocaleProvider>();
     final isDesktop = !context.isMobile;
     final online = context.select<RobotConnectionProvider, bool>((p) => p.isConnected);
 
@@ -541,21 +551,21 @@ class _MapScreenState extends State<MapScreen>
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: isDesktop
-          ? _buildDesktopLayout(context, online)
-          : _buildMobileLayout(context, online),
+          ? _buildDesktopLayout(context, online, locale)
+          : _buildMobileLayout(context, online, locale),
     );
   }
 
   // ═══════════════════════════════════════════════════════════
   //  DESKTOP — Mission Planner split layout
   // ═══════════════════════════════════════════════════════════
-  Widget _buildDesktopLayout(BuildContext context, bool online) {
+  Widget _buildDesktopLayout(BuildContext context, bool online, LocaleProvider locale) {
     return Row(
       children: [
         // ── Left Panel ──
         SizedBox(
           width: 280,
-          child: _buildLeftPanel(context, online),
+          child: _buildLeftPanel(context, online, locale),
         ),
 
         // ── Map + Waypoint area ──
@@ -563,7 +573,7 @@ class _MapScreenState extends State<MapScreen>
           child: Column(
             children: [
               // Map toolbar
-              _buildMapToolbar(context, online),
+              _buildMapToolbar(context, online, locale),
               // Map view + task status overlay
               Expanded(child: Stack(children: [
                 Positioned.fill(child: _buildMapArea(context)),
@@ -581,7 +591,7 @@ class _MapScreenState extends State<MapScreen>
   // ═══════════════════════════════════════════════════════════
   //  MOBILE — Full screen map with overlays
   // ═══════════════════════════════════════════════════════════
-  Widget _buildMobileLayout(BuildContext context, bool online) {
+  Widget _buildMobileLayout(BuildContext context, bool online, LocaleProvider locale) {
     return Stack(
       children: [
         Positioned.fill(child: _buildMapArea(context)),
@@ -623,7 +633,7 @@ class _MapScreenState extends State<MapScreen>
   // ═══════════════════════════════════════════════════════════
   //  LEFT PANEL — Task Modes + Parameters
   // ═══════════════════════════════════════════════════════════
-  Widget _buildLeftPanel(BuildContext context, bool online) {
+  Widget _buildLeftPanel(BuildContext context, bool online, LocaleProvider locale) {
     final dark = context.isDark;
     return Container(
       decoration: BoxDecoration(
@@ -636,12 +646,12 @@ class _MapScreenState extends State<MapScreen>
         padding: const EdgeInsets.all(20),
         children: [
           // ── TASK MODE ──
-          Text('TASK MODE', style: TextStyle(
+          Text(locale.tr('任务模式', 'TASK MODE'), style: TextStyle(
             fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2,
             color: context.subtitleColor,
           )),
           const SizedBox(height: 14),
-          _buildTaskModeGrid(context),
+          _buildTaskModeGrid(context, locale),
 
           const SizedBox(height: 24),
           Divider(color: context.borderColor.withValues(alpha: 0.5)),
@@ -650,7 +660,7 @@ class _MapScreenState extends State<MapScreen>
           // ── PARAMETERS ──
           Row(
             children: [
-              Text('PARAMETERS', style: TextStyle(
+              Text(locale.tr('参数设置', 'PARAMETERS'), style: TextStyle(
                 fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2,
                 color: context.subtitleColor,
               )),
@@ -665,7 +675,7 @@ class _MapScreenState extends State<MapScreen>
                     _obstacleOverride = false;
                   });
                 },
-                child: Text('Reset\nDefaults', textAlign: TextAlign.center,
+                child: Text(locale.tr('恢复\n默认', 'Reset\nDefaults'), textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: AppColors.primary, height: 1.2)),
               ),
             ],
@@ -674,9 +684,9 @@ class _MapScreenState extends State<MapScreen>
 
           // Semantic Navigation Instruction (visible only in semanticNav mode)
           if (_selectedMode == TaskMode.semanticNav) ...[
-            _paramLabel('语义导航指令'),
+            _paramLabel(locale.tr('语义导航指令', 'Semantic instruction')),
             const SizedBox(height: 6),
-            _buildSemanticInstructionInput(context),
+            _buildSemanticInstructionInput(context, locale),
             const SizedBox(height: 10),
             Row(children: [
               SizedBox(
@@ -689,7 +699,7 @@ class _MapScreenState extends State<MapScreen>
                 ),
               ),
               const SizedBox(width: 10),
-              Expanded(child: Text('未知目标自动探索',
+              Expanded(child: Text(locale.tr('未知目标自动探索', 'Auto-explore unknown targets'),
                 style: TextStyle(fontSize: 12, color: context.subtitleColor, height: 1.3))),
             ]),
             const SizedBox(height: 16),
@@ -697,11 +707,11 @@ class _MapScreenState extends State<MapScreen>
 
           // Follow Person params (visible only in followPerson mode)
           if (_selectedMode == TaskMode.followPerson) ...[
-            _paramLabel('跟随目标描述'),
+            _paramLabel(locale.tr('跟随目标描述', 'Follow target description')),
             const SizedBox(height: 6),
-            _paramInput(_followPersonTargetCtrl, '例: "穿红衣服的人" 或 "person"'),
+            _paramInput(_followPersonTargetCtrl, locale.tr('例: "穿红衣服的人" 或 "person"', 'e.g. "person in red" or "person"')),
             const SizedBox(height: 16),
-            _paramLabel('跟随距离 (${_followPersonDistance.toStringAsFixed(1)} m)'),
+            _paramLabel(locale.tr('跟随距离 (${_followPersonDistance.toStringAsFixed(1)} m)', 'Follow distance (${_followPersonDistance.toStringAsFixed(1)} m)')),
             const SizedBox(height: 6),
             Slider(
               value: _followPersonDistance,
@@ -716,14 +726,14 @@ class _MapScreenState extends State<MapScreen>
 
           // Mission Name
           if (_selectedMode != TaskMode.semanticNav && _selectedMode != TaskMode.followPerson) ...[
-            _paramLabel('Mission Name'),
+            _paramLabel(locale.tr('任务名称', 'Mission Name')),
             const SizedBox(height: 6),
-            _paramInput(_missionNameCtrl, 'e.g. Warehouse Alpha'),
+            _paramInput(_missionNameCtrl, locale.tr('例: 仓库A区', 'e.g. Warehouse Alpha')),
             const SizedBox(height: 16),
           ],
 
           // Robot Selection
-          _paramLabel('Robot Selection'),
+          _paramLabel(locale.tr('机器人选择', 'Robot Selection')),
           const SizedBox(height: 6),
           _buildRobotDropdown(context),
           const SizedBox(height: 16),
@@ -731,15 +741,15 @@ class _MapScreenState extends State<MapScreen>
           // Speed + Priority row
           Row(children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              _paramLabel('Speed Limit'),
+              _paramLabel(locale.tr('速度限制', 'Speed Limit')),
               const SizedBox(height: 6),
               _buildSpeedField(context),
             ])),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              _paramLabel('Priority'),
+              _paramLabel(locale.tr('优先级', 'Priority')),
               const SizedBox(height: 6),
-              _buildPriorityDropdown(context),
+              _buildPriorityDropdown(context, locale),
             ])),
           ]),
           const SizedBox(height: 16),
@@ -756,7 +766,7 @@ class _MapScreenState extends State<MapScreen>
               ),
             ),
             const SizedBox(width: 10),
-            Expanded(child: Text('Enable obstacle\navoidance override',
+            Expanded(child: Text(locale.tr('启用避障覆盖', 'Enable obstacle\navoidance override'),
               style: TextStyle(fontSize: 12, color: context.subtitleColor, height: 1.3))),
           ]),
         ],
@@ -764,7 +774,7 @@ class _MapScreenState extends State<MapScreen>
     );
   }
 
-  Widget _buildTaskModeGrid(BuildContext context) {
+  Widget _buildTaskModeGrid(BuildContext context, LocaleProvider locale) {
     const modes = [
       (TaskMode.navigation, Icons.navigation_rounded, Color(0xFF6366F1)),
       (TaskMode.mapping, Icons.map_rounded, Color(0xFFEA580C)),
@@ -779,7 +789,7 @@ class _MapScreenState extends State<MapScreen>
         for (final mode in modes)
           _TaskModeButton(
             icon: mode.$2,
-            label: mode.$1.displayName,
+            label: mode.$1.localizedName(locale),
             color: mode.$3,
             isSelected: _selectedMode == mode.$1,
             onTap: () => setState(() {
@@ -820,7 +830,7 @@ class _MapScreenState extends State<MapScreen>
     );
   }
 
-  Widget _buildSemanticInstructionInput(BuildContext context) {
+  Widget _buildSemanticInstructionInput(BuildContext context, LocaleProvider locale) {
     final dark = context.isDark;
     return Container(
       decoration: BoxDecoration(
@@ -839,7 +849,10 @@ class _MapScreenState extends State<MapScreen>
             minLines: 2,
             style: TextStyle(fontSize: 13, color: context.titleColor),
             decoration: InputDecoration(
-              hintText: '输入自然语言指令...\n例: "去红色灭火器旁边" 或 "go to the door"',
+              hintText: locale.tr(
+                '输入自然语言指令...\n例: "去红色灭火器旁边" 或 "go to the door"',
+                'Enter natural language instruction...\ne.g. "go to the red extinguisher" or "find the door"',
+              ),
               hintStyle: TextStyle(color: context.hintColor, fontSize: 12),
               contentPadding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
               border: InputBorder.none,
@@ -849,7 +862,7 @@ class _MapScreenState extends State<MapScreen>
                 onPressed: () {
                   // TODO: Voice input (future)
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: const Text('语音输入即将支持'),
+                    content: Text(locale.tr('语音输入即将支持', 'Voice input coming soon')),
                     behavior: SnackBarBehavior.floating,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
@@ -865,7 +878,7 @@ class _MapScreenState extends State<MapScreen>
                 Icon(Icons.auto_awesome, size: 14,
                     color: const Color(0xFF10B981)),
                 const SizedBox(width: 6),
-                Text('AI 语义理解',
+                Text(locale.tr('AI 语义理解', 'AI Semantic'),
                     style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
@@ -990,8 +1003,12 @@ class _MapScreenState extends State<MapScreen>
     );
   }
 
-  Widget _buildPriorityDropdown(BuildContext context) {
-    const labels = ['Normal', 'High', 'Critical'];
+  Widget _buildPriorityDropdown(BuildContext context, LocaleProvider locale) {
+    final labels = [
+      locale.tr('普通', 'Normal'),
+      locale.tr('高', 'High'),
+      locale.tr('紧急', 'Critical'),
+    ];
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -1010,7 +1027,7 @@ class _MapScreenState extends State<MapScreen>
   // ═══════════════════════════════════════════════════════════
   //  MAP TOOLBAR — Live feed indicator + view toggles
   // ═══════════════════════════════════════════════════════════
-  Widget _buildMapToolbar(BuildContext context, bool online) {
+  Widget _buildMapToolbar(BuildContext context, bool online, LocaleProvider locale) {
     final dark = context.isDark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -1022,13 +1039,13 @@ class _MapScreenState extends State<MapScreen>
       child: Row(
         children: [
           // View toggle icons
-          _toolbarIconBtn(Icons.navigation_rounded, tooltip: '导航视图',
+          _toolbarIconBtn(Icons.navigation_rounded, tooltip: locale.tr('导航视图', 'Navigation view'),
             isActive: _show3DModel, onTap: () => setState(() => _show3DModel = true)),
           const SizedBox(width: 4),
-          _toolbarIconBtn(Icons.location_on_rounded, tooltip: '2D地图',
+          _toolbarIconBtn(Icons.location_on_rounded, tooltip: locale.tr('2D地图', '2D Map'),
             isActive: !_show3DModel, onTap: () => setState(() => _show3DModel = false)),
           const SizedBox(width: 4),
-          _toolbarIconBtn(Icons.route_rounded, tooltip: '轨迹',
+          _toolbarIconBtn(Icons.route_rounded, tooltip: locale.tr('轨迹', 'Trajectory'),
             isActive: _showGlobalMap, onTap: () => setState(() => _showGlobalMap = !_showGlobalMap)),
 
           const SizedBox(width: 16),
@@ -1045,7 +1062,7 @@ class _MapScreenState extends State<MapScreen>
                 color: AppColors.success, shape: BoxShape.circle,
               )),
               const SizedBox(width: 8),
-              Text('Live Feed Active', style: TextStyle(
+              Text(locale.tr('实时数据', 'Live Feed Active'), style: TextStyle(
                 fontSize: 11, fontWeight: FontWeight.w600, color: context.titleColor,
               )),
             ]),
@@ -1068,7 +1085,9 @@ class _MapScreenState extends State<MapScreen>
                 shape: BoxShape.circle,
               )),
               const SizedBox(width: 6),
-              Text(online ? 'System Ready' : 'Offline', style: TextStyle(
+              Text(online
+                  ? locale.tr('系统就绪', 'System Ready')
+                  : locale.tr('离线', 'Offline'), style: TextStyle(
                 fontSize: 11, fontWeight: FontWeight.w600,
                 color: online ? AppColors.success : AppColors.error,
               )),
@@ -1239,6 +1258,7 @@ class _MapScreenState extends State<MapScreen>
   }
 
   Widget _buildFabColumn(BuildContext context) {
+    final locale = context.read<LocaleProvider>();
     final tg = context.watch<TaskGateway>();
     final cg = context.watch<ControlGateway>();
     final isRunning = tg.isRunning;
@@ -1250,12 +1270,12 @@ class _MapScreenState extends State<MapScreen>
       if (!isRunning)
         _MapFab(
           icon: _isSettingGoal ? Icons.close : Icons.add_location_alt_outlined,
-          tooltip: '设置$_goalPointLabel',
+          tooltip: locale.tr('设置${_goalPointLabel(locale)}', 'Set ${_goalPointLabel(locale)}'),
           onPressed: () {
             HapticFeedback.selectionClick();
             if (!_modeUsesGoalPoint) {
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: const Text('建图模式无需设置目标点'),
+                content: Text(locale.tr('建图模式无需设置目标点', 'No goal needed for mapping mode')),
                 backgroundColor: AppColors.warning,
                 behavior: SnackBarBehavior.floating,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -1276,23 +1296,30 @@ class _MapScreenState extends State<MapScreen>
       isRunning
           ? _MapFab(
               icon: isMapping ? Icons.save_rounded : Icons.stop_rounded,
-              tooltip: isMapping ? '停止建图' : '取消任务',
+              tooltip: isMapping
+                  ? locale.tr('停止建图', 'Stop mapping')
+                  : locale.tr('取消任务', 'Cancel task'),
               color: isMapping ? AppColors.success : AppColors.error,
               onPressed: () async {
                 final confirm = await showDialog<bool>(
                   context: context,
                   builder: (ctx) => AlertDialog(
-                    title: Text(isMapping ? '停止建图' : '取消任务'),
+                    title: Text(isMapping
+                        ? locale.tr('停止建图', 'Stop mapping')
+                        : locale.tr('取消任务', 'Cancel task')),
                     content: Text(isMapping
-                        ? '停止建图后将自动保存地图。'
-                        : '确定要取消当前任务吗？'),
+                        ? locale.tr('停止建图后将自动保存地图。', 'Map will be saved automatically after stopping.')
+                        : locale.tr('确定要取消当前任务吗？', 'Are you sure you want to cancel the current task?')),
                     actions: [
-                      TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('返回')),
+                      TextButton(onPressed: () => Navigator.of(ctx).pop(false),
+                        child: Text(locale.tr('返回', 'Back'))),
                       FilledButton(
                         style: FilledButton.styleFrom(
                           backgroundColor: isMapping ? AppColors.success : AppColors.error),
                         onPressed: () => Navigator.of(ctx).pop(true),
-                        child: Text(isMapping ? '停止并保存' : '取消任务'),
+                        child: Text(isMapping
+                            ? locale.tr('停止并保存', 'Stop & save')
+                            : locale.tr('取消任务', 'Cancel task')),
                       ),
                     ],
                   ),
@@ -1305,11 +1332,13 @@ class _MapScreenState extends State<MapScreen>
             )
           : _MapFab(
               icon: Icons.navigation_outlined,
-              tooltip: isEstop ? '急停中，无法启动' : '启动任务',
+              tooltip: isEstop
+                  ? locale.tr('急停中，无法启动', 'E-stop active, cannot start')
+                  : locale.tr('启动任务', 'Start task'),
               color: isEstop ? Colors.grey : null,
               onPressed: isEstop ? () {
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: const Text('急停状态，请先解除急停'),
+                  content: Text(locale.tr('急停状态，请先解除急停', 'E-stop active, please release first')),
                   backgroundColor: AppColors.error,
                   behavior: SnackBarBehavior.floating,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -1318,10 +1347,10 @@ class _MapScreenState extends State<MapScreen>
             ),
 
       const SizedBox(height: 6),
-      _MapFab(icon: Icons.folder_outlined, tooltip: '地图管理',
+      _MapFab(icon: Icons.folder_outlined, tooltip: locale.tr('地图管理', 'Map manager'),
         onPressed: () => Navigator.of(context).pushNamed('/map-manager')),
       const SizedBox(height: 6),
-      _MapFab(icon: Icons.save_outlined, tooltip: '保存地图',
+      _MapFab(icon: Icons.save_outlined, tooltip: locale.tr('保存地图', 'Save map'),
         onPressed: _saveMap),
     ]);
   }
@@ -1330,17 +1359,18 @@ class _MapScreenState extends State<MapScreen>
   //  TASK STATUS BAR — overlay when task is running
   // ═══════════════════════════════════════════════════════════
   Widget _buildTaskStatusBar(BuildContext context) {
+    final locale = context.read<LocaleProvider>();
     final tg = context.watch<TaskGateway>();
     if (!tg.isRunning) return const SizedBox.shrink();
 
     final dark = context.isDark;
     final taskLabel = switch (tg.activeTaskType) {
-      TaskType.TASK_TYPE_NAVIGATION => 'NAVIGATION',
-      TaskType.TASK_TYPE_MAPPING => 'MAPPING',
-      TaskType.TASK_TYPE_INSPECTION => 'PATROL',
-      TaskType.TASK_TYPE_FOLLOW_PATH => 'FOLLOW',
-      TaskType.TASK_TYPE_SEMANTIC_NAV => 'SEMANTIC NAV',
-      _ => 'TASK',
+      TaskType.TASK_TYPE_NAVIGATION => locale.tr('导航', 'NAVIGATION'),
+      TaskType.TASK_TYPE_MAPPING => locale.tr('建图', 'MAPPING'),
+      TaskType.TASK_TYPE_INSPECTION => locale.tr('巡检', 'PATROL'),
+      TaskType.TASK_TYPE_FOLLOW_PATH => locale.tr('循迹', 'FOLLOW'),
+      TaskType.TASK_TYPE_SEMANTIC_NAV => locale.tr('语义导航', 'SEMANTIC NAV'),
+      _ => locale.tr('任务', 'TASK'),
     };
     final progress = tg.progress;
     final sourceLabel = switch (_waypointSource) {
@@ -1389,7 +1419,7 @@ class _MapScreenState extends State<MapScreen>
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    tg.isPaused ? '$taskLabel (PAUSED)' : taskLabel,
+                    tg.isPaused ? '$taskLabel (${locale.tr('已暂停', 'PAUSED')})' : taskLabel,
                     style: TextStyle(
                       fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5,
                       color: tg.isPaused ? AppColors.warning : AppColors.primary,
@@ -1406,7 +1436,7 @@ class _MapScreenState extends State<MapScreen>
                 // Pause / Resume
                 _statusBarBtn(
                   icon: tg.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
-                  tooltip: tg.isPaused ? '恢复' : '暂停',
+                  tooltip: tg.isPaused ? locale.tr('恢复', 'Resume') : locale.tr('暂停', 'Pause'),
                   onTap: () => tg.isPaused ? tg.resumeTask() : tg.pauseTask(),
                 ),
                 const SizedBox(width: 4),
@@ -1415,23 +1445,30 @@ class _MapScreenState extends State<MapScreen>
                   final isMappingTask = tg.activeTaskType == TaskType.TASK_TYPE_MAPPING;
                   return _statusBarBtn(
                     icon: isMappingTask ? Icons.save_rounded : Icons.close_rounded,
-                    tooltip: isMappingTask ? '停止建图' : '取消任务',
+                    tooltip: isMappingTask
+                        ? locale.tr('停止建图', 'Stop mapping')
+                        : locale.tr('取消任务', 'Cancel task'),
                     color: isMappingTask ? AppColors.success : AppColors.error,
                     onTap: () async {
                       final confirm = await showDialog<bool>(
                         context: context,
                         builder: (ctx) => AlertDialog(
-                          title: Text(isMappingTask ? '停止建图' : '取消任务'),
+                          title: Text(isMappingTask
+                              ? locale.tr('停止建图', 'Stop mapping')
+                              : locale.tr('取消任务', 'Cancel task')),
                           content: Text(isMappingTask
-                              ? '停止建图后将自动保存地图。'
-                              : '确定要取消当前任务吗？'),
+                              ? locale.tr('停止建图后将自动保存地图。', 'Map will be saved automatically after stopping.')
+                              : locale.tr('确定要取消当前任务吗？', 'Are you sure you want to cancel the current task?')),
                           actions: [
-                            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('返回')),
+                            TextButton(onPressed: () => Navigator.of(ctx).pop(false),
+                              child: Text(locale.tr('返回', 'Back'))),
                             FilledButton(
                               style: FilledButton.styleFrom(
                                 backgroundColor: isMappingTask ? AppColors.success : AppColors.error),
                               onPressed: () => Navigator.of(ctx).pop(true),
-                              child: Text(isMappingTask ? '停止并保存' : '取消任务'),
+                              child: Text(isMappingTask
+                                  ? locale.tr('停止并保存', 'Stop & save')
+                                  : locale.tr('取消任务', 'Cancel task')),
                             ),
                           ],
                         ),
@@ -1447,20 +1484,21 @@ class _MapScreenState extends State<MapScreen>
                 // Clear waypoints
                 _statusBarBtn(
                   icon: Icons.delete_sweep_rounded,
-                  tooltip: '清除航点',
+                  tooltip: locale.tr('清除航点', 'Clear waypoints'),
                   color: AppColors.warning,
                   onTap: () async {
                     final confirm = await showDialog<bool>(
                       context: context,
                       builder: (ctx) => AlertDialog(
-                        title: const Text('清除航点'),
-                        content: const Text('清除所有航点并立即停车？'),
+                        title: Text(locale.tr('清除航点', 'Clear waypoints')),
+                        content: Text(locale.tr('清除所有航点并立即停车？', 'Clear all waypoints and stop immediately?')),
                         actions: [
-                          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('返回')),
+                          TextButton(onPressed: () => Navigator.of(ctx).pop(false),
+                            child: Text(locale.tr('返回', 'Back'))),
                           FilledButton(
                             style: FilledButton.styleFrom(backgroundColor: AppColors.warning),
                             onPressed: () => Navigator.of(ctx).pop(true),
-                            child: const Text('清除并停车'),
+                            child: Text(locale.tr('清除并停车', 'Clear & stop')),
                           ),
                         ],
                       ),
@@ -1514,6 +1552,7 @@ class _MapScreenState extends State<MapScreen>
   }
 
   Widget _buildGoalSettingBanner(BuildContext context) {
+    final locale = context.read<LocaleProvider>();
     return Positioned(
       top: MediaQuery.of(context).padding.top + 60,
       left: 0, right: 0,
@@ -1523,7 +1562,7 @@ class _MapScreenState extends State<MapScreen>
           color: AppColors.warning.withValues(alpha: 0.9),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Text('点击地图设置$_goalPointLabel', style: const TextStyle(
+        child: Text(locale.tr('点击地图设置${_goalPointLabel(locale)}', 'Tap map to set ${_goalPointLabel(locale)}'), style: const TextStyle(
           color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600,
         )),
       )),
@@ -1534,11 +1573,15 @@ class _MapScreenState extends State<MapScreen>
   //  GEOFENCE ALERT — top banner when WARNING or VIOLATION
   // ═══════════════════════════════════════════════════════════
   Widget _buildGeofenceAlertBanner() {
+    final locale = context.read<LocaleProvider>();
     final isViolation = _geofenceState == 'VIOLATION';
     final color = isViolation ? AppColors.error : AppColors.warning;
-    final label = isViolation ? '围栏越界' : '围栏警告';
+    final label = isViolation
+        ? locale.tr('围栏越界', 'Geofence violation')
+        : locale.tr('围栏警告', 'Geofence warning');
     final marginText = _geofenceMargin > 0
-        ? '  (余量: ${_geofenceMargin.toStringAsFixed(1)}m)'
+        ? locale.tr('  (余量: ${_geofenceMargin.toStringAsFixed(1)}m)',
+                     '  (margin: ${_geofenceMargin.toStringAsFixed(1)}m)')
         : '';
 
     return Positioned(
@@ -1590,7 +1633,7 @@ class _MapScreenState extends State<MapScreen>
         children: [
           // Header
           Row(children: [
-            Text('WAYPOINT SEQUENCE', style: TextStyle(
+            Text(context.read<LocaleProvider>().tr('航点序列', 'WAYPOINT SEQUENCE'), style: TextStyle(
               fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2,
               color: context.subtitleColor,
             )),
