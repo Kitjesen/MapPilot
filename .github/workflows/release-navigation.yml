@@ -144,3 +144,47 @@ jobs:
           prerelease: ${{ steps.version.outputs.prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to OTA Server
+        env:
+          OTA_SERVER_URL: ${{ secrets.OTA_SERVER_URL }}
+          OTA_API_KEY: ${{ secrets.OTA_API_KEY }}
+        run: |
+          if [ -z "${OTA_SERVER_URL}" ] || [ -z "${OTA_API_KEY}" ]; then
+            echo "OTA_SERVER_URL or OTA_API_KEY not configured, skipping OTA server upload"
+            exit 0
+          fi
+
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION_CLEAN="${VERSION#v}"
+          NOTES="${{ steps.version.outputs.notes }}"
+
+          # 找到打包的 navigation tarball
+          TARBALL=$(ls dist/navigation-*.tar.gz 2>/dev/null | head -1)
+          if [ -z "$TARBALL" ]; then
+            echo "ERROR: No navigation tarball found in dist/"
+            exit 1
+          fi
+          echo "Uploading: $TARBALL"
+
+          # Step 1: 上传包 (multipart/form-data)
+          UPLOAD_RESP=$(curl -sf \
+            -H "X-API-Key: ${OTA_API_KEY}" \
+            -F "name=navigation" \
+            -F "version=${VERSION_CLEAN}" \
+            -F "changelog=${NOTES}" \
+            -F "auto_sign=true" \
+            -F "file=@${TARBALL}" \
+            "${OTA_SERVER_URL}/packages/upload")
+
+          PKG_ID=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "Package uploaded: id=${PKG_ID}"
+
+          # Step 2: 创建发布（初始灰度 10%，LINGTU-NAV 产品策略）
+          curl -sf \
+            -H "X-API-Key: ${OTA_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\": \"${VERSION_CLEAN}\", \"channel\": \"stable\", \"package_ids\": [${PKG_ID}], \"rollout_percent\": 10, \"target_product\": \"LINGTU-NAV\"}" \
+            "${OTA_SERVER_URL}/releases"
+
+          echo "Release created in OTA server: ${VERSION_CLEAN} (10% rollout)"
