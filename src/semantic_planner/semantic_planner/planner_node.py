@@ -64,6 +64,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry, OccupancyGrid
@@ -515,6 +516,15 @@ class SemanticPlannerNode(Node):
             String, "/nav/semantic/cancel", self._cancel_callback, 10
         )
 
+        # FOLLOW_PERSON: 接收来自 task_manager 的跟随指令 (JSON)
+        # 消息格式: {"target_label": "person", "follow_distance": 1.5,
+        #            "timeout_sec": 300, "min_distance": 0.8, "max_distance": 5.0}
+        # 空消息 ({}) 表示停止跟随
+        self._sub_follow_person_cmd = self.create_subscription(
+            String, "/nav/semantic/follow_person_cmd",
+            self._follow_person_cmd_callback, 10
+        )
+
         # 可选: 订阅相机图像 (用于 VLM vision grounding)
         if self._vision_enabled:
             image_topic = self.get_parameter("vision.image_topic").value
@@ -529,6 +539,16 @@ class SemanticPlannerNode(Node):
         self._pub_status = self.create_publisher(String, "status", 10)
         self._pub_costmap = self.create_publisher(OccupancyGrid, "costmap_out", 1)  # 供 perception_node SCG 使用
         self._look_around_timer = None
+
+        # FOLLOW_PERSON: 发布跟随参数到 /nav/semantic/follow_person (best-effort)
+        _be_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self._follow_person_pub = self.create_publisher(
+            String, "/nav/semantic/follow_person", _be_qos
+        )
 
         # SCG 路径规划: 发布请求, 订阅结果
         if self._scg_enable:
@@ -698,10 +718,105 @@ class SemanticPlannerNode(Node):
             self._look_around_timer.cancel()
             self._look_around_timer = None
 
+        # FOLLOW_PERSON: 发布空目标停止跟随节点
+        if self._follow_mode:
+            _stop_msg = String()
+            _stop_msg.data = "{}"
+            self._follow_person_pub.publish(_stop_msg)
+            self._follow_mode = False
+            self.get_logger().info("Follow person mode cancelled")
+
         # 重置状态
         self._follow_mode = False
         self._action_executor.reset()
         self._set_state(PlannerState.CANCELLED)
+
+    def _follow_person_cmd_callback(self, msg: String):
+        """
+        接收来自 task_manager 的人物跟随指令 (TASK_TYPE_FOLLOW_PERSON = 7)。
+
+        消息格式 (JSON):
+          {"target_label": "person", "follow_distance": 1.5,
+           "timeout_sec": 300.0, "min_distance": 0.8, "max_distance": 5.0}
+
+        空消息 ({} 或空字符串) 表示停止跟随。
+        """
+        raw = msg.data.strip() if msg.data else ""
+
+        # 空消息 → 停止跟随
+        if not raw or raw in ("{}", "null"):
+            if self._follow_mode:
+                self.get_logger().info("Follow person: stop command received")
+                self._follow_mode = False
+                stop = Twist()
+                self._pub_cmd_vel.publish(stop)
+                self._set_state(PlannerState.IDLE)
+            return
+
+        try:
+            params = json.loads(raw)
+        except json.JSONDecodeError as e:
+            self.get_logger().warn(f"Follow person cmd JSON parse error: {e}")
+            return
+
+        target_label = params.get("target_label", "person") or "person"
+        follow_distance = float(params.get("follow_distance", 1.5) or 1.5)
+        timeout_sec = float(params.get("timeout_sec", 300.0) or 300.0)
+        min_distance = float(params.get("min_distance", 0.8) or 0.8)
+        max_distance = float(params.get("max_distance", 5.0) or 5.0)
+
+        self.get_logger().info(
+            "Follow person: target='%s', follow_dist=%.1fm, "
+            "min=%.1fm, max=%.1fm, timeout=%.0fs",
+            target_label, follow_distance, min_distance, max_distance, timeout_sec,
+        )
+
+        # 配置 PersonTracker 跟随距离
+        self._person_tracker.follow_distance = follow_distance
+
+        # 设置跟随模式内部状态
+        self._follow_mode = True
+        self._follow_target_label = target_label
+        self._follow_timeout = timeout_sec
+        self._follow_start_time = time.time()
+        self._task_start_time = time.time()
+        self._instruction_timeout = timeout_sec + 10.0  # 宽松超时
+
+        # 转发参数到 /nav/semantic/follow_person (供下游跟随控制器使用)
+        out_msg = String()
+        out_msg.data = json.dumps({
+            "target_label": target_label,
+            "follow_distance": follow_distance,
+            "min_distance": min_distance,
+            "max_distance": max_distance,
+            "timeout_sec": timeout_sec,
+        }, ensure_ascii=False)
+        self._follow_person_pub.publish(out_msg)
+
+        # 通过现有 VLN 闭环启动跟随:
+        # 构建单步 FOLLOW 任务计划, 使用 _execute_next_subgoal 进入 RESOLVING 状态
+        self._current_instruction = f"follow {target_label}"
+        self._current_language = "zh"
+        self._current_explore_if_unknown = False
+        self._replan_count = 0
+        self._explore_count = 0
+        self._execution_context = ""
+        self._resolver.reset_exploration()
+        self._action_executor.reset()
+
+        follow_plan = TaskPlan(
+            instruction=self._current_instruction,
+            subgoals=[
+                SubGoal(
+                    step_id=0,
+                    action=SubGoalAction.FOLLOW,
+                    target=target_label,
+                    parameters={"timeout": timeout_sec},
+                ),
+            ],
+        )
+        self._current_plan = follow_plan
+        self._execute_next_subgoal()
 
     def _scene_graph_callback(self, msg: String):
         """更新最新场景图 + 增量更新房间-物体 KG + 情节记忆。"""

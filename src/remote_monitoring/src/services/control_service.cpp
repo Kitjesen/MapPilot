@@ -492,7 +492,26 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
     }
   }
 
-  // 建图任务和语义导航任务不需要航点
+  // 人物跟随参数 (TASK_TYPE_FOLLOW_PERSON = 7)
+  if (request->has_follow_person_params()) {
+    const auto &fp = request->follow_person_params();
+    params.follow_person_label = fp.target_label().empty() ? "person" : fp.target_label();
+    if (fp.follow_distance() > 0.0) {
+      params.follow_person_distance = fp.follow_distance();
+    }
+    if (fp.timeout_sec() > 0.0) {
+      params.follow_person_timeout = fp.timeout_sec();
+    }
+    if (fp.min_distance() > 0.0) {
+      params.follow_person_min_dist = fp.min_distance();
+    }
+    if (fp.max_distance() > 0.0) {
+      params.follow_person_max_dist = fp.max_distance();
+    }
+    has_structured_params = true;
+  }
+
+  // 建图任务、语义导航任务和人物跟随任务不需要航点
   const bool is_mapping = (request->task_type() == robot::v1::TASK_TYPE_MAPPING);
   const bool is_semantic = (request->task_type() == robot::v1::TASK_TYPE_SEMANTIC_NAV);
   const bool is_follow_person = (request->task_type() == robot::v1::TASK_TYPE_FOLLOW_PERSON);

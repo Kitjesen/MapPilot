@@ -32,6 +32,9 @@ TaskManager::TaskManager(rclcpp::Node *node) : node_(node) {
   if (!node_->has_parameter("task_semantic_instruction_topic"))
     node_->declare_parameter<std::string>("task_semantic_instruction_topic",
                                           "/nav/semantic/instruction");
+  if (!node_->has_parameter("task_follow_person_cmd_topic"))
+    node_->declare_parameter<std::string>("task_follow_person_cmd_topic",
+                                          "/nav/semantic/follow_person_cmd");
 
   const auto odom_topic = node_->get_parameter("task_odom_topic").as_string();
   const auto waypoint_in = node_->get_parameter("task_waypoint_in_topic").as_string();
@@ -42,6 +45,8 @@ TaskManager::TaskManager(rclcpp::Node *node) : node_(node) {
       node_->get_parameter("task_semantic_goal_topic").as_string();
   const auto semantic_instruction_topic =
       node_->get_parameter("task_semantic_instruction_topic").as_string();
+  const auto follow_person_cmd_topic =
+      node_->get_parameter("task_follow_person_cmd_topic").as_string();
 
   // ---- TF2 ----
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
@@ -91,6 +96,10 @@ TaskManager::TaskManager(rclcpp::Node *node) : node_(node) {
   pub_semantic_instruction_ =
       node_->create_publisher<std_msgs::msg::String>(
           semantic_instruction_topic, 5);
+
+  pub_follow_person_cmd_ =
+      node_->create_publisher<std_msgs::msg::String>(
+          follow_person_cmd_topic, 5);
 
   // ---- 定时器 ----
   check_timer_ = node_->create_wall_timer(
@@ -188,11 +197,12 @@ void TaskManager::PctPathCallback(
 void TaskManager::SemanticGoalCallback(
     const geometry_msgs::msg::PoseStamped::ConstSharedPtr msg) {
   // 优先级: APP > SEMANTIC > PLANNER
-  // 有 App 任务 (非语义导航) 时忽略语义目标
+  // 有 App 任务 (非语义导航/人物跟随) 时忽略语义目标
   if (state_.load() != TaskState::IDLE) {
-    // 允许语义导航任务接收后续目标 (多步导航 / 重规划)
+    // 允许语义导航任务和人物跟随任务接收后续目标 (多步导航 / 重规划 / 跟随更新)
     std::lock_guard<std::mutex> lock(task_mutex_);
-    if (task_params_.type != robot::v1::TASK_TYPE_SEMANTIC_NAV) {
+    if (task_params_.type != robot::v1::TASK_TYPE_SEMANTIC_NAV &&
+        task_params_.type != robot::v1::TASK_TYPE_FOLLOW_PERSON) {
       return;
     }
   }
@@ -237,9 +247,10 @@ void TaskManager::SemanticStatusCallback(
   // 解析语义导航状态 JSON
   // 格式: {"state": "NAVIGATING", "detail": "...", "step": 5, ...}
 
-  // 只在语义导航任务活跃时处理状态
+  // 只在语义导航任务或人物跟随任务活跃时处理状态
   std::lock_guard<std::mutex> lock(task_mutex_);
-  if (task_params_.type != robot::v1::TASK_TYPE_SEMANTIC_NAV) {
+  if (task_params_.type != robot::v1::TASK_TYPE_SEMANTIC_NAV &&
+      task_params_.type != robot::v1::TASK_TYPE_FOLLOW_PERSON) {
     return;
   }
 
@@ -478,6 +489,16 @@ bool TaskManager::CancelTask(const std::string &task_id) {
 
   if (task_id != task_id_ || state_.load() == TaskState::IDLE) {
     return false;
+  }
+
+  // 人物跟随任务: 发布空停止指令到 planner_node
+  if (task_params_.type == robot::v1::TASK_TYPE_FOLLOW_PERSON &&
+      pub_follow_person_cmd_) {
+    std_msgs::msg::String stop_msg;
+    stop_msg.data = "{}";
+    pub_follow_person_cmd_->publish(stop_msg);
+    RCLCPP_INFO(node_->get_logger(),
+                "TaskManager: Published follow_person stop command");
   }
 
   RCLCPP_INFO(node_->get_logger(), "TaskManager: Task %s cancelled",
