@@ -1082,17 +1082,18 @@ private:
 
         for (int i = 0; i < 36 * pathNum_; i++) {
           int rotDir = int(i / pathNum_);
-          float angDiff = fabs(joyDir_ - (10.0 * rotDir - 180.0));
-          if (angDiff > 180.0) {
-            angDiff = 360.0 - angDiff;
-          }
-          if ((angDiff > dirThre_ && !dirToVehicle_) || (fabs(10.0 * rotDir - 180.0) > dirThre_ && fabs(joyDir_) <= 90.0 && dirToVehicle_) ||
-              ((10.0 * rotDir > dirThre_ && 360.0 - 10.0 * rotDir > dirThre_) && fabs(joyDir_) > 90.0 && dirToVehicle_)) {
+          // O12: angDiffList 复用（与主规划循环共享预计算值），消除重复 fabs+归一化
+          float angDiff = angDiffList[rotDir];
+          float rotAngDeg = 10.0f * rotDir - 180.0f;  // 仅算一次
+          float rotDeg    = 10.0f * rotDir;
+          if ((angDiff > dirThre_ && !dirToVehicle_) || (fabs(rotAngDeg) > dirThre_ && fabs(joyDir_) <= 90.0 && dirToVehicle_) ||
+              ((rotDeg > dirThre_ && 360.0f - rotDeg > dirThre_) && fabs(joyDir_) > 90.0 && dirToVehicle_)) {
             continue;
           }
 
+          const int pathIdx = i % pathNum_;  // 减少重复取模
           if (clearPathList_[i] < pointPerPathThre_) {
-            float dirDiff = fabs(joyDir_ - endDirPathList_[i % pathNum_] - (10.0 * rotDir - 180.0));
+            float dirDiff = fabs(joyDir_ - endDirPathList_[pathIdx] - rotAngDeg);
             if (dirDiff > 360.0) {
               dirDiff -= 360.0;
             }
@@ -1103,7 +1104,7 @@ private:
             float rotDirW;
             if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
             else rotDirW = fabs(fabs(rotDir - 27) + 1);
-            float groupDirW = 4  - fabs(pathList_[i % pathNum_] - 3);
+            float groupDirW = 4  - fabs(pathList_[pathIdx] - 3);
             float dw = std::fabs(dirWeight_ * dirDiff);  // 防御负参数导致 NaN
             // O9: sqrtf (float) 替代 std::sqrt (double)；dw^0.25 缓存一次；rotDirW^4 = (rotDirW^2)^2
             float sqrtSqrtDw = sqrtf(sqrtf(dw));
@@ -1111,9 +1112,10 @@ private:
             float score = (1.0f - sqrtSqrtDw) * rotDirW2 * rotDirW2;
             if (relativeGoalDis < omniDirGoalThre_) score = (1.0f - sqrtSqrtDw) * groupDirW * groupDirW;
             if (score > 0) {
-              clearPathPerGroupScore_[groupNum_ * rotDir + pathList_[i % pathNum_]] += score;
-              clearPathPerGroupNum_[groupNum_ * rotDir + pathList_[i % pathNum_]]++;
-              pathPenaltyPerGroupScore_[groupNum_ * rotDir + pathList_[i % pathNum_]] += pathPenaltyList_[i];
+              int groupIdx = groupNum_ * rotDir + pathList_[pathIdx];
+              clearPathPerGroupScore_[groupIdx]     += score;
+              clearPathPerGroupNum_[groupIdx]++;
+              pathPenaltyPerGroupScore_[groupIdx] += pathPenaltyList_[i];
             }
           }
         }
