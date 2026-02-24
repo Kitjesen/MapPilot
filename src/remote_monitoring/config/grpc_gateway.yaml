@@ -133,6 +133,16 @@ grpc_gateway:
     tf_odom_frame: "odom"
     tf_body_frame: "body"
     
+    # ==================== 断联降级策略 ====================
+    # 断联多久后触发减速 (秒)
+    disconnect_warn_sec: 30.0
+    # 减速后保留的速度百分比 (0-100, 50 = 降至 50%)
+    disconnect_warn_speed: 50
+    # 断联多久后触发停车 (秒)
+    disconnect_stop_sec: 300.0
+    # 停车动作: "idle" (切换 IDLE 模式并锁定) 或 "stop" (仅发布停车, 不切换模式)
+    disconnect_stop_action: "idle"
+
     # ==================== Safety Gate 配置 ====================
     # (对应 robot_config.yaml → safety.* / speed.* / geometry.*)
     deadman_timeout_ms: 300.0    # safety.deadman_timeout_ms

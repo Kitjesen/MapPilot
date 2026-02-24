@@ -214,6 +214,20 @@ GrpcGateway::GrpcGateway(rclcpp::Node *node) : node_(node) {
     slow_down_topic = node_->get_parameter("slow_down_topic").as_string();
   pub_slow_down_ = node_->create_publisher<std_msgs::msg::Int8>(slow_down_topic, 5);
 
+  // 断联降级阈值和动作 (yaml 可配置)
+  if (!node_->has_parameter("disconnect_warn_sec"))
+    node_->declare_parameter<double>("disconnect_warn_sec", 30.0);
+  if (!node_->has_parameter("disconnect_stop_sec"))
+    node_->declare_parameter<double>("disconnect_stop_sec", 300.0);
+  if (!node_->has_parameter("disconnect_warn_speed"))
+    node_->declare_parameter<int>("disconnect_warn_speed", 50);
+  if (!node_->has_parameter("disconnect_stop_action"))
+    node_->declare_parameter<std::string>("disconnect_stop_action", "idle");
+  disconnect_warn_sec_    = node_->get_parameter("disconnect_warn_sec").as_double();
+  disconnect_stop_sec_    = node_->get_parameter("disconnect_stop_sec").as_double();
+  disconnect_warn_speed_  = node_->get_parameter("disconnect_warn_speed").as_int();
+  disconnect_stop_action_ = node_->get_parameter("disconnect_stop_action").as_string();
+
   // 崩溃恢复: 检查上次运行状态, 清理残留 nav 服务
   RecoverFromCrash();
 
@@ -390,40 +404,60 @@ void GrpcGateway::CheckDisconnection() {
 
   int new_level = 0;
 
-  if (secs > 300.0) {
-    // > 5min: 切换 IDLE, 原地停车
+  if (secs > disconnect_stop_sec_) {
+    // > disconnect_stop_sec: 执行停车动作 (配置为 "idle" 或 "stop")
     new_level = 2;
     if (last_disconnect_level_ < 2) {
       RCLCPP_ERROR(rclcpp::get_logger("grpc_gateway"),
-                   "Client disconnected for %.0fs — switching to IDLE", secs);
-      mode_manager_->SwitchMode(robot::v1::ROBOT_MODE_IDLE);
+                   "Client disconnected for %.0fs — action: %s",
+                   secs, disconnect_stop_action_.c_str());
+      if (disconnect_stop_action_ == "stop") {
+        // 直接发布停止指令, 不切换模式
+        std_msgs::msg::Int8 stop_msg;
+        stop_msg.data = 3;  // full stop
+        pub_slow_down_->publish(stop_msg);
+      } else {
+        // 默认 "idle": 切换模式 → 停车并锁定
+        mode_manager_->SwitchMode(robot::v1::ROBOT_MODE_IDLE);
+      }
       if (event_buffer_) {
         event_buffer_->AddEvent(
             robot::v1::EVENT_TYPE_NETWORK_DISCONNECTED,
             robot::v1::EVENT_SEVERITY_CRITICAL,
-            "Client disconnected > 5min — stopping",
+            "Client disconnected > " +
+                std::to_string(static_cast<int>(disconnect_stop_sec_)) +
+                "s — " + disconnect_stop_action_,
             "Elapsed: " + std::to_string(static_cast<int>(secs)) + "s");
       }
     }
-  } else if (secs > 30.0) {
-    // 30s-5min: 减速 50%
+  } else if (secs > disconnect_warn_sec_) {
+    // > disconnect_warn_sec: 减速 (程度由 disconnect_warn_speed_ 配置)
     new_level = 1;
     if (last_disconnect_level_ < 1) {
       RCLCPP_WARN(rclcpp::get_logger("grpc_gateway"),
-                  "Client disconnected for %.0fs — reducing speed 50%%", secs);
+                  "Client disconnected for %.0fs — reducing speed to %d%%",
+                  secs, disconnect_warn_speed_);
       std_msgs::msg::Int8 msg;
-      msg.data = 2;  // slow_down level 2 = 50%
+      // slow_down level: 1=25%, 2=50%, 3=75% (由 local_planner 解释)
+      // 映射: warn_speed → level (粗略: 75%→1, 50%→2, 25%→3, 0%→full stop)
+      msg.data = (disconnect_warn_speed_ >= 75) ? 1
+               : (disconnect_warn_speed_ >= 50) ? 2
+               : (disconnect_warn_speed_ >= 25) ? 3
+               : 4;  // near-stop
       pub_slow_down_->publish(msg);
       if (event_buffer_) {
         event_buffer_->AddEvent(
             robot::v1::EVENT_TYPE_NETWORK_DISCONNECTED,
             robot::v1::EVENT_SEVERITY_WARNING,
-            "Client disconnected > 30s — reducing speed",
+            "Client disconnected > " +
+                std::to_string(static_cast<int>(disconnect_warn_sec_)) +
+                "s — reducing speed to " +
+                std::to_string(disconnect_warn_speed_) + "%",
             "Elapsed: " + std::to_string(static_cast<int>(secs)) + "s");
       }
     }
   } else {
-    // < 30s: 正常
+    // 正常 (已重连或未超阈值)
     if (last_disconnect_level_ > 0) {
       RCLCPP_INFO(rclcpp::get_logger("grpc_gateway"),
                   "Client reconnected — restoring normal speed");

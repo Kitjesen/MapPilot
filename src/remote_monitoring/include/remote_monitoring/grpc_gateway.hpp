@@ -76,10 +76,14 @@ private:
   std::string tls_cert_path_;
   std::string tls_key_path_;
 
-  // 断联降级
+  // 断联降级 (阈值与动作均可 yaml 配置)
   void CheckDisconnection();
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pub_slow_down_;
-  int last_disconnect_level_{0};  // 0=正常, 1=减速, 2=停车
+  int last_disconnect_level_{0};   // 0=正常, 1=减速, 2=停车
+  double disconnect_warn_sec_{30.0};   // 触发减速的断联时长 (s)
+  double disconnect_stop_sec_{300.0};  // 触发停车的断联时长 (s)
+  int    disconnect_warn_speed_{50};   // 减速百分比 (0-100)
+  std::string disconnect_stop_action_{"idle"};  // "idle" 或 "stop"
 
   // 崩溃恢复: 启动时检查上次状态, 清理残留服务
   void RecoverFromCrash();
