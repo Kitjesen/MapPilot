@@ -867,6 +867,10 @@ private:
       float cosVehicleYaw = cos(vehicleYaw_);
 
       plannerCloudCrop_->clear();
+      // O11: 预分配上界防止 push_back 触发多次 realloc（三个源云之和）
+      plannerCloudCrop_->reserve(plannerCloud_->size() +
+                                  boundaryCloud_->size() +
+                                  addedObstacles_->size());
 
       // O3+O6: 三段重复过滤代码合并为 lambda，去除 sqrt（平方比较）
       const float adjacentRangeSq = adjacentRange_ * adjacentRange_;
@@ -1179,6 +1183,7 @@ private:
 
           #if PLOTPATHSET == 1
           freePaths_->clear();
+          freePaths_->reserve(36 * pathNum_);  // O11: 预分配防止多次 realloc
           for (int i = 0; i < 36 * pathNum_; i++) {
             int rotDir = int(i / pathNum_);
             // O1+O2: RotLUT + angDiffList 复用，消除可视化循环内全部 trig 调用
