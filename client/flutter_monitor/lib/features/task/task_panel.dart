@@ -265,25 +265,27 @@ class _TaskPanelState extends State<TaskPanel> {
       (TaskType.TASK_TYPE_FOLLOW_PERSON, '跟随'),
     ];
     return _card(
-      child: Row(
+      child: GridView.count(
+        crossAxisCount: 4,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        childAspectRatio: 2.8,
         children: items.map((t) {
           final sel = _selectedType == t.$1;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () { HapticFeedback.selectionClick(); setState(() => _selectedType = t.$1); },
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: sel ? (context.isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.04)) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Center(
-                  child: Text(t.$2, style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
-                    color: sel ? context.titleColor : context.subtitleColor,
-                  )),
-                ),
+          return GestureDetector(
+            onTap: () { HapticFeedback.selectionClick(); setState(() => _selectedType = t.$1); },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: sel ? (context.isDark ? Colors.white.withValues(alpha: 0.07) : Colors.black.withValues(alpha: 0.04)) : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Center(
+                child: Text(t.$2, style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+                  color: sel ? context.titleColor : context.subtitleColor,
+                )),
               ),
             ),
           );

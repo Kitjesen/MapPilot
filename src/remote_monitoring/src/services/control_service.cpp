@@ -459,6 +459,27 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
     has_structured_params = true;
   }
 
+  // 人物跟随参数
+  if (request->has_follow_person_params()) {
+    const auto &fpp = request->follow_person_params();
+    if (!fpp.target_label().empty()) {
+      params.follow_person_label = fpp.target_label();
+    }
+    if (fpp.follow_distance() > 0.0) {
+      params.follow_person_distance = fpp.follow_distance();
+    }
+    if (fpp.timeout_sec() > 0.0) {
+      params.follow_person_timeout = fpp.timeout_sec();
+    }
+    if (fpp.min_distance() > 0.0) {
+      params.follow_person_min_dist = fpp.min_distance();
+    }
+    if (fpp.max_distance() > 0.0) {
+      params.follow_person_max_dist = fpp.max_distance();
+    }
+    has_structured_params = true;
+  }
+
   // 建图参数透传
   if (request->has_mapping_params()) {
     const auto &mp = request->mapping_params();
@@ -474,7 +495,8 @@ ControlServiceImpl::StartTask(grpc::ServerContext *,
   // 建图任务和语义导航任务不需要航点
   const bool is_mapping = (request->task_type() == robot::v1::TASK_TYPE_MAPPING);
   const bool is_semantic = (request->task_type() == robot::v1::TASK_TYPE_SEMANTIC_NAV);
-  if (params.waypoints.empty() && !is_mapping && !is_semantic) {
+  const bool is_follow_person = (request->task_type() == robot::v1::TASK_TYPE_FOLLOW_PERSON);
+  if (params.waypoints.empty() && !is_mapping && !is_semantic && !is_follow_person) {
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_INVALID_REQUEST);
     response->mutable_base()->set_error_message(

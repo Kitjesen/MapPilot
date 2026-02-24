@@ -592,12 +592,43 @@ class SemanticPlannerNode(Node):
             explore = data.get("explore_if_unknown", True)
             timeout = data.get("timeout_sec", self._instruction_timeout)
             radius = data.get("arrival_radius", self._arrival_radius)
+            follow_person_mode = data.get("follow_person_mode", False)
+            follow_target = data.get("target_label", "person") or "person"
+            follow_distance = float(data.get("follow_distance", 1.5))
         except (json.JSONDecodeError, AttributeError):
             instruction = msg.data
             language = "zh"
             explore = True
             timeout = self._instruction_timeout
             radius = self._arrival_radius
+            follow_person_mode = False
+            follow_target = "person"
+            follow_distance = 1.5
+
+        # 人物跟随模式: 直接构建 FOLLOW 计划，跳过 LLM 分解
+        if follow_person_mode:
+            self.get_logger().info(
+                "👤 Follow person: target='%s', distance=%.1fm, timeout=%.0fs",
+                follow_target, follow_distance, timeout,
+            )
+            self._follow_mode = False  # 先清除旧状态
+            self._current_instruction = f"跟随{follow_target}"
+            self._current_language = language
+            self._task_start_time = time.time()
+            self._replan_count = 0
+            self._action_executor.reset()
+            plan = TaskPlan(
+                instruction=self._current_instruction,
+                subgoals=[SubGoal(
+                    step_id=0,
+                    action=SubGoalAction.FOLLOW,
+                    target=follow_target,
+                    parameters={"timeout": timeout, "follow_distance": follow_distance},
+                )],
+            )
+            self._current_plan = plan
+            self._execute_next_subgoal()
+            return
 
         if not instruction:
             self.get_logger().warn("Empty instruction received, ignoring")
@@ -668,6 +699,7 @@ class SemanticPlannerNode(Node):
             self._look_around_timer = None
 
         # 重置状态
+        self._follow_mode = False
         self._action_executor.reset()
         self._set_state(PlannerState.CANCELLED)
 

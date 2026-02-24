@@ -322,10 +322,11 @@ std::string TaskManager::StartTask(const TaskParams &params) {
     return "";
   }
 
-  // 建图任务和语义导航任务不需要航点
+  // 建图任务、语义导航任务和人物跟随任务不需要航点
   if (params.waypoints.empty() &&
       params.type != robot::v1::TASK_TYPE_MAPPING &&
-      params.type != robot::v1::TASK_TYPE_SEMANTIC_NAV) {
+      params.type != robot::v1::TASK_TYPE_SEMANTIC_NAV &&
+      params.type != robot::v1::TASK_TYPE_FOLLOW_PERSON) {
     RCLCPP_WARN(node_->get_logger(),
                 "TaskManager: Cannot start task — no waypoints");
     return "";
@@ -380,7 +381,25 @@ std::string TaskManager::StartTask(const TaskParams &params) {
                 params.semantic_instruction.c_str());
   }
 
-  // 建图任务和语义导航任务无航点，不发布初始 waypoint
+  // 人物跟随任务: 通过同一指令 topic 下发特殊 JSON 到 planner_node
+  if (params.type == robot::v1::TASK_TYPE_FOLLOW_PERSON) {
+    std_msgs::msg::String instr_msg;
+    instr_msg.data =
+        "{\"follow_person_mode\":true"
+        ",\"target_label\":\"" + params.follow_person_label + "\""
+        ",\"follow_distance\":" + std::to_string(params.follow_person_distance) +
+        ",\"timeout_sec\":" + std::to_string(params.follow_person_timeout) +
+        ",\"min_distance\":" + std::to_string(params.follow_person_min_dist) +
+        ",\"max_distance\":" + std::to_string(params.follow_person_max_dist) +
+        ",\"instruction\":\"跟随" + params.follow_person_label + "\"}";
+    pub_semantic_instruction_->publish(instr_msg);
+    RCLCPP_INFO(node_->get_logger(),
+                "TaskManager: Published follow person cmd: target='%s', distance=%.1fm",
+                params.follow_person_label.c_str(),
+                params.follow_person_distance);
+  }
+
+  // 建图任务、语义导航任务和人物跟随任务无航点，不发布初始 waypoint
   if (!params.waypoints.empty()) {
     PublishCurrentWaypoint();
   }

@@ -87,6 +87,13 @@ struct TaskParams {
   bool semantic_explore_if_unknown{true};
   double semantic_timeout_sec{300.0};
   double semantic_arrival_radius{1.0};
+
+  // ── 人物跟随任务参数 ──
+  std::string follow_person_label{"person"};  // 跟随目标描述
+  double follow_person_distance{1.5};         // 跟随距离 (m)
+  double follow_person_timeout{300.0};        // 超时 (s)
+  double follow_person_min_dist{0.8};         // 最小距离 (m)
+  double follow_person_max_dist{5.0};         // 最大距离 (m)
 };
 
 /// 任务执行状态 (内部)
