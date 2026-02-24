@@ -1140,10 +1140,11 @@ private:
           float maxScore = 0;
           for (int i = 0; i < 36 * groupNum_; i++) {
             int rotDir = int(i / groupNum_);
-            float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
-            float rotDeg = 10.0 * rotDir;
-            if (rotDeg > 180.0) rotDeg -= 360.0;
-            if (maxScore < clearPathPerGroupScore_[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+            // O14: rotAng*180/PI = 10*rotDir-180，消除无用 deg→rad→deg 往返转换
+            float rotAngDeg = 10.0f * rotDir - 180.0f;
+            float rotDeg    = 10.0f * rotDir;
+            if (rotDeg > 180.0f) rotDeg -= 360.0f;
+            if (maxScore < clearPathPerGroupScore_[i] && ((rotAngDeg > minObsAngCW && rotAngDeg < minObsAngCCW) ||
                 (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive_) || !checkRotObstacle_)) {
               maxScore = clearPathPerGroupScore_[i];
               selectedGroupID = i;
@@ -1201,13 +1202,14 @@ private:
           freePaths_->reserve(36 * pathNum_);  // O11: 预分配防止多次 realloc
           for (int i = 0; i < 36 * pathNum_; i++) {
             int rotDir = int(i / pathNum_);
-            // O1+O2: RotLUT + angDiffList 复用，消除可视化循环内全部 trig 调用
-            float rotAngDeg = 10.0f * rotDir - 180.0f;  // 与 RotLUT 索引对应
-            float rotDeg = 10.0f * rotDir;
+            // O1+O2+O14: RotLUT + angDiffList 复用，消除可视化循环内全部 trig
+            float rotAngDeg = 10.0f * rotDir - 180.0f;
+            float rotDegRaw = 10.0f * rotDir;   // wrap 前（用于 dirThre_ 比较）
+            float rotDeg    = rotDegRaw;
             if (rotDeg > 180.0f) rotDeg -= 360.0f;
             float angDiff = angDiffList[rotDir];
             if ((angDiff > dirThre_ && !dirToVehicle_) || (fabs(rotAngDeg) > dirThre_ && fabs(joyDir_) <= 90.0 && dirToVehicle_) ||
-                ((10.0 * rotDir > dirThre_ && 360.0 - 10.0 * rotDir > dirThre_) && fabs(joyDir_) > 90.0 && dirToVehicle_) ||
+                ((rotDegRaw > dirThre_ && 360.0f - rotDegRaw > dirThre_) && fabs(joyDir_) > 90.0 && dirToVehicle_) ||
                 !((rotAngDeg > minObsAngCW && rotAngDeg < minObsAngCCW) ||
                 (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive_) || !checkRotObstacle_)) {
               continue;
