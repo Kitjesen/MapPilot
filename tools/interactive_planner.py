@@ -53,10 +53,14 @@ SLOWDOWN_DIS   = 2.0
 WAYPOINT_DIST  = 0.5    # pct_adapter 航点间距
 ARRIVAL_THRE   = 0.5    # pct_adapter 到达阈值
 
-# 候选路径
+# 候选路径 (对应 C++ 36 rotations × 343 paths; demo 简化为 36 直线方向)
 N_PATHS   = 36
 PATH_LEN  = 10
 PATH_STEP = 0.35
+DIR_THRE  = 90.0    # C++ dirThre_: 只评估目标方向 ±90° 内的候选路径
+JOY_CLAMP = 95.0    # C++ !twoWayDrive: joyDir 限幅 ±95°
+FREEZE_ANG = 90.0   # C++ freezeAng_: 目标在背后 → 停止
+GOAL_BEHIND_RANGE = 0.8  # C++ goalBehindRange_
 
 # stuck 重规划参数 (对应 pct_adapter.cpp)
 STUCK_TIMEOUT   = 10.0  # s
@@ -192,30 +196,21 @@ def _smooth_path(path, iterations=10, weight_smooth=0.3):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _make_candidate_paths():
-    """36 条 body-frame 候选路径 (constant-curvature arcs)
+    """36 条 body-frame 全方向候选路径 (straight lines, 10° intervals)
 
-    旧版: sin(arc * k / PATH_LEN) — 路径前段几乎不弯曲,
-    Pure Pursuit 跟踪前几个点时方向偏差极小 → 机器人转弯迟钝 → 大弧线轨迹.
+    C++ localPlanner: 343 base paths × 36 rotations = 12,348 candidates
+      RotLUT: angle = (10.0 * i - 180.0) deg, i = 0..35 → 覆盖 360°
+      每个 rotation 将 base path 旋转到对应方向, 然后评分
 
-    新版: 恒定曲率圆弧 — 从起点即开始弯曲, 转弯更灵敏.
+    Demo 简化: 36 条直线 × 1 shape = 36 candidates, 覆盖 360°
+      与 C++ 相同的方向分辨率 (10°), scoring 时按 dirThre_ 过滤
     """
     paths = []
-    angles = np.linspace(-math.radians(80), math.radians(80), N_PATHS)
-    total_len = PATH_LEN * PATH_STEP  # 3.5 m
-    for a in angles:
-        pts = []
-        if abs(a) < 0.001:
-            # 直线
-            for k in range(1, PATH_LEN + 1):
-                pts.append((PATH_STEP * k, 0.0))
-        else:
-            R = total_len / a  # 转弯半径 (带符号)
-            for k in range(1, PATH_LEN + 1):
-                s = PATH_STEP * k       # 弧长
-                theta = s / R            # 累积转角
-                x = R * math.sin(theta)
-                y = R * (1 - math.cos(theta))
-                pts.append((x, y))
+    for i in range(N_PATHS):
+        angle = math.radians(10.0 * i - 180.0)  # C++ RotLUT: -180° to +170°
+        pts = [(PATH_STEP * k * math.cos(angle),
+                PATH_STEP * k * math.sin(angle))
+               for k in range(1, PATH_LEN + 1)]
         paths.append(pts)
     return paths
 
@@ -352,8 +347,7 @@ class Robot:
                   if math.hypot(ox - self.x, oy - self.y) < ADJACENT_RANGE + r + 0.5]
 
         wi = min(self.wp_idx, len(self.waypoints) - 1)
-        # 沿路径前瞻 2m 计算目标方向 (不再盯着单一航点)
-        # 效果: 弯道提前转弯, 直道稳定跟踪, 避免 "瞄准远点急转" 的振荡
+        # 沿路径前瞻 2m 计算目标方向
         look_dist = 2.0
         ahead_idx = wi
         accum = 0.0
@@ -367,10 +361,37 @@ class Robot:
         gx, gy = self.waypoints[ahead_idx]
         goal_dir = math.atan2(gy - self.y, gx - self.x)
 
+        # ── C++ joyDir_ 逻辑: body-frame 目标方向 + freeze + clamp ──
+        joy_dir = goal_dir - self.yaw  # body frame (rad)
+        joy_dir = math.atan2(math.sin(joy_dir), math.cos(joy_dir))
+        joy_deg = math.degrees(joy_dir)
+
+        goal_dis = math.hypot(gx - self.x, gy - self.y)
+
+        # freezeAng_: 目标在背后且很近 → 停止 (C++ goalBehindRange_)
+        if abs(joy_deg) > FREEZE_ANG and goal_dis < GOAL_BEHIND_RANGE:
+            joy_deg = 0.0
+            joy_dir = 0.0
+
+        # !twoWayDrive: 限幅 ±95° (C++ lines 972-980)
+        joy_deg = max(-JOY_CLAMP, min(JOY_CLAMP, joy_deg))
+        joy_dir = math.radians(joy_deg)
+        goal_dir_clamped = self.yaw + joy_dir  # 世界坐标系下的受限目标方向
+
+        # ── 全方向候选路径评分 (C++ 36 rotations × dirThre_ filter) ──
         scored = []
-        for pts_body in CANDIDATE_BODY:
+        dir_thre_rad = math.radians(DIR_THRE)
+        for i, pts_body in enumerate(CANDIDATE_BODY):
+            rot_deg = 10.0 * i - 180.0  # body frame rotation angle
+            # dirThre_ 过滤: 跳过偏离目标方向 >90° 的候选路径
+            ang_diff = abs(joy_deg - rot_deg)
+            if ang_diff > 180.0:
+                ang_diff = 360.0 - ang_diff
+            if ang_diff > DIR_THRE:
+                scored.append(([], -1.0))
+                continue
             pts_w = _body_to_world(pts_body, self.x, self.y, self.yaw)
-            s = _score_path(pts_w, nearby, goal_dir, (self.x, self.y))
+            s = _score_path(pts_w, nearby, goal_dir_clamped, (self.x, self.y))
             scored.append((pts_w, s))
         self.scored_paths = scored
 
@@ -389,10 +410,17 @@ class Robot:
             found = False
             for scale in [0.7, 0.5, 0.35]:
                 relaxed = []
-                for pts_body in CANDIDATE_BODY:
+                for i, pts_body in enumerate(CANDIDATE_BODY):
+                    rot_deg = 10.0 * i - 180.0
+                    ang_diff = abs(joy_deg - rot_deg)
+                    if ang_diff > 180.0:
+                        ang_diff = 360.0 - ang_diff
+                    if ang_diff > DIR_THRE:
+                        relaxed.append(([], -1.0))
+                        continue
                     pts_w = _body_to_world(pts_body, self.x, self.y, self.yaw)
-                    s = _score_path(pts_w, nearby, goal_dir, (self.x, self.y),
-                                    margin_scale=scale)
+                    s = _score_path(pts_w, nearby, goal_dir_clamped,
+                                    (self.x, self.y), margin_scale=scale)
                     relaxed.append((pts_w, s))
                 best_r = max(relaxed, key=lambda x: x[1])
                 if best_r[1] > 0:
