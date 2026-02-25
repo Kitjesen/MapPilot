@@ -232,12 +232,17 @@ private:
       }
     }
 
-    // ── 航点跳跃: 如果机器人更接近后续航点 (恢复/重规划后可能跳过) ──
+    // ── 航点跳跃: 限窗搜索最近航点 (防止 U 形路径跳过整段) ──
+    // 正常跟踪: 只搜前方 5 个航点 (防止折叠路径跳到对岸)
+    // 恢复/重规划后: 搜索全部 (机器人可能被移动到远处)
     const size_t total = current_path_.size();
     {
+      const size_t search_window = 5;  // 正常模式下的搜索窗口
+      const size_t search_end = std::min(
+          current_waypoint_idx_ + search_window, total);
       size_t best_idx = current_waypoint_idx_;
       double best_dist = std::numeric_limits<double>::max();
-      for (size_t i = current_waypoint_idx_; i < total; ++i) {
+      for (size_t i = current_waypoint_idx_; i < search_end; ++i) {
         geometry_msgs::msg::Point pt_odom;
         if (!transform_point(current_path_[i].pose.position, pt_odom)) continue;
         const double d = get_distance(robot_pos_, pt_odom);

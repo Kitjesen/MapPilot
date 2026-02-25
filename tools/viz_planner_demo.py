@@ -328,10 +328,11 @@ class Robot:
     def _update_waypoint(self):
         if self.wp_idx >= len(self.global_path):
             return
-        # 航点跳跃: 跳到最近的前方航点 (恢复/重规划后避免回退)
+        # 限窗搜索最近航点 (+5): 防止 U 形路径跳到对岸
+        search_end = min(self.wp_idx + 5, len(self.global_path))
         best_idx = self.wp_idx
         best_dist = float('inf')
-        for i in range(self.wp_idx, len(self.global_path)):
+        for i in range(self.wp_idx, search_end):
             d = math.hypot(self.global_path[i][0] - self.x,
                            self.global_path[i][1] - self.y)
             if d < best_dist:
