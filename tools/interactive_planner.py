@@ -48,6 +48,12 @@ MAX_YAW_RATE   = 45.0   # deg/s  (C++ pathFollower: 45.0)
 YAW_RATE_GAIN  = 7.5    # (C++ pathFollower: 7.5)
 LOOK_AHEAD_BASE = 0.5   # m      (C++ baseLookAheadDis_: 0.5)
 LOOK_AHEAD_RATIO = 0.5  #        (C++ lookAheadRatio_: 0.5)
+MIN_LOOK_AHEAD = 0.2    # m      (C++ minLookAheadDis_: 0.2)
+MAX_LOOK_AHEAD = 2.0    # m      (C++ maxLookAheadDis_: 2.0)
+DIR_DIFF_THRE  = 0.1    # rad≈6° (C++ dirDiffThre_: 方向误差>6°→停车原地转)
+STOP_YAW_GAIN  = 7.5    # (C++ stopYawRateGain_: 停车时转向增益)
+OMNI_DIR_GOAL  = 1.0    # m      (C++ omniDirGoalThre_: 近目标放宽方向约束)
+OMNI_DIR_DIFF  = 1.5    # rad≈86°(C++ omniDirDiffThre_: 近目标最大允许方向差)
 STOP_DIS       = 0.35
 SLOWDOWN_DIS   = 2.0
 WAYPOINT_DIST  = 1.0    # pct_adapter 航点间距 (0.5太近→航点快速跳跃)
@@ -282,6 +288,7 @@ class Robot:
         self.x, self.y, self.yaw = ROBOT_START
         self.speed = 0.0
         self.wyaw = 0.0
+        self._dir_diff = 0.0   # pathFollower 方向误差 (用于全向运动学)
         self.scored_paths = []
         self.best_path = []
         self.mode = "IDLE"
@@ -410,6 +417,13 @@ class Robot:
                 continue
             pts_w = _body_to_world(pts_body, self.x, self.y, self.yaw)
             s = _score_path(pts_w, nearby, goal_dir_clamped, (self.x, self.y))
+            if s > 0:
+                # C++ dirWeight: 初始方向偏差惩罚 — 防止反向弧线得分等于正向直线
+                # 例: 目标在 0°, -50° 弧线弯回终点朝 0° → endpoint score ≈ 1.0
+                # 但初始方向偏 50°, 应该被惩罚 → 直线 0° 必须胜出
+                diff_b = math.radians(joy_deg - dir_deg)
+                diff_b = math.atan2(math.sin(diff_b), math.cos(diff_b))
+                s *= 0.2 + 0.8 * max(0.0, math.cos(diff_b))
             scored.append((pts_w, s))
         self.scored_paths = scored
 
@@ -438,6 +452,10 @@ class Robot:
                     pts_w = _body_to_world(pts_body, self.x, self.y, self.yaw)
                     s = _score_path(pts_w, nearby, goal_dir_clamped,
                                     (self.x, self.y), margin_scale=scale)
+                    if s > 0:
+                        diff_b = math.radians(joy_deg - dir_deg)
+                        diff_b = math.atan2(math.sin(diff_b), math.cos(diff_b))
+                        s *= 0.2 + 0.8 * max(0.0, math.cos(diff_b))
                     relaxed.append((pts_w, s))
                 best_r = max(relaxed, key=lambda x: x[1])
                 if best_r[1] > 0:
@@ -550,39 +568,61 @@ class Robot:
             step = MAX_ACCEL * DT
             self.speed = max(self.speed - step, target_speed)
             self.wyaw = 0.0
+            self._dir_diff = 0.0
             return
 
         if not self.best_path:
             self.speed = max(self.speed - MAX_ACCEL * DT * 2, 0.0)
             self.wyaw = 0.0
+            self._dir_diff = 0.0
             return
 
-        # Pure Pursuit: 沿选中弧线路径找 look-ahead 点 (C++ pathFollower 同算法)
-        # 恒曲率弧线路径在 look-ahead 距离处有真实弯曲 → 转向灵敏
-        # (旧版直线候选路径在 look-ahead 处无弯曲 → 被迫用端点方向 → 帧间震荡)
+        # ── Adaptive look-ahead with min/max bounds (C++ pathFollower) ──
         look_dis = LOOK_AHEAD_BASE + LOOK_AHEAD_RATIO * abs(self.speed)
+        look_dis = max(MIN_LOOK_AHEAD, min(MAX_LOOK_AHEAD, look_dis))
         tx, ty = self._find_lookahead(look_dis)
 
-        # 到终点距离 (用于减速控制)
+        # 到 look-ahead 点和终点的距离
+        look_dist = math.hypot(tx - self.x, ty - self.y)
         end_dis = float('inf')
         if self.waypoints:
             fx, fy = self.waypoints[-1]
             end_dis = math.hypot(fx - self.x, fy - self.y)
 
+        # ── 方向误差 ──
         path_dir = math.atan2(ty - self.y, tx - self.x)
         dir_diff = math.atan2(math.sin(path_dir - self.yaw),
                                math.cos(path_dir - self.yaw))
-        self.wyaw = YAW_RATE_GAIN * dir_diff
+        self._dir_diff = dir_diff  # 存储给 step() 做全向速度分解
+
+        # ── 转向控制: 停车/运动分离增益 (C++ stopYawRateGain_) ──
+        if abs(self.speed) < 2.0 * MAX_ACCEL * DT:
+            self.wyaw = STOP_YAW_GAIN * dir_diff   # 停车时可用更高增益快速对齐
+        else:
+            self.wyaw = YAW_RATE_GAIN * dir_diff
         max_wr = MAX_YAW_RATE * math.pi / 180
         self.wyaw = max(-max_wr, min(max_wr, self.wyaw))
 
-        target_speed = MAX_SPEED
-        if end_dis < SLOWDOWN_DIS:
-            target_speed = MAX_SPEED * (end_dis / SLOWDOWN_DIS)
+        # No rotation at goal (C++ noRotAtGoal_)
         if end_dis < STOP_DIS:
-            target_speed = 0.0
-        if abs(dir_diff) > 0.4:
-            target_speed *= max(0.25, 1.0 - abs(dir_diff) / math.pi)
+            self.wyaw = 0.0
+
+        # ── 方向门控加速 (C++ dirDiffThre_) ──
+        # 核心: 方向误差 > 6° 时减速到 0，原地转; < 6° 才加速前进
+        # 例外: 距目标 < 1m 时放宽到 86° (C++ omniDirGoalThre_)
+        # 这是 C++ pathFollower 最关键的行为:
+        #   避免 "一边转一边走" → 消除大弧线绕行
+        can_accel = (
+            (abs(dir_diff) < DIR_DIFF_THRE) or
+            (end_dis < OMNI_DIR_GOAL and abs(dir_diff) < OMNI_DIR_DIFF)
+        ) and end_dis > STOP_DIS
+
+        if can_accel:
+            target_speed = MAX_SPEED
+            if end_dis < SLOWDOWN_DIS:
+                target_speed = MAX_SPEED * (end_dis / SLOWDOWN_DIS)
+        else:
+            target_speed = 0.0  # 先停 → 原地转到对齐 → 再走
 
         step = MAX_ACCEL * DT
         self.speed = (min(self.speed + step, target_speed) if self.speed < target_speed
@@ -599,8 +639,15 @@ class Robot:
         self._check_stuck_replan(t)
         self._follow()
 
-        self.x += self.speed * math.cos(self.yaw) * DT
-        self.y += self.speed * math.sin(self.yaw) * DT
+        # 全向运动学 (C++ omniDirGoalThre_ > 0: 四足可横向行走)
+        # Body-frame: vx = speed*cos(dir_diff), vy = -speed*sin(dir_diff)
+        # dir_diff 很小时 (< 6°), 侧向分量 ≈ 0, 退化为普通前进
+        # dir_diff 较大时, 四足可横向微调, 避免纯靠转向修正
+        vx = self.speed * math.cos(self._dir_diff)
+        vy = -self.speed * math.sin(self._dir_diff)
+        cy, sy = math.cos(self.yaw), math.sin(self.yaw)
+        self.x += (vx * cy - vy * sy) * DT
+        self.y += (vx * sy + vy * cy) * DT
         self.yaw += self.wyaw * DT
         self.trail.append((self.x, self.y))
 
@@ -1002,6 +1049,16 @@ class InteractivePlanner:
             arts['status_detail'].set_text(
                 f'C++ recoveryState={robot._recovery_state}'
                 + (f'\nstuck 倒计时 {cd}' if cd else ''))
+        elif (robot.mode in ('FOLLOWING', 'AVOIDING')
+              and robot.speed < 0.05
+              and abs(robot._dir_diff) > DIR_DIFF_THRE):
+            # dirDiffThre_ 触发: 先转再走 (C++ pathFollower 核心行为)
+            dir_deg = math.degrees(abs(robot._dir_diff))
+            arts['status_msg'].set_text(f'[<>] 方向对齐 ({dir_deg:.0f}deg)')
+            arts['status_msg'].set_color('#c084fc')
+            arts['status_detail'].set_text(
+                f'方向误差 > {math.degrees(DIR_DIFF_THRE):.0f}deg\n'
+                f'先停车转向, 对齐后前进')
         elif robot.mode == 'AVOIDING':
             arts['status_msg'].set_text('[!] 障碍物规避')
             arts['status_msg'].set_color('#ff6e6e')
@@ -1036,11 +1093,84 @@ class InteractivePlanner:
 
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _run_test():
+    """自动化回归测试 — 验证 pathFollower 跟踪质量"""
+    import statistics
+    scenarios = [
+        ("straight",   (15.0, 6.0),  []),
+        ("side_90deg", (1.0, 1.0),   []),
+        ("behind",     (0.5, 6.0),   []),
+        ("dense_obs",  (15.0, 6.0),  [(5.0,5.5,0.7),(5.0,6.5,0.7),
+                                       (8.0,5.0,0.8),(8.0,7.0,0.8),
+                                       (11.0,5.5,0.6),(11.0,6.5,0.6)]),
+    ]
+    all_pass = True
+    for name, goal, extra_obs in scenarios:
+        robot = Robot()
+        obstacles = list(extra_obs)
+        robot.obstacles = list(obstacles)
+        ok = robot.set_goal(goal, obstacles)
+        if not ok:
+            print(f"  {name:12s}: NO_PATH (A* failed)")
+            if name != "dense_obs":
+                all_pass = False
+            continue
+        # Run simulation
+        max_steps = 600  # 20s at 30fps
+        dir_changes = []
+        prev_yaw = robot.yaw
+        for i in range(max_steps):
+            t = (i + 1) * DT
+            robot.step(t)
+            dyr = abs(math.degrees(
+                math.atan2(math.sin(robot.yaw - prev_yaw),
+                           math.cos(robot.yaw - prev_yaw))))
+            dir_changes.append(dyr)
+            prev_yaw = robot.yaw
+            if robot.reached:
+                break
+        # Compute metrics
+        reached = robot.reached
+        trail_len = sum(math.hypot(
+            robot.trail[i+1][0]-robot.trail[i][0],
+            robot.trail[i+1][1]-robot.trail[i][1])
+            for i in range(len(robot.trail)-1))
+        ideal_len = math.hypot(goal[0]-ROBOT_START[0], goal[1]-ROBOT_START[1])
+        path_ratio = trail_len / max(ideal_len, 0.01)
+        mean_dc = statistics.mean(dir_changes) if dir_changes else 0
+        max_dc = max(dir_changes) if dir_changes else 0
+
+        status = "PASS" if reached else "FAIL"
+        # Quality checks
+        if name == "straight" and (mean_dc > 3.0 or path_ratio > 1.3):
+            status = "FAIL"
+            all_pass = False
+        elif name == "side_90deg" and (not reached or path_ratio > 2.5):
+            status = "FAIL"
+            all_pass = False
+        elif name == "behind" and (not reached or path_ratio > 4.0):
+            status = "FAIL"
+            all_pass = False
+        elif not reached and name != "dense_obs":
+            all_pass = False
+
+        print(f"  {name:12s}: {status}  reached={reached}  "
+              f"ratio={path_ratio:.2f}x  smooth={mean_dc:.2f}deg/f  "
+              f"max={max_dc:.1f}deg/f  trail={trail_len:.1f}m")
+
+    print(f"\n{'ALL PASS' if all_pass else 'SOME FAILED'}")
+    return all_pass
+
+
 if __name__ == '__main__':
-    print('MapPilot 交互式规划演示')
-    print('  左键 = 设目标 (A* 全局规划 + 实时避障)')
-    print('  右键 = 添加障碍物')
-    print('  Backspace = 清除')
-    print('  R = 重置机器人位置')
-    app = InteractivePlanner()
-    app.run()
+    if '--test' in sys.argv:
+        print('=== pathFollower 跟踪质量回归测试 ===')
+        _run_test()
+    else:
+        print('MapPilot 交互式规划演示')
+        print('  左键 = 设目标 (A* 全局规划 + 实时避障)')
+        print('  右键 = 添加障碍物')
+        print('  Backspace = 清除')
+        print('  R = 重置机器人位置')
+        app = InteractivePlanner()
+        app.run()
