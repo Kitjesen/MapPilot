@@ -43,6 +43,12 @@ autonomy:
   slow_down: /nav/slow_down             # std_msgs/Int8 (减速)
   way_point: /nav/way_point             # geometry_msgs/PointStamped (目标航点)
   speed: /nav/speed                     # std_msgs/Float32 (速度倍率)
+  # 可选控制话题 (无发布者时节点静默等待，不影响正常导航)
+  map_clearing: /nav/map_clearing       # std_msgs/Float32 (terrain_analysis 地形清除半径)
+  cloud_clearing: /nav/cloud_clearing   # std_msgs/Float32 (terrain_analysis_ext 点云清除半径)
+  navigation_boundary: /nav/navigation_boundary  # geometry_msgs/PolygonStamped (导航边界多边形)
+  added_obstacles: /nav/added_obstacles # sensor_msgs/PointCloud2 (动态附加障碍物)
+  check_obstacle: /nav/check_obstacle   # std_msgs/Bool (障碍物检测开关)
 
 # ── 高层控制 ──
 control:

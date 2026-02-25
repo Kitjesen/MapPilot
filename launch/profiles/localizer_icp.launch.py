@@ -53,6 +53,9 @@ def generate_launch_description():
             ("/cloud_registered", "/nav/registered_cloud"),
             ("/Odometry",         "/nav/odometry"),
             # 输出: remap 到标准接口
+            # 注意: map_cloud 用相对名发布，加 namespace 后变为 /localizer/map_cloud，
+            #       必须显式 remap 到 /nav/map_cloud 才能被 terrain_analysis 等节点使用
+            ("map_cloud",             "/nav/map_cloud"),
             ("/localization_quality", "/nav/localization_quality"),
             # 服务: remap 到标准名
             ("relocalize",         "/nav/relocalize"),

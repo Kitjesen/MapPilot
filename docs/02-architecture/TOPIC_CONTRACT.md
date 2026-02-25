@@ -55,6 +55,11 @@
 | `/nav/slow_down` | `std_msgs/Int8` | 减速 |
 | `/nav/way_point` | `geometry_msgs/PointStamped` | 目标航点 |
 | `/nav/speed` | `std_msgs/Float32` | 速度倍率 |
+| `/nav/map_clearing` | `std_msgs/Float32` | 地形清除半径（可选，无发布者时忽略）|
+| `/nav/cloud_clearing` | `std_msgs/Float32` | 点云清除半径（可选，无发布者时忽略）|
+| `/nav/navigation_boundary` | `geometry_msgs/PolygonStamped` | 导航边界（可选）|
+| `/nav/added_obstacles` | `sensor_msgs/PointCloud2` | 动态附加障碍物（可选）|
+| `/nav/check_obstacle` | `std_msgs/Bool` | 障碍物检测开关（可选）|
 
 ### 高层控制
 

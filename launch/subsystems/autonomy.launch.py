@@ -8,7 +8,10 @@
   - pathFollower          (Pure Pursuit 路径跟踪)
 
 话题接口契约:
-  输入: /nav/odometry, /nav/map_cloud, /nav/way_point, /nav/speed
+  必需输入: /nav/odometry, /nav/map_cloud, /nav/way_point, /nav/speed
+  可选输入: /nav/map_clearing, /nav/cloud_clearing   (地形清除指令, 无发布者则忽略)
+            /nav/navigation_boundary                  (导航边界多边形, 无发布者则忽略)
+            /nav/added_obstacles, /nav/check_obstacle (动态障碍物, 无发布者则忽略)
   输出: /nav/terrain_map, /nav/terrain_map_ext, /nav/local_path,
         /nav/cmd_vel, /nav/stop, /nav/slow_down
 
@@ -76,11 +79,13 @@ def generate_launch_description():
         ],
         remappings=[
             # 源码内 /Odometry → 标准接口
-            ("/Odometry",     "/nav/odometry"),
+            ("/Odometry",      "/nav/odometry"),
             # 源码内 /cloud_map → 标准接口 (世界坐标系点云, odom frame)
-            ("/cloud_map",    "/nav/map_cloud"),
+            ("/cloud_map",     "/nav/map_cloud"),
+            # 可选输入: 地形清除指令 (无发布者时话题不存在, 节点静默等待)
+            ("/map_clearing",  "/nav/map_clearing"),
             # 输出: 标准接口
-            ("/terrain_map",  "/nav/terrain_map"),
+            ("/terrain_map",   "/nav/terrain_map"),
         ],
     )
 
@@ -114,6 +119,8 @@ def generate_launch_description():
         remappings=[
             ("/Odometry",        "/nav/odometry"),
             ("/cloud_map",       "/nav/map_cloud"),
+            # 可选输入: 点云清除指令 (无发布者时静默等待)
+            ("/cloud_clearing",  "/nav/cloud_clearing"),
             ("/terrain_map",     "/nav/terrain_map"),
             ("/terrain_map_ext", "/nav/terrain_map_ext"),
         ],
@@ -176,15 +183,19 @@ def generate_launch_description():
             }
         ],
         remappings=[
-            ("/Odometry",        "/nav/odometry"),
-            ("/cloud_map",       "/nav/map_cloud"),
-            ("/terrain_map",     "/nav/terrain_map"),
-            ("/terrain_map_ext", "/nav/terrain_map_ext"),
-            ("/way_point",       "/nav/way_point"),
-            ("/speed",           "/nav/speed"),
-            ("/path",            "/nav/local_path"),
-            ("/stop",            "/nav/stop"),
-            ("/slow_down",       "/nav/slow_down"),
+            ("/Odometry",             "/nav/odometry"),
+            ("/cloud_map",            "/nav/map_cloud"),
+            ("/terrain_map",          "/nav/terrain_map"),
+            ("/terrain_map_ext",      "/nav/terrain_map_ext"),
+            ("/way_point",            "/nav/way_point"),
+            ("/speed",                "/nav/speed"),
+            ("/path",                 "/nav/local_path"),
+            ("/stop",                 "/nav/stop"),
+            ("/slow_down",            "/nav/slow_down"),
+            # 可选输入: 动态约束 (无发布者时静默等待)
+            ("/navigation_boundary",  "/nav/navigation_boundary"),
+            ("/added_obstacles",      "/nav/added_obstacles"),
+            ("/check_obstacle",       "/nav/check_obstacle"),
         ],
     )
 
