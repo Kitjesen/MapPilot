@@ -59,6 +59,7 @@ def generate_launch_description():
             ("/localization_quality", "/nav/localization_quality"),
             # 服务: remap 到标准名
             ("relocalize",         "/nav/relocalize"),
+            ("relocalize_check",   "/nav/relocalize_check"),
         ],
     )
 

@@ -171,14 +171,19 @@ class PlanningTestNode(Node):
         return path
 
     def make_flat_terrain(self, radius: float = 5.0, step: float = 0.5) -> PointCloud2:
-        """构造一个平坦无障碍的 terrain_map (xyzI, 高度全为 0)"""
+        """构造一个平坦无障碍的 terrain_map，格式: XYZI float32×4
+
+        frame_id: odom (世界坐标系，与 terrain_analysis 期望一致)
+        intensity: 0.0 = 可通行地面; 非零 = 障碍物
+        z=0 = 地面高度 (terrain_analysis 以此判断 obstacle_height_thre)
+        """
         import struct
         points = []
         x = -radius
         while x <= radius:
             y = -radius
             while y <= radius:
-                # intensity = 0 → 可通行地面
+                # intensity=0 → 地面可通行，z=0 → 无高度障碍
                 points.append(struct.pack('ffff', x, y, 0.0, 0.0))
                 y += step
             x += step
@@ -350,12 +355,14 @@ class PlanningTestSuite:
         self.node.wait_for_status_event('path_received', timeout=3.0)
 
         # 把机器人移到第一个航点附近 (arrival_threshold=0.5m)
+        # 注意: robot_x/y 由 _publish_odom 以 10Hz 持续发布给 pct_adapter
+        # _spin(2s) 内会有 ~20 帧里程计送达，足够 adapter 检测到位置变化
         self.node.robot_x = 0.1
         self.node.robot_y = 0.0
         print("    机器人位置 → (0.1, 0.0)，期望到达第一航点")
         self._spin(2.0)
 
-        # 移到第二个航点附近触发推进
+        # 移到第二个航点附近触发推进 (map→odom TF 由 static_transform_publisher 提供)
         self.node.robot_x = 2.1
         self.node.robot_y = 0.0
         print("    机器人位置 → (2.1, 0.0)，期望 waypoint_reached")

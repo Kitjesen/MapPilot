@@ -35,6 +35,7 @@
 |-----------|------|------|
 | `/nav/localization_quality` | `std_msgs/Float32` | ICP 匹配质量分数 |
 | `/nav/relocalize` | `interface/srv/Relocalize` | 重定位服务 |
+| `/nav/relocalize_check` | `interface/srv/IsValid` | 检查重定位是否完成 |
 
 ### 全局规划层
 

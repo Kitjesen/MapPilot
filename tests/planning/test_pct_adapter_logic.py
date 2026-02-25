@@ -19,6 +19,7 @@ import math
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -51,6 +52,8 @@ def downsample_path(poses, waypoint_distance: float):
             last = pose
 
     # 最后一个点始终包含
+    # NOTE: C++ 实现无条件 push_back(path.poses.back())，可能在末点已被 loop 添加时产生重复。
+    # 本 Python 版有意去重（行为更清晰），对 adapter 逻辑无影响（重复末点不影响 goal 判断）。
     if downsampled[-1] != poses[-1]:
         downsampled.append(poses[-1])
 
@@ -164,6 +167,8 @@ class TestDownsamplePath(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_single_point(self):
+        # Python 版去重：单点路径返回 [(1,0,0)]
+        # C++ 版因无条件追加末点，实际返回 [(1,0,0),(1,0,0)]（重复，对 adapter 无影响）
         result = downsample_path([(1, 0, 0)], waypoint_distance=0.5)
         self.assertEqual(result, [(1, 0, 0)])
 
@@ -244,11 +249,11 @@ class TestPCTAdapterSimulator(unittest.TestCase):
         self.assertEqual(self.adapter.current_path, [])
 
     def test_waypoint_published_when_far(self):
-        """机器人远离航点 → 持续发布航点"""
+        """机器人远离目标航点 → 持续发布航点"""
         self.adapter.receive_path([(0, 0, 0), (5, 0, 0)])
-        self.adapter.control_loop((0.0, 0.0))  # 机器人在原点
-        # 第一个航点是 (0,0,0)，距离 0 → 到达 → 推进到下一个 (5,0,0)
-        # 再调用一次，机器人还在原点，还未到 (5,0,0) → 应发布
+        # 第一次: target=(0,0,0)，robot=(0,0)，dist=0 < threshold → waypoint_reached，idx→1，return
+        self.adapter.control_loop((0.0, 0.0))
+        # 第二次: target=(5,0,0)，robot=(0,0)，dist=5 >= threshold → 进入发布分支
         self.adapter.control_loop((0.0, 0.0))
         self.assertGreater(len(self.adapter.published_waypoints), 0)
 
@@ -264,44 +269,50 @@ class TestPCTAdapterSimulator(unittest.TestCase):
         self.assertEqual(events[0]['index'], 0)
 
     def test_goal_reached_event(self):
-        """机器人到达最后一个航点 → goal_reached 事件"""
-        self.adapter.receive_path([(0, 0, 0), (1, 0, 0)])
-        # 直接模拟已推进到最后一个索引
-        self.adapter.current_idx = len(self.adapter.current_path) - 1
-        target = self.adapter.current_path[-1]
-        # 机器人靠近最后一个航点
-        self.adapter.control_loop((target[0] + 0.1, target[1]))
+        """机器人经由正常 control_loop 推进到最后一个航点 → goal_reached 事件"""
+        # 使用3航点路径，通过正常流程推进（不手动篡改 current_idx）
+        self.adapter.receive_path([(0, 0, 0), (2, 0, 0), (4, 0, 0)])
+        # 步骤 1: 到达 (0,0,0) → waypoint_reached, idx→1
+        self.adapter.control_loop((0.1, 0.0))
+        # 步骤 2: 到达 (2,0,0) → waypoint_reached, idx→2
+        self.adapter.control_loop((2.1, 0.0))
+        # 步骤 3: 到达 (4,0,0) → goal_reached
+        self.adapter.control_loop((4.1, 0.0))
         events = self.adapter.events_of_type('goal_reached')
         self.assertEqual(len(events), 1)
+        self.assertTrue(self.adapter.goal_reached)
 
     def test_no_waypoint_after_goal_reached(self):
         """goal_reached 后停止发布 way_point"""
-        self.adapter.receive_path([(0, 0, 0), (0.3, 0, 0)])
-        # 先到达终点
-        target = self.adapter.current_path[-1]
-        for _ in range(5):
-            self.adapter.control_loop((target[0] + 0.1, target[1]))
-        self.assertTrue(self.adapter.goal_reached)
+        # 使用间距 >= waypoint_distance 的明确路径，通过正常流程推进
+        self.adapter.receive_path([(0, 0, 0), (2, 0, 0), (4, 0, 0)])
+        # 依次推进到终点
+        self.adapter.control_loop((0.1, 0.0))   # 到达(0,0,0) → idx→1
+        self.adapter.control_loop((2.1, 0.0))   # 到达(2,0,0) → idx→2
+        self.adapter.control_loop((4.1, 0.0))   # 到达(4,0,0) → goal_reached
+        self.assertTrue(self.adapter.goal_reached, "前置条件: goal_reached 应为 True")
 
         # goal_reached 后的调用不应再增加已发布航点数
         count_before = len(self.adapter.published_waypoints)
         for _ in range(5):
-            self.adapter.control_loop((target[0] + 0.1, target[1]))
+            self.adapter.control_loop((4.1, 0.0))
         count_after = len(self.adapter.published_waypoints)
         self.assertEqual(count_before, count_after,
             "goal_reached 后不应再发布 way_point")
 
     def test_stuck_detection(self):
-        """机器人长时间无进展 → stuck 事件"""
+        """机器人长时间无进展 → stuck 事件 (mock 时钟，避免 CI 偶发失败)"""
         adapter = PCTAdapterSimulator(
             waypoint_distance=0.5,
             arrival_threshold=0.5,
-            stuck_timeout_sec=0.1,  # 极短超时便于测试
+            stuck_timeout_sec=30.0,
         )
-        adapter.receive_path([(0, 0, 0), (10, 0, 0)])
-        # 机器人不移动，远离航点
-        time.sleep(0.2)
-        adapter.control_loop((5.0, 5.0))  # 远离所有航点
+        base_t = 1000.0
+        # receive_path 调用 time.time() 1次 → base_t
+        # control_loop  调用 time.time() 1次 → base_t + 31s > stuck_timeout
+        with patch('time.time', side_effect=[base_t, base_t + 31.0]):
+            adapter.receive_path([(0, 0, 0), (10, 0, 0)])
+            adapter.control_loop((5.0, 5.0))  # 机器人远离所有航点
         events = adapter.events_of_type('stuck')
         self.assertGreater(len(events), 0, "应触发 stuck 事件")
 

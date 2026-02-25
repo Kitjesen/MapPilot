@@ -10,8 +10,6 @@
 #   bash tests/integration/test_planning_stub.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
-set -e
-
 WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$WORKSPACE_DIR"
 
@@ -22,20 +20,26 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 LAUNCH_PID=""
+PCT_PID=""
+TF_PID=""
 
 cleanup() {
     echo ""
     echo -e "${YELLOW}清理进程...${NC}"
+    # 精确 kill 已记录的 PID (P0 fix: PCT_PID/TF_PID 原先未 kill)
+    [ -n "$PCT_PID"    ] && kill "$PCT_PID"    2>/dev/null || true
+    [ -n "$TF_PID"     ] && kill "$TF_PID"     2>/dev/null || true
     if [ -n "$LAUNCH_PID" ]; then
         kill "$LAUNCH_PID" 2>/dev/null || true
         sleep 1
         pkill -P "$LAUNCH_PID" 2>/dev/null || true
     fi
-    # 清理可能残留的 ROS2 节点
-    pkill -f "terrainAnalysis"   2>/dev/null || true
-    pkill -f "localPlanner"      2>/dev/null || true
-    pkill -f "pathFollower"      2>/dev/null || true
-    pkill -f "pct_path_adapter"  2>/dev/null || true
+    # 兜底: 清理可能残留的 ROS2 节点
+    pkill -f "terrainAnalysis"          2>/dev/null || true
+    pkill -f "localPlanner"             2>/dev/null || true
+    pkill -f "pathFollower"             2>/dev/null || true
+    pkill -f "pct_path_adapter"         2>/dev/null || true
+    pkill -f "static_transform_publisher" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -45,17 +49,19 @@ echo "=========================================="
 echo ""
 
 # ── 检查环境 ──────────────────────────────────────────────────────────────────
+# 注意: 不使用 set -e，避免后台节点启动/sleep 被 SIGINT 中断时意外退出
+# 关键错误用显式 exit 1 处理
 if [ ! -f "/opt/ros/humble/setup.bash" ]; then
     echo -e "${RED}❌ ROS2 Humble 未安装${NC}"
     exit 1
 fi
-source /opt/ros/humble/setup.bash
+source /opt/ros/humble/setup.bash || { echo -e "${RED}❌ source ROS2 失败${NC}"; exit 1; }
 
 if [ ! -f "install/setup.bash" ]; then
     echo -e "${RED}❌ install/ 未找到，请先 make build${NC}"
     exit 1
 fi
-source install/setup.bash
+source install/setup.bash || { echo -e "${RED}❌ source workspace 失败${NC}"; exit 1; }
 
 # ── 启动自主导航子系统（stub SLAM + stub 规划器）────────────────────────────
 echo -e "${BLUE}[1/4] 启动 autonomy 子系统 (stub 模式)...${NC}"
@@ -97,16 +103,23 @@ for i in $(seq 1 8); do
 done
 echo ""
 
-# ── 快速节点存活检查 ──────────────────────────────────────────────────────────
+# ── 快速节点存活检查 (P2 fix: 预检失败时快速退出) ────────────────────────────
 echo ""
 echo -e "${YELLOW}── 节点存活预检 ──${NC}"
+PRECHECK_FAIL=0
 for node in terrainAnalysis terrainAnalysisExt localPlanner pathFollower pct_path_adapter; do
     if ros2 node list 2>/dev/null | grep -q "/$node"; then
         echo -e "  ${GREEN}✓${NC} $node"
     else
         echo -e "  ${RED}✗${NC} $node"
+        PRECHECK_FAIL=1
     fi
 done
+if [ "$PRECHECK_FAIL" -eq 1 ]; then
+    echo -e "${RED}❌ 节点未完全启动，中止测试${NC}"
+    echo "  查看启动日志: cat /tmp/autonomy_stub.log  cat /tmp/pct_adapter_stub.log"
+    exit 1
+fi
 
 # ── 运行 Python 集成测试 ──────────────────────────────────────────────────────
 echo ""
