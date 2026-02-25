@@ -132,6 +132,25 @@ SCENES = {
         dyn_traj=[(5.0, 10.5), (5.0, 1.5)],
         dyn_r=0.4, dyn_spd=1.5, sim_time=20.0,
     ),
+    # 场景4: 路径封堵 — 演示三阶段恢复状态机 (停车→旋转→后退→脱困)
+    "blocked": dict(
+        name="卡死恢复演示",
+        desc="静态障碍封堵路径，触发停车→旋转→后退→脱困完整恢复流程",
+        static_obs=[
+            # 正面封堵墙 (x≈6)
+            (6.2, 4.8, 0.7), (6.2, 5.8, 0.65), (6.2, 6.8, 0.7),
+            # 两侧辅助障碍
+            (3.5, 3.0, 0.6), (3.5, 9.0, 0.6),
+            (10.0, 3.5, 0.7), (10.0, 8.5, 0.7),
+            (14.0, 5.0, 0.6), (14.0, 7.5, 0.5),
+        ],
+        global_path=[
+            (0.5, 6.0), (2.5, 6.0), (4.5, 6.0), (7.5, 6.0),
+            (10.0, 6.0), (12.5, 6.0), (15.0, 6.0), (17.0, 6.0),
+        ],
+        dyn_traj=[(15.0, 1.0), (15.0, 11.0)],
+        dyn_r=0.4, dyn_spd=1.0, sim_time=28.0,
+    ),
     # 场景3: 对向动态障碍 — 迎面驶来，机器人侧移让道
     "headon": dict(
         name="对向障碍物迎面",
@@ -239,6 +258,10 @@ class Robot:
         self.mode = "FOLLOWING"
         self.reached = False
         self.trail = [(self.x, self.y)]
+        # ── 恢复状态机 (对应 localPlanner.cpp 三阶段逻辑) ───────────────
+        self._blocked_start  = None  # 首次阻塞时刻 (仿真时间 t)
+        self._recovery_state = 0     # 0=normal/等待, 1=rotating, 2=backing_up
+        self._recovery_start = None  # 当前恢复阶段开始时刻
 
     # ── 动态障碍物位置 ────────────────────────────────────────────────────
 
@@ -272,7 +295,7 @@ class Robot:
 
     # ── localPlanner: 候选路径评分 ────────────────────────────────────────
 
-    def _local_plan(self, all_obs):
+    def _local_plan(self, all_obs, t):
         nearby = self._nearby_obstacles(all_obs)
 
         # 目标方向 (当前全局航点)
@@ -291,18 +314,18 @@ class Robot:
         best = max(scored, key=lambda x: x[1])
 
         if best[1] > 0:
-            # 正常：有可通行路径
+            # ── 有可通行路径：重置恢复状态 ────────────────────────────────
             self.best_path = best[0]
+            self._blocked_start  = None
+            self._recovery_state = 0
             self.mode = ("AVOIDING"
                          if any(math.hypot(ox - self.x, oy - self.y) < ADJACENT_RANGE
                                 for ox, oy, _ in all_obs)
                          else "FOLLOWING")
         else:
-            # ── 对应真实 localPlanner 的 pathScale 收缩循环 ──────────────
-            # C++ 行为：先缩小 pathScale（路径脚印变窄），再缩 pathRange，
-            # 仍无解则发布零点路径 → pathFollower joy_speed2=0 → 停车
+            # ── pathScale 收缩循环 (对应 C++ pathScale_ -= pathScaleStep_) ─
             found = False
-            for scale in [0.7, 0.5, 0.35]:       # 对应多次 pathScale -= step
+            for scale in [0.7, 0.5, 0.35]:
                 relaxed = []
                 for pts_body in CANDIDATE_BODY:
                     pts_w = _body_to_world(pts_body, self.x, self.y, self.yaw)
@@ -311,20 +334,71 @@ class Robot:
                     relaxed.append((pts_w, s))
                 best_r = max(relaxed, key=lambda x: x[1])
                 if best_r[1] > 0:
-                    self.scored_paths = relaxed   # 用收缩版路径显示
+                    self.scored_paths = relaxed
                     self.best_path = best_r[0]
+                    self._blocked_start  = None
+                    self._recovery_state = 0
                     found = True
+                    self.mode = "AVOIDING"
                     break
 
             if not found:
-                # 真实行为：pathFound=false → 发布零点路径 → 停车
-                self.best_path = []
+                # ── 三阶段恢复状态机 (对应 C++ !pathFound 新逻辑) ──────────
+                if self._blocked_start is None:
+                    self._blocked_start = t
+                blocked_dur = t - self._blocked_start
 
-            self.mode = "BLOCKED" if not found else "AVOIDING"
+                # 阶段切换
+                BLOCKED_THRE = 2.0
+                ROTATE_TIME  = 2.5
+                BACKUP_TIME  = 1.5
+                if self._recovery_state == 0 and blocked_dur >= BLOCKED_THRE:
+                    self._recovery_state = 1
+                    self._recovery_start = t
+                elif (self._recovery_state == 1 and
+                      self._recovery_start is not None and
+                      t - self._recovery_start >= ROTATE_TIME):
+                    self._recovery_state = 2
+                    self._recovery_start = t
+                elif (self._recovery_state == 2 and
+                      self._recovery_start is not None and
+                      t - self._recovery_start >= BACKUP_TIME):
+                    self._recovery_state = 0
+                    self._blocked_start  = t  # 重新计时
+
+                # 生成恢复路径 (body → world)
+                if self._recovery_state == 1:
+                    # 旋转：弧形路径偏向目标方向
+                    rel_angle = goal_dir - self.yaw
+                    rel_angle = math.atan2(math.sin(rel_angle), math.cos(rel_angle))
+                    turn_dir  = 1.0 if rel_angle >= 0.0 else -1.0
+                    pts_body  = [(0.15 * i * math.cos(turn_dir * i * 0.25),
+                                  0.15 * i * math.sin(turn_dir * i * 0.25))
+                                 for i in range(1, 7)]
+                    self.best_path = _body_to_world(pts_body, self.x, self.y, self.yaw)
+                    self.mode = "ROTATING"
+                elif self._recovery_state == 2:
+                    # 后退：body -X 方向
+                    pts_body = [(-0.2 * i, 0.0) for i in range(1, 6)]
+                    self.best_path = _body_to_world(pts_body, self.x, self.y, self.yaw)
+                    self.mode = "BACKING_UP"
+                else:
+                    # 等待计时：零点路径 → 停车
+                    self.best_path = []
+                    self.mode = "BLOCKED"
 
     # ── pathFollower: Pure Pursuit ────────────────────────────────────────
 
     def _follow(self):
+        # ── 后退阶段：直接用负速度，不走 Pure Pursuit ──────────────────
+        if self.mode == "BACKING_UP" and self.best_path:
+            target = -MAX_SPEED * 0.35          # 后退目标速度
+            step = MAX_ACCEL * DT
+            self.speed = (self.speed - step if self.speed > target
+                          else max(self.speed - step, target))
+            self.wyaw = 0.0
+            return
+
         if not self.best_path:
             # ── 对应真实 pathFollower 收到 path_size=1 时的行为 ──────────
             # C++ 行为: joy_speed2 = 0.0，机器人制动停车，不做任何转向
@@ -375,7 +449,7 @@ class Robot:
             return
         all_obs = self._all_obstacles(t)
         self._update_waypoint()
-        self._local_plan(all_obs)
+        self._local_plan(all_obs, t)
         self._follow()
 
         # 运动学积分
@@ -681,10 +755,10 @@ def make_animation(save_path=None, scene_name=None):
 
         # ── 信息面板更新 ──────────────────────────────────────────────────
         arts['i_time'].set_text(f'{t:.1f} s')
-        mode_color = {'AVOIDING': '#ff6e6e', 'ESCAPING': '#ff9900'}.get(
-            robot.mode, '#3fb950')
+        _mc = {'AVOIDING':'#ff6e6e','BLOCKED':'#ff9900',
+               'ROTATING':'#ff7700','BACKING_UP':'#ff4400'}
         arts['i_mode'].set_text(robot.mode)
-        arts['i_mode'].set_color(mode_color)
+        arts['i_mode'].set_color(_mc.get(robot.mode, '#3fb950'))
         arts['i_speed'].set_text(f'{robot.speed * 100:.0f} cm/s')
         arts['i_yaw'].set_text(f'{math.degrees(robot.wyaw):.1f} °/s')
         arts['i_wayp'].set_text(f'{wi + 1} / {len(GLOBAL_PATH)}')
@@ -719,12 +793,27 @@ def make_animation(save_path=None, scene_name=None):
             arts['status_msg'].set_color('#ffd700')
             arts['status_detail'].set_text('导航完成。\n机器人已停在目标点。')
         elif robot.mode == 'BLOCKED':
-            arts['status_msg'].set_text('[X] 全路径受阻 → 停车')
+            dur = (t - robot._blocked_start) if robot._blocked_start else 0
+            arts['status_msg'].set_text('[X] 路径受阻 → 等待恢复')
             arts['status_msg'].set_color('#ff9900')
             arts['status_detail'].set_text(
-                f'pathScale 收缩后仍无解\n'
-                f'C++真实行为: 发布零点路径\n'
-                f'pathFollower joy_speed2=0 → 停车')
+                f'pathScale 收缩仍无解\n'
+                f'停车等待 {dur:.1f}s / 2.0s\n'
+                f'即将进入旋转恢复阶段')
+        elif robot.mode == 'ROTATING':
+            arts['status_msg'].set_text('[~] 恢复: 旋转转向')
+            arts['status_msg'].set_color('#ff7700')
+            arts['status_detail'].set_text(
+                f'C++: recoveryState=1\n'
+                f'发布弧形路径朝向目标\n'
+                f'pathFollower 跟踪执行')
+        elif robot.mode == 'BACKING_UP':
+            arts['status_msg'].set_text('[<<] 恢复: 后退')
+            arts['status_msg'].set_color('#ff4400')
+            arts['status_detail'].set_text(
+                f'C++: recoveryState=2\n'
+                f'发布 body -X 后退路径\n'
+                f'twoWayDrive → 负速执行')
         elif robot.mode == 'AVOIDING':
             arts['status_msg'].set_text('[!] 障碍物规避')
             arts['status_msg'].set_color('#ff6e6e')
@@ -741,8 +830,13 @@ def make_animation(save_path=None, scene_name=None):
                 f'前视距={LOOK_AHEAD:.1f}m  偏航增益={YAW_RATE_GAIN}')
 
         # 标题
-        mode_color = {'AVOIDING': '#ff6e6e', 'BLOCKED': '#ff9900'}.get(
-            robot.mode, '#c9d1d9')
+        mode_color = {
+            'AVOIDING':   '#ff6e6e',
+            'BLOCKED':    '#ff9900',
+            'ROTATING':   '#ff7700',
+            'BACKING_UP': '#ff4400',
+        }.get(robot.mode, '#c9d1d9')
+        arts['i_mode'].set_color(mode_color)
         title_obj.set_text(
             f'MapPilot — {scene_name}   t = {t:.2f} s  |  '
             f'速度: {robot.speed*100:.0f} cm/s  |  模式: {robot.mode}')

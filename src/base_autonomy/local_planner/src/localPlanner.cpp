@@ -375,6 +375,14 @@ private:
   float vehicleRoll_ = 0, vehiclePitch_ = 0, vehicleYaw_ = 0;
   float vehicleX_ = 0, vehicleY_ = 0, vehicleZ_ = 0;
 
+  // ── Recovery state machine (三阶段卡死恢复) ──────────────────────────
+  int    recoveryState_       = 0;    // 0=normal, 1=rotating, 2=backing_up
+  double blockedStartTime_    = -1.0; // 首次 pathFound=false 的 odomTime_
+  double recoveryPhaseStart_  = -1.0; // 当前恢复阶段的开始时刻
+  double recoveryBlockedThre_ = 2.0;  // 触发恢复前的持续阻塞时间 (s)
+  double recoveryRotateTime_  = 2.5;  // 旋转阶段持续时间 (s)
+  double recoveryBackupTime_  = 1.5;  // 后退阶段持续时间 (s)
+
   bool newLaserCloud_ = false;
   bool newTerrainCloud_ = false;
   bool newTerrainCloudExt_ = false;
@@ -1264,6 +1272,9 @@ private:
             pathRange -= pathRangeStep_;
           }
         } else {
+          // 找到路径 → 重置恢复状态
+          recoveryState_    = 0;
+          blockedStartTime_ = -1.0;
           pathFound = true;
           break;
         }
@@ -1271,22 +1282,76 @@ private:
       pathScale_ = defPathScale;
 
       if (!pathFound) {
-        nav_msgs::msg::Path path;
-        path.poses.resize(1);
-        path.poses[0].pose.position.x = 0;
-        path.poses[0].pose.position.y = 0;
-        path.poses[0].pose.position.z = 0;
+        // ── 三阶段卡死恢复状态机 ─────────────────────────────────────
+        // 状态 0 (NORMAL/等待): 停车，计时
+        // 状态 1 (ROTATING):  向目标方向旋转的弧形路径
+        // 状态 2 (BACKING_UP): 沿 body -X 方向后退路径
+        if (blockedStartTime_ < 0) blockedStartTime_ = odomTime_;
+        const double blockedDur = odomTime_ - blockedStartTime_;
 
-        path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-        path.header.frame_id = "body";  // Use body frame (consistent with Fast-LIO2 TF)
-        pubPath_->publish(path);
+        if (recoveryState_ == 0 && blockedDur >= recoveryBlockedThre_) {
+          recoveryState_      = 1;
+          recoveryPhaseStart_ = odomTime_;
+          RCLCPP_WARN(get_logger(),
+            "[Recovery] 路径全部受阻 %.1fs → 进入旋转恢复", blockedDur);
+        } else if (recoveryState_ == 1 &&
+                   odomTime_ - recoveryPhaseStart_ >= recoveryRotateTime_) {
+          recoveryState_      = 2;
+          recoveryPhaseStart_ = odomTime_;
+          RCLCPP_WARN(get_logger(), "[Recovery] 旋转完成 → 进入后退");
+        } else if (recoveryState_ == 2 &&
+                   odomTime_ - recoveryPhaseStart_ >= recoveryBackupTime_) {
+          recoveryState_    = 0;
+          blockedStartTime_ = odomTime_;  // 重新计时
+          RCLCPP_WARN(get_logger(), "[Recovery] 后退完成 → 重置恢复计时");
+        }
+
+        // ── 构建恢复路径 (body frame) ──────────────────────────────────
+        nav_msgs::msg::Path recPath;
+        recPath.header.stamp    = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
+        recPath.header.frame_id = "body";
+
+        if (recoveryState_ == 1) {
+          // 旋转阶段：向目标方向弯曲的弧形路径
+          const float goalAngleWorld = atan2f(goalY_ - vehicleY_, goalX_ - vehicleX_);
+          float relAngle = goalAngleWorld - vehicleYaw_;
+          while (relAngle >  static_cast<float>(M_PI)) relAngle -= 2.0f * static_cast<float>(M_PI);
+          while (relAngle < -static_cast<float>(M_PI)) relAngle += 2.0f * static_cast<float>(M_PI);
+          const float turnDir = (relAngle >= 0.0f) ? 1.0f : -1.0f;
+
+          for (int i = 1; i <= 6; ++i) {
+            const float arc = turnDir * static_cast<float>(i) * 0.25f;
+            geometry_msgs::msg::PoseStamped p;
+            p.pose.position.x = 0.15f * static_cast<float>(i) * cosf(arc);
+            p.pose.position.y = 0.15f * static_cast<float>(i) * sinf(arc);
+            recPath.poses.push_back(p);
+          }
+
+        } else if (recoveryState_ == 2) {
+          // 后退阶段：沿 body -X 后退，pathFollower twoWayDrive_ 负速执行
+          for (int i = 1; i <= 5; ++i) {
+            geometry_msgs::msg::PoseStamped p;
+            p.pose.position.x = -0.2f * static_cast<float>(i);
+            p.pose.position.y = 0.0f;
+            recPath.poses.push_back(p);
+          }
+
+        } else {
+          // NORMAL 阶段（等待计时）：零点路径，pathFollower 停车
+          recPath.poses.resize(1);
+          recPath.poses[0].pose.position.x = 0;
+          recPath.poses[0].pose.position.y = 0;
+          recPath.poses[0].pose.position.z = 0;
+        }
+
+        pubPath_->publish(recPath);
 
         #if PLOTPATHSET == 1
         freePaths_->clear();
         sensor_msgs::msg::PointCloud2 freePaths2;
         pcl::toROSMsg(*freePaths_, freePaths2);
-        freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-        freePaths2.header.frame_id = "body";  // Use body frame (consistent with Fast-LIO2 TF)
+        freePaths2.header.stamp    = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
+        freePaths2.header.frame_id = "body";
         pubFreePaths_->publish(freePaths2);
         #endif
       }
