@@ -1,0 +1,706 @@
+#!/usr/bin/env python3
+"""
+MapPilot 全局规划 + 局部避障 动画演示
+=====================================
+模拟 localPlanner (候选路径扇形评分) + pathFollower (Pure Pursuit) 避障过程
+
+用法:
+    python tools/viz_planner_demo.py
+    python tools/viz_planner_demo.py --save demo.gif   # 保存 GIF
+"""
+
+import math
+import sys
+import argparse
+import numpy as np
+import matplotlib
+matplotlib.use('TkAgg' if 'linux' not in sys.platform else 'Agg')
+import matplotlib.pyplot as plt
+# 中文字体支持
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+import matplotlib.patches as mpatches
+import matplotlib.patheffects as pe
+from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.collections import LineCollection
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 场景配置
+# ═══════════════════════════════════════════════════════════════════════════
+
+WORLD_W, WORLD_H = 18.0, 12.0
+
+# 静态障碍物: (cx, cy, radius)
+STATIC_OBS = [
+    (3.5, 2.5, 0.7),
+    (3.5, 9.5, 0.7),
+    (7.0, 4.0, 0.9),
+    (7.0, 8.0, 0.6),
+    (11.0, 3.0, 0.7),
+    (11.0, 9.0, 0.8),
+    (5.5, 3.5, 0.5),
+    (14.0, 5.0, 0.6),
+    (14.0, 7.5, 0.5),
+]
+
+# 预规划全局路径 (绕静态障碍物)
+GLOBAL_PATH = [
+    (0.5,  6.0),
+    (2.0,  6.0),
+    (4.5,  5.5),
+    (6.0,  6.0),
+    (8.5,  6.0),
+    (10.0, 6.0),
+    (12.5, 6.0),
+    (13.5, 6.2),
+    (15.5, 6.0),
+    (17.0, 6.0),
+]
+
+# 动态障碍物: 从下向上穿越全局路径
+DYN_OBS_TRAJ = [(9.0, 1.0), (9.0, 11.0)]   # 起点→终点
+DYN_OBS_R    = 0.55
+DYN_OBS_SPD  = 2.2   # m/s, 仿真速度
+
+# 机器人
+ROBOT_START  = (0.5, 6.0, 0.0)   # x, y, yaw
+VEHICLE_W    = 0.55
+VEHICLE_L    = 0.7
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 规划参数 (对应 localPlanner / pathFollower)
+# ═══════════════════════════════════════════════════════════════════════════
+
+ADJACENT_RANGE  = 3.8    # 障碍物检测半径 (m)
+MAX_SPEED       = 1.4    # m/s
+MAX_ACCEL       = 1.2    # m/s²
+MAX_YAW_RATE    = 65.0   # deg/s
+YAW_RATE_GAIN   = 5.5
+LOOK_AHEAD      = 0.9    # Pure Pursuit 基础前视距离 (m)
+STOP_DIS        = 0.35   # 终点停车阈值 (m)
+SLOWDOWN_DIS    = 2.0    # 开始减速距离 (m)
+WAYPOINT_THRE   = 1.0    # PCT adapter 航点推进阈值 (m)
+
+# 候选路径: 36 条，角度 [-80°, +80°]
+N_PATHS   = 36
+PATH_LEN  = 10     # 每条路径点数
+PATH_STEP = 0.35   # 路径点间距 (m)
+
+FPS      = 25
+DT       = 1.0 / FPS
+SIM_TIME = 22.0    # 总仿真时间 (s)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 候选路径生成 (对应 localPlanner readPaths / startPaths)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _make_candidate_paths():
+    """生成 body-frame 候选路径 (扇形，对应 localPlanner 的 pathNum_ 条路径)"""
+    paths = []
+    angles = np.linspace(-math.radians(80), math.radians(80), N_PATHS)
+    for a in angles:
+        pts = []
+        for k in range(1, PATH_LEN + 1):
+            # 弧形：沿 a 方向弯曲
+            arc = a * 0.45
+            x = PATH_STEP * k * math.cos(arc * k / PATH_LEN)
+            y = PATH_STEP * k * math.sin(arc * k / PATH_LEN)
+            pts.append((x, y))
+        paths.append(pts)
+    return paths
+
+CANDIDATE_BODY = _make_candidate_paths()
+
+
+def _body_to_world(pts_body, rx, ry, ryaw):
+    cy, sy = math.cos(ryaw), math.sin(ryaw)
+    return [(rx + cy * px - sy * py, ry + sy * px + cy * py)
+            for px, py in pts_body]
+
+
+def _score_path(pts_world, obstacles, goal_dir, robot_xy, margin_scale=1.0):
+    """
+    路径评分 (简化版 localPlanner 评分):
+      - 任意点 < 安全距离 → 碰撞 (-1)
+      - obs_score: 最近障碍物距离
+      - dir_score: 路径末端方向与目标方向对齐程度
+    """
+    rx, ry = robot_xy
+    min_d = float('inf')
+    half_w = (VEHICLE_W / 2 + 0.08) * margin_scale   # 安全裕量（可缩放）
+
+    for px, py in pts_world:
+        for ox, oy, oр in obstacles:
+            d = math.hypot(px - ox, py - oy) - oр
+            if d < half_w:
+                return -1.0          # 碰撞
+            min_d = min(min_d, d)
+
+    if min_d == float('inf'):
+        min_d = ADJACENT_RANGE
+
+    obs_score = min(min_d / (ADJACENT_RANGE * 0.5), 1.0)
+
+    # 路径末端方向与目标方向
+    ex, ey = pts_world[-1]
+    path_dir = math.atan2(ey - ry, ex - rx)
+    diff = abs(math.atan2(math.sin(goal_dir - path_dir),
+                           math.cos(goal_dir - path_dir)))
+    dir_score = max(0.0, 1.0 - diff / math.pi * 1.8)
+
+    return 0.55 * obs_score + 0.45 * dir_score
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 机器人状态 & 规划器
+# ═══════════════════════════════════════════════════════════════════════════
+
+class Robot:
+    def __init__(self):
+        self.x, self.y, self.yaw = ROBOT_START
+        self.speed  = 0.0
+        self.wyaw   = 0.0          # yaw rate
+        self.wp_idx = 1            # PCT adapter 当前航点索引
+        self.scored_paths = []     # [(pts_world, score), ...]
+        self.best_path    = []     # 选中的局部路径
+        self.mode = "FOLLOWING"
+        self.reached = False
+        self.trail = [(self.x, self.y)]
+        self._escape_frames = 0
+
+    # ── 动态障碍物位置 ────────────────────────────────────────────────────
+
+    @staticmethod
+    def dyn_obs_at(t):
+        """返回动态障碍物 (x, y) — 线性插值"""
+        x0, y0 = DYN_OBS_TRAJ[0]
+        x1, y1 = DYN_OBS_TRAJ[1]
+        total_dist = math.hypot(x1 - x0, y1 - y0)
+        dist = DYN_OBS_SPD * t
+        f = min(dist / total_dist, 1.0)
+        return x0 + f * (x1 - x0), y0 + f * (y1 - y0)
+
+    def _all_obstacles(self, t):
+        dx, dy = self.dyn_obs_at(t)
+        return list(STATIC_OBS) + [(dx, dy, DYN_OBS_R)]
+
+    def _nearby_obstacles(self, all_obs):
+        """仅返回 ADJACENT_RANGE 内的障碍物"""
+        return [(ox, oy, oр) for ox, oy, oр in all_obs
+                if math.hypot(ox - self.x, oy - self.y) < ADJACENT_RANGE + oр + 0.5]
+
+    # ── PCT Adapter: 航点推进 ──────────────────────────────────────────────
+
+    def _update_waypoint(self):
+        if self.wp_idx >= len(GLOBAL_PATH):
+            return
+        gx, gy = GLOBAL_PATH[self.wp_idx]
+        if math.hypot(gx - self.x, gy - self.y) < WAYPOINT_THRE:
+            self.wp_idx = min(self.wp_idx + 1, len(GLOBAL_PATH) - 1)
+
+    # ── localPlanner: 候选路径评分 ────────────────────────────────────────
+
+    def _local_plan(self, all_obs):
+        nearby = self._nearby_obstacles(all_obs)
+
+        # 目标方向 (当前全局航点)
+        gx, gy = GLOBAL_PATH[min(self.wp_idx, len(GLOBAL_PATH) - 1)]
+        goal_dir = math.atan2(gy - self.y, gx - self.x)
+
+        scored = []
+        for pts_body in CANDIDATE_BODY:
+            pts_w = _body_to_world(pts_body, self.x, self.y, self.yaw)
+            s = _score_path(pts_w, nearby, goal_dir, (self.x, self.y))
+            scored.append((pts_w, s))
+
+        self.scored_paths = scored
+
+        # 选最高分路径
+        best = max(scored, key=lambda x: x[1])
+
+        if best[1] > 0:
+            # 正常：有可通行路径
+            self.best_path = best[0]
+            self._escape_frames = 0
+            self.mode = ("AVOIDING"
+                         if any(math.hypot(ox - self.x, oy - self.y) < ADJACENT_RANGE
+                                for ox, oy, _ in all_obs)
+                         else "FOLLOWING")
+        else:
+            # 降级 1: 放宽安全裕量（50% margin）再评分
+            relaxed = []
+            for pts_body in CANDIDATE_BODY:
+                pts_w = _body_to_world(pts_body, self.x, self.y, self.yaw)
+                s = _score_path(pts_w, nearby, goal_dir, (self.x, self.y),
+                                margin_scale=0.5)
+                relaxed.append((pts_w, s))
+            self.scored_paths = relaxed          # 用放宽版覆盖显示
+            best_r = max(relaxed, key=lambda x: x[1])
+            if best_r[1] > 0:
+                self.best_path = best_r[0]
+            else:
+                self.best_path = []             # 降级 2/3: follow 里处理旋转/后退
+
+            self._escape_frames += 1
+            self.mode = "ESCAPING"
+
+    # ── pathFollower: Pure Pursuit ────────────────────────────────────────
+
+    def _follow(self):
+        if not self.best_path:
+            # ── 逃脱模式 ───────────────────────────────────────────────────
+            gx, gy = GLOBAL_PATH[min(self.wp_idx, len(GLOBAL_PATH) - 1)]
+            goal_dir = math.atan2(gy - self.y, gx - self.x)
+            dir_diff = math.atan2(math.sin(goal_dir - self.yaw),
+                                   math.cos(goal_dir - self.yaw))
+            max_wr = MAX_YAW_RATE * math.pi / 180
+
+            if self._escape_frames < int(FPS * 1.5):
+                # 阶段1: 减速 + 原地转向目标方向
+                self.wyaw  = max(-max_wr, min(max_wr, YAW_RATE_GAIN * dir_diff))
+                self.speed = max(self.speed - MAX_ACCEL * DT * 2, 0.0)
+            else:
+                # 阶段2: 缓慢后退
+                self.wyaw  = max(-max_wr * 0.5, min(max_wr * 0.5,
+                                                      YAW_RATE_GAIN * dir_diff))
+                self.speed = max(self.speed - MAX_ACCEL * DT, -0.3)
+            return
+
+        # 终点距离
+        ex, ey = self.best_path[-1]
+        end_dis = math.hypot(ex - self.x, ey - self.y)
+
+        # 前视点
+        look = max(LOOK_AHEAD, 0.3 + 0.35 * abs(self.speed))
+        look_sq = look * look
+        fdx, fdy = ex - self.x, ey - self.y
+        for px, py in self.best_path:
+            dx, dy = px - self.x, py - self.y
+            if dx * dx + dy * dy >= look_sq:
+                fdx, fdy = dx, dy
+                break
+
+        # 方向差 → yaw rate
+        path_dir = math.atan2(fdy, fdx)
+        dir_diff = math.atan2(math.sin(path_dir - self.yaw),
+                               math.cos(path_dir - self.yaw))
+        self.wyaw = YAW_RATE_GAIN * dir_diff
+        max_wr = MAX_YAW_RATE * math.pi / 180
+        self.wyaw = max(-max_wr, min(max_wr, self.wyaw))
+
+        # 目标速度
+        target = MAX_SPEED
+        if end_dis < SLOWDOWN_DIS:
+            target = MAX_SPEED * (end_dis / SLOWDOWN_DIS)
+        if end_dis < STOP_DIS:
+            target = 0.0
+        # 大转角减速
+        if abs(dir_diff) > 0.4:
+            target *= max(0.25, 1.0 - abs(dir_diff) / math.pi)
+
+        step = MAX_ACCEL * DT
+        self.speed = (min(self.speed + step, target) if self.speed < target
+                      else max(self.speed - step, target))
+
+    # ── 仿真步进 ──────────────────────────────────────────────────────────
+
+    def step(self, t):
+        if self.reached:
+            return
+        all_obs = self._all_obstacles(t)
+        self._update_waypoint()
+        self._local_plan(all_obs)
+        self._follow()
+
+        # 运动学积分
+        self.x   += self.speed * math.cos(self.yaw) * DT
+        self.y   += self.speed * math.sin(self.yaw) * DT
+        self.yaw += self.wyaw * DT
+        self.trail.append((self.x, self.y))
+
+        # 到达终点
+        gx, gy = GLOBAL_PATH[-1]
+        if math.hypot(gx - self.x, gy - self.y) < STOP_DIS:
+            self.reached = True
+            self.speed   = 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 可视化
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _robot_polygon(rx, ry, ryaw):
+    """机器人轮廓 (矩形朝向箭头)"""
+    L, W = VEHICLE_L, VEHICLE_W
+    corners = [(-L/2, -W/2), (L/2, -W/2), (L/2, W/2), (-L/2, W/2)]
+    cy, sy = math.cos(ryaw), math.sin(ryaw)
+    return [(rx + cy*x - sy*y, ry + sy*x + cy*y) for x, y in corners]
+
+
+def make_figure():
+    fig = plt.figure(figsize=(15, 9), facecolor='#0d1117')
+    ax  = fig.add_axes([0.01, 0.08, 0.72, 0.88])
+    ax_info = fig.add_axes([0.74, 0.08, 0.24, 0.88])
+
+    ax.set_facecolor('#161b22')
+    ax_info.set_facecolor('#0d1117')
+    ax_info.axis('off')
+
+    ax.set_xlim(-0.5, WORLD_W + 0.5)
+    ax.set_ylim(-0.5, WORLD_H + 0.5)
+    ax.set_aspect('equal')
+    ax.tick_params(colors='#58a6ff', labelsize=7)
+    ax.spines[:].set_color('#30363d')
+    ax.set_xlabel('X (m)', color='#8b949e', fontsize=9)
+    ax.set_ylabel('Y (m)', color='#8b949e', fontsize=9)
+
+    # 网格
+    ax.grid(True, color='#21262d', linewidth=0.5, zorder=0)
+
+    return fig, ax, ax_info
+
+
+def build_artists(ax, ax_info):
+    """预创建所有 matplotlib artist"""
+    artists = {}
+
+    # ── 全局路径 ──────────────────────────────────────────────────────────
+    gx = [p[0] for p in GLOBAL_PATH]
+    gy = [p[1] for p in GLOBAL_PATH]
+    artists['global_path'], = ax.plot(gx, gy, '--', color='#1f6feb',
+                                       linewidth=1.8, alpha=0.6,
+                                       zorder=2, label='Global Path')
+    artists['global_pts'] = ax.scatter(gx, gy, color='#388bfd',
+                                        s=25, zorder=3, marker='o')
+
+    # ── 静态障碍物 ────────────────────────────────────────────────────────
+    for ox, oy, ор in STATIC_OBS:
+        c = plt.Circle((ox, oy), ор, color='#30363d',
+                        ec='#6e7681', linewidth=1.2, zorder=4)
+        ax.add_patch(c)
+        ax.text(ox, oy, '■', ha='center', va='center',
+                fontsize=8, color='#6e7681', zorder=5)
+
+    # ── 动态障碍物 ────────────────────────────────────────────────────────
+    artists['dyn_obs'] = plt.Circle((0, 0), DYN_OBS_R,
+                                     color='#ff6e6e', alpha=0.85,
+                                     ec='#ff4444', linewidth=2, zorder=10)
+    ax.add_patch(artists['dyn_obs'])
+    artists['dyn_label'] = ax.text(0, 0, '!!', ha='center', va='center',
+                                    fontsize=12, color='white', zorder=11,
+                                    fontweight='bold')
+
+    # ── 检测范围圆 ────────────────────────────────────────────────────────
+    artists['detect_zone'] = plt.Circle((0, 0), ADJACENT_RANGE,
+                                         fill=False, color='#1f6feb',
+                                         linewidth=0.8, alpha=0.25,
+                                         linestyle='--', zorder=3)
+    ax.add_patch(artists['detect_zone'])
+
+    # ── 候选路径 (LineCollection) ─────────────────────────────────────────
+    dummy_segs = [[(0, 0), (0, 0)]] * N_PATHS
+    artists['cand_lc'] = LineCollection(dummy_segs, linewidths=0.7,
+                                         alpha=0.55, zorder=5)
+    ax.add_collection(artists['cand_lc'])
+
+    # ── 选中局部路径 ──────────────────────────────────────────────────────
+    artists['best_path'], = ax.plot([], [], '-', color='#3fb950',
+                                     linewidth=2.8, zorder=8,
+                                     label='Local Path')
+
+    # ── 当前航点 ──────────────────────────────────────────────────────────
+    artists['waypoint'] = ax.scatter([], [], color='#ffd700',
+                                      s=120, marker='*', zorder=9,
+                                      label='Waypoint', edgecolors='#b8860b',
+                                      linewidths=0.8)
+
+    # ── 机器人轨迹 ────────────────────────────────────────────────────────
+    artists['trail'], = ax.plot([], [], '-', color='#79c0ff',
+                                 linewidth=1.2, alpha=0.5, zorder=6)
+
+    # ── 机器人本体 ────────────────────────────────────────────────────────
+    dummy_poly = plt.Polygon([(0,0)]*4, closed=True,
+                              facecolor='#58a6ff', edgecolor='#cae8ff',
+                              linewidth=1.5, zorder=12)
+    ax.add_patch(dummy_poly)
+    artists['robot_body'] = dummy_poly
+
+    # 前进方向箭头
+    artists['robot_arrow'] = ax.annotate('', xy=(0, 0), xytext=(0, 0),
+        arrowprops=dict(arrowstyle='->', color='#cae8ff', lw=2),
+        zorder=13)
+
+    # 速度箭头
+    artists['vel_arrow'] = ax.annotate('', xy=(0, 0), xytext=(0, 0),
+        arrowprops=dict(arrowstyle='->', color='#f8c555',
+                        lw=2.5, mutation_scale=18),
+        zorder=13)
+
+    # ── 终点标记 ──────────────────────────────────────────────────────────
+    gx, gy = GLOBAL_PATH[-1]
+    ax.scatter([gx], [gy], s=200, marker='*', color='#ffd700',
+               edgecolors='#b8860b', linewidths=1.5, zorder=15)
+    ax.text(gx + 0.2, gy + 0.3, 'GOAL', color='#ffd700',
+            fontsize=9, fontweight='bold', zorder=15)
+
+    # 起点
+    sx, sy = GLOBAL_PATH[0]
+    ax.text(sx - 0.1, sy + 0.3, 'START', color='#79c0ff',
+            fontsize=9, fontweight='bold', zorder=15)
+
+    # ── 图例 ─────────────────────────────────────────────────────────────
+    legend_elems = [
+        mpatches.Patch(color='#1f6feb', alpha=0.6, label='Global Path (PCT)'),
+        mpatches.Patch(color='#3fb950', label='Local Path (selected)'),
+        mpatches.Patch(color='#ffd700', alpha=0.8, label='Waypoint (adapter)'),
+        mpatches.Patch(color='#58a6ff', label='Robot'),
+        mpatches.Patch(color='#ff6e6e', label='Dynamic Obstacle'),
+        mpatches.Patch(color='#30363d', ec='#6e7681', label='Static Obstacle'),
+    ]
+    ax.legend(handles=legend_elems, loc='lower right',
+              facecolor='#161b22', edgecolor='#30363d',
+              labelcolor='#c9d1d9', fontsize=7.5, framealpha=0.9)
+
+    # ── 信息面板 ──────────────────────────────────────────────────────────
+    artists['info_title'] = ax_info.text(0.5, 0.97, 'MapPilot Planner',
+        ha='center', va='top', transform=ax_info.transAxes,
+        color='#58a6ff', fontsize=13, fontweight='bold')
+
+    artists['info_subtitle'] = ax_info.text(0.5, 0.91, 'Local Navigation Demo',
+        ha='center', va='top', transform=ax_info.transAxes,
+        color='#8b949e', fontsize=9)
+
+    # 分隔线
+    ax_info.axhline(0.88, color='#30363d', linewidth=1)
+
+    def _label(y, key, txt):
+        ax_info.text(0.05, y, txt, va='top', transform=ax_info.transAxes,
+                     color='#8b949e', fontsize=8.5)
+        artists[key] = ax_info.text(0.95, y, '—', va='top', ha='right',
+                                     transform=ax_info.transAxes,
+                                     color='#c9d1d9', fontsize=9,
+                                     fontweight='bold')
+
+    _label(0.84, 'i_time',   'Time')
+    _label(0.78, 'i_mode',   'Planner Mode')
+    _label(0.72, 'i_speed',  'Speed')
+    _label(0.66, 'i_yaw',    'Yaw Rate')
+    _label(0.60, 'i_wayp',   'Waypoint')
+    _label(0.54, 'i_obs',    'Nearby Obstacles')
+    _label(0.48, 'i_best',   'Best Path Score')
+
+    ax_info.axhline(0.44, color='#30363d', linewidth=1)
+
+    # 候选路径分数直方图（简易）
+    artists['bar_bg'] = ax_info.text(0.5, 0.40, 'Candidate Path Scores',
+        ha='center', va='top', transform=ax_info.transAxes,
+        color='#8b949e', fontsize=8.5)
+
+    artists['score_bars'] = []
+    bar_w = 0.9 / N_PATHS
+    for i in range(N_PATHS):
+        bar = mpatches.FancyBboxPatch(
+            (0.05 + i * bar_w, 0.25), bar_w * 0.85, 0.0,
+            boxstyle='square,pad=0', transform=ax_info.transAxes,
+            color='#238636', zorder=5)
+        ax_info.add_patch(bar)
+        artists['score_bars'].append(bar)
+
+    ax_info.axhline(0.22, color='#30363d', linewidth=1)
+
+    # 状态消息
+    artists['status_msg'] = ax_info.text(0.5, 0.18,
+        '● Initializing…',
+        ha='center', va='top', transform=ax_info.transAxes,
+        color='#3fb950', fontsize=9.5, fontweight='bold')
+
+    artists['status_detail'] = ax_info.text(0.5, 0.12,
+        '',
+        ha='center', va='top', transform=ax_info.transAxes,
+        color='#8b949e', fontsize=8, wrap=True)
+
+    # 脚注
+    ax_info.text(0.5, 0.03,
+        'Simulates localPlanner + pathFollower\nC++ nodes (no ROS2 required)',
+        ha='center', va='bottom', transform=ax_info.transAxes,
+        color='#484f58', fontsize=7.5)
+
+    return artists
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 动画更新
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _colormap_score(s):
+    """得分 → 颜色: 红(-1/0) → 黄(0.5) → 绿(1)"""
+    if s < 0:
+        return '#ff4444'
+    r = max(0.0, 1.0 - s * 1.5)
+    g = min(1.0, s * 1.5)
+    return (r, g, 0.1)
+
+
+def make_animation(save_path=None):
+    robot  = Robot()
+    n_frames = int(SIM_TIME * FPS)
+
+    fig, ax, ax_info = make_figure()
+    arts = build_artists(ax, ax_info)
+
+    title_obj = ax.set_title('MapPilot — 局部避障规划演示  t=0.00s',
+                               color='#c9d1d9', fontsize=11, pad=6)
+
+    def update(frame):
+        t = frame * DT
+        robot.step(t)
+
+        # ── 动态障碍物 ────────────────────────────────────────────────────
+        dx, dy = robot.dyn_obs_at(t)
+        arts['dyn_obs'].set_center((dx, dy))
+        arts['dyn_label'].set_position((dx, dy))
+
+        # ── 检测范围 ──────────────────────────────────────────────────────
+        arts['detect_zone'].set_center((robot.x, robot.y))
+
+        # ── 候选路径着色 ──────────────────────────────────────────────────
+        segs   = []
+        colors = []
+        for pts, score in robot.scored_paths:
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            segs.append(list(zip(xs, ys)))
+            colors.append(_colormap_score(score))
+        arts['cand_lc'].set_segments(segs)
+        arts['cand_lc'].set_colors(colors)
+
+        # ── 选中局部路径 ──────────────────────────────────────────────────
+        if robot.best_path:
+            bx = [p[0] for p in robot.best_path]
+            by = [p[1] for p in robot.best_path]
+            arts['best_path'].set_data(bx, by)
+        else:
+            arts['best_path'].set_data([], [])
+
+        # ── 当前航点 ──────────────────────────────────────────────────────
+        wi = min(robot.wp_idx, len(GLOBAL_PATH) - 1)
+        arts['waypoint'].set_offsets([[GLOBAL_PATH[wi][0], GLOBAL_PATH[wi][1]]])
+
+        # ── 机器人轨迹 ────────────────────────────────────────────────────
+        if len(robot.trail) > 1:
+            tx, ty = zip(*robot.trail)
+            arts['trail'].set_data(tx, ty)
+
+        # ── 机器人本体 ────────────────────────────────────────────────────
+        poly_pts = _robot_polygon(robot.x, robot.y, robot.yaw)
+        arts['robot_body'].set_xy(poly_pts)
+
+        # 前进方向箭头
+        arrow_len = VEHICLE_L * 0.65
+        ax_tip = robot.x + arrow_len * math.cos(robot.yaw)
+        ay_tip = robot.y + arrow_len * math.sin(robot.yaw)
+        arts['robot_arrow'].set_position((robot.x, robot.y))
+        arts['robot_arrow'].xy = (ax_tip, ay_tip)
+        arts['robot_arrow'].xytext = (robot.x, robot.y)
+
+        # 速度矢量箭头
+        spd_scale = 0.7
+        vx_tip = robot.x + robot.speed * math.cos(robot.yaw) * spd_scale
+        vy_tip = robot.y + robot.speed * math.sin(robot.yaw) * spd_scale
+        arts['vel_arrow'].xy = (vx_tip, vy_tip)
+        arts['vel_arrow'].xytext = (robot.x, robot.y)
+
+        # ── 信息面板更新 ──────────────────────────────────────────────────
+        arts['i_time'].set_text(f'{t:.1f} s')
+        mode_color = {'AVOIDING': '#ff6e6e', 'ESCAPING': '#ff9900'}.get(
+            robot.mode, '#3fb950')
+        arts['i_mode'].set_text(robot.mode)
+        arts['i_mode'].set_color(mode_color)
+        arts['i_speed'].set_text(f'{robot.speed * 100:.0f} cm/s')
+        arts['i_yaw'].set_text(f'{math.degrees(robot.wyaw):.1f} °/s')
+        arts['i_wayp'].set_text(f'{wi + 1} / {len(GLOBAL_PATH)}')
+
+        # 附近障碍物数量
+        all_obs = robot._all_obstacles(t)
+        n_nearby = sum(1 for ox, oy, _ in all_obs
+                       if math.hypot(ox - robot.x, oy - robot.y) < ADJACENT_RANGE)
+        arts['i_obs'].set_text(str(n_nearby))
+        arts['i_obs'].set_color('#ff6e6e' if n_nearby > 0 else '#3fb950')
+
+        # 最优路径分数
+        if robot.scored_paths:
+            best_s = max(s for _, s in robot.scored_paths)
+            score_txt = f'{best_s:.2f}' if best_s >= 0 else 'BLOCKED'
+            arts['i_best'].set_text(score_txt)
+            arts['i_best'].set_color('#3fb950' if best_s > 0.3 else '#ff6e6e')
+
+        # 候选路径分数直方图
+        if robot.scored_paths:
+            max_bar_h = 0.12
+            bar_w = 0.9 / N_PATHS
+            for i, (_, s) in enumerate(robot.scored_paths):
+                h = max(0.002, min(max_bar_h, (max(s, 0) * max_bar_h)))
+                c = _colormap_score(s)
+                arts['score_bars'][i].set_height(h)
+                arts['score_bars'][i].set_facecolor(c)
+
+        # 状态消息
+        if robot.reached:
+            arts['status_msg'].set_text('● 到达目标！')
+            arts['status_msg'].set_color('#ffd700')
+            arts['status_detail'].set_text('导航完成。\n机器人已停在目标点。')
+        elif robot.mode == 'ESCAPING':
+            phase = '后退' if robot._escape_frames >= int(FPS * 1.5) else '原地转向'
+            arts['status_msg'].set_text('[!] 逃脱模式')
+            arts['status_msg'].set_color('#ff9900')
+            arts['status_detail'].set_text(
+                f'所有路径受阻 ({robot._escape_frames}帧)\n'
+                f'降级策略: {phase}\n'
+                f'尝试放宽安全裕量重规划')
+        elif robot.mode == 'AVOIDING':
+            arts['status_msg'].set_text('[!] 障碍物规避')
+            arts['status_msg'].set_color('#ff6e6e')
+            arts['status_detail'].set_text(
+                f'localPlanner: 从{N_PATHS}条候选路径\n'
+                f'选出最优安全路径\n'
+                f'Pure Pursuit 跟踪执行')
+        else:
+            arts['status_msg'].set_text('● 跟踪全局路径')
+            arts['status_msg'].set_color('#3fb950')
+            arts['status_detail'].set_text(
+                f'pct_adapter 航点 → localPlanner\n'
+                f'pathFollower Pure Pursuit\n'
+                f'前视距={LOOK_AHEAD:.1f}m  偏航增益={YAW_RATE_GAIN}')
+
+        # 标题
+        mode_color = {'AVOIDING': '#ff6e6e', 'ESCAPING': '#ff9900'}.get(
+            robot.mode, '#c9d1d9')
+        title_obj.set_text(
+            f'MapPilot — 局部避障规划演示   t = {t:.2f} s  |  '
+            f'速度: {robot.speed*100:.0f} cm/s  |  模式: {robot.mode}')
+        title_obj.set_color(mode_color)
+
+        return list(arts.values())
+
+    anim = FuncAnimation(fig, update, frames=n_frames,
+                          interval=1000 // FPS, blit=False, repeat=False)
+
+    if save_path:
+        print(f'保存动画到 {save_path} ...')
+        writer = PillowWriter(fps=FPS)
+        anim.save(save_path, writer=writer, dpi=110)
+        print('保存完成')
+    else:
+        plt.show()
+
+    return anim
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='MapPilot 规划避障动画演示')
+    parser.add_argument('--save', metavar='FILE',
+                        help='保存为 GIF/MP4 文件 (例: demo.gif)')
+    args = parser.parse_args()
+    make_animation(save_path=args.save)
