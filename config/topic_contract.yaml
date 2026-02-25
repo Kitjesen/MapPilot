@@ -31,8 +31,7 @@ localization:
 # ── 全局规划层 ──
 planning:
   global_path: /nav/global_path         # nav_msgs/Path (全局路径)
-  planner_status: /nav/planner_status   # std_msgs/String (规划器状态)
-  waypoint: /nav/waypoint               # geometry_msgs/PointStamped (适配后的局部航点)
+  planner_status: /nav/planner_status   # std_msgs/String (JSON 规划器事件)
 
 # ── 自主导航层 ──
 autonomy:

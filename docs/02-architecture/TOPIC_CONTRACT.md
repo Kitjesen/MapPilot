@@ -41,8 +41,7 @@
 | 话题 | 类型 | 说明 |
 |------|------|------|
 | `/nav/global_path` | `nav_msgs/Path` | 全局路径 |
-| `/nav/planner_status` | `std_msgs/String` | 规划器状态 |
-| `/nav/waypoint` | `geometry_msgs/PointStamped` | 适配后的局部航点 |
+| `/nav/planner_status` | `std_msgs/String` | JSON 规划器事件 |
 
 ### 自主导航层
 
@@ -147,7 +146,7 @@ ros2 launch navigation_run.launch.py slam_profile:=liosam
 
 1. **创建 profile**: `launch/profiles/planner_astar.launch.py`
 2. 确保节点发布 `/nav/global_path` (nav_msgs/Path) 和 `/nav/planner_status` (std_msgs/String)
-3. 如果有路径适配器，确保发布 `/nav/waypoint` (geometry_msgs/PointStamped)
+3. 如果有路径适配器，确保发布 `/nav/way_point` (geometry_msgs/PointStamped)
 4. 使用: `ros2 launch navigation_run.launch.py planner_profile:=astar`
 
 ## 后向兼容
