@@ -7,8 +7,8 @@ MapPilot 交互式规划演示
 中键 / Backspace = 清除障碍物和路径
 
 底层逻辑完全对齐 C++:
-  - localPlanner: 36 候选路径评分 + pathScale 收缩 + 三阶段恢复
-  - pathFollower: Pure Pursuit 跟踪
+  - localPlanner: 252 候选路径 (36方向×7曲率弧线) 评分 + pathScale 收缩 + 三阶段恢复
+  - pathFollower: Pure Pursuit 跟踪 (沿弧线路径 look-ahead)
   - pct_adapter:  航点推进 (含最近航点跳跃) + stuck 检测 + 重规划
   - 全局路径:     A* (PCT Planner 核心同算法, 2D 简化版; Jetson .so 无法在 Windows 加载)
 
@@ -50,11 +50,14 @@ LOOK_AHEAD_BASE = 0.5   # m      (C++ baseLookAheadDis_: 0.5)
 LOOK_AHEAD_RATIO = 0.5  #        (C++ lookAheadRatio_: 0.5)
 STOP_DIS       = 0.35
 SLOWDOWN_DIS   = 2.0
-WAYPOINT_DIST  = 0.5    # pct_adapter 航点间距
-ARRIVAL_THRE   = 0.5    # pct_adapter 到达阈值
+WAYPOINT_DIST  = 1.0    # pct_adapter 航点间距 (0.5太近→航点快速跳跃)
+ARRIVAL_THRE   = 0.35   # pct_adapter 到达阈值 (需小于 WAYPOINT_DIST)
 
-# 候选路径 (对应 C++ 36 rotations × 343 paths; demo 简化为 36 直线方向)
-N_PATHS   = 36
+# 候选路径 (对应 C++ 36 rotations × 343 paths)
+N_DIRS    = 36           # 方向数 (10° intervals, C++ RotLUT)
+CURVATURES = [0.0, 0.15, -0.15, 0.30, -0.30, 0.50, -0.50]  # 曲率 (1/m)
+N_CURVES  = len(CURVATURES)  # 每方向曲率数
+N_TOTAL_PATHS = N_DIRS * N_CURVES  # 252 条候选路径
 PATH_LEN  = 10
 PATH_STEP = 0.35
 DIR_THRE  = 90.0    # C++ dirThre_: 只评估目标方向 ±90° 内的候选路径
@@ -196,22 +199,40 @@ def _smooth_path(path, iterations=10, weight_smooth=0.3):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _make_candidate_paths():
-    """36 条 body-frame 全方向候选路径 (straight lines, 10° intervals)
+    """36 方向 × 7 曲率 = 252 条 body-frame 候选路径 (恒曲率弧线)
 
     C++ localPlanner: 343 base paths × 36 rotations = 12,348 candidates
-      RotLUT: angle = (10.0 * i - 180.0) deg, i = 0..35 → 覆盖 360°
-      每个 rotation 将 base path 旋转到对应方向, 然后评分
+    Demo: 7 base shapes (直线 + 6种曲率弧) × 36 rotations = 252 candidates
 
-    Demo 简化: 36 条直线 × 1 shape = 36 candidates, 覆盖 360°
-      与 C++ 相同的方向分辨率 (10°), scoring 时按 dirThre_ 过滤
+    每条路径是恒定曲率弧线, 旋转到对应方向角:
+      κ=0    → 直线
+      κ=±0.15 → R=6.7m 缓弯 (30°/3.5m)
+      κ=±0.30 → R=3.3m 中弯 (60°/3.5m)
+      κ=±0.50 → R=2.0m 急弯 (100°/3.5m)
+
+    有弯曲路径后, Pure Pursuit 在 look-ahead 距离处看到真实弯曲,
+    转向灵敏, 不会像直线候选路径那样帧间震荡。
     """
     paths = []
-    for i in range(N_PATHS):
-        angle = math.radians(10.0 * i - 180.0)  # C++ RotLUT: -180° to +170°
-        pts = [(PATH_STEP * k * math.cos(angle),
-                PATH_STEP * k * math.sin(angle))
-               for k in range(1, PATH_LEN + 1)]
-        paths.append(pts)
+    for i in range(N_DIRS):
+        dir_deg = 10.0 * i - 180.0
+        dir_rad = math.radians(dir_deg)
+        cd, sd = math.cos(dir_rad), math.sin(dir_rad)
+        for kappa in CURVATURES:
+            pts = []
+            for k in range(1, PATH_LEN + 1):
+                s = PATH_STEP * k  # 弧长
+                if abs(kappa) < 1e-6:
+                    lx, ly = s, 0.0
+                else:
+                    # 恒曲率弧: x = sin(κs)/κ, y = (1-cos(κs))/κ
+                    lx = math.sin(kappa * s) / kappa
+                    ly = (1.0 - math.cos(kappa * s)) / kappa
+                # 旋转到方向角
+                bx = lx * cd - ly * sd
+                by = lx * sd + ly * cd
+                pts.append((bx, by))
+            paths.append((dir_deg, pts))
     return paths
 
 CANDIDATE_BODY = _make_candidate_paths()
@@ -348,7 +369,7 @@ class Robot:
 
         wi = min(self.wp_idx, len(self.waypoints) - 1)
         # 沿路径前瞻 2m 计算目标方向
-        look_dist = 2.0
+        look_dist = 3.0
         ahead_idx = wi
         accum = 0.0
         while ahead_idx < len(self.waypoints) - 1:
@@ -378,13 +399,10 @@ class Robot:
         joy_dir = math.radians(joy_deg)
         goal_dir_clamped = self.yaw + joy_dir  # 世界坐标系下的受限目标方向
 
-        # ── 全方向候选路径评分 (C++ 36 rotations × dirThre_ filter) ──
+        # ── 全方向候选路径评分 (36方向 × 7曲率 = 252 candidates, dirThre_ filter) ──
         scored = []
-        dir_thre_rad = math.radians(DIR_THRE)
-        for i, pts_body in enumerate(CANDIDATE_BODY):
-            rot_deg = 10.0 * i - 180.0  # body frame rotation angle
-            # dirThre_ 过滤: 跳过偏离目标方向 >90° 的候选路径
-            ang_diff = abs(joy_deg - rot_deg)
+        for dir_deg, pts_body in CANDIDATE_BODY:
+            ang_diff = abs(joy_deg - dir_deg)
             if ang_diff > 180.0:
                 ang_diff = 360.0 - ang_diff
             if ang_diff > DIR_THRE:
@@ -410,9 +428,8 @@ class Robot:
             found = False
             for scale in [0.7, 0.5, 0.35]:
                 relaxed = []
-                for i, pts_body in enumerate(CANDIDATE_BODY):
-                    rot_deg = 10.0 * i - 180.0
-                    ang_diff = abs(joy_deg - rot_deg)
+                for dir_deg, pts_body in CANDIDATE_BODY:
+                    ang_diff = abs(joy_deg - dir_deg)
                     if ang_diff > 180.0:
                         ang_diff = 360.0 - ang_diff
                     if ang_diff > DIR_THRE:
@@ -510,11 +527,28 @@ class Robot:
 
     # ── pathFollower: Pure Pursuit ────────────────────────────────────────
 
+    def _find_lookahead(self, dist):
+        """沿 best_path 找 look-ahead 点 (C++ pathFollower Pure Pursuit)"""
+        if not self.best_path:
+            return (self.x, self.y)
+        prev = (self.x, self.y)
+        accum = 0.0
+        for pt in self.best_path:
+            d = math.hypot(pt[0] - prev[0], pt[1] - prev[1])
+            accum += d
+            if accum >= dist:
+                overshoot = accum - dist
+                ratio = 1.0 - overshoot / max(d, 1e-6)
+                return (prev[0] + ratio * (pt[0] - prev[0]),
+                        prev[1] + ratio * (pt[1] - prev[1]))
+            prev = pt
+        return self.best_path[-1]
+
     def _follow(self):
         if self.mode == "BACKING_UP" and self.best_path:
-            target = -MAX_SPEED * 0.35
+            target_speed = -MAX_SPEED * 0.35
             step = MAX_ACCEL * DT
-            self.speed = max(self.speed - step, target)
+            self.speed = max(self.speed - step, target_speed)
             self.wyaw = 0.0
             return
 
@@ -523,37 +557,36 @@ class Robot:
             self.wyaw = 0.0
             return
 
-        ex, ey = self.best_path[-1]
-        end_dis = math.hypot(ex - self.x, ey - self.y)
+        # Pure Pursuit: 沿选中弧线路径找 look-ahead 点 (C++ pathFollower 同算法)
+        # 恒曲率弧线路径在 look-ahead 距离处有真实弯曲 → 转向灵敏
+        # (旧版直线候选路径在 look-ahead 处无弯曲 → 被迫用端点方向 → 帧间震荡)
+        look_dis = LOOK_AHEAD_BASE + LOOK_AHEAD_RATIO * abs(self.speed)
+        tx, ty = self._find_lookahead(look_dis)
 
-        # 以实际目标距离限制减速 (候选路径端点总是 ~3.5m 远, 不能用它减速)
+        # 到终点距离 (用于减速控制)
+        end_dis = float('inf')
         if self.waypoints:
             fx, fy = self.waypoints[-1]
-            end_dis = min(end_dis, math.hypot(fx - self.x, fy - self.y))
+            end_dis = math.hypot(fx - self.x, fy - self.y)
 
-        # 航向控制: 直接跟踪候选路径端点方向 (而非 look-ahead 中间点)
-        # 原因: 36 条恒定曲率弧线在 look-ahead 距离 (0.5-1.2m) 处弯曲极小,
-        # Pure Pursuit 跟踪中间点 → 转弯迟钝 → 近距离目标大弧线绕行
-        # C++ 有 343 条路径形状 (含急弯), 短 look-ahead 仍有效;
-        # Demo 只有 36 条, 改用端点方向确保转向灵敏
-        path_dir = math.atan2(ey - self.y, ex - self.x)
+        path_dir = math.atan2(ty - self.y, tx - self.x)
         dir_diff = math.atan2(math.sin(path_dir - self.yaw),
                                math.cos(path_dir - self.yaw))
         self.wyaw = YAW_RATE_GAIN * dir_diff
         max_wr = MAX_YAW_RATE * math.pi / 180
         self.wyaw = max(-max_wr, min(max_wr, self.wyaw))
 
-        target = MAX_SPEED
+        target_speed = MAX_SPEED
         if end_dis < SLOWDOWN_DIS:
-            target = MAX_SPEED * (end_dis / SLOWDOWN_DIS)
+            target_speed = MAX_SPEED * (end_dis / SLOWDOWN_DIS)
         if end_dis < STOP_DIS:
-            target = 0.0
+            target_speed = 0.0
         if abs(dir_diff) > 0.4:
-            target *= max(0.25, 1.0 - abs(dir_diff) / math.pi)
+            target_speed *= max(0.25, 1.0 - abs(dir_diff) / math.pi)
 
         step = MAX_ACCEL * DT
-        self.speed = (min(self.speed + step, target) if self.speed < target
-                      else max(self.speed - step, target))
+        self.speed = (min(self.speed + step, target_speed) if self.speed < target_speed
+                      else max(self.speed - step, target_speed))
 
     # ── 仿真步进 ──────────────────────────────────────────────────────────
 
@@ -667,7 +700,7 @@ class InteractivePlanner:
         ax.add_patch(arts['detect_zone'])
 
         # 候选路径
-        dummy_segs = [[(0, 0), (0, 0)]] * N_PATHS
+        dummy_segs = [[(0, 0), (0, 0)]] * N_TOTAL_PATHS
         arts['cand_lc'] = LineCollection(dummy_segs, linewidths=0.7,
                                           alpha=0.55, zorder=5)
         ax.add_collection(arts['cand_lc'])
@@ -973,7 +1006,7 @@ class InteractivePlanner:
             arts['status_msg'].set_text('[!] 障碍物规避')
             arts['status_msg'].set_color('#ff6e6e')
             arts['status_detail'].set_text(
-                f'{N_PATHS} 条候选路径评分\nPure Pursuit 跟踪')
+                f'{N_TOTAL_PATHS} 条候选路径评分\nPure Pursuit 跟踪')
         elif robot.mode == 'FOLLOWING':
             arts['status_msg'].set_text('● 跟踪全局路径')
             arts['status_msg'].set_color('#3fb950')
