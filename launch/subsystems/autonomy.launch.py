@@ -16,6 +16,11 @@
       通过 remap 对接到 /nav/map_cloud (世界坐标系点云)。
       sensor_scan_generation 订阅 /cloud_registered (机体坐标系), 与此不同。
 
+sensor_scan_generation 节点未在此启动 (当前无消费者):
+  - 发布 /sensor_scan + /state_estimation_at_scan，全库无订阅者
+  - 预留给 ICP Localizer 精确重定位使用（时间对齐的当前帧+位姿）
+  - 若 Localizer 重定位精度不足，可启用此节点替换直接订阅 /cloud_registered
+
 对应 systemd 服务: nav-autonomy.service
 """
 
