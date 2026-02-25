@@ -868,12 +868,16 @@ class InteractivePlanner:
             segs = []
             colors = []
             for pts, score in robot.scored_paths:
-                segs.append([(p[0], p[1]) for p in pts])
-                colors.append(_colormap_score(score))
-            arts['cand_lc'].set_segments(segs)
-            arts['cand_lc'].set_colors(colors)
+                if pts:  # dirThre_ 过滤的路径为空, 跳过
+                    segs.append([(p[0], p[1]) for p in pts])
+                    colors.append(_colormap_score(score))
+            if segs:
+                arts['cand_lc'].set_segments(segs)
+                arts['cand_lc'].set_colors(colors)
+            else:
+                arts['cand_lc'].set_segments([[(0, 0), (0, 0)]])
         else:
-            arts['cand_lc'].set_segments([[(0, 0), (0, 0)]] * N_PATHS)
+            arts['cand_lc'].set_segments([[(0, 0), (0, 0)]])
 
         # ── 选中路径 ──
         if robot.best_path:
