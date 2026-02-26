@@ -19,14 +19,12 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
-find_package(serial REQUIRED)
 find_package(nav_core REQUIRED)
 
 # Include directories
 include_directories(
   include
   ${PCL_INCLUDE_DIRS}
-  ${serial_INCLUDE_DIRS}
 )
 
 # Local Planner Node
@@ -59,12 +57,10 @@ ament_target_dependencies(pathFollower
   tf2_ros
   tf2_geometry_msgs
   pcl_conversions
-  serial
   nav_core
 )
 target_link_libraries(pathFollower
   ${PCL_LIBRARIES}
-  ${serial_LIBRARIES}
 )
 
 # Install executables
