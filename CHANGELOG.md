@@ -6,9 +6,52 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
-## [Unreleased] — 2026-03-01
+## [1.6.0] — 2026-03-01 (产品迭代 10轮 + OTA修复 + 运维升级)
 
-### 第三批迭代 R21-R30 (进行中)
+### Flutter 客户端 — 功能补全
+
+- **地图急停按钮** — 任务运行时显示红色 E-Stop FAB，一键急停；E-stop 解除需二次确认并选择原因
+- **全局低电量 Banner** — 电量 <15% 橙色、<5% 红色，滑入动画，全局可见
+- **任务状态深度可视化** — ETA 预估时间、重规划次数、语义导航 HUD（置信度 + Fast/Slow 标签）
+- **建图→导航快捷切换** — 建图完成后 BottomSheet 一键转入导航模式
+- **OTA 升级预检对话框** — 调用 CheckUpdateReadiness RPC，ERROR 阻止继续、WARNING 可忽略
+- **GetCapabilities 动态感知** — 根据后端声明的能力动态隐显 UI 元素
+- **定时任务调度** — ScheduledTask 数据模型 + SharedPreferences 持久化 + 管理页面（最多10条）
+- **任务完成报告卡片** — 任务结束自动弹出：用时/航点完成率/重规划次数/WARNING+事件列表
+- **任务模板本地持久化** — 保存/加载/删除路线方案，跨设备共享
+- **事件日志过滤搜索** — FilterChip (ALL/INFO/WARN/ERROR/CRIT) + 文本搜索 + 清除按钮
+
+### Flutter 客户端 — 地图增强
+
+- **真彩色占用栅格** — 三色渲染：绿(自由) / 灰(未知) / 深红(障碍)
+- **点云 Z 轴 5 色段** — blue → cyan → green → yellow → red 高度着色
+- **图例卡片** — 半透明黑底，5行图标 + 白色文字
+- **比例尺** — 基于 TransformController 动态计算，白色实线 + 距离标注
+- **长按添加航点** — 逆矩阵坐标转换，橙色圆圈标记
+
+### Flutter 客户端 — 安全与运维
+
+- **低电量任务拦截** — 发送任务前检查电量 <15% 弹确认对话框，fail-open
+- **语义导航透明度卡片** — Fast/Slow 路径标签 + 置信度进度条 + 当前目标 + 状态阶段
+- **系统服务诊断** — ExpansionTile 展示各 systemd 服务状态，一键重启
+- **SystemGateway** — 通过 OTA daemon (port 50052) 获取服务状态和重启
+
+### Flutter 客户端 — 基础设施
+
+- **流式文件下载** — `downloadFileTo()` 直接写入本地文件，大文件不堆内存
+- **告警评估防重入** — `_evaluating` 守卫防止并发 `_evaluate()` 调用
+- **TLS 安全日志** — 明文连接时输出警告日志
+- **版本升级 1.6.0**
+
+### OTA 修复
+
+- **健康检查服务名** — WARM 更新后不再硬编码 `navigation.service`，改为遍历 `managed_services` 配置列表，任一 active 即通过
+- **Ed25519 密钥路径** — `ota_public_key_path` 从空字符串改为 `/opt/lingtu/nav/ota/keys/server.pub`，附密钥生成说明
+- **Go agent systemd 单元** — `lingtu-nav-agent.service` 新增，依赖 `ota-daemon.service`，RestartSec=60
+
+### 测试
+
+- **nav_core 参数敏感性测试 (4组)** — dirDiffThre 转向阈值、slopeWeight 坡度影响、stuck 边界精确、replan 冷却防抖，全部通过
 
 ---
 
