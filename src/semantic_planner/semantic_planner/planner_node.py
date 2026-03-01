@@ -554,16 +554,6 @@ class SemanticPlannerNode(Node):
         self._pub_costmap = self.create_publisher(OccupancyGrid, "costmap_out", 1)  # 供 perception_node SCG 使用
         self._look_around_timer = None
 
-    def _make_twist_stamped(self, linear_x=0.0, linear_y=0.0, angular_z=0.0):
-        """构造 TwistStamped 消息 (frame_id='body', stamp=当前时间)."""
-        msg = TwistStamped()
-        msg.header.frame_id = "body"
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.twist.linear.x = linear_x
-        msg.twist.linear.y = linear_y
-        msg.twist.angular.z = angular_z
-        return msg
-
         # FOLLOW_PERSON: 发布跟随参数到 /nav/semantic/follow_person (best-effort)
         _be_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -601,6 +591,16 @@ class SemanticPlannerNode(Node):
             f"fsm_mode={self._fsm_mode}, "
             f"implicit_fsm_ready={self._implicit_fsm.is_ready}"
         )
+
+    def _make_twist_stamped(self, linear_x=0.0, linear_y=0.0, angular_z=0.0):
+        """构造 TwistStamped 消息 (frame_id='body', stamp=当前时间)."""
+        msg = TwistStamped()
+        msg.header.frame_id = "body"
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.twist.linear.x = linear_x
+        msg.twist.linear.y = linear_y
+        msg.twist.angular.z = angular_z
+        return msg
 
     # ================================================================
     #  异步事件循环
