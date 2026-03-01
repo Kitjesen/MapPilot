@@ -2669,11 +2669,39 @@ class TrajectoryPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // ── 长按航点标记（橙色圆圈） ──
-    for (final pt in longPressMarkers) {
+    // ── 长按航点标记（橙色圆圈 + 序号标签） ──
+    for (var i = 0; i < longPressMarkers.length; i++) {
+      final pt = longPressMarkers[i];
       canvas.drawCircle(pt, 0.35, _longPressFillPaint);
       canvas.drawCircle(pt, 0.35, _longPressStrokePaint);
       canvas.drawCircle(pt, 0.1, _longPressDotPaint);
+      // Waypoint number label (white text, black stroke, above marker)
+      canvas.save();
+      canvas.translate(pt.dx, pt.dy);
+      canvas.scale(0.04, -0.04); // flip Y back for text, ~10sp at world scale
+      final label = '${i + 1}';
+      // Black outline
+      final outlineTp = TextPainter(
+        text: TextSpan(text: label, style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          foreground: Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.5
+            ..color = Colors.black,
+        )),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      outlineTp.paint(canvas, Offset(-outlineTp.width / 2, -outlineTp.height - 8));
+      // White fill
+      final fillTp = TextPainter(
+        text: TextSpan(text: label, style: const TextStyle(
+          fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white,
+        )),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      fillTp.paint(canvas, Offset(-fillTp.width / 2, -fillTp.height - 8));
+      canvas.restore();
     }
 
     // ── 坐标轴 ──
