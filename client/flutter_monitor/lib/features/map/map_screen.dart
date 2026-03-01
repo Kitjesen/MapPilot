@@ -1385,6 +1385,44 @@ class _MapScreenState extends State<MapScreen>
             ),
           ))),
 
+        // Crosshair overlay (2D mode only)
+        if (!_show3DModel)
+          Positioned.fill(child: IgnorePointer(child: CustomPaint(
+            painter: _CrosshairPainter(),
+          ))),
+
+        // Center coordinate display (2D mode only)
+        if (!_show3DModel)
+          Positioned(
+            bottom: 60, left: 0, right: 0,
+            child: Center(child: AnimatedBuilder(
+              animation: _transformController,
+              builder: (_, __) {
+                final matrix = _transformController.value.clone();
+                final inv = Matrix4.tryInvert(matrix);
+                if (inv == null) return const SizedBox.shrink();
+                final size = MediaQuery.of(context).size;
+                final cx = size.width / 2;
+                final cy = size.height / 2;
+                final wx = inv[0] * cx + inv[4] * cy + inv[12];
+                final wy = -(inv[1] * cx + inv[5] * cy + inv[13]);
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'x: ${wx.toStringAsFixed(2)}, y: ${wy.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      color: Colors.white, fontSize: 11, fontFamily: 'monospace',
+                    ),
+                  ),
+                );
+              },
+            )),
+          ),
+
         // Geofence alert banner
         if (_geofenceState == 'WARNING' || _geofenceState == 'VIOLATION')
           _buildGeofenceAlertBanner(),
@@ -2637,6 +2675,28 @@ class TrajectoryPainter extends CustomPainter {
       longPressMarkers.length != old.longPressMarkers.length ||
       !identical(globalBuckets, old.globalBuckets) ||
       !identical(localBuckets, old.localBuckets);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Crosshair Painter — center crosshair overlay
+// ═══════════════════════════════════════════════════════════════
+
+class _CrosshairPainter extends CustomPainter {
+  static final _paint = Paint()
+    ..color = Colors.white.withValues(alpha: 0.5)
+    ..strokeWidth = 1;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    const arm = 20.0;
+    canvas.drawLine(Offset(cx - arm, cy), Offset(cx + arm, cy), _paint);
+    canvas.drawLine(Offset(cx, cy - arm), Offset(cx, cy + arm), _paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CrosshairPainter old) => false;
 }
 
 // ═══════════════════════════════════════════════════════════════
