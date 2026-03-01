@@ -244,6 +244,14 @@ class AppSettingsScreen extends StatelessWidget {
           SettingsSection(
             title: locale.tr('数据与存储', 'Data & Storage'),
             children: [
+              SettingsTile(
+                icon: Icons.inventory_2_outlined,
+                title: locale.tr('存储统计', 'Storage Statistics'),
+                subtitle: '${locale.tr('模板', 'Templates')}: ${settingsPrefs.taskTemplates.length}  |  '
+                    '${locale.tr('定时任务', 'Scheduled')}: ${settingsPrefs.scheduledTasks.length}  |  '
+                    '${locale.tr('设备', 'Devices')}: ${settingsPrefs.savedDevices.length}',
+                trailing: const SizedBox.shrink(),
+              ),
               _ClearCacheTile(),
             ],
           ),

@@ -267,6 +267,32 @@ class SettingsPreferences extends ChangeNotifier {
     final json = jsonEncode(_savedDevices.map((d) => d.toJson()).toList());
     await _prefs?.setString(_keySavedDevices, json);
   }
+
+  /// Clear non-critical data (templates, scheduled tasks).
+  /// Keeps saved devices and alert settings.
+  Future<void> clearNonCriticalData() async {
+    _taskTemplates.clear();
+    _scheduledTasks.clear();
+    await _prefs?.remove(_keyTaskTemplates);
+    await _prefs?.remove(_keyScheduledTasks);
+    notifyListeners();
+  }
+
+  /// Estimated size of stored preferences data (rough byte count).
+  int get estimatedStorageBytes {
+    int total = 0;
+    final p = _prefs;
+    if (p == null) return 0;
+    for (final key in [
+      _keyTaskTemplates,
+      _keyScheduledTasks,
+      _keySavedDevices,
+    ]) {
+      final v = p.getString(key);
+      if (v != null) total += v.length * 2; // UTF-16 estimate
+    }
+    return total;
+  }
 }
 
 /// Represents a saved robot device connection.
