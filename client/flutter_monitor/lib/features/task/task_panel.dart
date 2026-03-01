@@ -25,7 +25,7 @@ class TaskPanel extends StatefulWidget {
   State<TaskPanel> createState() => _TaskPanelState();
 }
 
-class _TaskPanelState extends State<TaskPanel> {
+class _TaskPanelState extends State<TaskPanel> with SingleTickerProviderStateMixin {
   TaskType _selectedType = TaskType.TASK_TYPE_NAVIGATION;
 
   final List<NavigationGoal> _waypoints = [];
@@ -53,6 +53,12 @@ class _TaskPanelState extends State<TaskPanel> {
   // ─── Mapping→Navigation transition tracking ───
   bool _mappingCompleteShown = false;
 
+  // ─── Circular progress completion animation ───
+  late final AnimationController _checkAnimCtrl = AnimationController(
+    vsync: this, duration: const Duration(milliseconds: 600),
+  );
+  bool _showCompletionCheck = false;
+
   // ─── Mission report: collect events during task ───
   final List<MissionEvent> _missionEvents = [];
   StreamSubscription<Event>? _missionEventSub;
@@ -66,6 +72,7 @@ class _TaskPanelState extends State<TaskPanel> {
 
   @override
   void dispose() {
+    _checkAnimCtrl.dispose();
     _missionEventSub?.cancel();
     _mapNameCtrl.dispose();
     _semanticInstructionCtrl.dispose();
@@ -280,8 +287,17 @@ class _TaskPanelState extends State<TaskPanel> {
       _activeWpResp = null;
       _mappingCompleteShown = false;
       _reportShown = false;
+      _showCompletionCheck = false;
+      _checkAnimCtrl.reset();
       _missionEvents.clear();
       _startMissionEventCollection();
+    }
+    // Trigger completion checkmark animation
+    if (_wasRunning && !gw.isRunning &&
+        gw.taskStatus == TaskStatus.TASK_STATUS_COMPLETED &&
+        !_showCompletionCheck) {
+      _showCompletionCheck = true;
+      _checkAnimCtrl.forward();
     }
     // Detect mapping task completion → show transition BottomSheet
     if (_wasRunning && !gw.isRunning &&
@@ -805,7 +821,10 @@ class _TaskPanelState extends State<TaskPanel> {
               gw.activeTaskId!.length > 20 ? '${gw.activeTaskId!.substring(0, 20)}…' : gw.activeTaskId!,
               style: TextStyle(fontSize: 12, color: context.subtitleColor),
             ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+          // Circular progress indicator
+          _circularProgress(gw),
+          const SizedBox(height: 20),
           // Progress + ETA
           _card(
             child: Padding(
@@ -892,6 +911,55 @@ class _TaskPanelState extends State<TaskPanel> {
             ],
           ),
           const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  Color _progressColor(double p) {
+    if (p < 0.3) return Colors.blue;
+    if (p < 0.7) return AppColors.success;
+    return Colors.orange;
+  }
+
+  Widget _circularProgress(TaskGateway gw) {
+    const size = 100.0;
+    if (_showCompletionCheck) {
+      return SizedBox(
+        width: size, height: size,
+        child: AnimatedBuilder(
+          animation: _checkAnimCtrl,
+          builder: (context, child) => Transform.scale(
+            scale: 0.8 + 0.2 * _checkAnimCtrl.value,
+            child: Opacity(
+              opacity: _checkAnimCtrl.value.clamp(0.0, 1.0),
+              child: child,
+            ),
+          ),
+          child: const Icon(Icons.check_circle_rounded, size: 64, color: AppColors.success),
+        ),
+      );
+    }
+    final pct = (gw.progress * 100).toStringAsFixed(0);
+    return SizedBox(
+      width: size, height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: size, height: size,
+            child: CircularProgressIndicator(
+              value: gw.progress,
+              strokeWidth: 6,
+              backgroundColor: context.isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.06),
+              valueColor: AlwaysStoppedAnimation(_progressColor(gw.progress)),
+            ),
+          ),
+          Text('$pct%', style: TextStyle(
+            fontSize: 20, fontWeight: FontWeight.w700, color: context.titleColor,
+          )),
         ],
       ),
     );
