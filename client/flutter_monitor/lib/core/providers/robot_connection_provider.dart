@@ -49,7 +49,9 @@ class RobotConnectionProvider extends ChangeNotifier {
 
   // — Reconnect logic —
   Timer? _reconnectTimer;
+  Timer? _reconnectCountdownTimer;
   int _reconnectAttempts = 0;
+  int _reconnectCountdown = 0; // seconds remaining until next attempt
   static const int _maxReconnectAttempts = 10;
   static const Duration _baseReconnectDelay = Duration(seconds: 2);
 
@@ -102,6 +104,12 @@ class RobotConnectionProvider extends ChangeNotifier {
 
   /// Latest measured RTT in milliseconds (null if no heartbeat yet).
   double? get connectionRttMs => _lastRttMs;
+
+  /// Seconds remaining until next reconnect attempt (0 when not reconnecting).
+  int get reconnectCountdown => _reconnectCountdown;
+
+  /// Current reconnect attempt number (0 when not reconnecting).
+  int get reconnectAttempts => _reconnectAttempts;
 
   /// Connection quality tier: good (<50ms) / slow (50-200ms) / unstable (≥200ms) / unknown.
   String get connectionQuality {
@@ -312,6 +320,7 @@ class RobotConnectionProvider extends ChangeNotifier {
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       _status = ConnectionStatus.error;
       _errorMessage = '重连失败，已达最大重试次数';
+      _reconnectCountdown = 0;
       notifyListeners();
       return;
     }
@@ -322,11 +331,29 @@ class RobotConnectionProvider extends ChangeNotifier {
               (1 << _reconnectAttempts.clamp(0, 4)))
           .clamp(2000, 30000),
     );
+    final delaySec = delay.inSeconds;
 
-    debugPrint('[Provider] Reconnect attempt ${_reconnectAttempts + 1} in ${delay.inSeconds}s');
+    debugPrint('[Provider] Reconnect attempt ${_reconnectAttempts + 1} in ${delaySec}s');
+
+    // Start countdown
+    _reconnectCountdown = delaySec;
+    notifyListeners();
+
+    _reconnectCountdownTimer?.cancel();
+    _reconnectCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_reconnectCountdown > 1) {
+        _reconnectCountdown--;
+        notifyListeners();
+      } else {
+        _reconnectCountdownTimer?.cancel();
+        _reconnectCountdownTimer = null;
+      }
+    });
 
     _reconnectTimer = Timer(delay, () async {
+      _reconnectCountdown = 0;
       _reconnectAttempts++;
+      notifyListeners();
       if (_client != null) {
         try {
           final success = await _client!.connect();
@@ -351,6 +378,9 @@ class RobotConnectionProvider extends ChangeNotifier {
   void _cancelReconnect() {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _reconnectCountdownTimer?.cancel();
+    _reconnectCountdownTimer = null;
+    _reconnectCountdown = 0;
   }
 
   // ============ Health Check ============

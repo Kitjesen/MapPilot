@@ -15,6 +15,7 @@ import 'package:flutter_monitor/features/map/map_screen.dart';
 import 'package:flutter_monitor/features/events/events_screen.dart';
 import 'package:flutter_monitor/features/settings/app_settings_screen.dart';
 import 'package:flutter_monitor/shared/widgets/low_battery_banner.dart';
+import 'package:flutter_monitor/shared/widgets/reconnect_banner.dart';
 
 /// Adaptive main navigation: mobile→bottom nav, tablet/desktop→sidebar
 class MainShellScreen extends StatefulWidget {
@@ -134,6 +135,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
         extendBody: !useSide,
         body: Column(
           children: [
+            const ReconnectBanner(),
             const LowBatteryBanner(),
             Expanded(
               child: useSide
