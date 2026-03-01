@@ -10,6 +10,7 @@ import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:flutter_monitor/shared/utils/haptic_utils.dart';
+import 'package:flutter_monitor/shared/widgets/empty_state.dart';
 import 'package:flutter_monitor/core/models/mission_report.dart';
 import 'package:flutter_monitor/core/models/task_template.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
@@ -593,11 +594,10 @@ class _TaskPanelState extends State<TaskPanel> with SingleTickerProviderStateMix
         const SizedBox(height: 6),
         if (_waypoints.isEmpty)
           _card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              child: Center(
-                child: Text(locale.tr('暂无航点', 'No waypoints'), style: TextStyle(fontSize: 13, color: context.subtitleColor)),
-              ),
+            child: EmptyState(
+              icon: Icons.route,
+              title: locale.tr('未添加航点', 'No waypoints'),
+              subtitle: locale.tr('在地图上长按添加航点', 'Long press on the map to add waypoints'),
             ),
           )
         else

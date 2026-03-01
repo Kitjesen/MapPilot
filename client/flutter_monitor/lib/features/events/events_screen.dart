@@ -9,6 +9,7 @@ import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:flutter_monitor/shared/widgets/skeleton_loader.dart';
+import 'package:flutter_monitor/shared/widgets/empty_state.dart';
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -357,33 +358,28 @@ class _EventsScreenState extends State<EventsScreen>
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          SizedBox(height: MediaQuery.of(context).size.height * 0.25),
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.history, size: 48, color: context.subtitleColor),
-                const SizedBox(height: 16),
-                Text(locale.tr('暂无事件记录', 'No events recorded'),
-                  style: TextStyle(fontSize: 15, color: context.subtitleColor)),
-                if (!_isStreaming)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12.0),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      SizedBox(width: 14, height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 1.5, color: context.subtitleColor)),
-                      const SizedBox(width: 8),
-                      Text(
-                        _retryCount > 0
-                            ? locale.tr('重连中 (第 $_retryCount 次)...', 'Reconnecting (attempt $_retryCount)...')
-                            : locale.tr('连接中...', 'Connecting...'),
-                        style: TextStyle(color: context.subtitleColor, fontSize: 13),
-                      ),
-                    ]),
-                  ),
-              ],
-            ),
+          EmptyState(
+            icon: Icons.inbox_outlined,
+            title: locale.tr('暂无事件', 'No events'),
+            subtitle: locale.tr('机器人运行时事件会显示在这里', 'Events will appear here when the robot is running'),
           ),
+          if (!_isStreaming)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  SizedBox(width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 1.5, color: context.subtitleColor)),
+                  const SizedBox(width: 8),
+                  Text(
+                    _retryCount > 0
+                        ? locale.tr('重连中 (第 $_retryCount 次)...', 'Reconnecting (attempt $_retryCount)...')
+                        : locale.tr('连接中...', 'Connecting...'),
+                    style: TextStyle(color: context.subtitleColor, fontSize: 13),
+                  ),
+                ]),
+              ),
+            ),
         ],
       );
     }
