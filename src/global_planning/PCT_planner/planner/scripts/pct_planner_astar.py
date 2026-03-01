@@ -26,6 +26,7 @@ import heapq
 import os
 import pickle
 import threading
+import time
 
 import numpy as np
 import rclpy
@@ -131,15 +132,21 @@ def _find_nearest_free(trav, ci, cj, obs_thr, radius=5):
     return best
 
 
-def _astar(trav, start, goal, obs_thr):
+def _astar(trav, start, goal, obs_thr, timeout_sec=5.0):
     """8-connected A* on traversability grid.
 
     Returns list of (ix, iy) from start to goal, or None if unreachable.
+    Raises TimeoutError if planning exceeds timeout_sec.
     """
+    deadline = time.monotonic() + timeout_sec
     h = lambda a, b: abs(a[0] - b[0]) + abs(a[1] - b[1])
     open_q = [(h(start, goal), 0.0, start, [])]
     visited = {}
     while open_q:
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f'A* timeout after {timeout_sec}s '
+                f'(visited {len(visited)} nodes)')
         f, g, cur, path = heapq.heappop(open_q)
         if cur in visited:
             continue
@@ -175,6 +182,7 @@ class PctPlannerAstar(Node):
         self.declare_parameter('loc_quality_min', 0.3)
         self.declare_parameter('smooth_method', 'catmull_rom')
         self.declare_parameter('smooth_interp',  3)
+        self.declare_parameter('astar_timeout_sec', 5.0)
 
         tomo_file    = self.get_parameter('tomogram_file').value
         self._obs    = self.get_parameter('obstacle_thr').value
@@ -183,6 +191,7 @@ class PctPlannerAstar(Node):
         self._loc_quality_min = self.get_parameter('loc_quality_min').value
         self._smooth_method = self.get_parameter('smooth_method').value
         self._smooth_interp  = self.get_parameter('smooth_interp').value
+        self._astar_timeout  = self.get_parameter('astar_timeout_sec').value
 
         if not tomo_file or not os.path.isfile(tomo_file):
             self.get_logger().error(
@@ -278,7 +287,13 @@ class PctPlannerAstar(Node):
                 self._publish_status('FAILED')
                 return
 
-            cells = _astar(self._trav, (si, sj), (gi, gj), self._obs)
+            try:
+                cells = _astar(self._trav, (si, sj), (gi, gj), self._obs,
+                               timeout_sec=self._astar_timeout)
+            except TimeoutError as e:
+                self.get_logger().error(f'A* planning timeout: {e}')
+                self._publish_status('FAILED')
+                return
             if cells is None:
                 self.get_logger().warn(
                     f'A* no path ({sx:.2f},{sy:.2f})→({gx:.2f},{gy:.2f}), '
