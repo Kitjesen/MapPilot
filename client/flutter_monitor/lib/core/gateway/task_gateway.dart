@@ -53,6 +53,10 @@ class TaskGateway extends ChangeNotifier {
   static const _pollWarnThreshold = 3;
   static const _pollErrorThreshold = 5;
 
+  // ─── Replan counter (PATH_BLOCKED events) ───
+  int _replanCount = 0;
+  StreamSubscription<Event>? _eventSub;
+
   bool get isRunning => _isRunning;
   bool get isPaused => _isPaused;
   String? get activeTaskId => _activeTaskId;
@@ -61,6 +65,7 @@ class TaskGateway extends ChangeNotifier {
   TaskStatus get taskStatus => _taskStatus;
   bool get isFailed => _taskStatus == TaskStatus.TASK_STATUS_FAILED;
   String? get statusMessage => _statusMessage;
+  int get replanCount => _replanCount;
 
   /// 清除状态消息
   void clearStatusMessage() {
@@ -306,9 +311,11 @@ class TaskGateway extends ChangeNotifier {
         _isRunning = true;
         _isPaused = false;
         _progress = 0.0;
+        _replanCount = 0;
         _taskStatus = TaskStatus.TASK_STATUS_RUNNING;
         _statusMessage = '${_taskTypeLabel(type)}任务已启动';
         _startPolling();
+        _startEventListening();
         notifyListeners();
         return true;
       } else {
@@ -431,6 +438,26 @@ class TaskGateway extends ChangeNotifier {
   void _stopPolling() {
     _statusTimer?.cancel();
     _statusTimer = null;
+    _stopEventListening();
+  }
+
+  void _startEventListening() {
+    _stopEventListening();
+    final client = _client;
+    if (client == null) return;
+    try {
+      _eventSub = client.streamEvents().listen((event) {
+        if (event.type == EventType.EVENT_TYPE_NAV_PATH_BLOCKED) {
+          _replanCount++;
+          notifyListeners();
+        }
+      }, onError: (_) {});
+    } catch (_) {}
+  }
+
+  void _stopEventListening() {
+    _eventSub?.cancel();
+    _eventSub = null;
   }
 
   String _taskTypeLabel(TaskType type) {
@@ -457,6 +484,7 @@ class TaskGateway extends ChangeNotifier {
   @override
   void dispose() {
     _stopPolling();
+    _stopEventListening();
     super.dispose();
   }
 }

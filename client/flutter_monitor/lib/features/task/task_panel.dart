@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -43,6 +45,9 @@ class _TaskPanelState extends State<TaskPanel> {
   // ─── ETA tracking ───
   DateTime? _taskStartTime;
   bool _wasRunning = false;
+
+  // ─── Mapping→Navigation transition tracking ───
+  bool _mappingCompleteShown = false;
 
   @override
   void initState() {
@@ -233,6 +238,17 @@ class _TaskPanelState extends State<TaskPanel> {
     if (gw.isRunning && !_wasRunning) {
       _taskStartTime = DateTime.now();
       _activeWpResp = null;
+      _mappingCompleteShown = false;
+    }
+    // Detect mapping task completion → show transition BottomSheet
+    if (_wasRunning && !gw.isRunning &&
+        gw.taskStatus == TaskStatus.TASK_STATUS_COMPLETED &&
+        gw.activeTaskType == TaskType.TASK_TYPE_MAPPING &&
+        !_mappingCompleteShown) {
+      _mappingCompleteShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showMappingCompleteSheet(locale);
+      });
     }
     _wasRunning = gw.isRunning;
 
@@ -704,10 +720,29 @@ class _TaskPanelState extends State<TaskPanel> {
                       minHeight: 4,
                     ),
                   ),
+                  // Replan counter
+                  if (gw.replanCount > 0) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(Icons.alt_route_rounded, size: 14, color: Colors.orange[700]),
+                        const SizedBox(width: 4),
+                        Text(
+                          locale.tr('重规划 ${gw.replanCount} 次', 'Replanned ${gw.replanCount} times'),
+                          style: TextStyle(fontSize: 12, color: Colors.orange[700], fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
+          // Semantic nav confidence HUD
+          if (_selectedType == TaskType.TASK_TYPE_SEMANTIC_NAV) ...[
+            const SizedBox(height: 12),
+            _semanticConfidenceHud(locale),
+          ],
           const SizedBox(height: 16),
           // Waypoint checklist
           _waypointChecklistCard(locale),
@@ -814,7 +849,7 @@ class _TaskPanelState extends State<TaskPanel> {
   //  ETA + Waypoint checklist + Failure banner
   // ════════════════════════════════════════════
 
-  /// Estimated time remaining as a human-readable string (e.g. "~2分钟")
+  /// Estimated time remaining (e.g. "预计还需 2 分 30 秒")
   String? get _etaString {
     final gw = context.read<TaskGateway>();
     if (_taskStartTime == null || gw.progress <= 0.01 || gw.progress >= 1.0) return null;
@@ -822,8 +857,11 @@ class _TaskPanelState extends State<TaskPanel> {
     final totalEst = elapsed / gw.progress;
     final remaining = (totalEst * (1 - gw.progress)).round();
     if (remaining <= 0) return null;
-    if (remaining < 60) return '~${remaining}秒';
-    return '~${(remaining / 60).ceil()}分钟';
+    final min = remaining ~/ 60;
+    final sec = remaining % 60;
+    if (min > 0 && sec > 0) return '预计还需 $min 分 $sec 秒';
+    if (min > 0) return '预计还需 $min 分';
+    return '预计还需 $sec 秒';
   }
 
   Widget _waypointChecklistCard(LocaleProvider locale) {
@@ -938,6 +976,141 @@ class _TaskPanelState extends State<TaskPanel> {
             child: Text(locale.tr('重试', 'Retry'), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
           ),
         ],
+      ),
+    );
+  }
+
+  // ════════════════════════════════════════════
+  //  Mapping→Navigation transition
+  // ════════════════════════════════════════════
+
+  void _showMappingCompleteSheet(LocaleProvider locale) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 40, height: 4,
+                  decoration: BoxDecoration(color: Colors.grey[400],
+                    borderRadius: BorderRadius.circular(2))),
+                const SizedBox(height: 20),
+                const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 48),
+                const SizedBox(height: 12),
+                Text(
+                  locale.tr('地图已保存', 'Map saved'),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: context.titleColor),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      setState(() => _selectedType = TaskType.TASK_TYPE_NAVIGATION);
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    child: Text(locale.tr('立即开始导航', 'Start navigation now'),
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: TextButton.styleFrom(
+                      foregroundColor: context.subtitleColor,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        side: BorderSide(color: context.borderColor),
+                      ),
+                    ),
+                    child: Text(locale.tr('返回首页', 'Back to home'),
+                      style: const TextStyle(fontSize: 14)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ════════════════════════════════════════════
+  //  Semantic nav confidence HUD
+  // ════════════════════════════════════════════
+
+  Widget _semanticConfidenceHud(LocaleProvider locale) {
+    // Mock data — will be replaced with real SlowState data when available
+    final mockConfidence = 0.5 + 0.3 * math.sin(DateTime.now().millisecondsSinceEpoch / 2000);
+    const mockPathType = 'Fast';
+
+    return _card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(locale.tr('语义置信度', 'Semantic Confidence'),
+                  style: TextStyle(fontSize: 13, color: context.subtitleColor)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: mockPathType == 'Fast'
+                        ? AppColors.success.withValues(alpha: 0.15)
+                        : Colors.orange.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    mockPathType == 'Fast'
+                        ? locale.tr('快速路径', 'Fast Path')
+                        : locale.tr('慢速路径', 'Slow Path'),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: mockPathType == 'Fast' ? AppColors.success : Colors.orange[700],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: mockConfidence.clamp(0.0, 1.0),
+                backgroundColor: context.isDark
+                    ? Colors.white.withValues(alpha: 0.06)
+                    : Colors.black.withValues(alpha: 0.04),
+                valueColor: AlwaysStoppedAnimation(
+                  mockConfidence > 0.7 ? AppColors.success : Colors.orange,
+                ),
+                minHeight: 4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${(mockConfidence * 100).clamp(0, 100).toStringAsFixed(0)}%',
+              style: TextStyle(fontSize: 11, color: context.subtitleColor),
+            ),
+          ],
+        ),
       ),
     );
   }
