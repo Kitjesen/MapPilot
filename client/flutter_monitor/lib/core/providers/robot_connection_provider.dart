@@ -77,6 +77,10 @@ class RobotConnectionProvider extends ChangeNotifier {
   static const Duration _heartbeatInterval = Duration(seconds: 5);
   static const int _heartbeatMaxFails = 3;
 
+  // — RTT history (last 60 samples) —
+  final List<double> _rttHistory = [];
+  static const int _rttHistoryMaxLen = 60;
+
   // — Capabilities —
   CapabilitiesResponse? _capabilities;
 
@@ -110,6 +114,27 @@ class RobotConnectionProvider extends ChangeNotifier {
 
   /// Current reconnect attempt number (0 when not reconnecting).
   int get reconnectAttempts => _reconnectAttempts;
+
+  /// RTT history (most recent 60 samples), oldest first.
+  List<double> get rttHistory => List.unmodifiable(_rttHistory);
+
+  /// Average RTT over history window (null if empty).
+  double? get averageRtt {
+    if (_rttHistory.isEmpty) return null;
+    return _rttHistory.reduce((a, b) => a + b) / _rttHistory.length;
+  }
+
+  /// Maximum RTT in history (null if empty).
+  double? get maxRtt {
+    if (_rttHistory.isEmpty) return null;
+    return _rttHistory.reduce((a, b) => a > b ? a : b);
+  }
+
+  /// Minimum RTT in history (null if empty).
+  double? get minRtt {
+    if (_rttHistory.isEmpty) return null;
+    return _rttHistory.reduce((a, b) => a < b ? a : b);
+  }
 
   /// Connection quality tier: good (<50ms) / slow (50-200ms) / unstable (≥200ms) / unknown.
   String get connectionQuality {
@@ -413,6 +438,7 @@ class RobotConnectionProvider extends ChangeNotifier {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _lastRttMs = null;
+    _rttHistory.clear();
   }
 
   Future<void> _sendHeartbeat() async {
@@ -424,6 +450,10 @@ class RobotConnectionProvider extends ChangeNotifier {
       await c.heartbeat();
       final rtt = DateTime.now().difference(start).inMicroseconds / 1000.0;
       _lastRttMs = rtt;
+      _rttHistory.add(rtt);
+      if (_rttHistory.length > _rttHistoryMaxLen) {
+        _rttHistory.removeAt(0);
+      }
       _heartbeatFailCount = 0;
       notifyListeners();
     } catch (_) {

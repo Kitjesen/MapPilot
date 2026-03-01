@@ -176,6 +176,12 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
                 ),
               ),
 
+              // RTT statistics card
+              if (isConnected && provider.rttHistory.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: _buildRttStatsCard(provider, locale),
+                ),
+
               // Feature cards heading
               SliverToBoxAdapter(
                 child: Padding(
@@ -567,6 +573,113 @@ class _RobotDetailScreenState extends State<RobotDetailScreen> {
     final x = fastState.pose?.position?.x ?? 0.0;
     final y = fastState.pose?.position?.y ?? 0.0;
     return 'X: ${x.toStringAsFixed(1)} Y: ${y.toStringAsFixed(1)}';
+  }
+
+  Widget _buildRttStatsCard(RobotConnectionProvider provider, LocaleProvider locale) {
+    final isDark = context.isDark;
+    final avg = provider.averageRtt;
+    final max = provider.maxRtt;
+    final min = provider.minRtt;
+    final count = provider.rttHistory.length;
+    final quality = provider.connectionQuality;
+    final qualityColor = switch (quality) {
+      'good' => AppColors.success,
+      'slow' => AppColors.warning,
+      'unstable' => AppColors.error,
+      _ => AppColors.textSecondary,
+    };
+    final qualityLabel = switch (quality) {
+      'good' => locale.tr('良好', 'Good'),
+      'slow' => locale.tr('较慢', 'Slow'),
+      'unstable' => locale.tr('不稳定', 'Unstable'),
+      _ => locale.tr('未知', 'Unknown'),
+    };
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkCard : Colors.white,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          boxShadow: [isDark ? AppShadows.dark() : AppShadows.light()],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.network_check_rounded, size: 16, color: qualityColor),
+                const SizedBox(width: 6),
+                Text(
+                  locale.tr('连接质量', 'Connection'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: context.subtitleColor,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: qualityColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    qualityLabel,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: qualityColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _rttStatCol(locale.tr('均值', 'Avg'), avg, context),
+                _rttStatCol(locale.tr('最低', 'Min'), min, context),
+                _rttStatCol(locale.tr('最高', 'Max'), max, context),
+                _rttStatCol(locale.tr('样本', 'N'), count.toDouble(), context, isSample: true),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _rttStatCol(String label, double? value, BuildContext context, {bool isSample = false}) {
+    final text = value == null
+        ? '--'
+        : isSample
+            ? value.toInt().toString()
+            : '${value.toStringAsFixed(0)}ms';
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: context.isDark ? AppColors.textPrimaryDark : AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: context.subtitleColor,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   String _formatMode(String mode) {
