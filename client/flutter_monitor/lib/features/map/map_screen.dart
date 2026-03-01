@@ -78,6 +78,11 @@ class _MapScreenState extends State<MapScreen>
   bool _showGlobalPath = true;
   bool _showOccupancyGrid = true;
 
+  // ─── Frontier markers ───
+  List<_FrontierMarker> _frontierMarkers = [];
+  StreamSubscription? _frontierSubscription;
+  bool _showFrontiers = true;
+
   Pose? _currentPose;
   List<double>? _currentJointAngles;
   StreamSubscription<FastState>? _fastSub;
@@ -166,6 +171,7 @@ class _MapScreenState extends State<MapScreen>
     _pclSubscription?.cancel();
     _pathSubscription?.cancel();
     _gridSubscription?.cancel();
+    _frontierSubscription?.cancel();
     _dogJointSub?.cancel();
     _transformController.dispose();
     _missionNameCtrl.dispose();
@@ -207,6 +213,13 @@ class _MapScreenState extends State<MapScreen>
       if (!mounted) return;
       _parseOccupancyGrid(chunk.data);
     }, onError: (e) => debugPrint('[MapScreen] Grid sub error: $e'));
+
+    _frontierSubscription = client
+        .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_FRONTIER_MARKERS)
+        .listen((chunk) {
+      if (!mounted) return;
+      _parseFrontierMarkers(chunk.data);
+    }, onError: (_) {/* frontier not available — silent */});
   }
 
   void _parseAndSetPoints(List<int> data, {required bool isGlobal}) {
@@ -296,6 +309,31 @@ class _MapScreenState extends State<MapScreen>
     setState(() {
       _occupancyGrid = _OccupancyGrid(
           width: w, height: h, resolution: res, originX: ox, originY: oy, data: gridData);
+      _mapDataVersion++;
+    });
+  }
+
+  /// Frontier markers binary format:
+  ///   Bytes 0-3:   count (uint32 LE)
+  ///   Per marker × 12 bytes: float32 x, float32 y, float32 score (LE)
+  ///   score range [0,1] — higher = more informative frontier
+  void _parseFrontierMarkers(List<int> data) {
+    if (data.length < 4) return;
+    final bd = Uint8List.fromList(data).buffer.asByteData();
+    final count = bd.getUint32(0, Endian.little);
+    if (count == 0 || data.length < 4 + count * 12) return;
+    final markers = <_FrontierMarker>[];
+    for (var i = 0; i < count; i++) {
+      final off = 4 + i * 12;
+      final x = bd.getFloat32(off, Endian.little);
+      final y = bd.getFloat32(off + 4, Endian.little);
+      final score = bd.getFloat32(off + 8, Endian.little);
+      if (x.isFinite && y.isFinite && score.isFinite) {
+        markers.add(_FrontierMarker(x: x, y: y, score: score.clamp(0.0, 1.0)));
+      }
+    }
+    setState(() {
+      _frontierMarkers = markers;
       _mapDataVersion++;
     });
   }
@@ -1252,6 +1290,7 @@ class _MapScreenState extends State<MapScreen>
                         dataVersion: _mapDataVersion,
                         globalPathPoints: _showGlobalPath ? _globalPathPoints : const [],
                         occupancyGrid: _showOccupancyGrid ? _occupancyGrid : null,
+                        frontierMarkers: _showFrontiers ? _frontierMarkers : const [],
                       ),
                       size: const Size(10000, 10000),
                     )),
@@ -1453,6 +1492,16 @@ class _MapScreenState extends State<MapScreen>
             setState(() => _showOccupancyGrid = !_showOccupancyGrid);
           },
           tooltip: 'Occupancy grid',
+        ),
+        const SizedBox(height: 4),
+        _mapCtrlBtn(Icons.explore_rounded,
+          color: _showFrontiers && _frontierMarkers.isNotEmpty
+              ? const Color(0xFFFF6D00) : null,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            setState(() => _showFrontiers = !_showFrontiers);
+          },
+          tooltip: 'Frontier markers',
         ),
         const SizedBox(height: 4),
         // Compass / recenter
@@ -2230,6 +2279,7 @@ class TrajectoryPainter extends CustomPainter {
   final int dataVersion;
   final List<Offset> globalPathPoints;
   final _OccupancyGrid? occupancyGrid;
+  final List<_FrontierMarker> frontierMarkers;
   final int _pathLength;
   final double? _poseX;
   final double? _poseY;
@@ -2286,6 +2336,7 @@ class TrajectoryPainter extends CustomPainter {
     this.localBuckets = const [[], [], [], [], []],
     this.navGoalPoint, this.dataVersion = 0,
     this.globalPathPoints = const [], this.occupancyGrid,
+    this.frontierMarkers = const [],
   })  : _pathLength = path.length,
         _poseX = currentPose?.position.x,
         _poseY = currentPose?.position.y;
@@ -2350,6 +2401,27 @@ class TrajectoryPainter extends CustomPainter {
       canvas.drawCircle(end, 0.15, _globalPathDotPaint);
     }
 
+    // ── 前沿探索标记（橙色渐变圆圈） ──
+    for (final fm in frontierMarkers) {
+      final r = 0.4 + fm.score * 0.8; // radius 0.4..1.2 m
+      // inner fill: score-based orange
+      final alpha = (0.12 + fm.score * 0.25).clamp(0.0, 0.37);
+      canvas.drawCircle(
+        Offset(fm.x, fm.y), r,
+        Paint()
+          ..color = Color.fromRGBO(255, 109, 0, alpha)
+          ..style = PaintingStyle.fill,
+      );
+      // stroke
+      canvas.drawCircle(
+        Offset(fm.x, fm.y), r,
+        Paint()
+          ..color = Color.fromRGBO(255, 109, 0, (0.5 + fm.score * 0.45).clamp(0.0, 1.0))
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.05,
+      );
+    }
+
     // ── 历史轨迹（蓝色线） ──
     if (path.isNotEmpty) {
       final p = Path()..moveTo(path.first.dx, path.first.dy);
@@ -2395,6 +2467,7 @@ class TrajectoryPainter extends CustomPainter {
       _poseX != old._poseX || _poseY != old._poseY || navGoalPoint != old.navGoalPoint ||
       globalPathPoints.length != old.globalPathPoints.length ||
       occupancyGrid != old.occupancyGrid ||
+      frontierMarkers.length != old.frontierMarkers.length ||
       !identical(globalBuckets, old.globalBuckets) ||
       !identical(localBuckets, old.localBuckets);
 }
@@ -2431,4 +2504,18 @@ class _OccupancyGrid {
     required this.originY,
     required this.data,
   });
+}
+
+/// 前沿探索标记数据模型
+///
+/// Binary wire format (from DataChunk):
+///   Bytes 0-3:  count (uint32 LE)
+///   Per marker × 12 bytes: float32 x, float32 y, float32 score (LE)
+///   score ∈ [0, 1] — higher = more informative frontier
+class _FrontierMarker {
+  final double x;
+  final double y;
+  final double score; // [0, 1]
+
+  const _FrontierMarker({required this.x, required this.y, required this.score});
 }
