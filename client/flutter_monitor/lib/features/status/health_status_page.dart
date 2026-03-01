@@ -74,6 +74,10 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
                 _geofenceCard(dark, geofence),
                 const SizedBox(height: 16),
 
+                // ── 规划质量 ──
+                _navQualityCard(dark, _latest!.navigation, _latest!.topicRates, _latestFast),
+                const SizedBox(height: 16),
+
                 // ── 子系统列表 ──
                 Text('子系统', style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w600,
@@ -172,7 +176,7 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
                     backgroundColor: color.withValues(alpha: 0.15),
                     valueColor: AlwaysStoppedAnimation(color),
                   ),
-                  Text('${healthScore.toStringAsFixed(0)}',
+                  Text(healthScore.toStringAsFixed(0),
                     style: TextStyle(
                       fontSize: 12, fontWeight: FontWeight.w700,
                       color: context.titleColor)),
@@ -255,6 +259,119 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
         )),
       ]),
     ));
+  }
+
+  Widget _navQualityCard(bool dark, NavigationStatus? nav, TopicRates? rates, FastState? fast) {
+    final status    = nav?.globalPlannerStatus ?? '';
+    final pathLen   = nav?.hasGlobalPath == true ? nav!.globalPathLength : -1.0;
+    final slowLevel = nav?.slowDownLevel ?? 0;
+    final hasWp     = nav?.hasWaypoint ?? false;
+    final speedScale = fast?.speedScale ?? 1.0;
+
+    final (statusColor, statusIcon) = switch (status.toUpperCase()) {
+      'PLANNING' => (Colors.blue, Icons.cached),
+      'SUCCESS'  => (AppColors.success, Icons.check_circle_outline),
+      'FAILED'   => (AppColors.error, Icons.cancel_outlined),
+      'IDLE'     => (context.subtitleColor, Icons.pause_circle_outline),
+      _          => (context.subtitleColor, Icons.help_outline),
+    };
+
+    final slowColors = [AppColors.success, AppColors.warning, Colors.orange, AppColors.error];
+    final slowColor  = slowColors[slowLevel.clamp(0, 3)];
+    final slowLabel  = ['正常', '一级减速', '二级减速', '三级减速'][slowLevel.clamp(0, 3)];
+
+    return _card(dark, child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── 标题行 ──
+          Row(children: [
+            Icon(Icons.alt_route, color: context.subtitleColor, size: 20),
+            const SizedBox(width: 10),
+            Text('规划质量', style: TextStyle(
+              fontSize: 14, fontWeight: FontWeight.w600, color: context.titleColor)),
+          ]),
+          const SizedBox(height: 12),
+
+          // ── 规划状态 + 路径长度 ──
+          Row(children: [
+            Icon(statusIcon, color: statusColor, size: 16),
+            const SizedBox(width: 6),
+            Text(status.isEmpty ? '—' : status,
+              style: TextStyle(fontSize: 12, color: statusColor, fontWeight: FontWeight.w500)),
+            const Spacer(),
+            if (pathLen >= 0)
+              Text('路径 ${pathLen.toStringAsFixed(1)} m',
+                style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+            if (!hasWp)
+              Text('无航点', style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+          ]),
+          const SizedBox(height: 8),
+
+          // ── 减速等级 ──
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: slowColor.withValues(alpha: 0.13),
+                borderRadius: BorderRadius.circular(4)),
+              child: Text(slowLabel,
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: slowColor)),
+            ),
+            const SizedBox(width: 8),
+            if (speedScale < 1.0 && speedScale > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(4)),
+                child: Text('限速 ${(speedScale * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(fontSize: 11, color: AppColors.warning, fontWeight: FontWeight.w600)),
+              ),
+          ]),
+
+          // ── 话题频率 ──
+          if (rates != null) ...[
+            const SizedBox(height: 10),
+            _rateRow('全局路径', rates.globalPathHz, 1.0),
+            const SizedBox(height: 4),
+            _rateRow('局部路径', rates.pathHz, 4.0),
+            const SizedBox(height: 4),
+            _rateRow('控制指令', rates.cmdVelHz, 20.0),
+          ],
+        ],
+      ),
+    ));
+  }
+
+  Widget _rateRow(String label, double actual, double expected) {
+    final ratio = expected > 0 ? (actual / expected).clamp(0.0, 1.0) : 0.0;
+    final color = ratio >= 0.8
+        ? AppColors.success
+        : ratio >= 0.4
+            ? AppColors.warning
+            : AppColors.error;
+    return Row(children: [
+      SizedBox(width: 64,
+        child: Text(label, style: TextStyle(fontSize: 11, color: context.subtitleColor))),
+      Expanded(child: ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: LinearProgressIndicator(
+          value: ratio,
+          backgroundColor: context.isDark
+              ? Colors.white.withValues(alpha: 0.06)
+              : Colors.black.withValues(alpha: 0.04),
+          valueColor: AlwaysStoppedAnimation(color.withValues(alpha: 0.7)),
+          minHeight: 4,
+        ),
+      )),
+      const SizedBox(width: 8),
+      SizedBox(width: 52,
+        child: Text('${actual.toStringAsFixed(1)} Hz',
+          textAlign: TextAlign.right,
+          style: TextStyle(fontSize: 11, color: context.subtitleColor))),
+    ]);
   }
 
   Widget _subsystemCard(bool dark, SubsystemHealth s) {
