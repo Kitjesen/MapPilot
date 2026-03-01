@@ -208,13 +208,22 @@ class _EventsScreenState extends State<EventsScreen>
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // ── Filter chips ──
-          if (_events.isNotEmpty) _buildFilterBar(context, locale),
-          // ── Events list ──
-          Expanded(child: _buildEventsList(context, locale)),
-        ],
+      body: RefreshIndicator(
+        onRefresh: () async {
+          _subscription?.cancel();
+          setState(() { _events.clear(); _retryCount = 0; });
+          _startListening();
+          // Give stream a moment to deliver initial events
+          await Future.delayed(const Duration(milliseconds: 500));
+        },
+        child: Column(
+          children: [
+            // ── Filter chips ──
+            if (_events.isNotEmpty) _buildFilterBar(context, locale),
+            // ── Events list ──
+            Expanded(child: _buildEventsList(context, locale)),
+          ],
+        ),
       ),
     );
   }
@@ -324,36 +333,48 @@ class _EventsScreenState extends State<EventsScreen>
   Widget _buildEventsList(BuildContext context, LocaleProvider locale) {
     final filtered = _filteredEvents;
     if (_events.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.history, size: 48, color: context.subtitleColor),
-            const SizedBox(height: 16),
-            Text(locale.tr('暂无事件记录', 'No events recorded'),
-              style: TextStyle(fontSize: 15, color: context.subtitleColor)),
-            if (!_isStreaming)
-              Padding(
-                padding: const EdgeInsets.only(top: 12.0),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  SizedBox(width: 14, height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 1.5, color: context.subtitleColor)),
-                  const SizedBox(width: 8),
-                  Text(
-                    _retryCount > 0
-                        ? locale.tr('重连中 (第 $_retryCount 次)...', 'Reconnecting (attempt $_retryCount)...')
-                        : locale.tr('连接中...', 'Connecting...'),
-                    style: TextStyle(color: context.subtitleColor, fontSize: 13),
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: MediaQuery.of(context).size.height * 0.25),
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.history, size: 48, color: context.subtitleColor),
+                const SizedBox(height: 16),
+                Text(locale.tr('暂无事件记录', 'No events recorded'),
+                  style: TextStyle(fontSize: 15, color: context.subtitleColor)),
+                if (!_isStreaming)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12.0),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      SizedBox(width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 1.5, color: context.subtitleColor)),
+                      const SizedBox(width: 8),
+                      Text(
+                        _retryCount > 0
+                            ? locale.tr('重连中 (第 $_retryCount 次)...', 'Reconnecting (attempt $_retryCount)...')
+                            : locale.tr('连接中...', 'Connecting...'),
+                        style: TextStyle(color: context.subtitleColor, fontSize: 13),
+                      ),
+                    ]),
                   ),
-                ]),
-              ),
-          ],
-        ),
+              ],
+            ),
+          ),
+        ],
       );
     }
     if (filtered.isEmpty) {
-      return Center(child: Text(locale.tr('无匹配事件', 'No matching events'),
-        style: TextStyle(fontSize: 14, color: context.subtitleColor)));
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: MediaQuery.of(context).size.height * 0.3),
+          Center(child: Text(locale.tr('无匹配事件', 'No matching events'),
+            style: TextStyle(fontSize: 14, color: context.subtitleColor))),
+        ],
+      );
     }
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),

@@ -61,6 +61,24 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
     }
   }
 
+  Future<void> _refreshData() async {
+    final conn = context.read<RobotConnectionProvider>();
+    // Re-subscribe to get fresh data
+    _sub?.cancel();
+    _fastSub?.cancel();
+    _latest = conn.latestSlowState;
+    _latestFast = conn.latestFastState;
+    _sub = conn.slowStateStream.listen((ss) {
+      if (mounted) setState(() => _latest = ss);
+    });
+    _fastSub = conn.fastStateStream.listen((fs) {
+      if (mounted) setState(() => _latestFast = fs);
+    });
+    setState(() {});
+    // Give streams a moment to deliver fresh data
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+
   @override
   void dispose() {
     _sub?.cancel();
@@ -86,12 +104,20 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: _latest == null
-          ? Center(
-              child: Text('等待数据...',
-                  style: TextStyle(color: context.subtitleColor)))
+      body: RefreshIndicator(
+        onRefresh: _refreshData,
+        child: _latest == null
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                SizedBox(height: MediaQuery.of(context).size.height * 0.35),
+                Center(child: Text('等待数据...',
+                    style: TextStyle(color: context.subtitleColor))),
+              ],
+            )
           : ListView(
-              physics: const BouncingScrollPhysics(),
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics()),
               padding: const EdgeInsets.all(20),
               children: [
                 // ── 综合健康 ──
@@ -149,6 +175,7 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
                   )),
               ],
             ),
+      ),
     );
   }
 
