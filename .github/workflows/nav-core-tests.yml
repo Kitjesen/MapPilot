@@ -22,3 +22,24 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir src/nav_core/build --output-on-failure
+
+  cross-compile-arm64:
+    name: Cross-compile ARM64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install aarch64 cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-aarch64-linux-gnu
+
+      - name: Configure (ARM64 cross-compile, standalone)
+        run: |
+          cmake -B src/nav_core/build-arm64 -S src/nav_core \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DSTANDALONE=ON
+
+      - name: Build (compile only, no tests)
+        run: cmake --build src/nav_core/build-arm64 --parallel $(nproc)
