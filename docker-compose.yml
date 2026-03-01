@@ -72,6 +72,13 @@ services:
       # 规划环境 (可选)
       - ${HOST_PLANNING_ENV:-/dev/null}:/etc/nav/planning.env:ro
 
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ros2 topic list 2>/dev/null | grep -q /nav/odometry"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
     restart: unless-stopped
 
     # 资源限制
