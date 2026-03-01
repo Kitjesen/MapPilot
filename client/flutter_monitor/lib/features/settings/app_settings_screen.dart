@@ -16,6 +16,7 @@ import 'package:flutter_monitor/features/settings/version_detail_page.dart';
 import 'package:flutter_monitor/features/settings/cloud_config_page.dart';
 import 'package:flutter_monitor/features/settings/device_info_page.dart';
 import 'package:flutter_monitor/features/settings/runtime_params_page.dart';
+import 'package:flutter_monitor/features/settings/scheduled_tasks_page.dart';
 import 'package:flutter_monitor/core/gateway/ota_gateway.dart';
 import 'package:flutter_monitor/core/gateway/runtime_config_gateway.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
@@ -110,6 +111,26 @@ class AppSettingsScreen extends StatelessWidget {
                   value: settingsPrefs.autoReconnect,
                   onChanged: (v) => settingsPrefs.setAutoReconnect(v),
                 ),
+              ),
+            ],
+          ),
+
+          // ==================== 定时任务 ====================
+          SettingsSection(
+            title: locale.tr('任务调度', 'Task Scheduling'),
+            children: [
+              SettingsTile(
+                icon: Icons.schedule_outlined,
+                title: locale.tr('定时任务', 'Scheduled Tasks'),
+                subtitle: settingsPrefs.scheduledTasks.isEmpty
+                    ? locale.tr('暂无定时任务', 'No scheduled tasks')
+                    : '${settingsPrefs.scheduledTasks.where((t) => t.enabled).length} '
+                      '${locale.tr('个已启用', 'enabled')}',
+                trailing: SettingsActionButton(
+                  label: locale.tr('管理', 'Manage'),
+                  onTap: () => _push(context, const ScheduledTasksPage()),
+                ),
+                onTap: () => _push(context, const ScheduledTasksPage()),
               ),
             ],
           ),

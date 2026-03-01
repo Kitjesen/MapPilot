@@ -2,12 +2,15 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_monitor/core/models/task_template.dart';
+import 'package:flutter_monitor/core/models/scheduled_task.dart';
 
 /// Centralized settings preferences with real persistence.
 /// All values are read/written via SharedPreferences.
 class SettingsPreferences extends ChangeNotifier {
   static const _keyTaskTemplates = 'task_templates';
   static const _maxTemplates = 20;
+  static const _keyScheduledTasks = 'scheduled_tasks';
+  static const _maxScheduledTasks = 10;
 
   static const _keyAutoReconnect = 'auto_reconnect';
   static const _keyConnectionTimeout = 'connection_timeout';
@@ -22,6 +25,7 @@ class SettingsPreferences extends ChangeNotifier {
   SharedPreferences? _prefs;
 
   // ====== Defaults ======
+  List<ScheduledTask> _scheduledTasks = [];
   List<TaskTemplate> _taskTemplates = [];
   bool _autoReconnect = true;
   int _connectionTimeoutSec = 5;
@@ -34,6 +38,7 @@ class SettingsPreferences extends ChangeNotifier {
   bool _alertCommLost = true;
 
   // ====== Getters ======
+  List<ScheduledTask> get scheduledTasks => List.unmodifiable(_scheduledTasks);
   List<TaskTemplate> get taskTemplates => List.unmodifiable(_taskTemplates);
   bool get autoReconnect => _autoReconnect;
   int get connectionTimeoutSec => _connectionTimeoutSec;
@@ -70,6 +75,19 @@ class SettingsPreferences extends ChangeNotifier {
             .toList();
       } catch (_) {
         _taskTemplates = [];
+      }
+    }
+
+    // Load scheduled tasks
+    final scheduledJson = _prefs!.getString(_keyScheduledTasks);
+    if (scheduledJson != null) {
+      try {
+        final list = jsonDecode(scheduledJson) as List;
+        _scheduledTasks = list
+            .map((e) => ScheduledTask.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (_) {
+        _scheduledTasks = [];
       }
     }
 
@@ -201,6 +219,43 @@ class SettingsPreferences extends ChangeNotifier {
     _taskTemplates.removeWhere((t) => t.name == name);
     await _persistTemplates();
     notifyListeners();
+  }
+
+  // ====== Scheduled Tasks ======
+
+  Future<void> saveScheduledTask(ScheduledTask task) async {
+    final idx = _scheduledTasks.indexWhere((t) => t.id == task.id);
+    if (idx >= 0) {
+      _scheduledTasks[idx] = task;
+    } else {
+      _scheduledTasks.insert(0, task);
+      if (_scheduledTasks.length > _maxScheduledTasks) {
+        _scheduledTasks = _scheduledTasks.take(_maxScheduledTasks).toList();
+      }
+    }
+    await _persistScheduledTasks();
+    notifyListeners();
+  }
+
+  Future<void> deleteScheduledTask(String id) async {
+    _scheduledTasks.removeWhere((t) => t.id == id);
+    await _persistScheduledTasks();
+    notifyListeners();
+  }
+
+  Future<void> toggleScheduledTask(String id, bool enabled) async {
+    final idx = _scheduledTasks.indexWhere((t) => t.id == id);
+    if (idx >= 0) {
+      _scheduledTasks[idx] = _scheduledTasks[idx].copyWith(enabled: enabled);
+      await _persistScheduledTasks();
+      notifyListeners();
+    }
+  }
+
+  Future<void> _persistScheduledTasks() async {
+    final json =
+        jsonEncode(_scheduledTasks.map((t) => t.toJson()).toList());
+    await _prefs?.setString(_keyScheduledTasks, json);
   }
 
   Future<void> _persistTemplates() async {
