@@ -12,14 +12,12 @@ import 'dart:math';
 import 'package:grpc/grpc.dart';
 import 'package:robot_proto/src/data.pbgrpc.dart';
 import 'package:robot_proto/src/data.pb.dart';
-import 'package:robot_proto/src/data.pbenum.dart';
 import 'package:robot_proto/src/common.pb.dart';
 
 late List<int> _latestFrame;
 bool _hasFrame = false;
 int _frameCount = 0;
 int _totalBytes = 0;
-int _lastReportedFrame = 0;
 final _sw = Stopwatch();
 final _frameNotifier = StreamController<void>.broadcast();
 

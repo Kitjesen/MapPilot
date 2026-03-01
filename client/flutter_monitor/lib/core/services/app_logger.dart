@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 /// Severity levels for log entries.
@@ -125,4 +126,20 @@ class AppLogger {
 
   /// Clear the log buffer.
   static void clear() => _buffer.clear();
+
+  /// Export all buffered logs as JSON Lines format for structured analysis.
+  static String exportAsJson() {
+    final buffer = StringBuffer();
+    for (final entry in _buffer) {
+      buffer.writeln(jsonEncode({
+        'ts': entry.timestamp.toIso8601String(),
+        'level': entry.level.name,
+        'logger': entry.tag,
+        'msg': entry.message,
+        if (entry.error != null) 'error': entry.error.toString(),
+        if (entry.stackTrace != null) 'stackTrace': entry.stackTrace.toString(),
+      }));
+    }
+    return buffer.toString();
+  }
 }

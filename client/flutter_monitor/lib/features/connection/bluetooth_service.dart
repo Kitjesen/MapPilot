@@ -172,6 +172,7 @@ class BluetoothService extends ChangeNotifier {
 
     try {
       await robot.device.connect(
+        license: License.free,
         timeout: const Duration(seconds: 10),
         autoConnect: false,
       );

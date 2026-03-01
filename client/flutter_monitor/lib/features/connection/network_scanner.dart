@@ -72,12 +72,6 @@ class NetworkScanner {
     return subnets;
   }
 
-  /// Legacy single-subnet getter for backward compat
-  Future<String?> _getLocalSubnet() async {
-    final subnets = await _getLocalSubnets();
-    return subnets.isEmpty ? null : subnets.first;
-  }
-
   /// Scan ALL local subnets for gRPC robot services
   Future<List<DiscoveredRobot>> scan({
     int port = 50051,

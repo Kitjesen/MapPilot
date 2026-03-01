@@ -162,7 +162,7 @@ class BleRobotClient extends ChangeNotifier {
 
   /// 发送 WiFi 配置
   Future<void> sendWifiConfig(String ssid, String password) async {
-    debugPrint('[BLE Client] WiFi config: SSID=$ssid');
+    debugPrint('[BLE Client] WiFi config: SSID=$ssid, pass=***');
     final packet = BleProtocol.buildWifiConfig(ssid, password);
     if (_wifiConfigChar != null) {
       await _wifiConfigChar!.write(packet.toList(), withoutResponse: false);

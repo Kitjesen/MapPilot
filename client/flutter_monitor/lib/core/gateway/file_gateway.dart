@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
 import 'package:flutter_monitor/core/services/app_logger.dart';
@@ -206,7 +208,62 @@ class FileGateway extends ChangeNotifier {
   bool get isDownloading => _isDownloading;
   double get downloadProgress => _downloadProgress;
 
+  /// Download a file from the robot directly to a local [File] — streaming,
+  /// never accumulates the full payload in memory.
+  ///
+  /// Returns the total bytes written, or null on error.
+  Future<int?> downloadFileTo(String remotePath, File localFile) async {
+    final client = _client;
+    if (client == null) return null;
+
+    _isDownloading = true;
+    _downloadProgress = 0.0;
+    _errorMessage = null;
+    notifyListeners();
+
+    IOSink? sink;
+    try {
+      sink = localFile.openWrite();
+      int receivedBytes = 0;
+      int totalSize = 0;
+
+      await for (final chunk in client.downloadFile(filePath: remotePath)) {
+        sink.add(chunk.data);
+        receivedBytes += chunk.data.length;
+        if (chunk.totalSize.toInt() > 0) totalSize = chunk.totalSize.toInt();
+        if (totalSize > 0) {
+          _downloadProgress = receivedBytes / totalSize;
+          notifyListeners();
+        }
+        if (chunk.isLast) break;
+      }
+
+      await sink.flush();
+      await sink.close();
+      sink = null;
+
+      _isDownloading = false;
+      _downloadProgress = 1.0;
+      notifyListeners();
+      return receivedBytes;
+    } catch (e) {
+      AppLogger.system.error('Failed to download file: $e');
+      await sink?.close();
+      // 清理不完整的文件
+      try {
+        if (await localFile.exists()) await localFile.delete();
+      } catch (_) {}
+      _isDownloading = false;
+      _errorMessage = '下载失败: $e';
+      notifyListeners();
+      return null;
+    }
+  }
+
   /// Download a file from the robot. Returns the collected bytes, or null on error.
+  ///
+  /// Prefer [downloadFileTo] for large files — this method must hold the
+  /// entire payload in memory to satisfy its return type.
   Future<List<int>?> downloadFile(String remotePath) async {
     final client = _client;
     if (client == null) return null;

@@ -11,6 +11,7 @@ import 'package:protobuf/well_known_types/google/protobuf/empty.pb.dart';
 import 'package:protobuf/well_known_types/google/protobuf/timestamp.pb.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
+import 'package:flutter_monitor/core/services/app_logger.dart';
 
 class RobotClient implements RobotClientBase {
   final String host;
@@ -87,6 +88,10 @@ class RobotClient implements RobotClientBase {
         options: CallOptions(timeout: const Duration(seconds: 3)),
       );
       print('Connected to robot: ${info.robotId} ($host:$port)');
+
+      if (!useTls) {
+        AppLogger.grpc.warning('Insecure gRPC connection (no TLS) to $host:$port');
+      }
 
       // 测试 OTA 连接 (50052) — 非阻塞, 失败不影响主连接
       try {

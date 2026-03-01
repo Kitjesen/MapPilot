@@ -1,6 +1,6 @@
 name: flutter_monitor
 description: Robot Remote Monitoring Client via gRPC
-version: 1.5.0
+version: 1.6.0
 publish_to: 'none'
 
 environment:
@@ -9,70 +9,66 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
+
   # gRPC & Protobuf
   grpc: ^5.1.0
   protobuf: ^6.0.0
-  
+
   # Robot proto definitions (generated gRPC stubs)
   robot_proto:
     path: ../../src/robot_proto/dart
-  
+
   # Han Dog CMS proto (direct dog board communication)
   han_dog_message:
     git:
       url: https://github.com/Kitjesen/han_dog_message.git
       path: dart
-      ref: main  # pinned from main
-  
+      ref: main
+
   # State Management
   provider: ^6.1.0
-  
+
   # UI
   cupertino_icons: ^1.0.2
   flutter_joystick: ^0.2.0
-  fl_chart: ^0.66.0
-  intl: ^0.18.0
-  webview_flutter: ^4.4.0
-  webview_flutter_android: ^3.12.0
-  webview_flutter_wkwebview: ^3.9.0
+  fl_chart: ^1.1.0
+  intl: ^0.20.0
+  webview_flutter: ^4.13.0
+  webview_flutter_android: ^4.10.0
+  webview_flutter_wkwebview: ^3.23.0
   webview_windows: ^0.4.0
-  
+
   # Utils
-  uuid: ^4.2.1
+  uuid: ^4.5.0
   fixnum: ^1.1.0
-  file_picker: ^8.0.0
+  file_picker: ^10.0.0
   http: ^1.2.0
   shared_preferences: ^2.2.0
-  
+
   # WebRTC for real-time video/audio
-  flutter_webrtc: ^0.12.6
-  permission_handler: ^11.3.0
+  flutter_webrtc: ^1.3.0
+  permission_handler: ^12.0.0
 
   # Bluetooth
-  flutter_blue_plus: ^1.35.2
+  flutter_blue_plus: ^2.2.0
 
   # Storage & Sharing
   path_provider: ^2.1.0
-  share_plus: ^10.0.0
+  share_plus: ^12.0.0
 
   # Local notifications (OS-level push)
-  flutter_local_notifications: ^18.0.1
+  flutter_local_notifications: ^20.0.0
 
   # UI Enhancements
   shimmer: ^3.0.0
   animations: ^2.0.11
   window_manager: ^0.5.1
 
-dependency_overrides:
-  protobuf: ^6.0.0
-  grpc: ^5.1.0
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
-  flutter_launcher_icons: ^0.13.1
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.0
   msix: ^3.16.0
 
 flutter:

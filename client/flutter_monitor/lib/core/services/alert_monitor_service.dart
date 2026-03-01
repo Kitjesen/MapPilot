@@ -49,6 +49,7 @@ class AlertMonitorService extends ChangeNotifier {
   final Map<AlertType, DateTime> _lastFired = {};
   Timer? _pollTimer;
   ConnectionStatus? _prevConnectionStatus;
+  bool _evaluating = false;
 
   // ---- 告警队列（新告警从这里弹出） ----
   final StreamController<AlertRecord> _alertController =
@@ -85,57 +86,63 @@ class AlertMonitorService extends ChangeNotifier {
 
   /// 核心评估逻辑
   void _evaluate() {
-    final conn = _connProvider;
-    final prefs = _settingsPrefs;
-    if (conn == null || prefs == null) return;
+    if (_evaluating) return;
+    _evaluating = true;
+    try {
+      final conn = _connProvider;
+      final prefs = _settingsPrefs;
+      if (conn == null || prefs == null) return;
 
-    // ---- 1. 通信异常 ----
-    if (prefs.alertCommLost) {
-      final currentStatus = conn.status;
-      // 从 connected/reconnecting 变成 error/disconnected
-      if (_prevConnectionStatus == ConnectionStatus.connected &&
-          (currentStatus == ConnectionStatus.error ||
-           currentStatus == ConnectionStatus.disconnected ||
-           currentStatus == ConnectionStatus.reconnecting)) {
-        _fire(AlertRecord(
-          type: AlertType.commLost,
-          level: AlertLevel.critical,
-          title: '通信异常',
-          message: '与机器人的连接已断开',
-        ));
+      // ---- 1. 通信异常 ----
+      if (prefs.alertCommLost) {
+        final currentStatus = conn.status;
+        // 从 connected/reconnecting 变成 error/disconnected
+        if (_prevConnectionStatus == ConnectionStatus.connected &&
+            (currentStatus == ConnectionStatus.error ||
+             currentStatus == ConnectionStatus.disconnected ||
+             currentStatus == ConnectionStatus.reconnecting)) {
+          _fire(AlertRecord(
+            type: AlertType.commLost,
+            level: AlertLevel.critical,
+            title: '通信异常',
+            message: '与机器人的连接已断开',
+          ));
+        }
+        _prevConnectionStatus = currentStatus;
       }
-      _prevConnectionStatus = currentStatus;
-    }
 
-    // 以下检查需要连接中
-    if (!conn.isConnected) return;
-    final slow = conn.latestSlowState;
-    if (slow == null) return;
+      // 以下检查需要连接中
+      if (!conn.isConnected) return;
+      final slow = conn.latestSlowState;
+      if (slow == null) return;
 
-    // ---- 2. 电量低 ----
-    if (prefs.alertBatteryLow) {
-      final battery = slow.resources.batteryPercent;
-      if (battery > 0 && battery < batteryThreshold) {
-        _fire(AlertRecord(
-          type: AlertType.batteryLow,
-          level: AlertLevel.warning,
-          title: '电量低',
-          message: '电池电量 ${battery.toStringAsFixed(0)}%，请及时充电',
-        ));
+      // ---- 2. 电量低 ----
+      if (prefs.alertBatteryLow) {
+        final battery = slow.resources.batteryPercent;
+        if (battery > 0 && battery < batteryThreshold) {
+          _fire(AlertRecord(
+            type: AlertType.batteryLow,
+            level: AlertLevel.warning,
+            title: '电量低',
+            message: '电池电量 ${battery.toStringAsFixed(0)}%，请及时充电',
+          ));
+        }
       }
-    }
 
-    // ---- 3. 温度过高 ----
-    if (prefs.alertTempHigh) {
-      final temp = slow.resources.cpuTemp;
-      if (temp > tempThreshold) {
-        _fire(AlertRecord(
-          type: AlertType.tempHigh,
-          level: AlertLevel.warning,
-          title: '温度过高',
-          message: 'CPU 温度 ${temp.toStringAsFixed(1)}°C，超过 ${tempThreshold.toStringAsFixed(0)}°C 阈值',
-        ));
+      // ---- 3. 温度过高 ----
+      if (prefs.alertTempHigh) {
+        final temp = slow.resources.cpuTemp;
+        if (temp > tempThreshold) {
+          _fire(AlertRecord(
+            type: AlertType.tempHigh,
+            level: AlertLevel.warning,
+            title: '温度过高',
+            message: 'CPU 温度 ${temp.toStringAsFixed(1)}°C，超过 ${tempThreshold.toStringAsFixed(0)}°C 阈值',
+          ));
+        }
       }
+    } finally {
+      _evaluating = false;
     }
   }
 

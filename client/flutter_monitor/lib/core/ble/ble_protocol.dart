@@ -71,6 +71,9 @@ class BleProtocol {
 
   /// 构建 WiFi 配置包
   /// payload: [ssid_len(1)] [ssid(N)] [pass_len(1)] [pass(M)]
+  ///
+  /// ⚠️ SECURITY: WiFi credentials are sent in plaintext over BLE.
+  /// TODO: Implement BLE-level encryption before production deployment.
   static Uint8List buildWifiConfig(String ssid, String password) {
     final ssidBytes = Uint8List.fromList(ssid.codeUnits);
     final passBytes = Uint8List.fromList(password.codeUnits);

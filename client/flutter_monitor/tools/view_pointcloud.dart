@@ -159,8 +159,8 @@ void _processPointCloud(StreamState state, List<int> rawData) {
   final bd = ByteData.sublistView(bytes);
 
   // Parse 20-byte header (little-endian)
-  final width = bd.getUint32(0, Endian.little);
-  final height = bd.getUint32(4, Endian.little);
+  final _ = bd.getUint32(0, Endian.little); // width (unused)
+  bd.getUint32(4, Endian.little); // height (unused)
   final pointStep = bd.getUint32(8, Endian.little);
   // row_step at offset 12
   // num_fields at offset 16

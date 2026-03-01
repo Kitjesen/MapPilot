@@ -361,27 +361,13 @@ class _FeatureItem {
   const _FeatureItem(this.icon, this.label);
 }
 
+// ignore: unused_element
 final List<_FeatureItem> _featureItems = [
-  const _FeatureItem(
-    Icons.view_in_ar_rounded,
-    '3D SLAM\nMapping',
-  ),
-  const _FeatureItem(
-    Icons.route_rounded,
-    'Path\nPlanning',
-  ),
-  const _FeatureItem(
-    Icons.speed_rounded,
-    'Real-time\nControl',
-  ),
-  const _FeatureItem(
-    Icons.security_rounded,
-    'Safety\nGeofence',
-  ),
-  const _FeatureItem(
-    Icons.cloud_sync_rounded,
-    'OTA\nDeploy',
-  ),
+  const _FeatureItem(Icons.view_in_ar_rounded, '3D SLAM\nMapping'),
+  const _FeatureItem(Icons.route_rounded, 'Path\nPlanning'),
+  const _FeatureItem(Icons.speed_rounded, 'Real-time\nControl'),
+  const _FeatureItem(Icons.security_rounded, 'Safety\nGeofence'),
+  const _FeatureItem(Icons.cloud_sync_rounded, 'OTA\nDeploy'),
 ];
 
 // ═══════════════════════════════════════════════════════════════
