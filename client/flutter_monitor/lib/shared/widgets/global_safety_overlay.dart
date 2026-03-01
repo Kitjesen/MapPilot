@@ -5,6 +5,7 @@ import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/gateway/control_gateway.dart';
+import 'package:flutter_monitor/shared/utils/haptic_utils.dart';
 
 /// Global safety overlay that provides:
 /// 1. A persistent floating emergency stop button (visible when connected)
@@ -179,7 +180,7 @@ class _EmergencyStopFABState extends State<_EmergencyStopFAB>
   }
 
   Future<void> _onEmergencyStop() async {
-    HapticFeedback.heavyImpact();
+    HapticUtils.heavy();
 
     setState(() => _triggered = true);
 

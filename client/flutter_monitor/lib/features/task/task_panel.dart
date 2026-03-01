@@ -9,6 +9,7 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
+import 'package:flutter_monitor/shared/utils/haptic_utils.dart';
 import 'package:flutter_monitor/core/models/mission_report.dart';
 import 'package:flutter_monitor/core/models/task_template.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
@@ -100,7 +101,7 @@ class _TaskPanelState extends State<TaskPanel> with SingleTickerProviderStateMix
   // ── Actions (delegate to TaskGateway) ──
 
   Future<void> _start() async {
-    HapticFeedback.lightImpact();
+    HapticUtils.medium();
     final gw = context.read<TaskGateway>();
     final locale = context.read<LocaleProvider>();
 
@@ -322,12 +323,13 @@ class _TaskPanelState extends State<TaskPanel> with SingleTickerProviderStateMix
       _missionEvents.clear();
       _startMissionEventCollection();
     }
-    // Trigger completion checkmark animation
+    // Trigger completion checkmark animation + success haptic
     if (_wasRunning && !gw.isRunning &&
         gw.taskStatus == TaskStatus.TASK_STATUS_COMPLETED &&
         !_showCompletionCheck) {
       _showCompletionCheck = true;
       _checkAnimCtrl.forward();
+      HapticUtils.success();
     }
     // Detect mapping task completion → show transition BottomSheet
     if (_wasRunning && !gw.isRunning &&

@@ -18,6 +18,7 @@ import 'package:flutter_monitor/features/map/robot_model_widget.dart';
 import 'package:flutter_monitor/core/providers/robot_profile_provider.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
+import 'package:flutter_monitor/shared/utils/haptic_utils.dart';
 
 // ═══════════════════════════════════════════════════════════════
 //  Mission Planner — Map Screen
@@ -551,7 +552,7 @@ class _MapScreenState extends State<MapScreen>
       await tg.clearWaypoints();
     }
 
-    HapticFeedback.mediumImpact();
+    HapticUtils.medium();
     final missionName = _missionNameCtrl.text.trim();
     late final bool ok;
     late final String okMsg;

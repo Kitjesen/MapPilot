@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/services/notification_service.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
+import 'package:flutter_monitor/shared/utils/haptic_utils.dart';
 
 /// 告警级别
 enum AlertLevel { info, warning, critical }
@@ -133,6 +134,7 @@ class AlertMonitorService extends ChangeNotifier with WidgetsBindingObserver {
       if (prefs.alertBatteryLow) {
         final battery = slow.resources.batteryPercent;
         if (battery > 0 && battery < batteryThreshold) {
+          HapticUtils.warning();
           _fire(AlertRecord(
             type: AlertType.batteryLow,
             level: AlertLevel.warning,
