@@ -21,6 +21,7 @@ grpc::Status OtaServiceImpl::UploadFile(
 
   robot::v1::UploadFileChunk chunk;
   std::string remote_path;
+  std::string tmp_path;  // write here first, rename on success
   std::string filename;
   uint64_t total_size = 0;
   std::string expected_sha256;
@@ -58,17 +59,24 @@ grpc::Status OtaServiceImpl::UploadFile(
       auto dir = remote_path.substr(0, remote_path.rfind('/'));
       std::filesystem::create_directories(dir);
 
+      // Write to a temporary file; rename to final path only after verification.
+      // This prevents a corrupted partial file from remaining on disk if the
+      // transfer is interrupted or SHA256 verification fails.
+      tmp_path = remote_path + ".tmp";
       auto mode = (resume_from > 0) ? (std::ios::binary | std::ios::app)
                                      : (std::ios::binary | std::ios::trunc);
-      output.open(remote_path, mode);
+      output.open(tmp_path, mode);
       if (!output.is_open()) {
         response->set_success(false);
-        response->set_message("Cannot open file for writing: " + remote_path);
+        response->set_message("Cannot open file for writing: " + tmp_path);
         return grpc::Status::OK;
       }
 
-      OtaLogInfo("UploadFile: %s size=%lu resume=%lu", remote_path.c_str(),
-               static_cast<unsigned long>(total_size), static_cast<unsigned long>(resume_from));
+      OtaLogInfo("UploadFile: %s size=%lu resume=%lu (tmp=%s)",
+               remote_path.c_str(),
+               static_cast<unsigned long>(total_size),
+               static_cast<unsigned long>(resume_from),
+               tmp_path.c_str());
     }
 
     // Write data
@@ -80,17 +88,33 @@ grpc::Status OtaServiceImpl::UploadFile(
 
   if (output.is_open()) output.close();
 
-  // SHA256 check
+  // SHA256 check against the temporary file
   std::string actual_sha256;
-  if (!remote_path.empty()) {
-    actual_sha256 = ComputeSHA256(remote_path);
+  if (!tmp_path.empty()) {
+    actual_sha256 = ComputeSHA256(tmp_path);
   }
 
   if (!expected_sha256.empty() && actual_sha256 != expected_sha256) {
+    // Remove the corrupted temporary file so it cannot be mistaken for a
+    // valid partial download on a future resume attempt.
+    if (!tmp_path.empty()) std::filesystem::remove(tmp_path);
     response->set_success(false);
     response->set_message("SHA256 mismatch: expected=" + expected_sha256 +
                           " actual=" + actual_sha256);
     return grpc::Status::OK;
+  }
+
+  // Atomically promote the temporary file to the final destination.
+  if (!tmp_path.empty() && !remote_path.empty()) {
+    std::error_code ec;
+    std::filesystem::rename(tmp_path, remote_path, ec);
+    if (ec) {
+      std::filesystem::remove(tmp_path);
+      response->set_success(false);
+      response->set_message("Failed to finalise upload (rename failed): " +
+                            ec.message());
+      return grpc::Status::OK;
+    }
   }
 
   response->set_success(true);
