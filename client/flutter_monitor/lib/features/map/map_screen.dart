@@ -70,6 +70,14 @@ class _MapScreenState extends State<MapScreen>
   List<Offset> _globalMapPoints = [];
   List<Offset> _localCloudPoints = [];
 
+  // ─── Global path & occupancy grid ───
+  List<Offset> _globalPathPoints = [];
+  _OccupancyGrid? _occupancyGrid;
+  StreamSubscription? _pathSubscription;
+  StreamSubscription? _gridSubscription;
+  bool _showGlobalPath = true;
+  bool _showOccupancyGrid = true;
+
   Pose? _currentPose;
   List<double>? _currentJointAngles;
   StreamSubscription<FastState>? _fastSub;
@@ -156,6 +164,8 @@ class _MapScreenState extends State<MapScreen>
     _fastSub?.cancel();
     _mapSubscription?.cancel();
     _pclSubscription?.cancel();
+    _pathSubscription?.cancel();
+    _gridSubscription?.cancel();
     _dogJointSub?.cancel();
     _transformController.dispose();
     _missionNameCtrl.dispose();
@@ -181,6 +191,22 @@ class _MapScreenState extends State<MapScreen>
       if (!mounted) return;
       _parseAndSetPoints(chunk.data, isGlobal: false);
     }, onError: (e) => debugPrint('[MapScreen] PCL sub error: $e'));
+
+    _pathSubscription = client
+        .subscribeToResource(ResourceId()
+          ..type = ResourceType.RESOURCE_TYPE_PATH
+          ..name = 'global_path')
+        .listen((chunk) {
+      if (!mounted) return;
+      _parseGlobalPath(chunk.data);
+    }, onError: (e) => debugPrint('[MapScreen] Path sub error: $e'));
+
+    _gridSubscription = client
+        .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_OCCUPANCY_GRID)
+        .listen((chunk) {
+      if (!mounted) return;
+      _parseOccupancyGrid(chunk.data);
+    }, onError: (e) => debugPrint('[MapScreen] Grid sub error: $e'));
   }
 
   void _parseAndSetPoints(List<int> data, {required bool isGlobal}) {
@@ -205,6 +231,55 @@ class _MapScreenState extends State<MapScreen>
       } else {
         _localCloudPoints = points;
       }
+    });
+  }
+
+  /// Global path wire format (from SerializePathWithMeta in data_service.cpp):
+  ///   Bytes 0-3:   num_poses      (uint32 LE)
+  ///   Bytes 4-7:   frame_id_len   (uint32 LE)
+  ///   Bytes 8..(8+frame_id_len-1): frame_id string (skip)
+  ///   Per pose × 56 bytes: 7×float64 LE  (x, y, z, qx, qy, qz, qw)
+  void _parseGlobalPath(List<int> data) {
+    if (data.length < 8) return;
+    final bd = Uint8List.fromList(data).buffer.asByteData();
+    final numPoses = bd.getUint32(0, Endian.little);
+    final frameIdLen = bd.getUint32(4, Endian.little);
+    final poseStart = 8 + frameIdLen;
+    if (numPoses == 0 || data.length < poseStart + numPoses * 56) return;
+    final points = <Offset>[];
+    for (var i = 0; i < numPoses; i++) {
+      final off = poseStart + i * 56;
+      final x = bd.getFloat64(off, Endian.little);
+      final y = bd.getFloat64(off + 8, Endian.little);
+      if (x.isFinite && y.isFinite) points.add(Offset(x, y));
+    }
+    setState(() {
+      _globalPathPoints = points;
+      _mapDataVersion++;
+    });
+  }
+
+  /// Occupancy grid binary format:
+  ///   Bytes 0-3:  width (int32 LE)
+  ///   Bytes 4-7:  height (int32 LE)
+  ///   Bytes 8-11: resolution m/cell (float32 LE)
+  ///   Bytes 12-15: origin_x (float32 LE)
+  ///   Bytes 16-19: origin_y (float32 LE)
+  ///   Bytes 20+:  width*height uint8 (0=free, 128=unknown, 255=occupied)
+  void _parseOccupancyGrid(List<int> data) {
+    if (data.length < 20) return;
+    final bd = Uint8List.fromList(data).buffer.asByteData();
+    final w = bd.getInt32(0, Endian.little);
+    final h = bd.getInt32(4, Endian.little);
+    final res = bd.getFloat32(8, Endian.little);
+    final ox = bd.getFloat32(12, Endian.little);
+    final oy = bd.getFloat32(16, Endian.little);
+    if (w <= 0 || h <= 0 || res <= 0 || data.length < 20 + w * h) return;
+    final gridData = Uint8List.fromList(data.sublist(20, 20 + w * h));
+    setState(() {
+      _occupancyGrid = _OccupancyGrid(
+          width: w, height: h, resolution: res, originX: ox, originY: oy, data: gridData);
+      _mapDataVersion++;
     });
   }
 
@@ -1156,6 +1231,8 @@ class _MapScreenState extends State<MapScreen>
                         localPoints: _localCloudPoints,
                         navGoalPoint: _navGoalPoint,
                         dataVersion: _mapDataVersion,
+                        globalPathPoints: _showGlobalPath ? _globalPathPoints : const [],
+                        occupancyGrid: _showOccupancyGrid ? _occupancyGrid : null,
                       ),
                       size: const Size(10000, 10000),
                     )),
@@ -1220,10 +1297,32 @@ class _MapScreenState extends State<MapScreen>
           _transformController.value = cur;
         }),
         const SizedBox(height: 4),
-        _mapCtrlBtn(Icons.layers_rounded, onTap: () {
-          HapticFeedback.selectionClick();
-          setState(() => _showGlobalMap = !_showGlobalMap);
-        }),
+        _mapCtrlBtn(Icons.layers_rounded,
+          color: _showGlobalMap ? AppColors.primary : null,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            setState(() => _showGlobalMap = !_showGlobalMap);
+          },
+          tooltip: 'Point cloud map',
+        ),
+        const SizedBox(height: 4),
+        _mapCtrlBtn(Icons.route_rounded,
+          color: _showGlobalPath ? const Color(0xFF7C3AED) : null,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            setState(() => _showGlobalPath = !_showGlobalPath);
+          },
+          tooltip: 'Global path',
+        ),
+        const SizedBox(height: 4),
+        _mapCtrlBtn(Icons.grid_on_rounded,
+          color: _showOccupancyGrid ? AppColors.warning : null,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            setState(() => _showOccupancyGrid = !_showOccupancyGrid);
+          },
+          tooltip: 'Occupancy grid',
+        ),
         const SizedBox(height: 4),
         // Compass / recenter
         Tooltip(
@@ -1244,17 +1343,24 @@ class _MapScreenState extends State<MapScreen>
     );
   }
 
-  Widget _mapCtrlBtn(IconData icon, {required VoidCallback onTap}) {
-    return GestureDetector(
+  Widget _mapCtrlBtn(IconData icon, {
+    required VoidCallback onTap,
+    Color? color,
+    String? tooltip,
+  }) {
+    final btn = GestureDetector(
       onTap: onTap,
       child: Container(
         width: 36, height: 36,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
+          color: color != null ? color.withValues(alpha: 0.15) : null,
         ),
-        child: Icon(icon, size: 18, color: context.subtitleColor),
+        child: Icon(icon, size: 18, color: color ?? context.subtitleColor),
       ),
     );
+    if (tooltip != null) return Tooltip(message: tooltip, child: btn);
+    return btn;
   }
 
   Widget _buildFabColumn(BuildContext context) {
@@ -1991,6 +2097,8 @@ class TrajectoryPainter extends CustomPainter {
   final List<Offset> localPoints;
   final Offset? navGoalPoint;
   final int dataVersion;
+  final List<Offset> globalPathPoints;
+  final _OccupancyGrid? occupancyGrid;
   final int _pathLength;
   final double? _poseX;
   final double? _poseY;
@@ -2014,11 +2122,28 @@ class TrajectoryPainter extends CustomPainter {
     ..color = const Color(0xFF34C759)..style = PaintingStyle.fill;
   static final _axisPaint = Paint()
     ..strokeWidth = 0.05..color = Colors.grey.withValues(alpha: 0.5);
+  // 全局路径
+  static final _globalPathPaint = Paint()
+    ..color = const Color(0xFF7C3AED)
+    ..strokeWidth = 0.18
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round;
+  static final _globalPathDotPaint = Paint()
+    ..color = const Color(0xFF7C3AED)
+    ..style = PaintingStyle.fill;
+  static final _globalPathEndStroke = Paint()
+    ..color = const Color(0xFF7C3AED)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.06;
+  // 占用栅格
+  final _gridPaint = Paint()..style = PaintingStyle.fill;
 
   TrajectoryPainter({
     required this.path, this.currentPose,
     this.globalPoints = const [], this.localPoints = const [],
     this.navGoalPoint, this.dataVersion = 0,
+    this.globalPathPoints = const [], this.occupancyGrid,
   })  : _pathLength = path.length,
         _poseX = currentPose?.position.x,
         _poseY = currentPose?.position.y;
@@ -2027,17 +2152,65 @@ class TrajectoryPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(1.0, -1.0);
+
+    // ── 占用栅格（底层，最先绘制）──
+    final g = occupancyGrid;
+    if (g != null) {
+      for (var row = 0; row < g.height; row++) {
+        for (var col = 0; col < g.width; col++) {
+          final val = g.data[row * g.width + col];
+          if (val < 50) continue; // 跳过空闲/未知格
+          final wx = g.originX + (col + 0.5) * g.resolution;
+          final wy = g.originY + (row + 0.5) * g.resolution;
+          final opacity = (val / 255.0).clamp(0.25, 0.75);
+          _gridPaint.color = Color.fromRGBO(255, 55, 55, opacity);
+          canvas.drawRect(
+            Rect.fromCenter(
+              center: Offset(wx, wy),
+              width: g.resolution * 1.05,
+              height: g.resolution * 1.05,
+            ),
+            _gridPaint,
+          );
+        }
+      }
+    }
+
+    // ── 地图点云 ──
     if (globalPoints.isNotEmpty) {
       canvas.drawPoints(ui.PointMode.points, globalPoints, _globalMapPaint);
     }
     if (localPoints.isNotEmpty) {
       canvas.drawPoints(ui.PointMode.points, localPoints, _localCloudPaint);
     }
+
+    // ── 全局路径（紫色线） ──
+    if (globalPathPoints.length >= 2) {
+      final gp = Path()
+        ..moveTo(globalPathPoints.first.dx, globalPathPoints.first.dy);
+      for (var i = 1; i < globalPathPoints.length; i++) {
+        gp.lineTo(globalPathPoints[i].dx, globalPathPoints[i].dy);
+      }
+      canvas.drawPath(gp, _globalPathPaint);
+      // 起始点
+      canvas.drawCircle(globalPathPoints.first, 0.2, _globalPathDotPaint);
+      // 终点圆环
+      final end = globalPathPoints.last;
+      canvas.drawCircle(end, 0.4, Paint()
+        ..color = const Color(0xFF7C3AED).withValues(alpha: 0.2)
+        ..style = PaintingStyle.fill);
+      canvas.drawCircle(end, 0.4, _globalPathEndStroke);
+      canvas.drawCircle(end, 0.15, _globalPathDotPaint);
+    }
+
+    // ── 历史轨迹（蓝色线） ──
     if (path.isNotEmpty) {
       final p = Path()..moveTo(path.first.dx, path.first.dy);
-      for (var i = 1; i < path.length; i++) p.lineTo(path[i].dx, path[i].dy);
+      for (var i = 1; i < path.length; i++) { p.lineTo(path[i].dx, path[i].dy); }
       canvas.drawPath(p, _trajectoryPaint);
     }
+
+    // ── 机器人位姿 ──
     if (currentPose != null) {
       final pos = currentPose!.position;
       final q = currentPose!.orientation;
@@ -2052,6 +2225,8 @@ class TrajectoryPainter extends CustomPainter {
       canvas.drawLine(Offset.zero, const Offset(1.0, 0), _headingPaint);
       canvas.restore();
     }
+
+    // ── 导航目标点 ──
     if (navGoalPoint != null) {
       canvas.save();
       canvas.translate(navGoalPoint!.dx, navGoalPoint!.dy);
@@ -2061,6 +2236,8 @@ class TrajectoryPainter extends CustomPainter {
       canvas.drawLine(const Offset(0, -0.3), const Offset(0, 0.3), _goalStrokePaint);
       canvas.restore();
     }
+
+    // ── 坐标轴 ──
     canvas.drawLine(const Offset(-1, 0), const Offset(1, 0), _axisPaint);
     canvas.drawLine(const Offset(0, -1), const Offset(0, 1), _axisPaint);
   }
@@ -2068,5 +2245,41 @@ class TrajectoryPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant TrajectoryPainter old) =>
       dataVersion != old.dataVersion || _pathLength != old._pathLength ||
-      _poseX != old._poseX || _poseY != old._poseY || navGoalPoint != old.navGoalPoint;
+      _poseX != old._poseX || _poseY != old._poseY || navGoalPoint != old.navGoalPoint ||
+      globalPathPoints.length != old.globalPathPoints.length ||
+      occupancyGrid != old.occupancyGrid;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Data models
+// ═══════════════════════════════════════════════════════════════
+
+/// 占用栅格数据模型
+///
+/// Binary wire format (from gRPC DataChunk):
+///   Bytes  0-3:  width  (int32 LE, cells)
+///   Bytes  4-7:  height (int32 LE, cells)
+///   Bytes  8-11: resolution (float32 LE, metres/cell)
+///   Bytes 12-15: origin_x   (float32 LE, world metres)
+///   Bytes 16-19: origin_y   (float32 LE, world metres)
+///   Bytes 20+:   width*height uint8 values
+///                  0   = free
+///                  128 = unknown
+///                  255 = occupied
+class _OccupancyGrid {
+  final int width;
+  final int height;
+  final double resolution;
+  final double originX;
+  final double originY;
+  final Uint8List data;
+
+  const _OccupancyGrid({
+    required this.width,
+    required this.height,
+    required this.resolution,
+    required this.originX,
+    required this.originY,
+    required this.data,
+  });
 }

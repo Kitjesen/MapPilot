@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -21,6 +20,20 @@ class NotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
 
+    // flutter_local_notifications 不支持 Web，跳过初始化
+    if (kIsWeb) {
+      _initialized = true;
+      debugPrint('[NotificationService] Web platform — notifications skipped');
+      return;
+    }
+
+    // Windows 平台: v20+ 需要 WindowsInitializationSettings
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      _initialized = true;
+      debugPrint('[NotificationService] Windows platform — notifications skipped');
+      return;
+    }
+
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings(
@@ -34,12 +47,12 @@ class NotificationService {
     );
 
     await _plugin.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
-    // 请求 Android 13+ 通知权限
-    if (Platform.isAndroid) {
+    // 请求 Android 13+ 通知权限（非 Web 平台）
+    if (defaultTargetPlatform == TargetPlatform.android) {
       await _plugin
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>()
@@ -90,7 +103,7 @@ class NotificationService {
       android: _robotChannel,
       iOS: DarwinNotificationDetails(),
     );
-    await _plugin.show(id, title, body, details, payload: payload);
+    await _plugin.show(id: id, title: title, body: body, notificationDetails: details, payload: payload);
   }
 
   /// 显示紧急告警通知
@@ -109,12 +122,12 @@ class NotificationService {
         presentSound: true,
       ),
     );
-    await _plugin.show(id, title, body, details, payload: payload);
+    await _plugin.show(id: id, title: title, body: body, notificationDetails: details, payload: payload);
   }
 
   /// 取消特定通知
   Future<void> cancel(int id) async {
-    await _plugin.cancel(id);
+    await _plugin.cancel(id: id);
   }
 
   /// 取消所有通知

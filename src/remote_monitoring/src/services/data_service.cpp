@@ -18,6 +18,7 @@
 #include <vector>
 
 // OpenSSL and health_monitor no longer needed (OTA moved to ota_daemon)
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -168,6 +169,51 @@ std::string SerializePathWithMeta(
     double vals[7] = {pos.x, pos.y, pos.z, ori.x, ori.y, ori.z, ori.w};
     std::memcpy(p, vals, 56);
     p += 56;
+  }
+
+  return result;
+}
+
+/// 占用栅格二进制格式（与 Flutter 客户端 _parseOccupancyGrid 对应）:
+///   Bytes  0-3:  width  (int32 LE, cells)
+///   Bytes  4-7:  height (int32 LE, cells)
+///   Bytes  8-11: resolution (float32 LE, metres/cell)
+///   Bytes 12-15: origin_x   (float32 LE, world metres)
+///   Bytes 16-19: origin_y   (float32 LE, world metres)
+///   Bytes 20+:   width*height uint8 (0=free, 128=unknown, 255=occupied)
+std::string SerializeOccupancyGrid(
+    const nav_msgs::msg::OccupancyGrid::ConstSharedPtr &msg) {
+  if (!msg) return {};
+
+  const int32_t w = static_cast<int32_t>(msg->info.width);
+  const int32_t h = static_cast<int32_t>(msg->info.height);
+  if (w <= 0 || h <= 0) return {};
+
+  const float res = msg->info.resolution;
+  const float ox = static_cast<float>(msg->info.origin.position.x);
+  const float oy = static_cast<float>(msg->info.origin.position.y);
+  const size_t cell_count = static_cast<size_t>(w) * static_cast<size_t>(h);
+
+  std::string result;
+  result.resize(20 + cell_count);
+  char *p = result.data();
+
+  std::memcpy(p, &w, 4);   p += 4;
+  std::memcpy(p, &h, 4);   p += 4;
+  std::memcpy(p, &res, 4); p += 4;
+  std::memcpy(p, &ox, 4);  p += 4;
+  std::memcpy(p, &oy, 4);  p += 4;
+
+  for (size_t i = 0; i < cell_count && i < msg->data.size(); ++i) {
+    const int8_t v = msg->data[i];
+    if (v < 0) {
+      p[i] = 128;  // unknown (-1 → 128)
+    } else if (v == 0) {
+      p[i] = 0;    // free
+    } else {
+      // ROS occupancy is 0-100 → scale to 50-255 (occupied zone)
+      p[i] = static_cast<uint8_t>(std::min(255, 50 + v * 2));
+    }
   }
 
   return result;
@@ -336,6 +382,7 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   safe_declare_str("data_path_topic", "/nav/local_path");
   safe_declare_str("data_free_paths_topic", "/free_paths");
   safe_declare_str("data_pct_path_topic", "/nav/global_path");
+  safe_declare_str("data_occupancy_grid_topic", "/nav/occupancy_grid");
   safe_declare_str("data_file_root", "");
   // OTA 参数已迁移到 ota_daemon (:50052), 此处不再声明
   safe_declare_bool("webrtc_enabled", false);
@@ -354,6 +401,7 @@ DataServiceImpl::DataServiceImpl(rclcpp::Node *node) : node_(node) {
   path_topic_ = node_->get_parameter("data_path_topic").as_string();
   free_paths_topic_ = node_->get_parameter("data_free_paths_topic").as_string();
   pct_path_topic_ = node_->get_parameter("data_pct_path_topic").as_string();
+  occupancy_grid_topic_ = node_->get_parameter("data_occupancy_grid_topic").as_string();
   file_root_ = node_->get_parameter("data_file_root").as_string();
 
   webrtc_enabled_ = node_->get_parameter("webrtc_enabled").as_bool();
@@ -430,6 +478,14 @@ DataServiceImpl::ListResources(grpc::ServerContext *,
       "PCT global planner path (map frame), topic: " + pct_path_topic_);
   global_path->set_available(true);
   AddDefaultProfiles(global_path);
+
+  auto *occ_grid = response->add_resources();
+  occ_grid->mutable_id()->set_type(robot::v1::RESOURCE_TYPE_OCCUPANCY_GRID);
+  occ_grid->mutable_id()->set_name("occupancy_grid");
+  occ_grid->set_description(
+      "2D occupancy grid map, topic: " + occupancy_grid_topic_);
+  occ_grid->set_available(true);
+  AddDefaultProfiles(occ_grid);
 
   return grpc::Status::OK;
 }
@@ -535,6 +591,19 @@ DataServiceImpl::Subscribe(grpc::ServerContext *context,
             return false;
           }
           *output = SerializePathWithMeta(msg);
+          return !output->empty();
+        },
+        cancel_flag, context, writer);
+  case robot::v1::RESOURCE_TYPE_OCCUPANCY_GRID:
+    return StreamResource<nav_msgs::msg::OccupancyGrid>(
+        node_, topic, rclcpp::QoS(1).transient_local(),
+        request->resource_id(), hz,
+        [](const nav_msgs::msg::OccupancyGrid::ConstSharedPtr &msg,
+           std::string *output) {
+          if (msg == nullptr || output == nullptr) {
+            return false;
+          }
+          *output = SerializeOccupancyGrid(msg);
           return !output->empty();
         },
         cancel_flag, context, writer);
@@ -797,6 +866,8 @@ double DataServiceImpl::ResolveFrequency(
     return kDefaultPointCloudHz;
   case robot::v1::RESOURCE_TYPE_PATH:
     return kDefaultPathHz;
+  case robot::v1::RESOURCE_TYPE_OCCUPANCY_GRID:
+    return kDefaultMapHz;  // 1 Hz — occupancy grid updates slowly
   default:
     return kDefaultPointCloudHz;
   }
@@ -833,6 +904,8 @@ std::string DataServiceImpl::ResolveTopic(
       return pct_path_topic_;
     }
     return path_topic_;
+  case robot::v1::RESOURCE_TYPE_OCCUPANCY_GRID:
+    return occupancy_grid_topic_;
   default:
     return {};
   }
