@@ -103,6 +103,16 @@ class RobotConnectionProvider extends ChangeNotifier {
   /// Latest measured RTT in milliseconds (null if no heartbeat yet).
   double? get connectionRttMs => _lastRttMs;
 
+  /// Connection quality tier: good (<50ms) / slow (50-200ms) / unstable (≥200ms) / unknown.
+  String get connectionQuality {
+    if (!isConnected) return 'unknown';
+    final rtt = _lastRttMs;
+    if (rtt == null) return 'unknown';
+    if (rtt < 50) return 'good';
+    if (rtt < 200) return 'slow';
+    return 'unstable';
+  }
+
   /// OTA daemon (port 50052) 是否可用
   bool get otaAvailable => _client?.otaAvailable ?? false;
 

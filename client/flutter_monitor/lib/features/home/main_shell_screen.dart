@@ -64,12 +64,15 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 收窄 select: 仅在连接状态变化时重建，心跳 RTT 等不触发
+    // 收窄 select: 仅在连接状态/质量变化时重建
     final isConnected = context.select<RobotConnectionProvider, bool>(
       (p) => p.isConnected,
     );
     final isDogConnected = context.select<RobotConnectionProvider, bool>(
       (p) => p.isDogConnected,
+    );
+    final connQuality = context.select<RobotConnectionProvider, String>(
+      (p) => p.connectionQuality,
     );
     final locale = context.watch<LocaleProvider>();
     final useSide = context.useSideNav;
@@ -355,7 +358,12 @@ class _MainShellScreenState extends State<MainShellScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: isConnected
-                          ? AppColors.success
+                          ? switch (context.read<RobotConnectionProvider>().connectionQuality) {
+                              'good'     => AppColors.success,
+                              'slow'     => AppColors.connecting,
+                              'unstable' => AppColors.warning,
+                              _          => AppColors.success,
+                            }
                           : isDogConnected
                               ? AppColors.connecting
                               : AppColors.offline,

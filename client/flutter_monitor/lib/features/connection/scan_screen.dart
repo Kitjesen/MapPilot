@@ -200,6 +200,7 @@ class _ScanScreenState extends State<ScanScreen>
               const SizedBox(height: 8),
               _buildTabBar(context),
               const SizedBox(height: 8),
+              _buildRecentConnections(context),
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
@@ -273,6 +274,82 @@ class _ScanScreenState extends State<ScanScreen>
             child: Icon(Icons.close_rounded, size: 22, color: context.subtitleColor),
           ),
         ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  RECENT CONNECTIONS — up to 3 saved, tap to reconnect
+  // ═══════════════════════════════════════════════════════════
+  Widget _buildRecentConnections(BuildContext context) {
+    final prefs = context.watch<SettingsPreferences>();
+    final recent = prefs.savedDevices.take(3).toList();
+    if (recent.isEmpty) return const SizedBox.shrink();
+    final locale = context.read<LocaleProvider>();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(locale.tr('最近连接', 'Recent'), style: TextStyle(
+              fontSize: 12, fontWeight: FontWeight.w600,
+              color: context.subtitleColor,
+            )),
+          ),
+          ...recent.map((d) => _buildRecentRow(context, d, locale)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentRow(BuildContext context, SavedDevice d, LocaleProvider locale) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => _connectToRobot(d.host, d.port),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: context.isDark
+                  ? Colors.white.withValues(alpha: 0.05)
+                  : Colors.black.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(children: [
+              Icon(Icons.history_rounded, size: 16, color: AppColors.primary),
+              const SizedBox(width: 10),
+              Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(d.name, style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600, color: context.titleColor,
+                  )),
+                  Text('${d.host}:${d.port}', style: TextStyle(
+                    fontSize: 11, color: context.subtitleColor, fontFamily: 'monospace',
+                  )),
+                ],
+              )),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(locale.tr('连接', 'Connect'), style: const TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primary,
+                )),
+              ),
+            ]),
+          ),
+        ),
       ),
     );
   }
