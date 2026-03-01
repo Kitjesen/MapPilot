@@ -74,6 +74,10 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
                 _systemResourceCard(dark),
                 const SizedBox(height: 16),
 
+                // ── 磁盘使用量 ──
+                _diskUsageCard(dark),
+                const SizedBox(height: 16),
+
                 // ── 定位质量 ──
                 _localizationCard(dark, health),
                 const SizedBox(height: 16),
@@ -865,6 +869,29 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
   }
 
   // ═══════════════════════════════════════════════════════
+  //  Disk Usage Bar
+  // ═══════════════════════════════════════════════════════
+
+  Widget _diskUsageCard(bool dark) {
+    return _card(dark, child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.storage_rounded, size: 20, color: context.subtitleColor),
+            const SizedBox(width: 10),
+            Text('磁盘使用', style: TextStyle(
+              fontSize: 14, fontWeight: FontWeight.w600, color: context.titleColor)),
+          ]),
+          const SizedBox(height: 12),
+          _DiskUsageLoader(dark: dark, cardBuilder: _card),
+        ],
+      ),
+    ));
+  }
+
+  // ═══════════════════════════════════════════════════════
   //  Helpers
   // ═══════════════════════════════════════════════════════
 
@@ -944,4 +971,95 @@ class _ArcGaugePainter extends CustomPainter {
   @override
   bool shouldRepaint(_ArcGaugePainter old) =>
       old.ratio != ratio || old.color != color;
+}
+
+/// Lazily fetches DeviceInfo for disk usage and renders a horizontal bar.
+class _DiskUsageLoader extends StatefulWidget {
+  final bool dark;
+  final Widget Function(bool dark, {required Widget child}) cardBuilder;
+
+  const _DiskUsageLoader({required this.dark, required this.cardBuilder});
+
+  @override
+  State<_DiskUsageLoader> createState() => _DiskUsageLoaderState();
+}
+
+class _DiskUsageLoaderState extends State<_DiskUsageLoader> {
+  DeviceInfoResponse? _info;
+  bool _loading = false;
+  bool _attempted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchDiskInfo();
+  }
+
+  Future<void> _fetchDiskInfo() async {
+    if (_attempted) return;
+    _attempted = true;
+    final client = context.read<RobotConnectionProvider>().client;
+    if (client == null || !client.otaAvailable) return;
+
+    setState(() => _loading = true);
+    try {
+      final resp = await client.getDeviceInfo();
+      if (mounted) setState(() => _info = resp);
+    } catch (_) {}
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: SizedBox(width: 18, height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2)),
+      ));
+    }
+
+    if (_info == null || _info!.diskTotalBytes.toInt() == 0) {
+      return Text('磁盘信息不可用',
+        style: TextStyle(fontSize: 12, color: context.subtitleColor));
+    }
+
+    final total = _info!.diskTotalBytes.toInt();
+    final free = _info!.diskFreeBytes.toInt();
+    final used = total - free;
+    final ratio = total > 0 ? (used / total).clamp(0.0, 1.0) : 0.0;
+    final usedGB = used / (1024 * 1024 * 1024);
+    final totalGB = total / (1024 * 1024 * 1024);
+    final pct = (ratio * 100).toStringAsFixed(1);
+
+    final barColor = ratio > 0.9
+        ? AppColors.error
+        : ratio > 0.75
+            ? AppColors.warning
+            : AppColors.info;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: SizedBox(
+            height: 10,
+            child: LinearProgressIndicator(
+              value: ratio,
+              backgroundColor: widget.dark
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.black.withValues(alpha: 0.04),
+              valueColor: AlwaysStoppedAnimation(barColor),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '已用 ${usedGB.toStringAsFixed(1)} GB / 总共 ${totalGB.toStringAsFixed(1)} GB ($pct%)',
+          style: TextStyle(fontSize: 12, color: context.subtitleColor),
+        ),
+      ],
+    );
+  }
 }
