@@ -345,7 +345,11 @@ class _TaskPanelState extends State<TaskPanel> {
           _mappingSection(locale)
         else
           _navSection(locale),
-        const SizedBox(height: 32),
+        if (_waypoints.isNotEmpty && _selectedType != TaskType.TASK_TYPE_MAPPING &&
+            _selectedType != TaskType.TASK_TYPE_SEMANTIC_NAV &&
+            _selectedType != TaskType.TASK_TYPE_FOLLOW_PERSON)
+          _durationEstimate(locale),
+        const SizedBox(height: 16),
         _startBtn(locale),
         const SizedBox(height: 80),
       ],
@@ -710,6 +714,34 @@ class _TaskPanelState extends State<TaskPanel> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _durationEstimate(LocaleProvider locale) {
+    // Total path distance between consecutive waypoints
+    double totalDist = 0;
+    for (int i = 1; i < _waypoints.length; i++) {
+      final a = _waypoints[i - 1].position;
+      final b = _waypoints[i].position;
+      final dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      totalDist += math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    final totalSec = (totalDist / 0.5 + _waypoints.length * 5).round();
+    final min = totalSec ~/ 60;
+    final sec = totalSec % 60;
+    final text = min > 0
+        ? locale.tr('预计 $min 分 $sec 秒', 'Est. $min min $sec sec')
+        : locale.tr('预计 $sec 秒', 'Est. $sec sec');
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.schedule, size: 14, color: context.subtitleColor),
+          const SizedBox(width: 4),
+          Text(text, style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+        ],
+      ),
     );
   }
 
