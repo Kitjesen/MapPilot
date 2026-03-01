@@ -75,6 +75,9 @@ class AlertMonitorService extends ChangeNotifier with WidgetsBindingObserver {
     required RobotConnectionProvider connProvider,
     required SettingsPreferences settingsPrefs,
   }) {
+    // 先解除之前的绑定，防止重复注册观察者和监听器
+    _unbindInternal();
+
     _connProvider = connProvider;
     _settingsPrefs = settingsPrefs;
 
@@ -82,11 +85,19 @@ class AlertMonitorService extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     // 每 2 秒轮询一次状态
-    _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _evaluate());
 
     // 同时监听连接状态变化（即时感知断连）
     _connProvider!.addListener(_onProviderChanged);
+  }
+
+  /// 内部解绑：移除观察者和监听器，取消轮询定时器。
+  /// bind() 和 dispose() 都调用此方法，保证幂等性。
+  void _unbindInternal() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _connProvider?.removeListener(_onProviderChanged);
+    WidgetsBinding.instance.removeObserver(this);
   }
 
   @override
@@ -227,10 +238,8 @@ class AlertMonitorService extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
-    _connProvider?.removeListener(_onProviderChanged);
+    _unbindInternal();
     _alertController.close();
-    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 }
