@@ -495,63 +495,67 @@ class OtaGateway extends ChangeNotifier {
   // ---- Internal Orchestrator ----
 
   /// Advances the deployment state machine through phases sequentially.
-  /// Each phase method throws on failure; catch sets the session to [DeployPhase.failed].
+  ///
+  /// Implemented as an iterative while-loop (not recursive) so that:
+  /// 1. The call stack does not grow with each phase transition.
+  /// 2. Cancel checks between every phase are guaranteed to short-circuit
+  ///    immediately — no waiting for the next recursive frame.
   Future<void> _advanceDeployment() async {
     final s = _activeDeployment;
     if (s == null) return;
 
-    if (s._cancelled) {
-      _activeDeployment = null;
-      notifyListeners();
-      return;
-    }
-
     try {
-      switch (s.phase) {
-        case DeployPhase.downloading:
-          await _doDownload(s);
-          if (s._cancelled) { _activeDeployment = null; notifyListeners(); return; }
-          s.phase = DeployPhase.uploading;
-          notifyListeners();
-          await _advanceDeployment();
+      while (!s._cancelled) {
+        switch (s.phase) {
+          case DeployPhase.downloading:
+            await _doDownload(s);
+            if (s._cancelled) break;
+            s.phase = DeployPhase.uploading;
+            notifyListeners();
 
-        case DeployPhase.uploading:
-          await _doUpload(s);
-          if (s._cancelled) { _activeDeployment = null; notifyListeners(); return; }
-          s.phase = DeployPhase.checking;
-          notifyListeners();
-          await _advanceDeployment();
+          case DeployPhase.uploading:
+            await _doUpload(s);
+            if (s._cancelled) break;
+            s.phase = DeployPhase.checking;
+            notifyListeners();
 
-        case DeployPhase.checking:
-          await _doReadinessCheck(s);
-          if (s._cancelled) { _activeDeployment = null; notifyListeners(); return; }
-          s.phase = DeployPhase.applying;
-          notifyListeners();
-          await _advanceDeployment();
+          case DeployPhase.checking:
+            await _doReadinessCheck(s);
+            if (s._cancelled) break;
+            s.phase = DeployPhase.applying;
+            notifyListeners();
 
-        case DeployPhase.applying:
-          await _doApply(s);
-          if (s._cancelled) { _activeDeployment = null; notifyListeners(); return; }
-          s.phase = DeployPhase.validating;
-          notifyListeners();
-          await _advanceDeployment();
+          case DeployPhase.applying:
+            await _doApply(s);
+            if (s._cancelled) break;
+            s.phase = DeployPhase.validating;
+            notifyListeners();
 
-        case DeployPhase.validating:
-          await _doValidate(s);
-          s.phase = DeployPhase.completed;
-          s.progress = 1.0;
-          _statusMessage = '${s.artifactName} 部署成功';
-          notifyListeners();
-          // Auto-refresh installed versions after success
-          try { await fetchInstalledVersions(); } catch (_) {}
+          case DeployPhase.validating:
+            await _doValidate(s);
+            s.phase = DeployPhase.completed;
+            s.progress = 1.0;
+            _statusMessage = '${s.artifactName} 部署成功';
+            notifyListeners();
+            // Auto-refresh installed versions after success
+            try { await fetchInstalledVersions(); } catch (_) {}
+            return;
 
-        default:
-          return;
+          default:
+            return;
+        }
       }
     } catch (e) {
       s.failedAtPhase = s.phase;
       s.phase = DeployPhase.failed;
       s.errorMessage = e.toString();
+      notifyListeners();
+      return;
+    }
+
+    // Reached here because s._cancelled became true inside the loop
+    if (s._cancelled) {
+      _activeDeployment = null;
       notifyListeners();
     }
   }
