@@ -125,6 +125,11 @@ class _MapScreenState extends State<MapScreen>
   // ─── Long-press waypoints (temporary markers on map) ───
   final List<Offset> _longPressMarkers = [];
 
+  // ─── Measurement tool ───
+  bool _isMeasuring = false;
+  Offset? _measureStart; // world coordinates
+  Offset? _measureEnd;   // world coordinates
+
   // ─── Active waypoints (from backend) ───
   List<ActiveWaypoint> _activeWaypoints = [];
   WaypointSource _waypointSource = WaypointSource.WAYPOINT_SOURCE_NONE;
@@ -406,7 +411,32 @@ class _MapScreenState extends State<MapScreen>
   }
 
   void _handleMapTap(TapDownDetails details) {
-    if (!_isSettingGoal || _show3DModel) return;
+    if (_show3DModel) return;
+
+    // ── Measurement mode ──
+    if (_isMeasuring) {
+      final matrix = _transformController.value.clone();
+      final inv = Matrix4.tryInvert(matrix);
+      if (inv == null) return;
+      final sp = details.localPosition;
+      final mx = inv[0] * sp.dx + inv[4] * sp.dy + inv[12];
+      final my = inv[1] * sp.dx + inv[5] * sp.dy + inv[13];
+      HapticFeedback.lightImpact();
+      final point = Offset(mx, -my);
+      setState(() {
+        if (_measureStart == null || _measureEnd != null) {
+          // First click or restart: set start
+          _measureStart = point;
+          _measureEnd = null;
+        } else {
+          // Second click: set end
+          _measureEnd = point;
+        }
+      });
+      return;
+    }
+
+    if (!_isSettingGoal) return;
     final matrix = _transformController.value.clone();
     final inv = Matrix4.tryInvert(matrix);
     if (inv == null) return;
@@ -1294,7 +1324,7 @@ class _MapScreenState extends State<MapScreen>
         if (!_show3DModel)
           Positioned.fill(
             child: GestureDetector(
-              onTapDown: (_isSettingGoal && _modeUsesGoalPoint)
+              onTapDown: (_isMeasuring || (_isSettingGoal && _modeUsesGoalPoint))
                   ? _handleMapTap
                   : null,
               onLongPressStart: _handleMapLongPress,
@@ -1341,6 +1371,16 @@ class _MapScreenState extends State<MapScreen>
             painter: _ActiveWaypointPainter(
               waypoints: _activeWaypoints,
               currentIndex: _activeWaypointCurrentIndex,
+              transform: _transformController.value,
+            ),
+          ))),
+
+        // Measurement overlay
+        if (_measureStart != null && !_show3DModel)
+          Positioned.fill(child: IgnorePointer(child: CustomPaint(
+            painter: _MeasurePainter(
+              start: _measureStart!,
+              end: _measureEnd,
               transform: _transformController.value,
             ),
           ))),
@@ -1677,6 +1717,23 @@ class _MapScreenState extends State<MapScreen>
           },
         ),
       ],
+      const SizedBox(height: 6),
+      // Measurement tool
+      _MapFab(
+        icon: Icons.straighten,
+        tooltip: locale.tr('测距工具', 'Measure distance'),
+        color: _isMeasuring ? AppColors.primary : null,
+        onPressed: () {
+          HapticFeedback.selectionClick();
+          setState(() {
+            _isMeasuring = !_isMeasuring;
+            if (!_isMeasuring) {
+              _measureStart = null;
+              _measureEnd = null;
+            }
+          });
+        },
+      ),
       const SizedBox(height: 6),
       _MapFab(icon: Icons.folder_outlined, tooltip: locale.tr('地图管理', 'Map manager'),
         onPressed: () => Navigator.of(context).pushNamed('/map-manager')),
@@ -2580,6 +2637,97 @@ class TrajectoryPainter extends CustomPainter {
       longPressMarkers.length != old.longPressMarkers.length ||
       !identical(globalBuckets, old.globalBuckets) ||
       !identical(localBuckets, old.localBuckets);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Measurement Painter — dashed line + distance label
+// ═══════════════════════════════════════════════════════════════
+
+class _MeasurePainter extends CustomPainter {
+  final Offset start;
+  final Offset? end;
+  final Matrix4 transform;
+
+  _MeasurePainter({required this.start, this.end, required this.transform});
+
+  Offset _toScreen(double x, double y) {
+    final m = transform;
+    return Offset(
+      m[0] * x + m[4] * (-y) + m[12],
+      m[1] * x + m[5] * (-y) + m[13],
+    );
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final startScreen = _toScreen(start.dx, start.dy);
+
+    // Start point — green dot
+    canvas.drawCircle(startScreen, 6, Paint()..color = const Color(0xFF34C759));
+    canvas.drawCircle(startScreen, 6, Paint()
+      ..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2);
+
+    if (end == null) return;
+
+    final endScreen = _toScreen(end!.dx, end!.dy);
+
+    // End point — red dot
+    canvas.drawCircle(endScreen, 6, Paint()..color = const Color(0xFFFF3B30));
+    canvas.drawCircle(endScreen, 6, Paint()
+      ..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2);
+
+    // Dashed line
+    final dashPaint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    final dx = endScreen.dx - startScreen.dx;
+    final dy = endScreen.dy - startScreen.dy;
+    final dist = math.sqrt(dx * dx + dy * dy);
+    const dashLen = 8.0;
+    const gapLen = 4.0;
+    if (dist > 0) {
+      final ux = dx / dist;
+      final uy = dy / dist;
+      double d = 0;
+      while (d < dist) {
+        final end2 = math.min(d + dashLen, dist);
+        canvas.drawLine(
+          Offset(startScreen.dx + ux * d, startScreen.dy + uy * d),
+          Offset(startScreen.dx + ux * end2, startScreen.dy + uy * end2),
+          dashPaint,
+        );
+        d += dashLen + gapLen;
+      }
+    }
+
+    // Distance label (world distance in meters)
+    final worldDist = (end! - start).distance;
+    final label = '${worldDist.toStringAsFixed(2)} m';
+    final mid = Offset((startScreen.dx + endScreen.dx) / 2,
+                        (startScreen.dy + endScreen.dy) / 2);
+    final tp = TextPainter(
+      text: TextSpan(text: label, style: const TextStyle(
+        color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700,
+      )),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    // Background rect
+    final rect = Rect.fromCenter(
+      center: mid - const Offset(0, 16),
+      width: tp.width + 12,
+      height: tp.height + 6,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      Paint()..color = Colors.black.withValues(alpha: 0.7),
+    );
+    tp.paint(canvas, Offset(rect.left + 6, rect.top + 3));
+  }
+
+  @override
+  bool shouldRepaint(covariant _MeasurePainter old) =>
+      start != old.start || end != old.end || transform != old.transform;
 }
 
 // ═══════════════════════════════════════════════════════════════
