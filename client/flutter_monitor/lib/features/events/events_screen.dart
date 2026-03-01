@@ -8,6 +8,7 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
+import 'package:flutter_monitor/shared/widgets/skeleton_loader.dart';
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -21,6 +22,7 @@ class _EventsScreenState extends State<EventsScreen>
   final List<Event> _events = [];
   StreamSubscription? _subscription;
   bool _isStreaming = false;
+  bool _initialLoading = true;
 
   static const int _maxEvents = 200;
 
@@ -55,6 +57,10 @@ class _EventsScreenState extends State<EventsScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startListening();
     });
+    // Clear initial loading skeleton after 3s even if no events arrive
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted && _initialLoading) setState(() => _initialLoading = false);
+    });
   }
 
   @override
@@ -84,6 +90,7 @@ class _EventsScreenState extends State<EventsScreen>
               }
             }
             _isStreaming = true;
+            _initialLoading = false;
             _retryCount = 0;
           });
         },
@@ -332,6 +339,20 @@ class _EventsScreenState extends State<EventsScreen>
 
   Widget _buildEventsList(BuildContext context, LocaleProvider locale) {
     final filtered = _filteredEvents;
+    if (_events.isEmpty && _initialLoading) {
+      // Skeleton shimmer while waiting for first data
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+        children: const [
+          SkeletonListTile(),
+          SkeletonListTile(),
+          SkeletonListTile(),
+          SkeletonListTile(),
+          SkeletonListTile(),
+        ],
+      );
+    }
     if (_events.isEmpty) {
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),

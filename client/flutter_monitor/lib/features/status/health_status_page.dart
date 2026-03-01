@@ -8,6 +8,7 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/gateway/system_gateway.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:robot_proto/robot_proto.dart';
+import 'package:flutter_monitor/shared/widgets/skeleton_loader.dart';
 
 /// 健康状态页面 — 显示子系统健康、定位质量和围栏状态
 class HealthStatusPage extends StatefulWidget {
@@ -109,10 +110,11 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
         child: _latest == null
           ? ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              children: [
-                SizedBox(height: MediaQuery.of(context).size.height * 0.35),
-                Center(child: Text('等待数据...',
-                    style: TextStyle(color: context.subtitleColor))),
+              padding: const EdgeInsets.all(20),
+              children: const [
+                SkeletonListTile(),
+                SkeletonListTile(),
+                SkeletonListTile(),
               ],
             )
           : ListView(
