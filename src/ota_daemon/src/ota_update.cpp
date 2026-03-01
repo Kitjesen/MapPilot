@@ -126,6 +126,24 @@ grpc::Status OtaServiceImpl::CheckUpdateReadiness(
     }
   }
 
+  // 6. Active navigation task check (WARNING only, does not block update)
+  {
+    auto *c = response->add_checks();
+    c->set_check_name("active_task");
+    auto st = ota::GetServiceStatus("nav-planning.service");
+    if (st.active_state == "active") {
+      c->set_passed(true);  // WARNING, not a blocker
+      c->set_message("Navigation task is running, recommend waiting for completion before update");
+      c->set_detail("nav-planning.service is active (sub_state=" + st.sub_state + ")");
+      // Note: intentionally NOT setting all_passed = false
+      // This is a WARNING, not an ERROR
+    } else {
+      c->set_passed(true);
+      c->set_message("No active navigation task");
+      c->set_detail("nav-planning.service state=" + st.active_state);
+    }
+  }
+
   response->set_ready(all_passed);
   return grpc::Status::OK;
 }
