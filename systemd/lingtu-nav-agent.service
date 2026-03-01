@@ -1,0 +1,25 @@
+[Unit]
+Description=OTA Go Agent (Automatic Update Polling)
+After=network-online.target ota-daemon.service
+Wants=network-online.target
+Requires=ota-daemon.service
+
+[Service]
+Type=simple
+User=sunrise
+Group=sunrise
+WorkingDirectory=/opt/lingtu/nav/ota
+ExecStart=/opt/lingtu/nav/ota/agent/ota-agent --config /opt/lingtu/nav/ota/config/lingtu-nav.yaml
+Restart=on-failure
+RestartSec=60
+TimeoutStopSec=10
+
+Environment=HOME=/home/sunrise
+Environment=LANG=en_US.UTF-8
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lingtu-nav-agent
+
+[Install]
+WantedBy=multi-user.target

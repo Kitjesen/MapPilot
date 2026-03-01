@@ -21,7 +21,10 @@ system_version_path: "/opt/lingtu/nav/ota/system_version.json"
 staging_dir: "/opt/lingtu/nav/ota/staging"
 
 # ── Ed25519 公钥 (设备端验签, 留空=跳过) ──
-ota_public_key_path: ""
+# Ed25519 公钥路径 — 部署时需将 server.pub 复制到此路径并启用
+# 生成方法: openssl genpkey -algorithm ed25519 -out server.pem && openssl pkey -in server.pem -pubout -out server.pub
+# 留空 = 跳过签名验证 (仅开发环境使用，生产环境必须填写)
+ota_public_key_path: "/opt/lingtu/nav/ota/keys/server.pub"
 
 # ── TLS (留空=明文) ──
 tls_cert_path: ""

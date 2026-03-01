@@ -269,30 +269,54 @@ bool OtaServiceImpl::PostInstallHealthCheck(
     return true;
   }
 
-  // WARM: 检查 navigation.service 是否仍正常运行
-  OtaLogInfo("Post-install health check (WARM): checking navigation.service...");
+  // WARM: 检查 managed_services 中任意一个服务是否正常运行
+  // 排除 ota-daemon.service 自身; 若列表为空则降级检查 nav-grpc.service
+  std::vector<std::string> check_services;
+  for (const auto &svc : config_.managed_services) {
+    if (svc != "ota-daemon.service") {
+      check_services.push_back(svc);
+    }
+  }
+  if (check_services.empty()) {
+    check_services.push_back("nav-grpc.service");
+  }
+
+  OtaLogInfo("Post-install health check (WARM): checking %zu managed services...",
+           check_services.size());
   std::this_thread::sleep_for(std::chrono::seconds(3));
 
-  auto status = GetServiceStatus("navigation.service");
-  if (status.active_state == "active" && status.sub_state == "running") {
-    if (failure_reason) *failure_reason = "passed (navigation.service running)";
+  // 检查是否有任意一个服务 active
+  auto check_any_active = [&](std::string *active_svc) -> bool {
+    for (const auto &svc : check_services) {
+      auto st = GetServiceStatus(svc);
+      if (st.active_state == "active") {
+        if (active_svc) *active_svc = svc;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  std::string active_svc;
+  if (check_any_active(&active_svc)) {
+    if (failure_reason) *failure_reason = "passed (" + active_svc + " running)";
     return true;
   }
 
   // 等待更长时间
-  OtaLogWarn("navigation.service not running yet, waiting up to %d seconds...",
+  OtaLogWarn("No managed service active yet, waiting up to %d seconds...",
            config_.health_check_timeout_sec);
   for (int i = 0; i < config_.health_check_timeout_sec; i += 3) {
     std::this_thread::sleep_for(std::chrono::seconds(3));
-    status = GetServiceStatus("navigation.service");
-    if (status.active_state == "active" && status.sub_state == "running") {
-      if (failure_reason) *failure_reason = "passed (navigation.service recovered)";
+    if (check_any_active(&active_svc)) {
+      if (failure_reason) *failure_reason = "passed (" + active_svc + " recovered)";
       return true;
     }
   }
 
   if (failure_reason) {
-    *failure_reason = "navigation.service state=" + status.active_state + "/" + status.sub_state;
+    *failure_reason = "no managed service active after " +
+                      std::to_string(config_.health_check_timeout_sec) + "s";
   }
   return false;
 }
