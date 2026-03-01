@@ -550,13 +550,36 @@ class _TaskPanelState extends State<TaskPanel> {
           )
         else
           _card(
-            child: Column(
-              children: [
-                for (int i = 0; i < _waypoints.length; i++) ...[
-                  if (i > 0) Divider(height: 1, color: context.dividerColor),
-                  _waypointRow(i),
-                ],
-              ],
+            child: ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: _waypoints.length,
+              onReorder: (oldIdx, newIdx) {
+                setState(() {
+                  if (newIdx > oldIdx) newIdx--;
+                  final item = _waypoints.removeAt(oldIdx);
+                  _waypoints.insert(newIdx, item);
+                });
+              },
+              proxyDecorator: (child, index, animation) {
+                return Material(
+                  elevation: 2,
+                  borderRadius: BorderRadius.circular(8),
+                  color: context.isDark ? AppColors.darkCard : Colors.white,
+                  child: child,
+                );
+              },
+              itemBuilder: (context, i) {
+                return Column(
+                  key: ValueKey('wp_$i'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (i > 0) Divider(height: 1, color: this.context.dividerColor),
+                    _waypointRow(i, reorderable: true),
+                  ],
+                );
+              },
             ),
           ),
         const SizedBox(height: 8),
@@ -594,7 +617,7 @@ class _TaskPanelState extends State<TaskPanel> {
     );
   }
 
-  Widget _waypointRow(int i) {
+  Widget _waypointRow(int i, {bool reorderable = false}) {
     final wp = _waypoints[i];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -621,6 +644,13 @@ class _TaskPanelState extends State<TaskPanel> {
             onTap: () => setState(() => _waypoints.removeAt(i)),
             child: Icon(Icons.close, size: 16, color: context.subtitleColor),
           ),
+          if (reorderable) ...[
+            const SizedBox(width: 8),
+            ReorderableDragStartListener(
+              index: i,
+              child: Icon(Icons.drag_handle, size: 20, color: context.subtitleColor),
+            ),
+          ],
         ],
       ),
     );
