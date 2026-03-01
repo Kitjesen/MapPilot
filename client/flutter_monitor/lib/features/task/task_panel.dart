@@ -97,6 +97,36 @@ class _TaskPanelState extends State<TaskPanel> {
     final gw = context.read<TaskGateway>();
     final locale = context.read<LocaleProvider>();
 
+    // ── Low battery safety check ──
+    final batteryPct = context
+        .read<RobotConnectionProvider>()
+        .latestSlowState
+        ?.resources
+        .batteryPercent;
+    if (batteryPct != null && batteryPct < 15) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(locale.tr('电量不足', 'Low Battery')),
+          content: Text(locale.tr(
+            '当前电量 ${batteryPct.toStringAsFixed(0)}%，建议充电后执行任务。\n是否继续？',
+            'Battery at ${batteryPct.toStringAsFixed(0)}%. Charge before starting a task.\nContinue anyway?',
+          )),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(locale.tr('取消', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(locale.tr('强制执行', 'Force Start')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
     // Pre-start: check for active waypoints from backend
     if (_selectedType != TaskType.TASK_TYPE_MAPPING) {
       final active = await gw.getActiveWaypoints();
