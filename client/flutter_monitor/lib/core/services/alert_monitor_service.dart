@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/services/notification_service.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
@@ -34,12 +36,15 @@ class AlertRecord {
 /// 监听 [RobotConnectionProvider] 状态变化，根据 [SettingsPreferences]
 /// 中的用户配置，在满足阈值时生成告警记录。
 /// 上层 UI 通过 [alertStream] 收到新告警后自行展示 SnackBar / 通知。
-class AlertMonitorService extends ChangeNotifier {
+class AlertMonitorService extends ChangeNotifier with WidgetsBindingObserver {
   // ---- 阈值 ----
   static const double batteryThreshold = 20.0; // %
   static const double tempThreshold = 70.0; // °C
   static const Duration commLostDelay = Duration(seconds: 8);
   static const Duration _cooldown = Duration(seconds: 60);
+
+  // ---- App 前台状态 ----
+  bool _appInForeground = true;
 
   // ---- 依赖 ----
   RobotConnectionProvider? _connProvider;
@@ -72,12 +77,20 @@ class AlertMonitorService extends ChangeNotifier {
     _connProvider = connProvider;
     _settingsPrefs = settingsPrefs;
 
+    // 监听 App 前后台切换
+    WidgetsBinding.instance.addObserver(this);
+
     // 每 2 秒轮询一次状态
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _evaluate());
 
     // 同时监听连接状态变化（即时感知断连）
     _connProvider!.addListener(_onProviderChanged);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appInForeground = state == AppLifecycleState.resumed;
   }
 
   void _onProviderChanged() {
@@ -159,6 +172,11 @@ class AlertMonitorService extends ChangeNotifier {
 
     _alertController.add(record);
 
+    // CRITICAL 级别在前台时播放系统提示音
+    if (record.level == AlertLevel.critical && _appInForeground) {
+      SystemSound.play(SystemSoundType.alert);
+    }
+
     // OS 级通知（当用户开启时）
     if (_settingsPrefs?.alertSystem ?? false) {
       _sendSystemNotification(record);
@@ -210,6 +228,7 @@ class AlertMonitorService extends ChangeNotifier {
     _pollTimer?.cancel();
     _connProvider?.removeListener(_onProviderChanged);
     _alertController.close();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 }
