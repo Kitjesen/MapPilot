@@ -132,6 +132,37 @@ def _find_nearest_free(trav, ci, cj, obs_thr, radius=5):
     return best
 
 
+def _ccw(A, B, C):
+    """True if A->B->C is counter-clockwise (2D cross product > 0)."""
+    return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+
+
+def _segments_intersect(A, B, C, D):
+    """True if line segment AB intersects CD (proper intersection only)."""
+    return (_ccw(A, C, D) != _ccw(B, C, D)) and (_ccw(A, B, C) != _ccw(A, B, D))
+
+
+def _check_path_self_intersection(cells):
+    """Check if path has self-intersections.
+
+    Uses line segment intersection test on non-adjacent segments.
+    Returns number of intersections found (0 = clean path).
+    """
+    n = len(cells)
+    if n < 4:
+        return 0
+    count = 0
+    for i in range(n - 1):
+        # Skip adjacent and near-adjacent segments (they share endpoints)
+        for j in range(i + 2, n - 1):
+            if i == 0 and j == n - 2:
+                continue  # skip first-last pair for closed-ish paths
+            if _segments_intersect(cells[i], cells[i + 1],
+                                   cells[j], cells[j + 1]):
+                count += 1
+    return count
+
+
 def _astar(trav, start, goal, obs_thr, timeout_sec=5.0):
     """8-connected A* on traversability grid.
 
@@ -307,6 +338,13 @@ class PctPlannerAstar(Node):
                 cells = _downsample_path(cells, min_dist_cells=self._smooth_min_dist)
                 if self._smooth_method == 'catmull_rom' and len(cells) >= 2:
                     cells = _catmull_rom_smooth(cells, n_interp=self._smooth_interp)
+
+            # Self-intersection check (warning only, does not block)
+            n_intersections = _check_path_self_intersection(cells)
+            if n_intersections > 0:
+                self.get_logger().warn(
+                    f'Path has {n_intersections} self-intersection(s), '
+                    f'{len(cells)} waypoints')
 
             path_msg = Path()
             path_msg.header.stamp    = self.get_clock().now().to_msg()
