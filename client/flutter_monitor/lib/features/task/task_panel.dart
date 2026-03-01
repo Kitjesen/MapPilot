@@ -1,14 +1,18 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
+import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
+import 'package:flutter_monitor/core/models/mission_report.dart';
 import 'package:flutter_monitor/core/models/task_template.dart';
 import 'package:flutter_monitor/core/storage/settings_preferences.dart';
+import 'package:flutter_monitor/features/task/mission_report_sheet.dart';
 import 'package:robot_proto/src/common.pb.dart';
 import 'package:robot_proto/src/control.pb.dart';
 
@@ -49,6 +53,11 @@ class _TaskPanelState extends State<TaskPanel> {
   // ─── Mapping→Navigation transition tracking ───
   bool _mappingCompleteShown = false;
 
+  // ─── Mission report: collect events during task ───
+  final List<MissionEvent> _missionEvents = [];
+  StreamSubscription<Event>? _missionEventSub;
+  bool _reportShown = false;
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +66,7 @@ class _TaskPanelState extends State<TaskPanel> {
 
   @override
   void dispose() {
+    _missionEventSub?.cancel();
     _mapNameCtrl.dispose();
     _semanticInstructionCtrl.dispose();
     _followPersonTargetCtrl.dispose();
@@ -234,11 +244,14 @@ class _TaskPanelState extends State<TaskPanel> {
     final locale = context.watch<LocaleProvider>();
     final gw = context.watch<TaskGateway>();
 
-    // Track task start time for ETA computation
+    // Track task start time for ETA computation + mission event collection
     if (gw.isRunning && !_wasRunning) {
       _taskStartTime = DateTime.now();
       _activeWpResp = null;
       _mappingCompleteShown = false;
+      _reportShown = false;
+      _missionEvents.clear();
+      _startMissionEventCollection();
     }
     // Detect mapping task completion → show transition BottomSheet
     if (_wasRunning && !gw.isRunning &&
@@ -248,6 +261,17 @@ class _TaskPanelState extends State<TaskPanel> {
       _mappingCompleteShown = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _showMappingCompleteSheet(locale);
+      });
+    }
+    // Detect any task terminal state → show mission report
+    if (_wasRunning && !gw.isRunning && !_reportShown &&
+        (gw.taskStatus == TaskStatus.TASK_STATUS_COMPLETED ||
+         gw.taskStatus == TaskStatus.TASK_STATUS_FAILED ||
+         gw.taskStatus == TaskStatus.TASK_STATUS_CANCELLED)) {
+      _reportShown = true;
+      _stopMissionEventCollection();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showMissionReport(context, gw, locale);
       });
     }
     _wasRunning = gw.isRunning;
@@ -977,6 +1001,55 @@ class _TaskPanelState extends State<TaskPanel> {
           ),
         ],
       ),
+    );
+  }
+
+  // ════════════════════════════════════════════
+  //  Mission report
+  // ════════════════════════════════════════════
+
+  void _startMissionEventCollection() {
+    _stopMissionEventCollection();
+    final client = context.read<RobotConnectionProvider>().client;
+    if (client == null) return;
+    try {
+      _missionEventSub = client.streamEvents().listen((event) {
+        if (event.severity.value >= EventSeverity.EVENT_SEVERITY_WARNING.value) {
+          _missionEvents.add(MissionEvent(
+            title: event.title.isNotEmpty ? event.title : event.type.toString(),
+            severity: event.severity,
+            timestamp: event.timestamp.toDateTime().toLocal(),
+          ));
+        }
+      }, onError: (_) {});
+    } catch (_) {}
+  }
+
+  void _stopMissionEventCollection() {
+    _missionEventSub?.cancel();
+    _missionEventSub = null;
+  }
+
+  void _showMissionReport(BuildContext ctx, TaskGateway gw, LocaleProvider locale) {
+    final now = DateTime.now();
+    final wpResp = _activeWpResp;
+    final report = MissionReport(
+      taskId: gw.activeTaskId,
+      taskType: gw.activeTaskType,
+      finalStatus: gw.taskStatus,
+      startTime: _taskStartTime ?? now,
+      endTime: now,
+      waypointsCompleted: wpResp != null ? wpResp.currentIndex : 0,
+      waypointsTotal: wpResp != null ? wpResp.totalCount : _waypoints.length,
+      replanCount: gw.replanCount,
+      failureReason: gw.isFailed ? gw.statusMessage : null,
+      events: List.unmodifiable(_missionEvents),
+    );
+    showMissionReportSheet(
+      ctx,
+      report: report,
+      locale: locale,
+      onRetry: _start,
     );
   }
 

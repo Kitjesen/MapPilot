@@ -22,6 +22,7 @@ import 'package:flutter_monitor/core/gateway/map_gateway.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:flutter_monitor/core/gateway/control_gateway.dart';
 import 'package:flutter_monitor/core/gateway/runtime_config_gateway.dart';
+import 'package:flutter_monitor/core/gateway/system_gateway.dart';
 import 'package:flutter_monitor/core/models/runtime_config.dart';
 import 'package:flutter_monitor/core/gateway/file_gateway.dart';
 import 'package:flutter_monitor/core/grpc/robot_client_base.dart';
@@ -79,6 +80,7 @@ class RobotMonitorApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => TaskGateway()),
         ChangeNotifierProvider(create: (_) => ControlGateway()),
         ChangeNotifierProvider(create: (_) => RuntimeConfigGateway()),
+        ChangeNotifierProvider(create: (_) => SystemGateway()),
         ChangeNotifierProvider(create: (_) => LocaleProvider()),
         ChangeNotifierProvider(create: (_) => FileGateway()),
         ChangeNotifierProvider(create: (_) => AlertMonitorService()),
@@ -99,6 +101,10 @@ class _AppWithBindingsState extends State<_AppWithBindings>
     with WidgetsBindingObserver {
   bool _bound = false;
   StreamSubscription<AlertRecord>? _alertSub;
+
+  /// Generation counter to guard against client-switch races.
+  /// Each new connection increments this; stale listeners bail out.
+  int _clientGeneration = 0;
 
   /// 全局 ScaffoldMessenger key，用于从任意位置弹 SnackBar
   final GlobalKey<ScaffoldMessengerState> _messengerKey =
@@ -145,6 +151,7 @@ class _AppWithBindingsState extends State<_AppWithBindings>
       final fileGateway = context.read<FileGateway>();
       final controlGateway = context.read<ControlGateway>();
       final runtimeConfigGateway = context.read<RuntimeConfigGateway>();
+      final systemGateway = context.read<SystemGateway>();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         otaGateway.updateClient(connProvider.client);
@@ -157,24 +164,34 @@ class _AppWithBindingsState extends State<_AppWithBindings>
           dogClient: connProvider.dogClient,
         );
         runtimeConfigGateway.updateClient(connProvider.client);
+        systemGateway.updateClient(connProvider.client);
       });
 
       // 监听连接变化，自动同步所有 Gateway 的 client 引用
       // 使用 client identity 守卫，避免重复调用 (Provider 可能因非连接变化触发)
+      // generation counter 防止快速重连时的竞态：只有最新一次连接切换生效
       RobotClientBase? _lastClient;
       connProvider.addListener(() {
         final currentClient = connProvider.client;
         if (identical(currentClient, _lastClient)) return;
         _lastClient = currentClient;
+        final gen = ++_clientGeneration;
         otaGateway.updateClient(currentClient);
+        if (gen != _clientGeneration) return;
         mapGateway.updateClient(currentClient);
+        if (gen != _clientGeneration) return;
         taskGateway.updateClient(currentClient);
+        if (gen != _clientGeneration) return;
         fileGateway.updateClient(currentClient);
+        if (gen != _clientGeneration) return;
         controlGateway.updateClients(
           client: currentClient,
           dogClient: connProvider.dogClient,
         );
+        if (gen != _clientGeneration) return;
         runtimeConfigGateway.updateClient(currentClient);
+        if (gen != _clientGeneration) return;
+        systemGateway.updateClient(currentClient);
       });
 
       // ── Cross-Gateway Orchestration ──

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
+import 'package:flutter_monitor/core/gateway/system_gateway.dart';
 import 'package:robot_proto/robot_proto.dart';
 
 /// 健康状态页面 — 显示子系统健康、定位质量和围栏状态
@@ -76,6 +77,10 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
 
                 // ── 规划质量 ──
                 _navQualityCard(dark, _latest!.navigation, _latest!.topicRates, _latestFast),
+                const SizedBox(height: 16),
+
+                // ── 系统服务 ──
+                _buildServiceDiagCard(dark),
                 const SizedBox(height: 16),
 
                 // ── 子系统列表 ──
@@ -436,6 +441,168 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
         ),
       ],
     );
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  Service Diagnostics
+  // ═══════════════════════════════════════════════════════
+
+  Widget _buildServiceDiagCard(bool dark) {
+    return Consumer<SystemGateway>(
+      builder: (context, gateway, _) {
+        return _card(dark, child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            leading: Icon(Icons.miscellaneous_services, size: 20,
+              color: context.subtitleColor),
+            title: Text('系统服务', style: TextStyle(
+              fontSize: 14, fontWeight: FontWeight.w600,
+              color: context.titleColor)),
+            onExpansionChanged: (expanded) {
+              if (expanded && gateway.services.isEmpty && gateway.error == null) {
+                gateway.fetchServiceStatuses();
+              }
+            },
+            children: [
+              if (gateway.error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(children: [
+                    Icon(Icons.info_outline, size: 14, color: AppColors.warning),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(gateway.error!,
+                      style: TextStyle(fontSize: 12, color: AppColors.warning))),
+                  ]),
+                ),
+              if (gateway.loading)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )),
+                )
+              else if (gateway.services.isEmpty && gateway.error == null)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text('暂无服务数据',
+                    style: TextStyle(fontSize: 12, color: context.subtitleColor)),
+                )
+              else
+                ...gateway.services.map((svc) => _serviceRow(dark, gateway, svc)),
+              if (gateway.services.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: TextButton.icon(
+                    onPressed: gateway.loading ? null : () => gateway.fetchServiceStatuses(),
+                    icon: const Icon(Icons.refresh, size: 14),
+                    label: const Text('刷新', style: TextStyle(fontSize: 12)),
+                  ),
+                ),
+            ],
+          ),
+        ));
+      },
+    );
+  }
+
+  Widget _serviceRow(bool dark, SystemGateway gateway, ServiceStatus svc) {
+    final state = svc.state.toLowerCase();
+    final isRunning = state == 'running' || state == 'active';
+    final isDegraded = state == 'degraded' || state == 'activating' || state == 'reloading';
+    final color = isRunning
+        ? AppColors.success
+        : isDegraded
+            ? AppColors.warning
+            : AppColors.error;
+    final isRestarting = gateway.restartingService == svc.name;
+
+    // 友好显示名
+    final displayName = svc.name
+        .replaceAll('nav-', '')
+        .replaceAll('ota-', 'OTA ')
+        .replaceAll('-', ' ');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(children: [
+        // 状态点
+        Container(
+          width: 8, height: 8,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 10),
+        // 服务名
+        Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(displayName, style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w500,
+              color: context.titleColor)),
+            Text(svc.state.isEmpty ? '--' : svc.state,
+              style: TextStyle(fontSize: 11, color: context.subtitleColor)),
+          ],
+        )),
+        // 重启按钮
+        if (isRestarting)
+          const SizedBox(
+            width: 20, height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        else
+          SizedBox(
+            height: 28,
+            child: TextButton(
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: () => _confirmRestart(context, gateway, svc.name, displayName),
+              child: Text('重启', style: TextStyle(
+                fontSize: 11, color: context.subtitleColor)),
+            ),
+          ),
+      ]),
+    );
+  }
+
+  void _confirmRestart(
+    BuildContext context,
+    SystemGateway gateway,
+    String serviceName,
+    String displayName,
+  ) {
+    final messenger = ScaffoldMessenger.of(context);
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认重启'),
+        content: Text('确认重启 $displayName 服务？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('重启'),
+          ),
+        ],
+      ),
+    ).then((confirmed) async {
+      if (confirmed != true) return;
+      final ok = await gateway.restartService(serviceName);
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(ok ? '$displayName 已重启' : '重启失败: ${gateway.error ?? ""}'),
+          duration: const Duration(seconds: 2),
+        ));
+      }
+    });
   }
 
   // ═══════════════════════════════════════════════════════
