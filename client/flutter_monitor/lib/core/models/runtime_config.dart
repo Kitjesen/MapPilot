@@ -126,6 +126,7 @@ class RuntimeConfig {
   double slowGroupNumThre;
   double pointPerPathThre;
   double dirWeight;
+  double slopeWeight;
   double dirThre;
   double minPathRange;
   double pathRangeStep;
@@ -319,6 +320,7 @@ class RuntimeConfig {
     this.slowGroupNumThre = 1,
     this.pointPerPathThre = 2,
     this.dirWeight = 0.02,
+    this.slopeWeight = 0.0,
     this.dirThre = 90.0,
     this.minPathRange = 1.0,
     this.pathRangeStep = 0.5,
@@ -423,7 +425,7 @@ class RuntimeConfig {
     double? pathScale, double? minPathScale, double? pathScaleStep, bool? pathScaleBySpeed, double? adjacentRange,
     double? costHeightThre1, double? costHeightThre2,
     double? slowPathNumThre, double? slowGroupNumThre, double? pointPerPathThre,
-    double? dirWeight, double? dirThre, double? minPathRange, double? pathRangeStep,
+    double? dirWeight, double? slopeWeight, double? dirThre, double? minPathRange, double? pathRangeStep,
     double? joyToSpeedDelay, double? joyToCheckObstacleDelay,
     double? freezeAng, double? freezeTime, double? goalClearRange, double? goalBehindRange,
     double? laserVoxelSize,
@@ -519,7 +521,8 @@ class RuntimeConfig {
       slowPathNumThre: slowPathNumThre ?? this.slowPathNumThre,
       slowGroupNumThre: slowGroupNumThre ?? this.slowGroupNumThre,
       pointPerPathThre: pointPerPathThre ?? this.pointPerPathThre,
-      dirWeight: dirWeight ?? this.dirWeight, dirThre: dirThre ?? this.dirThre,
+      dirWeight: dirWeight ?? this.dirWeight, slopeWeight: slopeWeight ?? this.slopeWeight,
+      dirThre: dirThre ?? this.dirThre,
       minPathRange: minPathRange ?? this.minPathRange, pathRangeStep: pathRangeStep ?? this.pathRangeStep,
       joyToSpeedDelay: joyToSpeedDelay ?? this.joyToSpeedDelay,
       joyToCheckObstacleDelay: joyToCheckObstacleDelay ?? this.joyToCheckObstacleDelay,
@@ -623,7 +626,7 @@ class RuntimeConfig {
     'cost_height_thre_1': costHeightThre1, 'cost_height_thre_2': costHeightThre2,
     'slow_path_num_thre': slowPathNumThre, 'slow_group_num_thre': slowGroupNumThre,
     'point_per_path_thre': pointPerPathThre,
-    'dir_weight': dirWeight, 'dir_thre': dirThre,
+    'dir_weight': dirWeight, 'slope_weight': slopeWeight, 'dir_thre': dirThre,
     'min_path_range': minPathRange, 'path_range_step': pathRangeStep,
     'joy_to_speed_delay': joyToSpeedDelay, 'joy_to_check_obstacle_delay': joyToCheckObstacleDelay,
     'freeze_ang': freezeAng, 'freeze_time': freezeTime,
@@ -729,7 +732,8 @@ class RuntimeConfig {
     slowPathNumThre: _d(j, 'slow_path_num_thre', 5),
     slowGroupNumThre: _d(j, 'slow_group_num_thre', 1),
     pointPerPathThre: _d(j, 'point_per_path_thre', 2),
-    dirWeight: _d(j, 'dir_weight', 0.02), dirThre: _d(j, 'dir_thre', 90.0),
+    dirWeight: _d(j, 'dir_weight', 0.02), slopeWeight: _d(j, 'slope_weight', 0.0),
+    dirThre: _d(j, 'dir_thre', 90.0),
     minPathRange: _d(j, 'min_path_range', 1.0), pathRangeStep: _d(j, 'path_range_step', 0.5),
     joyToSpeedDelay: _d(j, 'joy_to_speed_delay', 2.0),
     joyToCheckObstacleDelay: _d(j, 'joy_to_check_obstacle_delay', 5.0),
@@ -1005,6 +1009,7 @@ const List<ParamGroup> allParamGroups = [
     ParamConstraint(fieldName: 'slow_group_num_thre', minValue: 1, maxValue: 10, step: 1, unit: '', displayName: '减速组数阈值', group: 'local_planner', inputType: ParamInputType.stepper, isAdvanced: true),
     ParamConstraint(fieldName: 'point_per_path_thre', minValue: 1, maxValue: 10, step: 1, unit: '', displayName: '每路径最小点数', group: 'local_planner', inputType: ParamInputType.stepper, isAdvanced: true),
     ParamConstraint(fieldName: 'dir_weight', minValue: 0.0, maxValue: 0.5, step: 0.01, unit: '', displayName: '方向权重', group: 'local_planner', isAdvanced: true),
+    ParamConstraint(fieldName: 'slope_weight', minValue: 0.0, maxValue: 8.0, step: 0.5, unit: '', displayName: '坡度权重', group: 'local_planner', isAdvanced: true),
     ParamConstraint(fieldName: 'dir_thre', minValue: 30, maxValue: 180, step: 5, unit: '°', displayName: '方向阈值', group: 'local_planner', inputType: ParamInputType.stepper, isAdvanced: true),
     ParamConstraint(fieldName: 'min_path_range', minValue: 0.5, maxValue: 5.0, step: 0.5, unit: 'm', displayName: '最小路径范围', group: 'local_planner', isAdvanced: true),
     ParamConstraint(fieldName: 'path_range_step', minValue: 0.1, maxValue: 2.0, step: 0.1, unit: 'm', displayName: '路径范围步长', group: 'local_planner', isAdvanced: true),
