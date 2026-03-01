@@ -5,6 +5,8 @@ import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
+import 'package:flutter_monitor/core/models/task_template.dart';
+import 'package:flutter_monitor/core/storage/settings_preferences.dart';
 import 'package:robot_proto/src/common.pb.dart';
 import 'package:robot_proto/src/control.pb.dart';
 
@@ -499,6 +501,16 @@ class _TaskPanelState extends State<TaskPanel> {
             }),
           ],
         ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            _outlineBtn(locale.tr('保存模板', 'Save template'),
+              icon: Icons.bookmark_add_outlined, onTap: _saveTemplate),
+            const SizedBox(width: 8),
+            _outlineBtn(locale.tr('加载模板', 'Load template'),
+              icon: Icons.bookmark_outlined, onTap: _loadTemplate),
+          ],
+        ),
         const SizedBox(height: 20),
         _label(locale.tr('选项', 'Options')),
         const SizedBox(height: 6),
@@ -970,7 +982,141 @@ class _TaskPanelState extends State<TaskPanel> {
     );
   }
 
-  Widget _outlineBtn(String label, {required VoidCallback onTap}) {
+  // ────────────────────────────────────────
+  //  Template save / load
+  // ────────────────────────────────────────
+
+  Future<void> _saveTemplate() async {
+    final nameCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('保存任务模板', style: TextStyle(fontSize: 16)),
+        content: TextField(
+          controller: nameCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '输入模板名称',
+            isDense: true,
+          ),
+          onSubmitted: (_) => Navigator.pop(ctx, true),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final name = nameCtrl.text.trim();
+    if (name.isEmpty) return;
+
+    final tws = _waypoints.map((g) => TemplateWaypoint(
+      x: g.position.x, y: g.position.y, z: g.position.z,
+      yaw: g.yaw, arrivalRadius: g.arrivalRadius, label: g.label,
+    )).toList();
+    final tmpl = TaskTemplate.create(
+      name: name,
+      taskType: _selectedType.value,
+      waypoints: tws,
+      loop: _loop,
+    );
+    await context.read<SettingsPreferences>().saveTemplate(tmpl);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已保存模板「$name」'), duration: const Duration(seconds: 2)));
+    }
+  }
+
+  Future<void> _loadTemplate() async {
+    final prefs = context.read<SettingsPreferences>();
+    final templates = prefs.taskTemplates;
+    if (templates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无保存的模板'), duration: Duration(seconds: 2)));
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setSheetState) {
+          final tmplList = prefs.taskTemplates;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 12),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Align(alignment: Alignment.centerLeft,
+                  child: Text('加载任务模板',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)))),
+              const SizedBox(height: 8),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: tmplList.length,
+                  itemBuilder: (_, i) {
+                    final t = tmplList[i];
+                    return Dismissible(
+                      key: ValueKey(t.name),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        color: Colors.red,
+                        child: const Icon(Icons.delete, color: Colors.white)),
+                      onDismissed: (_) {
+                        prefs.deleteTemplate(t.name);
+                        setSheetState(() {});
+                      },
+                      child: ListTile(
+                        leading: const Icon(Icons.bookmark_rounded, size: 20),
+                        title: Text(t.name,
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                        subtitle: Text('${t.waypoints.length} 个航点'
+                          '${t.loop ? " · 循环" : ""}',
+                          style: const TextStyle(fontSize: 12)),
+                        trailing: const Icon(Icons.chevron_right, size: 18),
+                        onTap: () {
+                          _applyTemplate(t);
+                          Navigator.pop(ctx);
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+          );
+        });
+      },
+    );
+  }
+
+  void _applyTemplate(TaskTemplate t) {
+    setState(() {
+      _waypoints.clear();
+      for (final w in t.waypoints) {
+        final g = NavigationGoal()
+          ..position = (Vector3()..x = w.x..y = w.y..z = w.z)
+          ..yaw = w.yaw
+          ..arrivalRadius = w.arrivalRadius
+          ..label = w.label;
+        _waypoints.add(g);
+      }
+      _loop = t.loop;
+    });
+  }
+
+  Widget _outlineBtn(String label, {required VoidCallback onTap, IconData? icon}) {
     return SizedBox(
       height: 40,
       child: TextButton(
@@ -982,7 +1128,13 @@ class _TaskPanelState extends State<TaskPanel> {
             side: BorderSide(color: context.borderColor),
           ),
         ),
-        child: Text(label, style: const TextStyle(fontSize: 13)),
+        child: icon != null
+            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(icon, size: 15),
+                const SizedBox(width: 5),
+                Text(label, style: const TextStyle(fontSize: 13)),
+              ])
+            : Text(label, style: const TextStyle(fontSize: 13)),
       ),
     );
   }

@@ -1,10 +1,14 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_monitor/core/models/task_template.dart';
 
 /// Centralized settings preferences with real persistence.
 /// All values are read/written via SharedPreferences.
 class SettingsPreferences extends ChangeNotifier {
+  static const _keyTaskTemplates = 'task_templates';
+  static const _maxTemplates = 20;
+
   static const _keyAutoReconnect = 'auto_reconnect';
   static const _keyConnectionTimeout = 'connection_timeout';
   static const _keyHapticFeedback = 'haptic_feedback';
@@ -18,6 +22,7 @@ class SettingsPreferences extends ChangeNotifier {
   SharedPreferences? _prefs;
 
   // ====== Defaults ======
+  List<TaskTemplate> _taskTemplates = [];
   bool _autoReconnect = true;
   int _connectionTimeoutSec = 5;
   bool _hapticFeedback = true;
@@ -29,6 +34,7 @@ class SettingsPreferences extends ChangeNotifier {
   bool _alertCommLost = true;
 
   // ====== Getters ======
+  List<TaskTemplate> get taskTemplates => List.unmodifiable(_taskTemplates);
   bool get autoReconnect => _autoReconnect;
   int get connectionTimeoutSec => _connectionTimeoutSec;
   bool get hapticFeedback => _hapticFeedback;
@@ -53,6 +59,19 @@ class SettingsPreferences extends ChangeNotifier {
     _alertBatteryLow = _prefs!.getBool(_keyAlertBatteryLow) ?? true;
     _alertTempHigh = _prefs!.getBool(_keyAlertTempHigh) ?? true;
     _alertCommLost = _prefs!.getBool(_keyAlertCommLost) ?? true;
+
+    // Load task templates
+    final templatesJson = _prefs!.getString(_keyTaskTemplates);
+    if (templatesJson != null) {
+      try {
+        final list = jsonDecode(templatesJson) as List;
+        _taskTemplates = list
+            .map((e) => TaskTemplate.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (_) {
+        _taskTemplates = [];
+      }
+    }
 
     // Load saved devices
     final devicesJson = _prefs!.getString(_keySavedDevices);
@@ -159,6 +178,34 @@ class SettingsPreferences extends ChangeNotifier {
     } catch (_) {
       return _savedDevices.isNotEmpty ? _savedDevices.first : null;
     }
+  }
+
+  // ====== Task Templates ======
+
+  Future<void> saveTemplate(TaskTemplate template) async {
+    // 重名则覆盖
+    final idx = _taskTemplates.indexWhere((t) => t.name == template.name);
+    if (idx >= 0) {
+      _taskTemplates[idx] = template;
+    } else {
+      _taskTemplates.insert(0, template);
+      if (_taskTemplates.length > _maxTemplates) {
+        _taskTemplates = _taskTemplates.take(_maxTemplates).toList();
+      }
+    }
+    await _persistTemplates();
+    notifyListeners();
+  }
+
+  Future<void> deleteTemplate(String name) async {
+    _taskTemplates.removeWhere((t) => t.name == name);
+    await _persistTemplates();
+    notifyListeners();
+  }
+
+  Future<void> _persistTemplates() async {
+    final json = jsonEncode(_taskTemplates.map((t) => t.toJson()).toList());
+    await _prefs?.setString(_keyTaskTemplates, json);
   }
 
   Future<void> _persistDevices() async {
