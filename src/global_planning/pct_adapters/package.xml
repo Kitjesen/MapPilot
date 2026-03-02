@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>pct_adapters</name>
-  <version>1.0.0</version>
+  <version>1.7.2</version>
   <description>Adapter nodes for PCT Planner integration</description>
   <maintainer email="user@example.com">User</maintainer>
   <license>MIT</license>

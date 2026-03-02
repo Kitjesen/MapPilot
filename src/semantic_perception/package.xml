@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>semantic_perception</name>
-  <version>0.4.0</version>
+  <version>1.7.2</version>
   <description>Semantic perception for VLN: KG-Augmented Loopy BP + Safety-Aware Scene Graph + Phantom Nodes + YOLO-World + CLIP + ConceptGraphs</description>
   <maintainer email="dev@3dnav.io">3dNAV Team</maintainer>
   <license>MIT</license>

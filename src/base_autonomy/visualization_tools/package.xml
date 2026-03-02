@@ -1,6 +1,6 @@
 <package format="3">
   <name>visualization_tools</name>
-  <version>0.0.1</version>
+  <version>1.7.2</version>
   <description>Visulization Tools</description>
   <maintainer email="hongbiaz@cmu.edu">Hongbiao Zhu</maintainer>
   <license>BSD</license>

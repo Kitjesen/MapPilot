@@ -1,6 +1,6 @@
 name: flutter_monitor
 description: Robot Remote Monitoring Client via gRPC
-version: 1.6.0
+version: 1.7.2
 publish_to: 'none'
 
 environment:
@@ -91,7 +91,7 @@ msix_config:
   display_name: 大算机器人
   publisher_display_name: Dasuan Robotics
   identity_name: com.dasuan.robot
-  msix_version: 1.0.0.0
+  msix_version: 1.7.2.0
   logo_path: assets/app_icon.png
   capabilities: internetClient, privateNetworkClientServer
   languages: zh-Hans, en

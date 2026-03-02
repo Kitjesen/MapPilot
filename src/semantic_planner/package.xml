@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>semantic_planner</name>
-  <version>0.3.0</version>
+  <version>1.7.2</version>
   <description>Semantic planner for VLN: Fast-Slow goal resolution + SayCan decomposition + LOVON actions + KG safety gate</description>
   <maintainer email="dev@3dnav.io">3dNAV Team</maintainer>
   <license>MIT</license>

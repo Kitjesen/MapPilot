@@ -15,7 +15,7 @@
 robot:
   id: "robot_001"
   hw_id: "dog_v2"
-  firmware_version: "1.3.2"
+  firmware_version: "1.7.2"
 
 # ── 几何尺寸 (m) ──
 geometry:

@@ -41,19 +41,19 @@ grpc::Status OtaServiceImpl::UploadFile(
 
       if (remote_path.empty()) {
         response->set_success(false);
-        response->set_message("remote_path is required");
+        response->set_message("远程路径不能为空 (remote_path is required)");
         response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
         return grpc::Status::OK;
       }
       if (!IsPathAllowed(remote_path)) {
         response->set_success(false);
-        response->set_message("Path not in allowed directories: " + remote_path);
+        response->set_message("路径不在允许的目录内: " + remote_path);
         response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_FORBIDDEN);
         return grpc::Status::OK;
       }
       if (remote_path.find("..") != std::string::npos) {
         response->set_success(false);
-        response->set_message("Path traversal not allowed");
+        response->set_message("不允许路径穿越 (Path traversal not allowed)");
         response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_FORBIDDEN);
         return grpc::Status::OK;
       }
@@ -108,8 +108,8 @@ grpc::Status OtaServiceImpl::UploadFile(
     // valid partial download on a future resume attempt.
     if (!tmp_path.empty()) std::filesystem::remove(tmp_path);
     response->set_success(false);
-    response->set_message("SHA256 mismatch: expected=" + expected_sha256 +
-                          " actual=" + actual_sha256);
+    response->set_message("SHA256校验不匹配: 期望=" + expected_sha256 +
+                          " 实际=" + actual_sha256);
     return grpc::Status::OK;
   }
 

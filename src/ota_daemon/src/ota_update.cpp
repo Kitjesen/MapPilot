@@ -113,13 +113,13 @@ grpc::Status OtaServiceImpl::CheckUpdateReadiness(
     if (request->manifest_signature().empty() ||
         config_.ota_public_key_path.empty()) {
       c->set_passed(true);
-      c->set_message("Signature check skipped (no signature or key)");
+      c->set_message("签名校验已跳过（无签名或密钥）");
     } else {
       bool ok = VerifyEd25519(config_.ota_public_key_path,
                                request->manifest_content(),
                                request->manifest_signature());
       c->set_passed(ok);
-      c->set_message(ok ? "Signature valid" : "Signature invalid");
+      c->set_message(ok ? "签名校验通过" : "签名校验失败");
       if (!ok) all_passed = false;
     }
   }
@@ -131,13 +131,13 @@ grpc::Status OtaServiceImpl::CheckUpdateReadiness(
     auto st = ota::GetServiceStatus("nav-planning.service");
     if (st.active_state == "active") {
       c->set_passed(true);  // WARNING, not a blocker
-      c->set_message("Navigation task is running, recommend waiting for completion before update");
+      c->set_message("导航任务正在运行，建议等待完成后再更新");
       c->set_detail("nav-planning.service is active (sub_state=" + st.sub_state + ")");
       // Note: intentionally NOT setting all_passed = false
       // This is a WARNING, not an ERROR
     } else {
       c->set_passed(true);
-      c->set_message("No active navigation task");
+      c->set_message("无活跃导航任务");
       c->set_detail("nav-planning.service state=" + st.active_state);
     }
   }
@@ -177,7 +177,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       target_path.find("..") != std::string::npos) {
     response->set_success(false);
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
-    response->set_message("Path traversal not allowed");
+    response->set_message("不允许路径穿越");
     response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_FORBIDDEN);
     return grpc::Status::OK;
   }
@@ -186,7 +186,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
   if (!FileExists(staged_path)) {
     response->set_success(false);
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
-    response->set_message("Staged file not found: " + staged_path);
+    response->set_message("暂存文件未找到: " + staged_path);
     response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
     return grpc::Status::OK;
   }
@@ -198,7 +198,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       response->set_success(false);
       response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
       response->set_failure_code(robot::v1::OTA_FAILURE_SHA256_MISMATCH);
-      response->set_message("SHA256 mismatch");
+      response->set_message("SHA256校验不匹配");
       response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
       return grpc::Status::OK;
     }
@@ -213,7 +213,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       response->set_success(false);
       response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
       response->set_failure_code(robot::v1::OTA_FAILURE_HW_INCOMPAT);
-      response->set_message("Hardware incompatible");
+      response->set_message("硬件不兼容");
       response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
       return grpc::Status::OK;
     }

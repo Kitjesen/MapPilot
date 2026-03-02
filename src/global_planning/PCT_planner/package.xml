@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>pct_planner</name>
-  <version>1.0.0</version>
+  <version>1.7.2</version>
   <description>PCT Global Planner - 3D tomography-based path planning</description>
   <maintainer email="your_email@example.com">Your Name</maintainer>
   <license>MIT</license>

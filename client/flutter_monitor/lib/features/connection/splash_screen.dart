@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_monitor/app/theme.dart';
 
 /// App 版本号 — 与 pubspec.yaml 保持一致
-const String kAppVersion = '1.3.2';
+const String kAppVersion = '1.7.2';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});

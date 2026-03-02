@@ -10,7 +10,7 @@ grpc_gateway:
     
     # 机器人标识 (对应 robot_config.yaml → robot.id / robot.firmware_version)
     robot_id: "robot_001"
-    firmware_version: "1.3.2"
+    firmware_version: "1.7.2"
     
     # 状态流频率
     fast_state_hz: 30.0

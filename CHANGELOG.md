@@ -6,6 +6,53 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.7.2] — 2026-03-02 (代码质量 20轮迭代)
+
+### C++ 代码质量
+- Round 1: RAII 加固（VerifyEd25519/PostJson 改用 unique_ptr）、const 正确性、EscapeJson 静态化
+- Round 2: 15 处错误日志统一 [函数名] 前缀
+- Round 3: 超时边界检查、rfind npos 防护、filesystem path 替代字符串操作
+- Round 4: 移除 3 个未使用 include，修正 include 顺序
+
+### Python 语义规划
+- Round 1: goal_resolver/action_executor/episodic_memory 公开方法完整类型注解
+- Round 2: 细化 except 异常类型，消除静默 except Exception: pass
+- Round 3: asyncio.Task 引用保留、资源 with 语句、历史记录 FIFO 上限
+- Round 4: 消除所有 print()，异常路径补全日志，Nav2 feedback 降级 DEBUG
+
+### Flutter UI/UX
+- Round 1: StreamBuilder/FutureBuilder 错误分支统一显示 EmptyState + retry
+- Round 2: 11 处 IconButton 补全 tooltip，AnimatedSwitcher 数值动画
+- Round 3: AnimatedSize/AnimatedSwitcher 动画、SkeletonListTile 骨架屏
+- Round 4: notifyListeners 变化守卫、context.select 精细订阅、mounted 检查
+
+### DevOps / 运维
+- Round 1: health_check 13→17 项（OTA 密钥、Python 版本、inode 率、gRPC 端口）
+- Round 2: Docker Compose 健康检查 + 日志限制
+- Round 3: Systemd OOMScoreAdjust=-500、MemoryMax 按服务设置、依赖链完整
+- Round 4: CI 覆盖率报告、pub-cache 缓存、构建产物大小门控
+
+### 导航规划
+- Round 9: PCT 适配器边界加固（航点跳跃保护/零路径/10m 距离校验）
+- Round 10: 卡死检测渐进警告（5s WARN_STUCK / 10s STUCK）、恢复确认
+- Round 11: 地形评分参数化、frontier NaN/Inf 过滤
+
+### gRPC 网关
+- Round 12: Keep-alive 配置、6 个流式 RPC 全局 try/catch
+- Round 13: OTA 错误码映射完整、取消信号传播
+
+### 测试覆盖
+- Round 14: 42 个回归测试（planner_node 初始化、llm_client async、OTA 健壮性）
+
+### 集成与文档
+- Round 15: 新增参数文档化（frontier/maxIndexJump/卡死检测）
+- Round 16: topic_contract WARN_STUCK 同步
+- Round 17: C++/Flutter 用户面向错误消息中文化
+- Round 18: frontier_scorer lru_cache、路径长度缓存
+- Round 19: topic/config/import 一致性审计修复
+
+---
+
 ## [1.7.1] — 2026-03-02 (生产级安全与稳定性修复)
 
 ### 安全修复 (CRITICAL)

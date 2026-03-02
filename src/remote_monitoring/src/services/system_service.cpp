@@ -111,7 +111,7 @@ bool SystemServiceImpl::RequireLease(robot::v1::BaseResponse *base) {
     return true;  // 无 lease_mgr 时放行; 有活跃租约时放行
   }
   base->set_error_code(robot::v1::ERROR_CODE_LEASE_CONFLICT);
-  base->set_error_message("Operation requires an active lease");
+  base->set_error_message("操作需要活跃租约 (Operation requires an active lease)");
   return false;
 }
 
@@ -125,7 +125,7 @@ grpc::Status SystemServiceImpl::Login(
   // 简化实现：接受任何用户（实际应校验）
   if (request->username().empty()) {
     response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
-    response->mutable_base()->set_error_message("Username required");
+    response->mutable_base()->set_error_message("用户名不能为空 (Username required)");
     return grpc::Status::OK;
   }
   
@@ -249,7 +249,7 @@ grpc::Status SystemServiceImpl::Relocalize(
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_MODE_CONFLICT);
     response->mutable_base()->set_error_message(
-        "Cannot relocalize during active task — cancel the task first");
+        "导航任务进行中，无法重定位 — 请先取消当前任务");
     response->set_success(false);
     return grpc::Status::OK;
   }
@@ -269,7 +269,7 @@ grpc::Status SystemServiceImpl::Relocalize(
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
     response->mutable_base()->set_error_message(
-        "Relocalize service not available");
+        "重定位服务不可用 (Relocalize service not available)");
     response->set_success(false);
     return grpc::Status::OK;
   }
@@ -286,7 +286,7 @@ grpc::Status SystemServiceImpl::Relocalize(
   auto future = relocalize_client_->async_send_request(ros_req);
   if (future.wait_for(kServiceTimeout) != std::future_status::ready) {
     response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_TIMEOUT);
-    response->mutable_base()->set_error_message("Relocalize service timed out");
+    response->mutable_base()->set_error_message("重定位服务超时 (Relocalize service timed out)");
     response->set_success(false);
     return grpc::Status::OK;
   }
@@ -338,7 +338,7 @@ grpc::Status SystemServiceImpl::SaveMap(
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_INVALID_REQUEST);
     response->mutable_base()->set_error_message(
-        "Save path must be under map directory: " + map_directory_);
+        "保存路径必须在地图目录内: " + map_directory_);
     response->set_success(false);
     return grpc::Status::OK;
   }
@@ -348,9 +348,9 @@ grpc::Status SystemServiceImpl::SaveMap(
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_RESOURCE_CONFLICT);
     response->mutable_base()->set_error_message(
-        "Map already exists: " +
+        "地图已存在: " +
         fs::path(file_path).filename().string() +
-        " — delete it first or choose a different name");
+        " — 请先删除或选择其他名称");
     response->set_success(false);
     return grpc::Status::OK;
   }
@@ -367,7 +367,7 @@ grpc::Status SystemServiceImpl::SaveMap(
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_SERVICE_UNAVAILABLE);
     response->mutable_base()->set_error_message(
-        "SaveMap service not available");
+        "保存地图服务不可用 (SaveMap service not available)");
     response->set_success(false);
     return grpc::Status::OK;
   }
@@ -379,7 +379,7 @@ grpc::Status SystemServiceImpl::SaveMap(
   auto future = save_map_client_->async_send_request(ros_req);
   if (future.wait_for(kServiceTimeout) != std::future_status::ready) {
     response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_TIMEOUT);
-    response->mutable_base()->set_error_message("SaveMap service timed out");
+    response->mutable_base()->set_error_message("保存地图服务超时 (SaveMap service timed out)");
     response->set_success(false);
     return grpc::Status::OK;
   }
@@ -394,7 +394,7 @@ grpc::Status SystemServiceImpl::SaveMap(
   // 验证文件确实被创建
   if (ros_resp->success && !fs::exists(file_path)) {
     response->set_success(false);
-    response->set_message("Save service reported success but file not found");
+    response->set_message("保存服务返回成功但文件未找到");
     response->mutable_base()->set_error_code(
         robot::v1::ERROR_CODE_INTERNAL_ERROR);
   }
