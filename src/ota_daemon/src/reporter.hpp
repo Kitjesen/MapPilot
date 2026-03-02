@@ -37,7 +37,7 @@ class OtaReporter {
 
   void         LoadDeviceId();
   bool         PostJson(const std::string& endpoint, const std::string& body);
-  std::string  EscapeJson(const std::string& s);
+  static std::string EscapeJson(const std::string& s);
 };
 
 }  // namespace ota

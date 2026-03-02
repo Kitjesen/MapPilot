@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <memory>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -102,16 +103,20 @@ bool VerifyEd25519(const std::string &public_key_pem,
                    const std::string &signature_hex) {
   if (public_key_pem.empty() || signature_hex.empty()) return false;
 
-  FILE *fp = fopen(public_key_pem.c_str(), "r");
+  // RAII wrapper for FILE*
+  std::unique_ptr<FILE, decltype(&fclose)> fp(
+      fopen(public_key_pem.c_str(), "r"), &fclose);
   if (!fp) {
-    OtaLogWarn("Ed25519: cannot open public key: %s", public_key_pem.c_str());
+    OtaLogWarn("[VerifyEd25519] cannot open public key: %s", public_key_pem.c_str());
     return false;
   }
 
-  EVP_PKEY *pkey = PEM_read_PUBKEY(fp, nullptr, nullptr, nullptr);
-  fclose(fp);
+  // RAII wrapper for EVP_PKEY*
+  std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> pkey(
+      PEM_read_PUBKEY(fp.get(), nullptr, nullptr, nullptr), &EVP_PKEY_free);
+  fp.reset();  // close file early, no longer needed
   if (!pkey) {
-    OtaLogWarn("Ed25519: failed to parse public key");
+    OtaLogWarn("[VerifyEd25519] failed to parse public key");
     return false;
   }
 
@@ -124,21 +129,20 @@ bool VerifyEd25519(const std::string &public_key_pem,
       sig_bytes.push_back(static_cast<unsigned char>(byte));
   }
 
-  EVP_MD_CTX *md_ctx = EVP_MD_CTX_new();
-  bool ok = false;
-  if (md_ctx) {
-    if (EVP_DigestVerifyInit(md_ctx, nullptr, nullptr, nullptr, pkey) == 1) {
-      int rc = EVP_DigestVerify(
-          md_ctx,
-          sig_bytes.data(), sig_bytes.size(),
-          reinterpret_cast<const unsigned char *>(message.data()),
-          message.size());
-      ok = (rc == 1);
-    }
-    EVP_MD_CTX_free(md_ctx);
-  }
-  EVP_PKEY_free(pkey);
-  return ok;
+  // RAII wrapper for EVP_MD_CTX*
+  std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> md_ctx(
+      EVP_MD_CTX_new(), &EVP_MD_CTX_free);
+  if (!md_ctx) return false;
+
+  if (EVP_DigestVerifyInit(md_ctx.get(), nullptr, nullptr, nullptr, pkey.get()) != 1)
+    return false;
+
+  int rc = EVP_DigestVerify(
+      md_ctx.get(),
+      sig_bytes.data(), sig_bytes.size(),
+      reinterpret_cast<const unsigned char *>(message.data()),
+      message.size());
+  return rc == 1;
 }
 
 // ──────────────── Semver ────────────────

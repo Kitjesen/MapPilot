@@ -223,7 +223,7 @@ void OtaServiceImpl::SaveSystemVersionJson() {
 
 bool OtaServiceImpl::BackupArtifact(const std::string &name,
                                      const std::string &current_path,
-                                     std::string *backup_path) {
+                                     std::string *backup_path) const {
   if (!FileExists(current_path) || !backup_path) return false;
   std::filesystem::create_directories(config_.ota_backup_dir);
 
@@ -254,7 +254,7 @@ bool OtaServiceImpl::BackupArtifact(const std::string &name,
 // ──────────────── 健康检查 (systemd-based, 不依赖 ROS2) ────────────────
 
 bool OtaServiceImpl::PostInstallHealthCheck(
-    robot::v1::OtaSafetyLevel safety_level, std::string *failure_reason) {
+    robot::v1::OtaSafetyLevel safety_level, std::string *failure_reason) const {
 
   // HOT: 文件级更新, 不需要检查服务
   if (safety_level == robot::v1::OTA_SAFETY_LEVEL_HOT ||
@@ -328,7 +328,7 @@ void OtaServiceImpl::AppendUpgradeHistory(
     const std::string &from_version, const std::string &to_version,
     const std::string &status, robot::v1::OtaFailureCode failure_code,
     const std::string &failure_reason, uint64_t duration_ms,
-    const std::string &health_check) {
+    const std::string &health_check) const {
   auto dir = config_.ota_history_path.substr(0, config_.ota_history_path.rfind('/'));
   std::filesystem::create_directories(dir);
 

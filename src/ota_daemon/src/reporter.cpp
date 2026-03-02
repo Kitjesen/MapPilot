@@ -8,6 +8,7 @@
 
 #include <curl/curl.h>
 #include <fstream>
+#include <memory>
 #include <sstream>
 
 namespace ota {
@@ -83,31 +84,31 @@ void OtaReporter::Report(const std::string& package_name,
 
 bool OtaReporter::PostJson(const std::string& endpoint,
                            const std::string& body) {
-  CURL* curl = curl_easy_init();
+  // RAII wrappers for curl resources
+  std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(
+      curl_easy_init(), &curl_easy_cleanup);
   if (!curl) return false;
 
   std::string url = cfg_.server_url + endpoint;
 
-  struct curl_slist* headers = nullptr;
-  headers = curl_slist_append(headers, "Content-Type: application/json");
+  std::unique_ptr<struct curl_slist, decltype(&curl_slist_free_all)> headers(
+      nullptr, &curl_slist_free_all);
+  headers.reset(curl_slist_append(headers.release(), "Content-Type: application/json"));
   if (!api_key_.empty()) {
     std::string auth = "X-API-Key: " + api_key_;
-    headers = curl_slist_append(headers, auth.c_str());
+    headers.reset(curl_slist_append(headers.release(), auth.c_str()));
   }
 
-  curl_easy_setopt(curl, CURLOPT_URL,            url.c_str());
-  curl_easy_setopt(curl, CURLOPT_POST,           1L);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDS,     body.c_str());
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  DevNull);
-  curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);  // 线程安全
+  curl_easy_setopt(curl.get(), CURLOPT_URL,            url.c_str());
+  curl_easy_setopt(curl.get(), CURLOPT_POST,           1L);
+  curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS,     body.c_str());
+  curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER,     headers.get());
+  curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT,        10L);
+  curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT, 5L);
+  curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION,  DevNull);
+  curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL,       1L);  // 线程安全
 
-  CURLcode res = curl_easy_perform(curl);
-  curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
-
+  CURLcode res = curl_easy_perform(curl.get());
   return res == CURLE_OK;
 }
 

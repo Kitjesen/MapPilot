@@ -140,10 +140,10 @@ private:
 
   bool BackupArtifact(const std::string &name,
                       const std::string &current_path,
-                      std::string *backup_path);
+                      std::string *backup_path) const;
 
   bool PostInstallHealthCheck(robot::v1::OtaSafetyLevel safety_level,
-                              std::string *failure_reason);
+                              std::string *failure_reason) const;
 
   void AppendUpgradeHistory(const std::string &action,
                             const std::string &artifact_name,
@@ -153,7 +153,7 @@ private:
                             robot::v1::OtaFailureCode failure_code,
                             const std::string &failure_reason,
                             uint64_t duration_ms,
-                            const std::string &health_check);
+                            const std::string &health_check) const;
 
   bool IsPathAllowed(const std::string &path) const;
 
