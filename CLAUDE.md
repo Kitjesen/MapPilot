@@ -93,8 +93,8 @@ Livox LiDAR → SLAM (Fast-LIO2 + PGO) → Terrain Analysis → Planning → Dog
 | Package | Sub-packages | Role |
 |---|---|---|
 | `slam/` | fastlio2, pgo, localizer, hba, interface | Fast-LIO2 frontend, PGO loop closure, ICP relocalization (38 C++/Py files) |
-| `base_autonomy/` | local_planner, terrain_analysis, terrain_analysis_ext, sensor_scan_generation, visualization_tools | Local planner + terrain analysis (ground estimation, traversability). local_planner 支持 `slopeWeight` 参数（默认 0=关闭，建议 3~6）让地形代价影响路径选择得分 |
-| `global_planning/` | PCT_planner, pct_adapters, NeuPAN | PCT Planner (tomography-based global path planning, pybind11 wrapper) |
+| `base_autonomy/` | local_planner, terrain_analysis, terrain_analysis_ext, sensor_scan_generation, visualization_tools | Local planner + terrain analysis (ground estimation, traversability). local_planner 支持 `slopeWeight` 参数（默认 0=关闭，建议 3~6）让地形代价影响路径选择得分。pathFollower 渐进卡死检测：`stuck_timeout`(默认 10s) + `stuck_dist_thre`(默认 0.15m)，半超时发 `WARN_STUCK`，全超时发 `STUCK`，含反向运动加速检测和恢复确认（连续 3 帧速度 >0.05m/s） |
+| `global_planning/` | PCT_planner, pct_adapters, NeuPAN | PCT Planner (tomography-based global path planning, pybind11 wrapper). pct_path_adapter 增加 `max_index_jump`（默认 3）航点跳跃保护和 `max_first_waypoint_dist`（默认 10.0m）首航点距离校验 |
 | `remote_monitoring/` | — | gRPC gateway (port 50051) — telemetry, control, OTA, WebRTC bridge (C++, 44 files) |
 | `drivers/` | livox_ros_driver2, robot_driver | Livox LiDAR driver + quadruped robot serial interface |
 | `semantic_perception/` | — | YOLO-World + CLIP + ConceptGraphs scene graph (22,345 LOC, 75 Py files) |

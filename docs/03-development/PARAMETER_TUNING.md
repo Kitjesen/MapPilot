@@ -345,3 +345,53 @@ ros2 topic echo /planning_status
 # 临时覆盖（不改 yaml）:
 ros2 param set /local_planner slopeWeight 4.0
 ```
+
+---
+
+## pathFollower 渐进卡死检测
+
+### 参数位置
+`pathFollower.launch.xml` — `stuck_timeout` 和 `stuck_dist_thre` 参数。
+
+### 工作原理
+
+pathFollower 周期性检查机器人在 `stuck_timeout` 秒内的位移。如果位移小于 `stuck_dist_thre`：
+1. **半超时 (50%)**: 发布 `WARN_STUCK` 到 `/nav/planner_status`（早期预警）
+2. **全超时 (100%)**: 发布 `STUCK` 到 `/nav/planner_status`（确认卡死）
+3. **反向运动加速**: 如果命令前进但实际后退，剩余超时压缩到最多 3s
+4. **恢复确认**: 连续 3 帧速度 >0.05m/s 才清除卡死状态
+
+### 推荐值
+
+| 参数 | 默认 | 室内 | 室外 | 说明 |
+|---|---|---|---|---|
+| `stuck_timeout` | 10.0 | 8.0 | 15.0 | 卡死判定时间窗口 (s) |
+| `stuck_dist_thre` | 0.15 | 0.10 | 0.20 | 最小位移阈值 (m) |
+
+### 示例
+```bash
+ros2 param set /pathFollower stuck_timeout 8.0
+ros2 param set /pathFollower stuck_dist_thre 0.10
+```
+
+---
+
+## pct_path_adapter 航点跟踪保护
+
+### 参数位置
+`pct_path_adapter` 节点 ROS2 参数。
+
+### 参数说明
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `max_index_jump` | 3 | 单次回调允许的最大航点索引跳跃，超过时 WARN 日志（可能 TF 抖动） |
+| `max_first_waypoint_dist` | 10.0 | 路径首航点与机器人的最大距离 (m)，超过则拒绝路径（坐标系不匹配） |
+| `stuck_timeout_sec` | 10.0 | 航点卡死超时 (s)，触发重规划 |
+| `max_replan_count` | 2 | 最大重规划次数，超过后发布 `stuck_final` |
+| `replan_cooldown_sec` | 5.0 | 两次重规划之间的冷却时间 (s) |
+
+### 调参建议
+- `max_index_jump=3` 适合大多数场景；如果机器人速度快且航点间距小，可增大到 5
+- `max_first_waypoint_dist=10.0` 若建图区域大，可增大到 20.0
+- 如果频繁出现 "Waypoint index jumped" 警告，检查 TF 链是否稳定

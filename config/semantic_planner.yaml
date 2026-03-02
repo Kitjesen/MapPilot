@@ -36,7 +36,6 @@ semantic_planner_node:
     # ── 目标解析 ──
     goal_resolution:
       confidence_threshold: 0.6          # 低于此置信度触发探索
-      vision_threshold: 0.5              # 低于此置信度额外触发 Vision grounding
       replan_on_failure: true            # 到达失败时重新规划
       max_replan_attempts: 3
       fast_path_threshold: 0.75          # 高置信度快速路径阈值
@@ -48,6 +47,9 @@ semantic_planner_node:
       max_explore_steps: 20              # 最大探索步数
       step_distance: 2.0                 # 每步探索距离 (m)
       costmap_topic: "/nav/costmap"      # OccupancyGrid 话题
+      terrain_topic: "/nav/terrain_map"  # 地形点云话题 (PointCloud2)
+      terrain_grid_resolution: 0.2       # 地形栅格分辨率 (m/cell)
+      terrain_grid_half_size: 15.0       # 地形栅格半宽 (m)
       frontier_score_threshold: 0.2      # frontier 最低接受分
       frontier_min_size: 5               # 最小 frontier 区块 cell 数
       frontier_max_count: 10             # 评分前保留多少个 frontier
@@ -57,27 +59,27 @@ semantic_planner_node:
       frontier_language_weight: 0.2      # 语言相关性权重
       frontier_grounding_weight: 0.3     # grounding potential 权重
 
-      # Frontier 评分详细参数
-      frontier_novelty_distance: 5.0     # 新颖度判定距离 (m)
-      frontier_nearby_object_radius: 3.0 # 附近物体搜索半径 (m)
-      frontier_grounding_angle_threshold: 0.7854  # 角度阈值 (45度)
-      frontier_cooccurrence_bonus: 0.25  # 共现关系加分
-      frontier_grounding_spatial_bonus: 0.1      # 空间关系加分
-      frontier_grounding_keyword_bonus: 0.4      # 关键词匹配加分
-      frontier_grounding_relation_bonus: 0.15    # 关系推理加分
+      # Frontier 评分详细参数 (Round 11 新增, 用于 FrontierScorer ablation 实验)
+      frontier_novelty_distance: 5.0     # 新颖度归一化距离 (m); 越远frontier新颖度越高; 推荐 3.0~8.0
+      frontier_nearby_object_radius: 3.0 # 附近物体搜索半径 (m); 用于语言评分和描述生成; 推荐 2.0~5.0
+      frontier_grounding_angle_threshold: 0.7854  # MTU3D 空间梯度角度阈值 (rad, pi/4=45°); 推荐 0.3~1.0
+      frontier_cooccurrence_bonus: 0.25  # 共现先验加分 (目标常与某物体同现时); 推荐 0.1~0.4
+      frontier_grounding_spatial_bonus: 0.1      # frontier方向有物体时的grounding加分; 推荐 0.05~0.2
+      frontier_grounding_keyword_bonus: 0.4      # frontier方向有指令相关物体时加分; 推荐 0.2~0.6
+      frontier_grounding_relation_bonus: 0.15    # 关系链延伸加分 (SG-Nav关联物体); 推荐 0.05~0.3
       # 创新3: Frontier CLIP 视觉评分权重 (VLFM 核心)
       frontier_vision_weight: 0.0              # 0=禁用; 启用建议 0.15
       # 创新4: 语义先验权重 (Topology-Aware Semantic Exploration)
       frontier_semantic_prior_weight: 0.2      # 0=禁用; 启用建议 0.2
 
-      # USS-Nav TSP 后处理参数
-      frontier_tsp_reorder: true               # 是否启用 TSP 贪心重排序
-      frontier_tsp_limit: 20                   # frontier 数超过此值时跳过 TSP
-      frontier_tsp_ig_radius_cells: 10         # 信息增益估算半径 (cells)
+      # USS-Nav TSP 后处理参数 (贪心 nearest-neighbor 重排序访问顺序)
+      frontier_tsp_reorder: true               # 是否启用 TSP 贪心重排序; true=按 1/IG+dist 排; false=保持评分排序
+      frontier_tsp_limit: 20                   # frontier 数超过此值时跳过 TSP (避免 O(n²) 开销); 推荐 15~30
+      frontier_tsp_ig_radius_cells: 10         # 信息增益估算半径 (cells); 统计未知格子数; 推荐 5~15
 
-      # 失败记忆参数 (SEEK-style)
-      frontier_failure_penalty_radius: 3.0     # 惩罚半径 (m)
-      frontier_failure_penalty_decay: 0.7      # 惩罚衰减系数
+      # 失败记忆参数 (SEEK-style, RSS 2024 — 避免重复探索死角)
+      frontier_failure_penalty_radius: 3.0     # 惩罚半径 (m); 该范围内 frontier 降权; 推荐 2.0~5.0
+      frontier_failure_penalty_decay: 0.7      # 惩罚衰减系数 (0~1); 越大惩罚越强; 推荐 0.5~0.9
 
       # SG-Nav 对齐参数
       sgnav:
