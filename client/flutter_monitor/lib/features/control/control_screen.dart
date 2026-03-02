@@ -752,6 +752,13 @@ class _ControlScreenState extends State<ControlScreen>
         stream: provider.slowStateStream,
         initialData: provider.latestSlowState,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.cloud_off_rounded, size: 13, color: Colors.white.withValues(alpha: 0.6)),
+              const SizedBox(width: 6),
+              Text('--', style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.6))),
+            ]);
+          }
           final slow = snapshot.data;
           final battery = slow?.resources.batteryPercent;
           final rtt = provider.connectionRttMs;

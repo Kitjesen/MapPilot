@@ -9,6 +9,7 @@ import 'package:flutter_monitor/core/gateway/system_gateway.dart';
 import 'package:flutter_monitor/core/gateway/task_gateway.dart';
 import 'package:robot_proto/robot_proto.dart';
 import 'package:flutter_monitor/shared/widgets/skeleton_loader.dart';
+import 'package:flutter_monitor/shared/widgets/empty_state.dart';
 
 /// 健康状态页面 — 显示子系统健康、定位质量和围栏状态
 class HealthStatusPage extends StatefulWidget {
@@ -23,6 +24,7 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
   StreamSubscription<FastState>? _fastSub;
   SlowState? _latest;
   FastState? _latestFast;
+  String? _streamError;
 
   // ── 运行时间计数器 ──
   Timer? _uptimeTimer;
@@ -39,10 +41,14 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
     _latest = conn.latestSlowState;
     _latestFast = conn.latestFastState;
     _sub = conn.slowStateStream.listen((ss) {
-      if (mounted) setState(() => _latest = ss);
+      if (mounted) setState(() { _latest = ss; _streamError = null; });
+    }, onError: (e) {
+      if (mounted) setState(() => _streamError = '$e');
     });
     _fastSub = conn.fastStateStream.listen((fs) {
-      if (mounted) setState(() => _latestFast = fs);
+      if (mounted) setState(() { _latestFast = fs; _streamError = null; });
+    }, onError: (e) {
+      if (mounted) setState(() => _streamError = '$e');
     });
     // 每分钟刷新运行时间
     _uptimeTimer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -70,12 +76,16 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
     _latest = conn.latestSlowState;
     _latestFast = conn.latestFastState;
     _sub = conn.slowStateStream.listen((ss) {
-      if (mounted) setState(() => _latest = ss);
+      if (mounted) setState(() { _latest = ss; _streamError = null; });
+    }, onError: (e) {
+      if (mounted) setState(() => _streamError = '$e');
     });
     _fastSub = conn.fastStateStream.listen((fs) {
-      if (mounted) setState(() => _latestFast = fs);
+      if (mounted) setState(() { _latestFast = fs; _streamError = null; });
+    }, onError: (e) {
+      if (mounted) setState(() => _streamError = '$e');
     });
-    setState(() {});
+    setState(() => _streamError = null);
     // Give streams a moment to deliver fresh data
     await Future.delayed(const Duration(milliseconds: 500));
   }
@@ -107,7 +117,20 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
       ),
       body: RefreshIndicator(
         onRefresh: _refreshData,
-        child: _latest == null
+        child: _streamError != null
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                EmptyState(
+                  icon: Icons.cloud_off_rounded,
+                  title: '数据加载失败',
+                  subtitle: _streamError,
+                  actionLabel: '重试',
+                  onAction: _refreshData,
+                ),
+              ],
+            )
+          : _latest == null
           ? ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.all(20),

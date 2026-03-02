@@ -160,6 +160,9 @@ class _MapScreenState extends State<MapScreen>
   String _geofenceState = 'NO_FENCE';
   double _geofenceMargin = 0;
 
+  // ─── Subscription error state ───
+  String? _subscriptionError;
+
   bool get _modeUsesGoalPoint =>
       _selectedMode != TaskMode.mapping &&
       _selectedMode != TaskMode.semanticNav &&
@@ -206,23 +209,33 @@ class _MapScreenState extends State<MapScreen>
     super.dispose();
   }
 
-  // ─── Data subscriptions (unchanged) ───
+  // ─── Data subscriptions ───
   void _subscribeToMaps() {
     final client = context.read<RobotConnectionProvider>().client;
-    if (client == null) return;
+    if (client == null) {
+      setState(() => _subscriptionError = '未连接到机器人');
+      return;
+    }
+    setState(() => _subscriptionError = null);
+
+    void _onSubError(String source, dynamic e) {
+      debugPrint('[MapScreen] $source sub error: $e');
+      if (mounted) setState(() => _subscriptionError = '$source: $e');
+    }
+
     _mapSubscription = client
         .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_MAP)
         .listen((chunk) {
       if (!mounted) return;
       _parseAndSetPoints(chunk.data, isGlobal: true);
-    }, onError: (e) => debugPrint('[MapScreen] Map sub error: $e'));
+    }, onError: (e) => _onSubError('Map', e));
 
     _pclSubscription = client
         .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_POINTCLOUD)
         .listen((chunk) {
       if (!mounted) return;
       _parseAndSetPoints(chunk.data, isGlobal: false);
-    }, onError: (e) => debugPrint('[MapScreen] PCL sub error: $e'));
+    }, onError: (e) => _onSubError('PCL', e));
 
     _pathSubscription = client
         .subscribeToResource(ResourceId()
@@ -231,14 +244,14 @@ class _MapScreenState extends State<MapScreen>
         .listen((chunk) {
       if (!mounted) return;
       _parseGlobalPath(chunk.data);
-    }, onError: (e) => debugPrint('[MapScreen] Path sub error: $e'));
+    }, onError: (e) => _onSubError('Path', e));
 
     _gridSubscription = client
         .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_OCCUPANCY_GRID)
         .listen((chunk) {
       if (!mounted) return;
       _parseOccupancyGrid(chunk.data);
-    }, onError: (e) => debugPrint('[MapScreen] Grid sub error: $e'));
+    }, onError: (e) => _onSubError('Grid', e));
 
     _frontierSubscription = client
         .subscribeToResource(ResourceId()..type = ResourceType.RESOURCE_TYPE_FRONTIER_MARKERS)
@@ -1424,6 +1437,34 @@ class _MapScreenState extends State<MapScreen>
             painter: _CrosshairPainter(),
           ))),
 
+        // Subscription error overlay
+        if (_subscriptionError != null)
+          Positioned(
+            top: 8, left: 16, right: 16,
+            child: Material(
+              elevation: 2,
+              borderRadius: BorderRadius.circular(10),
+              color: AppColors.error.withValues(alpha: 0.92),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(children: [
+                  const Icon(Icons.cloud_off_rounded, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(
+                    _subscriptionError!,
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                    maxLines: 2, overflow: TextOverflow.ellipsis,
+                  )),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () { _subscribeToMaps(); },
+                    child: const Icon(Icons.refresh_rounded, color: Colors.white, size: 18),
+                  ),
+                ]),
+              ),
+            ),
+          ),
+
         // Center coordinate display (2D mode only)
         if (!_show3DModel)
           Positioned(
@@ -2213,6 +2254,7 @@ class _MapScreenState extends State<MapScreen>
       stream: provider.slowStateStream,
       initialData: provider.latestSlowState,
       builder: (context, snapshot) {
+        if (snapshot.hasError) return const SizedBox.shrink();
         final battery = snapshot.data?.resources.batteryPercent;
         if (battery == null || battery >= 15) return const SizedBox.shrink();
         final locale = context.read<LocaleProvider>();
