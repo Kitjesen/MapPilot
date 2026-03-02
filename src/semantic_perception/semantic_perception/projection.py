@@ -90,8 +90,40 @@ def project_to_3d(
     return np.array([x, y, z])
 
 
-# Alias for backward compatibility
-project_2d_to_3d = project_to_3d
+def project_2d_to_3d(
+    bbox: np.ndarray,
+    depth_image: np.ndarray,
+    camera_info: dict,
+) -> Optional[np.ndarray]:
+    """High-level helper: project bounding-box center to 3-D camera coords.
+
+    Args:
+        bbox: [x1, y1, x2, y2] pixel bounding box.
+        depth_image: (H, W) float32 depth in metres; 0 = invalid.
+        camera_info: dict with keys fx, fy, cx, cy.
+
+    Returns:
+        np.ndarray [x, y, z] in camera frame, or None if depth is invalid.
+    """
+    cx_px = float((bbox[0] + bbox[2]) / 2)
+    cy_px = float((bbox[1] + bbox[3]) / 2)
+    u, v = int(round(cx_px)), int(round(cy_px))
+
+    h, w = depth_image.shape[:2]
+    if not (0 <= v < h and 0 <= u < w):
+        return None
+
+    depth = float(depth_image[v, u])
+    if depth <= 0.0:
+        return None
+
+    intr = CameraIntrinsics(
+        fx=float(camera_info["fx"]),
+        fy=float(camera_info["fy"]),
+        cx=float(camera_info["cx"]),
+        cy=float(camera_info["cy"]),
+    )
+    return project_to_3d(cx_px, cy_px, depth, intr)
 
 
 def transform_point(

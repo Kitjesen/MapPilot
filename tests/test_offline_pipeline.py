@@ -3077,7 +3077,7 @@ class TestBeliefNetwork:
     def test_vocabulary_completeness(self):
         """Vocabulary should cover all objects in KG room mappings."""
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         assert len(vocab) >= 50, f"Expected >= 50 objects, got {len(vocab)}"
         assert "desk" in vocab
         assert "fire_extinguisher" in vocab
@@ -3085,7 +3085,7 @@ class TestBeliefNetwork:
 
     def test_cooccurrence_matrix_shape(self):
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         cooc = self.build_cooc(kg, vocab)
         C = len(vocab)
         assert cooc.shape == (C, C)
@@ -3096,13 +3096,13 @@ class TestBeliefNetwork:
 
     def test_cooccurrence_symmetry(self):
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         cooc = self.build_cooc(kg, vocab)
         assert np.allclose(cooc, cooc.T), "Co-occurrence should be symmetric"
 
     def test_safety_vector(self):
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         s = self.build_safety(kg, vocab)
         assert s.shape == (len(vocab),)
         # gas_cylinder should be dangerous
@@ -3114,7 +3114,7 @@ class TestBeliefNetwork:
 
     def test_affordance_matrix(self):
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         A = self.build_aff(kg, vocab)
         assert A.shape == (len(vocab), self.NUM_AFF)
         # desk should not be graspable
@@ -3123,7 +3123,7 @@ class TestBeliefNetwork:
 
     def test_room_priors(self):
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         priors = self.build_priors(kg, vocab)
         assert len(priors) == len(self.ROOM_TYPES)
         # Office should expect desk
@@ -3131,7 +3131,7 @@ class TestBeliefNetwork:
 
     def test_dangerous_mask(self):
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         mask = self.build_danger(kg, vocab)
         assert mask.shape == (len(vocab),)
         dangerous_count = int(mask.sum())
@@ -3146,7 +3146,7 @@ class TestBeliefNetwork:
         from semantic_perception.knowledge_graph import IndustrialKnowledgeGraph
         import torch
         kg = IndustrialKnowledgeGraph()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         C = len(vocab)
         model = KGBeliefGCN(num_objects=C)
         N = 5
@@ -3166,7 +3166,7 @@ class TestBeliefNetwork:
         from semantic_perception.knowledge_graph import IndustrialKnowledgeGraph
         import torch
         kg = IndustrialKnowledgeGraph()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         C = len(vocab)
         model = KGBeliefGCN(num_objects=C)
         B, N = 3, 5
@@ -3214,7 +3214,7 @@ class TestKGDataGeneration:
             pytest.skip("PyTorch not available")
         from semantic_perception.belief_network import KGSceneGraphDataset
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         ds = KGSceneGraphDataset(
             kg, vocab,
             self.build_cooc(kg, vocab),
@@ -3231,7 +3231,7 @@ class TestKGDataGeneration:
             pytest.skip("PyTorch not available")
         from semantic_perception.belief_network import KGSceneGraphDataset, NUM_AFFORDANCE_TYPES
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         C = len(vocab)
         ds = KGSceneGraphDataset(
             kg, vocab,
@@ -3254,7 +3254,7 @@ class TestKGDataGeneration:
             pytest.skip("PyTorch not available")
         from semantic_perception.belief_network import KGSceneGraphDataset
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         ds = KGSceneGraphDataset(
             kg, vocab,
             self.build_cooc(kg, vocab),
@@ -3276,7 +3276,7 @@ class TestKGDataGeneration:
             pytest.skip("PyTorch not available")
         from semantic_perception.belief_network import KGSceneGraphDataset, collate_variable_rooms
         kg = self.KG()
-        vocab = self.build_vocab(kg)
+        vocab, _ = self.build_vocab(kg)
         ds = KGSceneGraphDataset(
             kg, vocab,
             self.build_cooc(kg, vocab),
