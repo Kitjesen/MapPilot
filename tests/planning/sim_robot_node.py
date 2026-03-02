@@ -25,6 +25,7 @@ import math
 import os
 import json
 import time
+from typing import Optional
 
 import rclpy
 from rclpy.node import Node
@@ -59,6 +60,111 @@ TERRAIN_R   = 10.0   # m, 合成平坦地形半径
 TERRAIN_S   =  0.4   # m, 格栅间距
 WARMUP_S    =  4.0   # s, 预热时间 (≥ joyToSpeedDelay=2.0s)
 GOAL_RESEND_S = 15.0 # s, 重新发送目标的间隔
+
+
+# ── 建筑点云 PCD 默认路径 (按优先级查找) ─────────────────────────────────────
+_PCD_CANDIDATES = [
+    os.environ.get('SIM_PCD_PATH', ''),
+    '/home/sunrise/data/SLAM/navigation/install/pct_planner/share/pct_planner/rsc/pcd/building2_9.pcd',
+    '/home/sunrise/data/SLAM/navigation/src/global_planning/PCT_planner/rsc/pcd/building2_9.pcd',
+]
+
+
+def _find_pcd() -> Optional[str]:
+    for p in _PCD_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    # 尝试 ament 安装路径
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        share = get_package_share_directory('pct_planner')
+        p = os.path.join(share, 'rsc', 'pcd', 'building2_9.pcd')
+        if os.path.exists(p):
+            return p
+    except Exception:
+        pass
+    return None
+
+
+def _load_pcd_binary(pcd_path: str, max_pts: int = 80000) -> Optional[np.ndarray]:
+    """
+    加载 binary PCD 文件 → (N, 4) float32 [x, y, z, intensity=z].
+
+    - 支持 plain binary 和 binary 格式 (含 x y z ... 字段)
+    - 超过 max_pts 时随机降采样
+    - intensity 列设为 z 高度值, 供 Foxglove 按高度着色
+    """
+    try:
+        with open(pcd_path, 'rb') as f:
+            raw = f.read()
+
+        # 解析 ASCII 头部
+        pos, meta = 0, {}
+        while pos < len(raw):
+            end = raw.find(b'\n', pos)
+            if end == -1:
+                break
+            line = raw[pos:end].decode('ascii', errors='ignore').strip()
+            parts = line.split()
+            if parts:
+                meta[parts[0].upper()] = parts[1:]
+            pos = end + 1
+            if parts and parts[0].upper() == 'DATA':
+                break  # data_offset = pos
+
+        data_offset = pos
+        data_type = meta.get('DATA', ['ascii'])[0].lower()
+        n_pts  = int(meta.get('POINTS', [0])[0])
+        fields = meta.get('FIELDS', [])
+        sizes  = [int(s) for s in meta.get('SIZE', [])]
+        types  = meta.get('TYPE', [])
+
+        if data_type != 'binary' or 'x' not in fields:
+            return None
+
+        # 构建 numpy dtype (每个字段 float32/int32/uint32)
+        np_map = {'F': 'f4', 'I': 'i4', 'U': 'u4'}
+        dt = np.dtype([(f, np_map.get(t, 'f4'))
+                       for f, t in zip(fields, types)])
+
+        arr = np.frombuffer(raw[data_offset: data_offset + n_pts * dt.itemsize],
+                            dtype=dt)
+        x = arr['x'].astype(np.float32)
+        y = arr['y'].astype(np.float32)
+        z = arr['z'].astype(np.float32)
+
+        pts = np.column_stack([x, y, z, z.copy()])   # intensity = z for height colormap
+
+        if len(pts) > max_pts:
+            idx = np.random.choice(len(pts), max_pts, replace=False)
+            pts = pts[idx]
+
+        return pts
+    except Exception as e:
+        return None
+
+
+def _make_xyzi_cloud(pts: np.ndarray, frame_id: str, stamp=None) -> PointCloud2:
+    """将 (N,4) float32 [x,y,z,i] 数组打包为 PointCloud2 消息。"""
+    arr = pts.astype(np.float32)
+    msg = PointCloud2()
+    msg.header.frame_id = frame_id
+    if stamp is not None:
+        msg.header.stamp = stamp
+    msg.height = 1
+    msg.width  = len(arr)
+    msg.is_dense = False
+    msg.is_bigendian = False
+    msg.fields = [
+        PointField(name='x',         offset=0,  datatype=PointField.FLOAT32, count=1),
+        PointField(name='y',         offset=4,  datatype=PointField.FLOAT32, count=1),
+        PointField(name='z',         offset=8,  datatype=PointField.FLOAT32, count=1),
+        PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1),
+    ]
+    msg.point_step = 16
+    msg.row_step   = 16 * len(arr)
+    msg.data       = arr.tobytes()
+    return msg
 
 
 def _flat_cloud(cx: float, cy: float, stamp=None) -> PointCloud2:
@@ -133,8 +239,11 @@ class SimRobotNode(Node):
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
-        self.pub_desc = self.create_publisher(String, '/robot_description', latched)
+        self.pub_desc  = self.create_publisher(String,       '/robot_description',  latched)
+        # /nav/building_cloud: 真实建筑 3D 点云 (latched, 仅用于可视化)
+        self.pub_bldg  = self.create_publisher(PointCloud2,  '/nav/building_cloud', latched)
         self._publish_robot_description()
+        self._publish_building_cloud()
 
         # ── Subscribers ──
         # pathFollower 以 BEST_EFFORT 50 Hz 发布 cmd_vel
@@ -168,6 +277,24 @@ class SimRobotNode(Node):
         msg.data = content
         self.pub_desc.publish(msg)
         self.get_logger().info(f'[sim] /robot_description published ({len(content)} chars)')
+
+    def _publish_building_cloud(self):
+        """加载 building2_9.pcd → 发布真实建筑 3D 点云到 /nav/building_cloud (latched)。"""
+        pcd_path = _find_pcd()
+        if pcd_path is None:
+            self.get_logger().warn('[sim] building2_9.pcd not found — 3D cloud skipped')
+            return
+
+        pts = _load_pcd_binary(pcd_path, max_pts=80000)
+        if pts is None or len(pts) == 0:
+            self.get_logger().warn(f'[sim] PCD load failed: {pcd_path}')
+            return
+
+        msg = _make_xyzi_cloud(pts, frame_id='map',
+                                stamp=self.get_clock().now().to_msg())
+        self.pub_bldg.publish(msg)
+        self.get_logger().info(
+            f'[sim] Building cloud: {len(pts)} pts published from {pcd_path}')
 
     def _pub_static_tf(self):
         """发布静态 TF:  map→odom  +  body→base_link (URDF 根坐标系)。"""
