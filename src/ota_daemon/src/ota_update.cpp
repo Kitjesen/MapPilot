@@ -152,7 +152,7 @@ grpc::Status OtaServiceImpl::CheckUpdateReadiness(
 grpc::Status OtaServiceImpl::ApplyUpdate(
     grpc::ServerContext *, const robot::v1::ApplyUpdateRequest *request,
     robot::v1::ApplyUpdateResponse *response) {
-
+  try {
   const auto &artifact = request->artifact();
   const std::string &staged_path = request->staged_path();
   const std::string target_path = ResolveTargetPath(artifact);
@@ -165,10 +165,12 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
   if (staged_path.empty() || target_path.empty()) {
     response->set_success(false);
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
+    response->set_failure_code(robot::v1::OTA_FAILURE_INSTALL_SCRIPT);
     response->set_message(
         "staged_path is empty or target_path could not be resolved "
         "(check artifact_paths.yaml for artifact: " +
         artifact.name() + ")");
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
     return grpc::Status::OK;
   }
   if (staged_path.find("..") != std::string::npos ||
@@ -176,6 +178,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
     response->set_success(false);
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
     response->set_message("Path traversal not allowed");
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_FORBIDDEN);
     return grpc::Status::OK;
   }
 
@@ -184,6 +187,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
     response->set_success(false);
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
     response->set_message("Staged file not found: " + staged_path);
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
     return grpc::Status::OK;
   }
 
@@ -195,6 +199,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
       response->set_failure_code(robot::v1::OTA_FAILURE_SHA256_MISMATCH);
       response->set_message("SHA256 mismatch");
+      response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
       return grpc::Status::OK;
     }
   }
@@ -209,6 +214,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
       response->set_failure_code(robot::v1::OTA_FAILURE_HW_INCOMPAT);
       response->set_message("Hardware incompatible");
+      response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
       return grpc::Status::OK;
     }
   }
@@ -226,6 +232,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
         response->set_failure_code(robot::v1::OTA_FAILURE_DEPENDENCY);
         response->set_message("Missing/outdated dependency: " +
                               dep.artifact_name());
+        response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
         return grpc::Status::OK;
       }
     }
@@ -423,6 +430,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
     response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
     response->set_message(install_msg);
     response->set_failure_code(robot::v1::OTA_FAILURE_INSTALL_SCRIPT);
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INTERNAL_ERROR);
     if (artifact.safety_level() == robot::v1::OTA_SAFETY_LEVEL_COLD) {
       ota::ManageService("navigation.service", "start");
     }
@@ -461,6 +469,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
     response->set_status(robot::v1::OTA_UPDATE_STATUS_ROLLED_BACK);
     response->set_message("Health check failed: " + health_reason);
     response->set_failure_code(robot::v1::OTA_FAILURE_HEALTH_CHECK);
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INTERNAL_ERROR);
     return grpc::Status::OK;
   }
 
@@ -508,6 +517,14 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
   response->set_previous_version(previous_version);
   response->set_failure_code(robot::v1::OTA_FAILURE_NONE);
   return grpc::Status::OK;
+  } catch (const std::exception &e) {
+    OtaLogError("[ApplyUpdate] exception: %s", e.what());
+    response->set_success(false);
+    response->set_status(robot::v1::OTA_UPDATE_STATUS_FAILED);
+    response->set_message(std::string("Internal error: ") + e.what());
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INTERNAL_ERROR);
+    return grpc::Status::OK;
+  }
 }
 
 // =====================================================================
@@ -549,6 +566,7 @@ grpc::Status OtaServiceImpl::Rollback(
   if (name.empty()) {
     response->set_success(false);
     response->set_message("artifact_name is required");
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
     return grpc::Status::OK;
   }
 
@@ -558,12 +576,14 @@ grpc::Status OtaServiceImpl::Rollback(
   if (rb_it == rollback_entries_.end()) {
     response->set_success(false);
     response->set_message("No rollback entry for: " + name);
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
     return grpc::Status::OK;
   }
 
   if (!FileExists(rb_it->second.backup_path())) {
     response->set_success(false);
     response->set_message("Backup file missing");
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
     rollback_entries_.erase(rb_it);
     SaveInstalledManifest();
     return grpc::Status::OK;
@@ -573,6 +593,7 @@ grpc::Status OtaServiceImpl::Rollback(
   if (inst_it == installed_artifacts_.end()) {
     response->set_success(false);
     response->set_message("No installed record for: " + name);
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_RESOURCE_NOT_FOUND);
     return grpc::Status::OK;
   }
 
@@ -584,6 +605,7 @@ grpc::Status OtaServiceImpl::Rollback(
   } catch (const std::exception &e) {
     response->set_success(false);
     response->set_message(std::string("Rollback copy failed: ") + e.what());
+    response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INTERNAL_ERROR);
     return grpc::Status::OK;
   }
 

@@ -29,7 +29,7 @@ grpc::Status OtaServiceImpl::UploadFile(
   std::ofstream output;
   uint64_t bytes_written = 0;
 
-  while (reader->Read(&chunk)) {
+  while (!ctx->IsCancelled() && reader->Read(&chunk)) {
     // First chunk: extract metadata
     if (chunk.has_metadata() && remote_path.empty()) {
       const auto &meta = chunk.metadata();
@@ -42,16 +42,19 @@ grpc::Status OtaServiceImpl::UploadFile(
       if (remote_path.empty()) {
         response->set_success(false);
         response->set_message("remote_path is required");
+        response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_INVALID_REQUEST);
         return grpc::Status::OK;
       }
       if (!IsPathAllowed(remote_path)) {
         response->set_success(false);
         response->set_message("Path not in allowed directories: " + remote_path);
+        response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_FORBIDDEN);
         return grpc::Status::OK;
       }
       if (remote_path.find("..") != std::string::npos) {
         response->set_success(false);
         response->set_message("Path traversal not allowed");
+        response->mutable_base()->set_error_code(robot::v1::ERROR_CODE_FORBIDDEN);
         return grpc::Status::OK;
       }
 
@@ -87,6 +90,12 @@ grpc::Status OtaServiceImpl::UploadFile(
   }
 
   if (output.is_open()) output.close();
+
+  // Handle client cancellation: clean up partial file
+  if (ctx->IsCancelled()) {
+    if (!tmp_path.empty()) std::filesystem::remove(tmp_path);
+    return grpc::Status(grpc::CANCELLED, "Upload cancelled by client");
+  }
 
   // SHA256 check against the temporary file
   std::string actual_sha256;
