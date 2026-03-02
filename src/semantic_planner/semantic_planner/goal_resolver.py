@@ -1816,7 +1816,7 @@ class GoalResolver:
         if self._tsg is not None:
             self._tsg = TopologySemGraph() if TopologySemGraph is not None else None
 
-    def set_room_object_kg(self, kg) -> None:
+    def set_room_object_kg(self, kg: Optional[Any]) -> None:
         """注入房间-物体知识图谱 (P1: KG-backed room adjacency prediction)。"""
         self._room_object_kg = kg
 
