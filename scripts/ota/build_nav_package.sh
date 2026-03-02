@@ -151,7 +151,7 @@ cp -a "$WORKSPACE_DIR/install" "$STAGING_DIR/$PACKAGE_NAME/install"
 # 复制运行时必需的配置和脚本
 echo -e "  复制运行时文件..."
 cp "$WORKSPACE_DIR/VERSION" "$STAGING_DIR/$PACKAGE_NAME/"
-cp "$WORKSPACE_DIR/fastdds_no_shm.xml" "$STAGING_DIR/$PACKAGE_NAME/"
+cp "$WORKSPACE_DIR/config/fastdds_no_shm.xml" "$STAGING_DIR/$PACKAGE_NAME/"
 
 # 复制 launch 文件
 if [ -d "$WORKSPACE_DIR/launch" ]; then

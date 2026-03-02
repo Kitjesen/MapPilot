@@ -413,8 +413,8 @@ If changing topic names, update `config/topic_contract.yaml` and `docs/02-archit
 ### Top-level
 
 - `docs/README.md` — Documentation index
-- `AGENTS.md` — Detailed ROS2 topic/node map and startup sequence for AI agents (bilingual)
-- `TEST_PLAN.md` — Test plan overview
+- `docs/AGENTS.md` — Detailed ROS2 topic/node map and startup sequence for AI agents (bilingual)
+- `docs/07-testing/TEST_PLAN.md` — Test plan overview
 
 ### By Topic (`docs/`)
 

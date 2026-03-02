@@ -167,7 +167,7 @@ scripts/ota/deploy_to_robot.sh     # One-click deploy to robot
 
 | Document | Description |
 |----------|-------------|
-| `AGENTS.md` | ROS 2 topic and node map, startup sequence |
+| `docs/AGENTS.md` | ROS 2 topic and node map, startup sequence |
 | `docs/02-architecture/` | System architecture, topic contract |
 | `docs/03-development/` | API reference, parameter tuning, troubleshooting |
 | `docs/04-deployment/` | Docker and OTA deployment guides |

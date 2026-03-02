@@ -29,7 +29,7 @@ else
 fi
 
 # 设置 FastDDS 共享内存配置
-export FASTRTPS_DEFAULT_PROFILES_FILE="$WORKSPACE_DIR/fastdds_no_shm.xml"
+export FASTRTPS_DEFAULT_PROFILES_FILE="$WORKSPACE_DIR/config/fastdds_no_shm.xml"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
 echo -e "${GREEN}[2/6] 环境配置完成${NC}"
@@ -98,7 +98,7 @@ case $SENSOR_CHOICE in
         gnome-terminal --tab --title="Orbbec Camera" -- bash -c "
             cd $WORKSPACE_DIR
             source install/setup.bash
-            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/fastdds_no_shm.xml
+            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/config/fastdds_no_shm.xml
             ros2 launch orbbec_camera gemini_330_series.launch.py
             exec bash
         " &
@@ -109,7 +109,7 @@ case $SENSOR_CHOICE in
         gnome-terminal --tab --title="Livox Driver" -- bash -c "
             cd $WORKSPACE_DIR
             source install/setup.bash
-            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/fastdds_no_shm.xml
+            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/config/fastdds_no_shm.xml
             ros2 launch livox_ros_driver2 msg_MID360_launch.py
             exec bash
         " &
@@ -128,7 +128,7 @@ case $LOC_CHOICE in
         gnome-terminal --tab --title="Fake Localization" -- bash -c "
             cd $WORKSPACE_DIR
             source install/setup.bash
-            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/fastdds_no_shm.xml
+            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/config/fastdds_no_shm.xml
             python3 src/global_planning/PCT_planner/planner/scripts/test/fake_localization.py
             exec bash
         " &
@@ -139,7 +139,7 @@ case $LOC_CHOICE in
         gnome-terminal --tab --title="FAST-LIO2 Localization" -- bash -c "
             cd $WORKSPACE_DIR
             source install/setup.bash
-            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/fastdds_no_shm.xml
+            export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/config/fastdds_no_shm.xml
             ros2 launch fastlio2 lio_launch.py
             exec bash
         " &
@@ -155,7 +155,7 @@ echo -e "${GREEN}[5/6] 启动 PCT 全局规划器...${NC}"
 gnome-terminal --tab --title="PCT Global Planner" -- bash -c "
     cd $WORKSPACE_DIR
     source install/setup.bash
-    export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/fastdds_no_shm.xml
+    export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/config/fastdds_no_shm.xml
     export NAV_MAP_PATH='$NAV_MAP_PATH'
     ros2 launch launch/profiles/planner_pct.launch.py
     exec bash
@@ -167,7 +167,7 @@ echo -e "${GREEN}[6/6] 启动 RViz2 可视化...${NC}"
 gnome-terminal --tab --title="RViz2 - Planning" -- bash -c "
     cd $WORKSPACE_DIR
     source install/setup.bash
-    export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/fastdds_no_shm.xml
+    export FASTRTPS_DEFAULT_PROFILES_FILE=$WORKSPACE_DIR/config/fastdds_no_shm.xml
     rviz2 -d src/global_planning/PCT_planner/rsc/rviz/pct_ros.rviz
     exec bash
 " &

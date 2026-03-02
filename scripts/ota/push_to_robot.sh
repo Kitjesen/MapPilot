@@ -158,7 +158,7 @@ if [ "$SYNC_ONLY" = true ]; then
     fi
 
     # 同步配置文件
-    rsync -azP "$WORKSPACE_DIR/fastdds_no_shm.xml" "${ROBOT_TARGET}:${NAV_CURRENT}/"
+    rsync -azP "$WORKSPACE_DIR/config/fastdds_no_shm.xml" "${ROBOT_TARGET}:${NAV_CURRENT}/"
     if [ -d "$WORKSPACE_DIR/launch" ]; then
         rsync -azP "$WORKSPACE_DIR/launch/" "${ROBOT_TARGET}:${NAV_CURRENT}/launch/"
     fi

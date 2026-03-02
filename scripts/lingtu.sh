@@ -31,7 +31,7 @@ _init() {
         exit 1
     fi
     source install/setup.bash
-    export FASTRTPS_DEFAULT_PROFILES_FILE="$WORKSPACE_DIR/fastdds_no_shm.xml"
+    export FASTRTPS_DEFAULT_PROFILES_FILE="$WORKSPACE_DIR/config/fastdds_no_shm.xml"
     export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 }
 
