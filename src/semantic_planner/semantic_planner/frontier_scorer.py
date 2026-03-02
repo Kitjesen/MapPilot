@@ -458,6 +458,21 @@ class FrontierScorer:
         if not self._frontiers:
             return []
 
+        # R11: 边界值验证 — 过滤 NaN/Inf 位置的 frontier
+        valid_frontiers = []
+        for f in self._frontiers:
+            if (np.isfinite(f.center_world).all()
+                    and np.isfinite(f.distance)):
+                valid_frontiers.append(f)
+            else:
+                logger.warning(
+                    "Skipping frontier %d: invalid position %s or distance %s",
+                    f.frontier_id, f.center_world, f.distance,
+                )
+        self._frontiers = valid_frontiers
+        if not self._frontiers:
+            return []
+
         max_dist = max(f.distance for f in self._frontiers) or 1.0
         inst_lower = instruction.lower()
 

@@ -70,6 +70,15 @@ semantic_planner_node:
       # 创新4: 语义先验权重 (Topology-Aware Semantic Exploration)
       frontier_semantic_prior_weight: 0.2      # 0=禁用; 启用建议 0.2
 
+      # USS-Nav TSP 后处理参数
+      frontier_tsp_reorder: true               # 是否启用 TSP 贪心重排序
+      frontier_tsp_limit: 20                   # frontier 数超过此值时跳过 TSP
+      frontier_tsp_ig_radius_cells: 10         # 信息增益估算半径 (cells)
+
+      # 失败记忆参数 (SEEK-style)
+      frontier_failure_penalty_radius: 3.0     # 惩罚半径 (m)
+      frontier_failure_penalty_decay: 0.7      # 惩罚衰减系数
+
       # SG-Nav 对齐参数
       sgnav:
         max_subgraphs: 6                 # 每轮最多推理子图数量

@@ -182,6 +182,12 @@ class SemanticPlannerNode(Node):
         self.declare_parameter("exploration.frontier_vision_weight", 0.0)
         # 创新4: 语义先验权重 (Topology-Aware Semantic Exploration)
         self.declare_parameter("exploration.frontier_semantic_prior_weight", 0.2)
+        # R11: USS-Nav TSP + 失败记忆参数
+        self.declare_parameter("exploration.frontier_tsp_reorder", True)
+        self.declare_parameter("exploration.frontier_tsp_limit", 20)
+        self.declare_parameter("exploration.frontier_tsp_ig_radius_cells", 10)
+        self.declare_parameter("exploration.frontier_failure_penalty_radius", 3.0)
+        self.declare_parameter("exploration.frontier_failure_penalty_decay", 0.7)
 
         # SG-Nav 对齐参数
         self.declare_parameter("exploration.sgnav.max_subgraphs", 6)
@@ -336,7 +342,17 @@ class SemanticPlannerNode(Node):
             grounding_relation_bonus=self.get_parameter("exploration.frontier_grounding_relation_bonus").value,
             vision_weight=self.get_parameter("exploration.frontier_vision_weight").value,
             semantic_prior_weight=self.get_parameter("exploration.frontier_semantic_prior_weight").value,
+            tsp_reorder=self.get_parameter("exploration.frontier_tsp_reorder").value,
+            tsp_frontier_limit=self.get_parameter("exploration.frontier_tsp_limit").value,
+            tsp_ig_radius_cells=self.get_parameter("exploration.frontier_tsp_ig_radius_cells").value,
         )
+        # R11: 从参数覆盖失败记忆惩罚参数
+        self._frontier_scorer._failure_penalty_radius = self.get_parameter(
+            "exploration.frontier_failure_penalty_radius"
+        ).value
+        self._frontier_scorer._failure_penalty_decay = self.get_parameter(
+            "exploration.frontier_failure_penalty_decay"
+        ).value
         # 加载持久化语义数据 (房间-物体 KG, 拓扑记忆)
         self._semantic_data_dir = self.get_parameter("semantic_data_dir").value
         if self._semantic_data_dir:
