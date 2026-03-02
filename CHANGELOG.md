@@ -6,6 +6,17 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.7.4] — 2026-03-02 (S100P 集成测试 22/22 全通过)
+
+### 测试修复
+- `tests/integration/test_planning_pipeline.py`: 订阅 `/nav/adapter_status` 而非 `/nav/planner_status` 获取 JSON 事件（`path_received`/`waypoint_reached`/`goal_reached`）
+- `tests/integration/test_planning_stub.sh`: 等待时间 8s→15s；预检改为30s重试循环（解决 terrainAnalysis 在 S100P 注册慢问题）；预检前重启 ROS2 daemon（避免 stale daemon xmlrpc Fault）
+
+### 验证
+- 在地瓜机器人 S100P（RDK S100P，aarch64）上直接运行：`bash tests/integration/test_planning_stub.sh` → **22/22 全通过**
+
+---
+
 ## [1.7.3] — 2026-03-02 (文档与工程结构整理)
 
 ### 文档
