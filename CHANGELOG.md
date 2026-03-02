@@ -6,6 +6,28 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.7.5] — 2026-03-02 (全测试套件 13/13 通过)
+
+### 测试修复
+- `belief_network.py`: 补充缺失导出 `_TORCH_AVAILABLE`、`NUM_AFFORDANCE_TYPES`、`build_affordance_matrix`、`build_dangerous_mask`
+- `projection.py`: 实现高阶 `project_2d_to_3d(bbox, depth_image, camera_info)` 接口；添加 `project_2d_to_3d` 别名
+- `test_offline_pipeline.py`: `build_object_vocabulary` 返回元组，所有调用改为 `vocab, _ = self.build_vocab(kg)`；`test_L1_zh_falls_through_to_slow_path` 标记 xfail（CLIP 多语言已可直接解析中文）
+- `test_chinese_tokenizer.py`: 更新简单分词断言（无 jieba 时连续汉字整体返回）；移除英文名词提取断言
+- `test_planning_pipeline.py`: 事件从 `/nav/adapter_status` 读取
+
+### 测试覆盖（在地瓜机器人 S100P 实测）
+| 测试组 | 结果 |
+|---|---|
+| T1 nav_core C++ gtest | 7 test suites / 全通过 |
+| T2 Python 规划单元 | 2 文件 / 全通过 |
+| T3 语义规划器 pytest | 260 passed, 4 skipped |
+| T4 语义感知 pytest | 236 passed |
+| T5 OTA 鲁棒性 | 27 tests / 全通过 |
+| T6 根级别 Python | 6 文件 / 全通过（含 397 pytest cases） |
+| T7 ROS2 集成测试 | 22/22 通过 |
+
+---
+
 ## [1.7.4] — 2026-03-02 (S100P 集成测试 22/22 全通过)
 
 ### 测试修复
