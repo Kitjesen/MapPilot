@@ -11,6 +11,7 @@ Cloud LLM 客户端抽象层。
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -143,6 +144,10 @@ class OpenAIClient(LLMClientBase):
                     await asyncio.sleep(2 ** attempt)
                     continue
                 return content
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except LLMError:
+                raise
             except Exception as e:
                 err_str = str(e)
                 if "invalid temperature" in err_str and temp != 1.0:
@@ -152,12 +157,12 @@ class OpenAIClient(LLMClientBase):
                 if attempt < self.config.max_retries:
                     wait = 2 ** attempt
                     logger.warning(
-                        "OpenAI API attempt %d failed: %s, retrying in %ds",
-                        attempt + 1, e, wait,
+                        "OpenAI API attempt %d failed (%s): %s, retrying in %ds",
+                        attempt + 1, type(e).__name__, e, wait,
                     )
                     await asyncio.sleep(wait)
                 else:
-                    raise LLMError(f"OpenAI API failed after {attempt + 1} attempts: {e}")
+                    raise LLMError(f"OpenAI API failed after {attempt + 1} attempts: {e}") from e
 
     async def chat_with_image(
         self,
@@ -217,16 +222,25 @@ class OpenAIClient(LLMClientBase):
                     temperature=temp,
                     max_tokens=4096,
                 )
-                msg = response.choices[0].message; return msg.content or getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
+                msg = response.choices[0].message
+                return msg.content or getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except LLMError:
+                raise
             except Exception as e:
                 err_str = str(e)
                 if "invalid temperature" in err_str and temp != 1.0:
                     temp = 1.0
                     continue
                 if attempt < self.config.max_retries:
+                    logger.warning(
+                        "OpenAI Vision attempt %d failed (%s): %s",
+                        attempt + 1, type(e).__name__, e,
+                    )
                     await asyncio.sleep(2 ** attempt)
                 else:
-                    raise LLMError(f"OpenAI Vision failed: {e}")
+                    raise LLMError(f"OpenAI Vision failed: {e}") from e
 
     def is_available(self) -> bool:
         return bool(self._api_key)
@@ -287,16 +301,20 @@ class ClaudeClient(LLMClientBase):
                     block.text for block in response.content
                     if hasattr(block, "text")
                 )
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except LLMError:
+                raise
             except Exception as e:
                 if attempt < self.config.max_retries:
                     wait = 2 ** attempt
                     logger.warning(
-                        "Claude API attempt %d failed: %s, retrying in %ds",
-                        attempt + 1, e, wait,
+                        "Claude API attempt %d failed (%s): %s, retrying in %ds",
+                        attempt + 1, type(e).__name__, e, wait,
                     )
                     await asyncio.sleep(wait)
                 else:
-                    raise LLMError(f"Claude API failed after {attempt + 1} attempts: {e}")
+                    raise LLMError(f"Claude API failed after {attempt + 1} attempts: {e}") from e
 
     def is_available(self) -> bool:
         return bool(self._api_key)
@@ -326,16 +344,20 @@ class QwenClient(LLMClientBase):
                     None, self._sync_call, messages, temp
                 )
                 return result
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except LLMError:
+                raise
             except Exception as e:
                 if attempt < self.config.max_retries:
                     wait = 2 ** attempt
                     logger.warning(
-                        "Qwen API attempt %d failed: %s, retrying in %ds",
-                        attempt + 1, e, wait,
+                        "Qwen API attempt %d failed (%s): %s, retrying in %ds",
+                        attempt + 1, type(e).__name__, e, wait,
                     )
                     await asyncio.sleep(wait)
                 else:
-                    raise LLMError(f"Qwen API failed after {attempt + 1} attempts: {e}")
+                    raise LLMError(f"Qwen API failed after {attempt + 1} attempts: {e}") from e
 
     def _sync_call(self, messages: List[Dict[str, str]], temperature: float) -> str:
         """同步调用 DashScope API。"""
@@ -457,8 +479,8 @@ class MockLLMClient(LLMClientBase):
                     objects = sg.get("objects", [])
                     if objects:
                         break
-        except Exception:
-            pass
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass  # Mock client: scene graph parsing is best-effort
 
         # 2. 确定目标物体
         target_label = ""

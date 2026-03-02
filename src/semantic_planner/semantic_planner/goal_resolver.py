@@ -730,8 +730,8 @@ class GoalResolver:
                         allowed.update(r.get("object_ids", []))
                     if allowed:
                         return allowed
-            except Exception:
-                pass
+            except (ValueError, TypeError, AttributeError) as e:
+                logger.debug("HOV-SG room CLIP scoring failed: %s", e)
 
         # ── 路线2: fallback — subgraphs label 文本匹配（原有逻辑）──
         subgraphs = scene_graph.get("subgraphs", [])
@@ -753,7 +753,8 @@ class GoalResolver:
             return None
         try:
             sims = clip_encoder.text_text_similarity(instruction, room_texts)
-        except Exception:
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.debug("CLIP text_text_similarity failed: %s", e)
             return None
         if not sims or len(sims) != len(rooms):
             return None
@@ -802,8 +803,9 @@ class GoalResolver:
                         )
                         clip_scored.append((obj, combined, new_reason))
                         continue
-                except Exception:
-                    pass
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.debug("CLIP attribute disambiguate failed for '%s': %s",
+                                 obj.get("label", "?"), e)
             clip_scored.append((obj, fused_score, reason))
 
         clip_scored.sort(key=lambda x: x[1], reverse=True)
@@ -1096,7 +1098,8 @@ class GoalResolver:
                 if any(r in lbl or lbl in r for r in references)
             ]
             return list(set(matched_targets)), list(set(matched_refs))
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.debug("LLM role parsing response parse failed: %s", e)
             return [], []
 
     # ================================================================
@@ -1274,8 +1277,8 @@ class GoalResolver:
                         if center:
                             result.hint_room_center = list(center)
                         break
-        except Exception:
-            pass  # 不影响主流程
+        except (TypeError, KeyError, ValueError) as e:
+            logger.debug("OmniNav region lookup failed (non-critical): %s", e)
 
         return result
 
