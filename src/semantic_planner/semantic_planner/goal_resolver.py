@@ -26,7 +26,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -94,7 +94,7 @@ class TargetBeliefManager:
     解决多实例歧义问题 (e.g., 多把椅子, 多个门)。
     """
 
-    def __init__(self, gamma1: float = 1.0, gamma2: float = 0.5, gamma3: float = 0.3):
+    def __init__(self, gamma1: float = 1.0, gamma2: float = 0.5, gamma3: float = 0.3) -> None:
         self._hypotheses: List[TargetHypothesis] = []
         self._gamma1 = gamma1  # fused score weight
         self._gamma2 = gamma2  # credibility weight
@@ -227,7 +227,7 @@ class GoalResolver:
         confidence_threshold: float = 0.6,
         fast_path_threshold: float = 0.75,   # Fast 路径最低置信度
         max_replan_attempts: int = 3,
-    ):
+    ) -> None:
         self._primary = create_llm_client(primary_config)
         self._fallback = (
             create_llm_client(fallback_config) if fallback_config else None
@@ -288,7 +288,7 @@ class GoalResolver:
         instruction: str,
         scene_graph_json: str,
         robot_position: Optional[Dict[str, float]] = None,
-        clip_encoder=None,
+        clip_encoder: Optional[Any] = None,
     ) -> Optional[GoalResult]:
         """
         Fast Path: 场景图直接匹配, 无需 LLM。
@@ -1172,7 +1172,7 @@ class GoalResolver:
         robot_position: Optional[Dict[str, float]] = None,
         language: str = "zh",
         explore_if_unknown: bool = True,
-        clip_encoder=None,
+        clip_encoder: Optional[Any] = None,
     ) -> GoalResult:
         """
         完整解析 (AdaCoT 动态路由 + Fast/Slow 双进程)。
@@ -1629,7 +1629,7 @@ class GoalResolver:
         scene_graph_json: str,
         max_objects: int = 15,
         max_relations: int = 20,
-        clip_encoder=None,
+        clip_encoder: Optional[Any] = None,
     ) -> str:
         """
         选择性 Grounding: 只给 LLM 与指令相关的场景子图。
@@ -1808,7 +1808,7 @@ class GoalResolver:
 
         return json.dumps(result, ensure_ascii=False)
 
-    def reset_exploration(self):
+    def reset_exploration(self) -> None:
         """重置探索状态 (新任务时调用)。"""
         self._explored_directions.clear()
         self._explore_step_count = 0
@@ -1879,7 +1879,7 @@ class GoalResolver:
 
         return None
 
-    def _parse_llm_response(self, response_text: str, scene_graph: dict = None) -> GoalResult:
+    def _parse_llm_response(self, response_text: str, scene_graph: Optional[dict] = None) -> GoalResult:
         """解析 LLM JSON 响应。"""
         try:
             data = self._extract_json(response_text)

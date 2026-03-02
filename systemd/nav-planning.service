@@ -18,6 +18,10 @@ KillMode=mixed
 KillSignal=SIGINT
 SuccessExitStatus=130 SIGINT
 
+# 关键服务保护: 降低 OOM killer 优先级
+OOMScoreAdjust=-500
+MemoryMax=3G
+
 # 地图和初始位姿可通过 EnvironmentFile 覆盖
 EnvironmentFile=-/etc/nav/planning.env
 Environment=HOME=/home/sunrise

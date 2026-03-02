@@ -1,7 +1,7 @@
 [Unit]
 Description=Navigation - gRPC Gateway (Remote Monitoring & Control)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target nav-planning.service
+Wants=network-online.target nav-planning.service
 
 [Service]
 Type=simple
@@ -17,6 +17,8 @@ WatchdogSec=30
 KillMode=mixed
 KillSignal=SIGINT
 SuccessExitStatus=130 SIGINT
+
+MemoryMax=1G
 
 Environment=HOME=/home/sunrise
 Environment=LANG=en_US.UTF-8

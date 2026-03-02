@@ -18,6 +18,10 @@ KillMode=mixed
 KillSignal=SIGINT
 SuccessExitStatus=130 SIGINT
 
+# 关键服务保护: 降低 OOM killer 优先级
+OOMScoreAdjust=-500
+MemoryMax=4G
+
 Environment=HOME=/home/sunrise
 Environment=LANG=en_US.UTF-8
 

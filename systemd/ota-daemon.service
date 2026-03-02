@@ -12,6 +12,10 @@ ExecStart=/bin/bash /opt/nav/scripts/services/ota-daemon.sh
 Restart=always
 RestartSec=3
 TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGINT
+SuccessExitStatus=130 SIGINT
+MemoryMax=512M
 
 Environment=HOME=/home/sunrise
 Environment=LANG=en_US.UTF-8

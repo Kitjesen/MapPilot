@@ -16,6 +16,8 @@ KillMode=mixed
 KillSignal=SIGINT
 SuccessExitStatus=130 SIGINT
 
+MemoryMax=6G
+
 Environment=HOME=/home/sunrise
 Environment=LANG=en_US.UTF-8
 

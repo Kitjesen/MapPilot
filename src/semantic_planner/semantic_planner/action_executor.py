@@ -24,7 +24,7 @@ import time
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -86,7 +86,7 @@ class ActionExecutor:
         look_around_speed: float = 0.5,     # rad/s 旋转速度
         look_around_duration: float = 12.0, # 秒 (≈ 360° at 0.5 rad/s)
         nav_timeout: float = 60.0,
-    ):
+    ) -> None:
         self.approach_distance = approach_distance
         self.verify_distance = verify_distance
         self.look_around_speed = look_around_speed
@@ -256,13 +256,13 @@ class ActionExecutor:
             return False
         return (time.time() - self._start_time) > self.nav_timeout
 
-    def mark_succeeded(self):
+    def mark_succeeded(self) -> None:
         self._status = ActionStatus.SUCCEEDED
 
-    def mark_failed(self):
+    def mark_failed(self) -> None:
         self._status = ActionStatus.FAILED
 
-    def reset(self):
+    def reset(self) -> None:
         self._status = ActionStatus.IDLE
         self._start_time = 0.0
 
@@ -274,7 +274,7 @@ class ActionExecutor:
         current_labels: List[str],
         original_goal: str,
         failure_count: int = 1,
-        llm_client=None,
+        llm_client: Optional[Any] = None,
     ) -> str:
         """
         LERa 三步失败恢复：Look → Explain → Replan。

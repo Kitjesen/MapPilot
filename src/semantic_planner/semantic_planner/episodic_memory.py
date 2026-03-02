@@ -34,7 +34,7 @@ class EpisodicMemory:
     MAX_RECORDS = 500
     MIN_DISTANCE_M = 1.0   # 同一位置 1m 内不重复记录
 
-    def __init__(self, clip_encoder=None):
+    def __init__(self, clip_encoder: object | None = None) -> None:
         self._records: List[MemoryRecord] = []
         self._clip = clip_encoder
 
