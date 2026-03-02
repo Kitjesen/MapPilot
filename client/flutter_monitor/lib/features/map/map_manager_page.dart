@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_monitor/core/gateway/map_gateway.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
+import 'package:flutter_monitor/shared/widgets/skeleton_loader.dart';
 import 'package:flutter_monitor/app/theme.dart';
 import 'package:flutter_monitor/core/services/ui_error_mapper.dart';
 import 'package:robot_proto/src/system.pb.dart';
@@ -307,7 +308,16 @@ class _MapManagerPageState extends State<MapManagerPage> {
         actions: [IconButton(icon: const Icon(Icons.refresh, size: 18), tooltip: locale.tr('刷新', 'Refresh'), onPressed: () => gateway.refreshMaps())],
       ),
       body: gateway.isLoading
-          ? const Center(child: CircularProgressIndicator.adaptive())
+          ? const Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(children: [
+                SkeletonListTile(),
+                SizedBox(height: 8),
+                SkeletonListTile(),
+                SizedBox(height: 8),
+                SkeletonListTile(),
+              ]),
+            )
           : gateway.error != null
               ? _errView(gateway)
               : _listView(gateway),

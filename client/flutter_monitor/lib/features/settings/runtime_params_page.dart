@@ -146,31 +146,36 @@ class _RuntimeParamsPageState extends State<RuntimeParamsPage> {
           children: [
             _StatusBanner(gw: gw, locale: locale),
             // ── Search bar ──
-            if (_showSearch)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: TextField(
-                  controller: _searchController,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    hintText: locale.tr('搜索参数名称…', 'Search parameter name…'),
-                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                    suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear_rounded, size: 18),
-                            onPressed: () => setState(() {
-                              _searchQuery = '';
-                              _searchController.clear();
-                            }),
-                          )
-                        : null,
-                    isDense: true,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    filled: true,
-                  ),
-                  onChanged: (v) => setState(() => _searchQuery = v.trim().toLowerCase()),
-                ),
-              ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              child: _showSearch
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: TextField(
+                        controller: _searchController,
+                        autofocus: true,
+                        decoration: InputDecoration(
+                          hintText: locale.tr('搜索参数名称…', 'Search parameter name…'),
+                          prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                          suffixIcon: _searchQuery.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear_rounded, size: 18),
+                                  onPressed: () => setState(() {
+                                    _searchQuery = '';
+                                    _searchController.clear();
+                                  }),
+                                )
+                              : null,
+                          isDense: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          filled: true,
+                        ),
+                        onChanged: (v) => setState(() => _searchQuery = v.trim().toLowerCase()),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
             // ── Body: search results or tabbed view ──
             if (_showSearch && _searchQuery.isNotEmpty)
               Expanded(
@@ -705,10 +710,16 @@ class _GroupViewState extends State<_GroupView> with AutomaticKeepAliveClientMix
             isEn: widget.isEn,
             onTap: () => setState(() => _showAdvanced = !_showAdvanced),
           ),
-          if (_showAdvanced) ...[
-            const SizedBox(height: 8),
-            _buildCard(context, advancedParams, advancedToggles),
-          ],
+          AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
+            child: _showAdvanced
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: _buildCard(context, advancedParams, advancedToggles),
+                  )
+                : const SizedBox.shrink(),
+          ),
         ],
       ],
     );

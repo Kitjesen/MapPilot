@@ -6,6 +6,7 @@ import 'package:flutter_monitor/core/providers/robot_connection_provider.dart';
 import 'package:flutter_monitor/core/services/app_logger.dart';
 import 'package:flutter_monitor/core/locale/locale_provider.dart';
 import 'package:robot_proto/src/data.pb.dart';
+import 'package:flutter_monitor/shared/widgets/skeleton_loader.dart';
 
 /// Page that displays robot device information and manages systemd services.
 class DeviceInfoPage extends StatefulWidget {
@@ -139,7 +140,16 @@ class _DeviceInfoPageState extends State<DeviceInfoPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          ? const Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(children: [
+                SkeletonListTile(),
+                SizedBox(height: 8),
+                SkeletonListTile(),
+                SizedBox(height: 8),
+                SkeletonListTile(),
+              ]),
+            )
           : _error != null
               ? Center(
                   child: Column(

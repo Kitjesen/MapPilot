@@ -1561,10 +1561,17 @@ class _MapScreenState extends State<MapScreen>
                     ),
                   ),
                 ),
-                if (_showLayerPanel) ...[
-                  const SizedBox(height: 6),
-                  _buildLayerPanel(),
-                ],
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: _showLayerPanel
+                      ? Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: _buildLayerPanel(),
+                        )
+                      : const SizedBox.shrink(),
+                ),
               ],
             ),
           ),

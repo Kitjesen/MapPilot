@@ -939,11 +939,16 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
               bgColor: color.withValues(alpha: 0.12),
               strokeWidth: 6,
             ),
-            child: Center(child: Text(
-              value.toStringAsFixed(0),
-              style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.w700,
-                color: context.titleColor),
+            child: Center(child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
+              child: Text(
+                value.toStringAsFixed(0),
+                key: ValueKey(value.toStringAsFixed(0)),
+                style: TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.w700,
+                  color: context.titleColor),
+              ),
             )),
           ),
         ),
@@ -1068,12 +1073,17 @@ class _HealthStatusPageState extends State<HealthStatusPage> {
             Text('RTT 延迟', style: TextStyle(
               fontSize: 12, color: context.subtitleColor)),
             const Spacer(),
-            Text(
-              rtt != null ? '${rtt.toStringAsFixed(1)} ms' : '-- ms',
-              style: TextStyle(
-                fontSize: 14, fontWeight: FontWeight.w700,
-                fontFeatures: const [FontFeature.tabularFigures()],
-                color: rttColor),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
+              child: Text(
+                rtt != null ? '${rtt.toStringAsFixed(1)} ms' : '-- ms',
+                key: ValueKey(rtt?.toStringAsFixed(1) ?? '--'),
+                style: TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  color: rttColor),
+              ),
             ),
           ]),
           // RTT sparkline
