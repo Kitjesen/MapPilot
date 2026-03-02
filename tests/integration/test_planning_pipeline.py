@@ -90,6 +90,10 @@ class PlanningTestNode(Node):
                                  lambda m: self._record('/nav/way_point', m), 10)
         self.create_subscription(String, '/nav/planner_status',
                                  lambda m: self._record('/nav/planner_status', m), 10)
+        # pct_path_adapter publishes JSON events (path_received/waypoint_reached/goal_reached)
+        # to /nav/adapter_status, not /nav/planner_status
+        self.create_subscription(String, '/nav/adapter_status',
+                                 lambda m: self._record('/nav/adapter_status', m), 10)
         self.create_subscription(Path, '/nav/local_path',
                                  lambda m: self._record('/nav/local_path', m), 10)
         self.create_subscription(TwistStamped, '/nav/cmd_vel',
@@ -135,13 +139,15 @@ class PlanningTestNode(Node):
                     return True
         return False
 
-    # ── 辅助: 检查收到的 planner_status 中是否有指定 event ─────────────────────
+    # ── 辅助: 检查 adapter_status 中是否有指定 event (JSON格式) ────────────────
+    # pct_path_adapter → /nav/adapter_status: {"event":"path_received/waypoint_reached/goal_reached",...}
+    # global_planner   → /nav/planner_status: plain string IDLE/PLANNING/SUCCESS/FAILED
     def wait_for_status_event(self, event: str, timeout: float = 10.0) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
             rclpy.spin_once(self, timeout_sec=0.05)
             with self._lock:
-                for msg in self.received['/nav/planner_status']:
+                for msg in self.received['/nav/adapter_status']:
                     try:
                         data = json.loads(msg.data)
                         if data.get('event') == event:
