@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
     config = ota::LoadConfig(config_path);
     ota::OtaLogInfo("Loaded config from %s", config_path.c_str());
   } else {
-    ota::OtaLogWarn("Config not found at %s, using defaults", config_path.c_str());
+    ota::OtaLogWarn("[main] Config not found at %s, using defaults", config_path.c_str());
   }
 
   // 设置日志级别
@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
       creds = grpc::SslServerCredentials(ssl_opts);
       ota::OtaLogInfo("TLS enabled");
     } else {
-      ota::OtaLogWarn("TLS cert/key empty, falling back to insecure");
+      ota::OtaLogWarn("[main] TLS cert/key empty, falling back to insecure");
       creds = grpc::InsecureServerCredentials();
     }
   } else {
@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
 
   g_server = builder.BuildAndStart();
   if (!g_server) {
-    ota::OtaLogError("Failed to start gRPC server on %s", listen_addr.c_str());
+    ota::OtaLogError("[main] Failed to start gRPC server on %s", listen_addr.c_str());
     return 1;
   }
 

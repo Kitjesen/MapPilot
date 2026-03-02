@@ -58,7 +58,7 @@ OtaDaemonConfig LoadConfig(const std::string &yaml_path) {
       if (r["api_key_file"])   cfg.reporter.api_key_file   = r["api_key_file"].as<std::string>();
     }
   } catch (const std::exception &e) {
-    OtaLogError("Failed to parse config %s: %s", yaml_path.c_str(), e.what());
+    OtaLogError("[LoadConfig] Failed to parse config %s: %s", yaml_path.c_str(), e.what());
   }
 
   // ── 加载制品路径映射 (artifact_paths.yaml) ──
@@ -96,11 +96,11 @@ OtaDaemonConfig LoadConfig(const std::string &yaml_path) {
       OtaLogInfo("Loaded artifact paths: %zu exact, %zu category defaults",
                cfg.artifact_paths.size(), cfg.category_defaults.size());
     } else {
-      OtaLogWarn("artifact_paths.yaml not found at %s, using manifest target_path as fallback",
+      OtaLogWarn("[LoadConfig] artifact_paths.yaml not found at %s, using manifest target_path as fallback",
                paths_yaml.c_str());
     }
   } catch (const std::exception &e) {
-    OtaLogError("Failed to parse %s: %s", paths_yaml.c_str(), e.what());
+    OtaLogError("[LoadConfig] Failed to parse %s: %s", paths_yaml.c_str(), e.what());
   }
 
   return cfg;

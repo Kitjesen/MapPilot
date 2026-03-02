@@ -291,20 +291,20 @@ bool ManageService(const std::string &service_name,
                    const std::string &action) {
   // Validate action
   if (action != "start" && action != "stop" && action != "restart") {
-    OtaLogError("Invalid service action: %s", action.c_str());
+    OtaLogError("[ManageService] Invalid service action: %s", action.c_str());
     return false;
   }
   // Validate service name (security: only allow alphanumeric, dash, dot)
   for (char c : service_name) {
     if (!std::isalnum(c) && c != '-' && c != '_' && c != '.') {
-      OtaLogError("Invalid service name: %s", service_name.c_str());
+      OtaLogError("[ManageService] Invalid service name: %s", service_name.c_str());
       return false;
     }
   }
 
   // 使用 sudo: sudoers 规则允许 sunrise 用户无密码管理 nav-* 服务
   std::string cmd = "sudo /bin/systemctl " + action + " " + service_name + " 2>&1";
-  OtaLogInfo("Executing: %s", cmd.c_str());
+  OtaLogInfo("[ManageService] Executing: %s", cmd.c_str());
   int ret = system(cmd.c_str());
   return ret == 0;
 }

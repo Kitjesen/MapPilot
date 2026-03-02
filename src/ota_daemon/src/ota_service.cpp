@@ -113,7 +113,7 @@ bool OtaServiceImpl::LoadInstalledManifest() {
 
   std::ifstream file(config_.ota_manifest_path);
   if (!file.is_open()) {
-    OtaLogError("Failed to open manifest: %s", config_.ota_manifest_path.c_str());
+    OtaLogError("[LoadInstalledManifest] Failed to open manifest: %s", config_.ota_manifest_path.c_str());
     return false;
   }
 
@@ -161,7 +161,7 @@ bool OtaServiceImpl::SaveInstalledManifest() {
 
   std::ofstream file(config_.ota_manifest_path, std::ios::trunc);
   if (!file.is_open()) {
-    OtaLogError("Failed to save manifest to %s", config_.ota_manifest_path.c_str());
+    OtaLogError("[SaveInstalledManifest] Failed to save manifest to %s", config_.ota_manifest_path.c_str());
     return false;
   }
 
@@ -246,7 +246,7 @@ bool OtaServiceImpl::BackupArtifact(const std::string &name,
     OtaLogInfo("Backed up %s -> %s", current_path.c_str(), backup_path->c_str());
     return true;
   } catch (const std::exception &e) {
-    OtaLogError("Backup failed: %s", e.what());
+    OtaLogError("[BackupArtifact] Backup failed: %s", e.what());
     return false;
   }
 }
@@ -304,7 +304,7 @@ bool OtaServiceImpl::PostInstallHealthCheck(
   }
 
   // 等待更长时间
-  OtaLogWarn("No managed service active yet, waiting up to %d seconds...",
+  OtaLogWarn("[PostInstallHealthCheck] No managed service active yet, waiting up to %d seconds...",
            config_.health_check_timeout_sec);
   for (int i = 0; i < config_.health_check_timeout_sec; i += 3) {
     std::this_thread::sleep_for(std::chrono::seconds(3));

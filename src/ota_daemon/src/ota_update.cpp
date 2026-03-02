@@ -344,7 +344,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
                           " 2>&1";
         int r = std::system(cmd.c_str());
         if (r != 0) {
-          OtaLogWarn("Dog Board reload script returned %d (non-fatal)", r);
+          OtaLogWarn("[ApplyUpdate] Dog Board reload script returned %d (non-fatal)", r);
           install_msg += " (reload notification failed, exit=" +
                          std::to_string(r) + ")";
         } else {
@@ -437,7 +437,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       PostInstallHealthCheck(artifact.safety_level(), &health_reason);
 
   if (!health_ok) {
-    OtaLogWarn("Health check FAILED for %s: %s - auto-rolling back",
+    OtaLogWarn("[ApplyUpdate] Health check FAILED for %s: %s - auto-rolling back",
              artifact.name().c_str(), health_reason.c_str());
     {
       std::lock_guard<std::mutex> lock(ota_mutex_);
