@@ -305,8 +305,8 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
 
   switch (artifact.apply_action()) {
     case robot::v1::OTA_APPLY_ACTION_COPY_ONLY: {
-      auto dir = target_path.substr(0, target_path.rfind('/'));
-      std::filesystem::create_directories(dir);
+      std::filesystem::create_directories(
+          std::filesystem::path(target_path).parent_path());
       try {
         std::filesystem::copy_file(
             staged_path, target_path,
@@ -319,8 +319,8 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       break;
     }
     case robot::v1::OTA_APPLY_ACTION_RELOAD_MODEL: {
-      auto dir = target_path.substr(0, target_path.rfind('/'));
-      std::filesystem::create_directories(dir);
+      std::filesystem::create_directories(
+          std::filesystem::path(target_path).parent_path());
       try {
         std::filesystem::copy_file(
             staged_path, target_path,
@@ -376,7 +376,7 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
       break;
     }
     case robot::v1::OTA_APPLY_ACTION_INSTALL_SCRIPT: {
-      auto dir = staged_path.substr(0, staged_path.rfind('/'));
+      auto dir = std::filesystem::path(staged_path).parent_path().string();
       std::string script = dir + "/install.sh";
       if (FileExists(script)) {
         int r = std::system(
@@ -384,8 +384,8 @@ grpc::Status OtaServiceImpl::ApplyUpdate(
         install_ok = (r == 0);
         install_msg = "Install script returned " + std::to_string(r);
       } else {
-        auto tdir = target_path.substr(0, target_path.rfind('/'));
-        std::filesystem::create_directories(tdir);
+        std::filesystem::create_directories(
+            std::filesystem::path(target_path).parent_path());
         try {
           std::filesystem::copy_file(
               staged_path, target_path,
@@ -640,20 +640,24 @@ grpc::Status OtaServiceImpl::GetUpgradeHistory(
   for (uint32_t i = 0; i < limit && i < lines.size(); ++i) {
     auto *entry = response->add_entries();
     auto extract = [&](const std::string &key) -> std::string {
+      const std::string &line = lines[i];
       std::string needle = "\"" + key + "\":\"";
-      auto pos = lines[i].find(needle);
+      auto pos = line.find(needle);
       if (pos == std::string::npos) {
         needle = "\"" + key + "\":";
-        pos = lines[i].find(needle);
+        pos = line.find(needle);
         if (pos == std::string::npos) return "";
         auto start = pos + needle.size();
-        auto end = lines[i].find_first_of(",}", start);
-        if (end == std::string::npos) end = lines[i].size();
-        return lines[i].substr(start, end - start);
+        if (start >= line.size()) return "";
+        auto end = line.find_first_of(",}", start);
+        if (end == std::string::npos) end = line.size();
+        return line.substr(start, end - start);
       }
       auto start = pos + needle.size();
-      auto end = lines[i].find('"', start);
-      return lines[i].substr(start, end - start);
+      if (start >= line.size()) return "";
+      auto end = line.find('"', start);
+      if (end == std::string::npos) return "";
+      return line.substr(start, end - start);
     };
 
     entry->set_timestamp(extract("ts"));

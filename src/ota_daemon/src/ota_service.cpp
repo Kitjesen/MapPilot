@@ -156,8 +156,10 @@ bool OtaServiceImpl::LoadInstalledManifest() {
 }
 
 bool OtaServiceImpl::SaveInstalledManifest() {
-  auto dir = config_.ota_manifest_path.substr(0, config_.ota_manifest_path.rfind('/'));
-  std::filesystem::create_directories(dir);
+  auto slash = config_.ota_manifest_path.rfind('/');
+  if (slash != std::string::npos) {
+    std::filesystem::create_directories(config_.ota_manifest_path.substr(0, slash));
+  }
 
   std::ofstream file(config_.ota_manifest_path, std::ios::trunc);
   if (!file.is_open()) {
@@ -183,14 +185,18 @@ bool OtaServiceImpl::SaveInstalledManifest() {
 void OtaServiceImpl::LoadSystemVersionJson() {
   std::string content = ReadFileToString(config_.system_version_path);
   if (!content.empty()) {
-    // Simple parse for system_version field
+    // Simple parse for system_version field — with boundary checks on each find
     auto pos = content.find("\"system_version\"");
-    if (pos != std::string::npos) {
+    if (pos != std::string::npos && pos + 16 < content.size()) {
       auto q1 = content.find('"', pos + 16);
-      auto q2 = content.find('"', q1 + 1);
-      auto q3 = content.find('"', q2 + 1);
-      if (q3 != std::string::npos) {
-        system_version_ = content.substr(q2 + 1, q3 - q2 - 1);
+      if (q1 != std::string::npos && q1 + 1 < content.size()) {
+        auto q2 = content.find('"', q1 + 1);
+        if (q2 != std::string::npos && q2 + 1 < content.size()) {
+          auto q3 = content.find('"', q2 + 1);
+          if (q3 != std::string::npos && q3 > q2 + 1) {
+            system_version_ = content.substr(q2 + 1, q3 - q2 - 1);
+          }
+        }
       }
     }
   }
@@ -209,8 +215,10 @@ void OtaServiceImpl::SaveSystemVersionJson() {
   json << "\n  }\n}\n";
 
   std::string tmp = config_.system_version_path + ".tmp";
-  auto dir = config_.system_version_path.substr(0, config_.system_version_path.rfind('/'));
-  std::filesystem::create_directories(dir);
+  auto slash = config_.system_version_path.rfind('/');
+  if (slash != std::string::npos) {
+    std::filesystem::create_directories(config_.system_version_path.substr(0, slash));
+  }
   std::ofstream out(tmp);
   if (out.is_open()) {
     out << json.str();
@@ -329,8 +337,10 @@ void OtaServiceImpl::AppendUpgradeHistory(
     const std::string &status, robot::v1::OtaFailureCode failure_code,
     const std::string &failure_reason, uint64_t duration_ms,
     const std::string &health_check) const {
-  auto dir = config_.ota_history_path.substr(0, config_.ota_history_path.rfind('/'));
-  std::filesystem::create_directories(dir);
+  auto slash = config_.ota_history_path.rfind('/');
+  if (slash != std::string::npos) {
+    std::filesystem::create_directories(config_.ota_history_path.substr(0, slash));
+  }
 
   std::string escaped = failure_reason;
   for (size_t pos = 0; (pos = escaped.find('"', pos)) != std::string::npos; pos += 2)

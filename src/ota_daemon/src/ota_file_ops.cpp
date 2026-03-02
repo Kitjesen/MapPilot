@@ -56,8 +56,8 @@ grpc::Status OtaServiceImpl::UploadFile(
       }
 
       // Ensure parent dir
-      auto dir = remote_path.substr(0, remote_path.rfind('/'));
-      std::filesystem::create_directories(dir);
+      std::filesystem::create_directories(
+          std::filesystem::path(remote_path).parent_path());
 
       // Write to a temporary file; rename to final path only after verification.
       // This prevents a corrupted partial file from remaining on disk if the
@@ -226,8 +226,8 @@ grpc::Status OtaServiceImpl::DownloadFromUrl(
     return grpc::Status::OK;
   }
 
-  auto dir = staging_path.substr(0, staging_path.rfind('/'));
-  std::filesystem::create_directories(dir);
+  std::filesystem::create_directories(
+      std::filesystem::path(staging_path).parent_path());
 
   OtaLogInfo("DownloadFromUrl: %s -> %s", url.c_str(), staging_path.c_str());
 
