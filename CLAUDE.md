@@ -311,7 +311,7 @@ All standard topics use `/nav/` prefix. Defined in `config/topic_contract.yaml`.
 | `/nav/relocalize_check` | interface/srv/IsValid | 检查重定位是否完成 |
 | `/nav/dog_odometry` | nav_msgs/Odometry | han_dog_bridge IMU 里程计（含位置积分，50→10Hz） |
 | `/nav/adapter_status` | std_msgs/String (JSON) | pct_path_adapter 航点跟踪事件 `{"event":"...","index":N,"total":N}` |
-| `/nav/planner_status` | std_msgs/String | 全局规划器状态：`IDLE`/`PLANNING`/`SUCCESS`/`FAILED`/`GOAL_REACHED` |
+| `/nav/planner_status` | std_msgs/String | 全局规划器状态：`IDLE`/`PLANNING`/`SUCCESS`/`FAILED`/`GOAL_REACHED`/`WARN_STUCK`/`STUCK`（pathFollower 渐进卡死检测：半超时发 WARN_STUCK 预警，全超时发 STUCK 确认） |
 | `/nav/semantic/scene_graph` | String (JSON) | ConceptGraphs scene graph |
 | `/nav/semantic/detections_3d` | Detection3DArray | 3D object detections |
 | `/nav/semantic/instruction` | String | Natural language navigation instruction |

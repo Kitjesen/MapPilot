@@ -33,8 +33,8 @@ localization:
 # ── 全局规划层 ──
 planning:
   global_path: /nav/global_path         # nav_msgs/Path (全局路径)
-  planner_status: /nav/planner_status   # std_msgs/String 纯字符串: "IDLE"/"PLANNING"/"SUCCESS"/"FAILED" (global_planner 发布)
-  adapter_status: /nav/adapter_status   # std_msgs/String JSON: {"event":...,"index":N,"total":N} (pct_path_adapter 发布)
+  planner_status: /nav/planner_status   # std_msgs/String 纯字符串: "IDLE"/"PLANNING"/"SUCCESS"/"FAILED"/"WARN_STUCK"/"STUCK" (global_planner + pathFollower 发布; WARN_STUCK=半超时预警, STUCK=全超时确认卡死)
+  adapter_status: /nav/adapter_status   # std_msgs/String JSON: {"event":...,"index":N,"total":N} (pct_path_adapter 发布; event: path_received/waypoint_reached/goal_reached/replanning/stuck_final/failed)
 
 # ── 自主导航层 ──
 autonomy:

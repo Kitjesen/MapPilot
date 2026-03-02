@@ -42,7 +42,8 @@
 | 话题 | 类型 | 说明 |
 |------|------|------|
 | `/nav/global_path` | `nav_msgs/Path` | 全局路径 |
-| `/nav/planner_status` | `std_msgs/String` | JSON 规划器事件 |
+| `/nav/planner_status` | `std_msgs/String` | 规划器状态：`IDLE`/`PLANNING`/`SUCCESS`/`FAILED`/`WARN_STUCK`/`STUCK` |
+| `/nav/adapter_status` | `std_msgs/String` | pct_path_adapter JSON: `{"event":"...","index":N,"total":N}` |
 
 ### 自主导航层
 
