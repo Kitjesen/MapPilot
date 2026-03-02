@@ -5,11 +5,14 @@
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -69,8 +72,8 @@ class EpisodicMemory:
         if self._clip is not None:
             try:
                 embedding = self._clip.encode_text(description)
-            except Exception:
-                pass
+            except (ValueError, TypeError, AttributeError) as e:
+                logger.debug("CLIP encode_text failed: %s", e)
 
         record = MemoryRecord(
             timestamp=time.time(),
@@ -114,8 +117,8 @@ class EpisodicMemory:
                     scores.append(sim)
                 ranked = sorted(zip(scores, candidates), key=lambda x: -x[0])
                 return [r for _, r in ranked[:top_k]]
-            except Exception:
-                pass
+            except (ValueError, TypeError, AttributeError) as e:
+                logger.debug("CLIP embedding query failed, falling back to keywords: %s", e)
 
         # 降级：关键词匹配
         scored = [(self._keyword_score(query, r), r) for r in candidates]

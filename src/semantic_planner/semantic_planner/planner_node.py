@@ -895,7 +895,7 @@ class SemanticPlannerNode(Node):
                     self._person_tracker.update(
                         self._latest_scene_graph_parsed.get("objects", [])
                     )
-                except Exception:
+                except (TypeError, KeyError, AttributeError):
                     pass
             return
 
@@ -904,7 +904,7 @@ class SemanticPlannerNode(Node):
             scene_data = json.loads(msg.data)
             self._latest_scene_graph_parsed = scene_data
             self._latest_scene_graph_hash = new_hash
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             scene_data = self._latest_scene_graph_parsed or {}
 
         # 增量更新 runtime KG (每次场景图更新都提取房间-物体关系)
@@ -914,8 +914,8 @@ class SemanticPlannerNode(Node):
                 room_data = extract_room_objects_from_scene_graph(msg.data)
                 for room_type, labels, confs in room_data:
                     self._runtime_kg.observe_room(room_type, labels, confs)
-            except Exception:
-                pass  # non-critical
+            except (ImportError, TypeError, KeyError, ValueError) as e:
+                self.get_logger().debug("Runtime KG update failed (non-critical): %s", e)
 
         # 更新情节记忆（复用已解析的 scene_data）
         try:
@@ -924,14 +924,14 @@ class SemanticPlannerNode(Node):
             if rp:
                 _pos = np.array([rp['x'], rp['y'], rp.get('z', 0.0)])
                 self._episodic_memory.add(position=_pos, labels=_labels)
-        except Exception:
-            pass  # 静默降级
+        except (TypeError, KeyError, ValueError) as e:
+            self.get_logger().debug("Episodic memory update failed: %s", e)
 
         # 更新 PersonTracker（复用已解析 dict，消除第二次 json.loads）
         if self._follow_mode:
             try:
                 self._person_tracker.update(scene_data.get("objects", []))
-            except Exception:
+            except (TypeError, KeyError, AttributeError):
                 pass
 
     def _image_callback(self, msg: Image):
@@ -2145,7 +2145,7 @@ class SemanticPlannerNode(Node):
             # 日志 (低频: 仅当距离变化 > 0.5m 时)
             if not hasattr(self, "_last_fb_dist") or abs(self._last_fb_dist - dist_remaining) > 0.5:
                 self._last_fb_dist = dist_remaining
-                self.get_logger().info(
+                self.get_logger().debug(
                     f"Nav2 feedback: dist_remaining={dist_remaining:.2f}m, "
                     f"time={nav_time:.1f}s, recoveries={n_recoveries}, "
                     f"accumulated={self._nav_accumulated_dist:.1f}m"
@@ -2263,8 +2263,8 @@ class SemanticPlannerNode(Node):
                             target_exist = max(target_exist, belief.get("P_exist", 0.6))
                             sigma = belief.get("sigma_pos", 1.0)
                             target_var = min(target_var, sigma * sigma)
-            except Exception:
-                pass
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+                self.get_logger().debug("VoI scheduler state parse failed: %s", e)
 
         return SchedulerState(
             target_credibility=target_cred,
@@ -2317,8 +2317,8 @@ class SemanticPlannerNode(Node):
                         if self._nav2_goal_handle and self._nav2_goal_active:
                             try:
                                 self._nav2_goal_handle.cancel_goal_async()
-                            except Exception:
-                                pass
+                            except (RuntimeError, AttributeError) as e:
+                                self.get_logger().debug("cancel_goal_async failed: %s", e)
                         self._current_goal = result
                         # 重新发送 Nav2 目标
                         from geometry_msgs.msg import PoseStamped
@@ -2907,8 +2907,8 @@ class SemanticPlannerNode(Node):
                     if _best_dist > 8.0:
                         _current_room_id = -1
                         _current_room_name = ""
-            except Exception:
-                pass
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+                self.get_logger().debug("Topo memory scene graph parse failed: %s", e)
 
             self._topo_memory.update_position(
                 position=np.array([

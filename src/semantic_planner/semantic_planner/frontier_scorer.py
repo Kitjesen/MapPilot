@@ -418,8 +418,8 @@ class FrontierScorer:
                     )
                     if sim and len(sim) > 0:
                         return max(0.0, min(1.0, float(sim[0])))
-                except Exception:
-                    pass
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.debug("CLIP frontier vision scoring failed: %s", e)
         return 0.0
 
     def score_frontiers(
@@ -906,8 +906,8 @@ class FrontierScorer:
                         confidence = room_probs[best_room]
                         if confidence > 0.3:
                             room_type = best_room
-            except Exception:
-                pass
+            except (ImportError, TypeError, ValueError, AttributeError) as e:
+                logger.debug("Room type prediction failed: %s", e)
 
         if unique_labels:
             desc = f"可见对象：{'、'.join(unique_labels)}，推测区域：{room_type}"

@@ -248,8 +248,8 @@ class TopologicalMemory:
                 q_feats = self._clip_encoder.encode_text([query])
                 if q_feats is not None and q_feats.size > 0:
                     query_clip_feat = q_feats[0]
-            except Exception:
-                pass
+            except (ValueError, TypeError, AttributeError) as e:
+                logger.debug("CLIP text encoding for topo query failed: %s", e)
 
         # Phase 1: 计算每个节点的原始分数
         raw_scores: Dict[int, float] = {}
@@ -267,8 +267,8 @@ class TopologicalMemory:
                         clip_sim = float(_np.dot(query_clip_feat, nf / nf_norm))
                         # CLIP 相似度映射到 [0, 3]，与关键词分数量纲对齐
                         score += max(0.0, clip_sim) * 3.0
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as e:
+                    logger.debug("CLIP node similarity failed: %s", e)
 
             # ── 源2: 标签关键词匹配 ──
             for label in node.visible_labels:
@@ -460,7 +460,8 @@ class TopologicalMemory:
             try:
                 hull = ConvexHull(positions)
                 coverage = hull.volume  # 2D 时 volume = area
-            except Exception:
+            except (ValueError, ImportError) as e:
+                logger.debug("ConvexHull coverage calculation failed: %s", e)
                 coverage = 0.0
         else:
             coverage = 0.0

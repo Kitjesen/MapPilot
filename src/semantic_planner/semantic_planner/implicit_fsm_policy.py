@@ -10,11 +10,14 @@
   - 从 .npz 权重文件加载参数
 """
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 MISSION_STATES = ["success", "searching_1", "searching_0", "running"]
@@ -162,7 +165,8 @@ class ImplicitFSMPolicy:
                 try:
                     self._model = _LinearFSMModel.from_npz(str(p))
                     self._ready = True
-                except Exception:
+                except (OSError, ValueError, KeyError) as e:
+                    logger.warning("Failed to load FSM weights from %s: %s", p, e)
                     if strict:
                         raise
 
