@@ -6,6 +6,21 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.7.3] — 2026-03-02 (文档与工程结构整理)
+
+### 文档
+- 重写 README.md：去除装饰性内容，改为专业技术文档，补全架构说明、操作模式、配置和部署章节
+
+### 工程结构
+- 整理根目录：`AGENTS.md` → `docs/`，`TEST_PLAN.md` → `docs/07-testing/`，`fastdds_no_shm.xml` → `config/`，`lingtu.sh` → `scripts/`
+- 更新所有脚本和文档中的路径引用（`mapping.sh`、`planning.sh`、`save_map.sh`、`scripts/ota/`）
+
+### 测试与可视化
+- 新增 e2e 建筑导航测试脚本（`tests/planning/e2e_nav_test.py`、`e2e_multi_scenario.py`、`e2e_generate_viz.py`）
+- 新增规划演示 GIF 和轨迹图（`tools/`，含 corridor / head-on / replan / blocked 五个场景）
+
+---
+
 ## [1.7.2] — 2026-03-02 (代码质量 20轮迭代)
 
 ### C++ 代码质量
