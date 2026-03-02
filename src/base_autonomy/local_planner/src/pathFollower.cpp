@@ -326,6 +326,13 @@ private:
   double stuckCheckX_    = 0.0;
   double stuckCheckY_    = 0.0;
   bool stuckCheckInit_   = false;
+  bool stuckWarnPublished_ = false;  // R10: 渐进警告已发布标记
+
+  // R10-3: 卡死恢复确认 — 需连续 N 帧速度 >阈值才清除卡死状态
+  int stuckRecoverCount_   = 0;
+  bool stuckRecovering_    = false;
+  static constexpr int kStuckRecoverFrames = 3;
+  static constexpr double kStuckRecoverSpeed = 0.05;  // m/s
 
   nav_msgs::msg::Path path_;
 
@@ -390,17 +397,33 @@ private:
       stuckCheckX_    = vehicleX_;
       stuckCheckY_    = vehicleY_;
       stuckCheckInit_ = true;
+      stuckWarnPublished_ = false;
     } else {
       double elapsed = (now() - stuckCheckTime_).seconds();
+      double sdx = vehicleX_ - stuckCheckX_;
+      double sdy = vehicleY_ - stuckCheckY_;
+      double moved = std::sqrt(sdx*sdx + sdy*sdy);
+      bool hasActivePath = path_.poses.size() > 0 && safetyStop_ == 0;
+
+      // R10-1: 渐进警告 — 5s 时发 WARN_STUCK, 10s 时发 STUCK
+      if (hasActivePath && moved < stuckDistThre_ && elapsed >= stuckTimeout_ * 0.5
+          && !stuckWarnPublished_) {
+        auto warnMsg = std_msgs::msg::String();
+        warnMsg.data = "WARN_STUCK";
+        pubGoalStatus_->publish(warnMsg);
+        stuckWarnPublished_ = true;
+        RCLCPP_WARN(get_logger(),
+          "Stuck warning: moved %.3fm in %.1fs (threshold=%.1fs)",
+          moved, elapsed, stuckTimeout_);
+      }
+
       if (elapsed >= stuckTimeout_) {
-        double dx = vehicleX_ - stuckCheckX_;
-        double dy = vehicleY_ - stuckCheckY_;
-        double moved = std::sqrt(dx*dx + dy*dy);
-        // 有活动路径 + 未急停 + 移动距离过小 → STUCK
-        if (path_.poses.size() > 0 && safetyStop_ == 0 && moved < stuckDistThre_) {
-          auto msg = std_msgs::msg::String();
-          msg.data = "STUCK";
-          pubGoalStatus_->publish(msg);
+        if (hasActivePath && moved < stuckDistThre_) {
+          auto stuckMsg = std_msgs::msg::String();
+          stuckMsg.data = "STUCK";
+          pubGoalStatus_->publish(stuckMsg);
+          stuckRecovering_ = true;
+          stuckRecoverCount_ = 0;
           RCLCPP_WARN(get_logger(),
             "Stuck detected: moved %.3fm in %.1fs (thre=%.3fm)", moved, elapsed, stuckDistThre_);
         }
@@ -408,6 +431,42 @@ private:
         stuckCheckTime_ = now();
         stuckCheckX_    = vehicleX_;
         stuckCheckY_    = vehicleY_;
+        stuckWarnPublished_ = false;
+      }
+    }
+
+    // R10-2: 反向卡死检测 — 命令前进但实际后退时提前触发
+    if (path_.poses.size() > 0 && safetyStop_ == 0 && stuckCheckInit_) {
+      double cmdVx = coreState_.vehicleSpeed;
+      double actualVx = odomIn->twist.twist.linear.x;
+      // 命令前进 >0.1 但实际后退 <-0.05: 视为异常, 加速卡死判定
+      if (cmdVx > 0.1 && actualVx < -0.05) {
+        double elapsed = (now() - stuckCheckTime_).seconds();
+        double remaining = stuckTimeout_ - elapsed;
+        // 将剩余时间压缩到最多 3s, 提前触发
+        if (remaining > 3.0) {
+          stuckCheckTime_ = now() - rclcpp::Duration::from_seconds(stuckTimeout_ - 3.0);
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
+            "Reverse motion detected (cmd=%.2f, actual=%.2f), "
+            "accelerating stuck detection", cmdVx, actualVx);
+        }
+      }
+    }
+
+    // R10-3: 卡死恢复确认 — 连续 3 帧速度 >0.05 才清除卡死状态
+    if (stuckRecovering_) {
+      double speed = std::sqrt(
+        odomIn->twist.twist.linear.x * odomIn->twist.twist.linear.x +
+        odomIn->twist.twist.linear.y * odomIn->twist.twist.linear.y);
+      if (speed > kStuckRecoverSpeed) {
+        stuckRecoverCount_++;
+        if (stuckRecoverCount_ >= kStuckRecoverFrames) {
+          stuckRecovering_ = false;
+          stuckRecoverCount_ = 0;
+          RCLCPP_INFO(get_logger(), "Stuck recovery confirmed (speed=%.2f)", speed);
+        }
+      } else {
+        stuckRecoverCount_ = 0;  // 重置计数
       }
     }
 
