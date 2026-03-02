@@ -106,19 +106,36 @@ echo ""
 # ── 快速节点存活检查 (P2 fix: 预检失败时快速退出) ────────────────────────────
 # 重启 ROS2 daemon 以避免 stale daemon 导致 ros2 node list 失败
 ros2 daemon stop 2>/dev/null; ros2 daemon start 2>/dev/null
-sleep 1
 echo ""
-echo -e "${YELLOW}── 节点存活预检 ──${NC}"
-PRECHECK_FAIL=0
+echo -e "${YELLOW}── 节点存活预检 (最多等待 30s) ──${NC}"
+
+# 重试等待: 每秒检查一次，最多 30s（terrainAnalysis 在 S100P 上需要更长时间注册）
+NODES_OK=0
+for attempt in $(seq 1 30); do
+    NODE_LIST=$(ros2 node list 2>/dev/null || true)
+    MISSING=""
+    for node in terrainAnalysis terrainAnalysisExt localPlanner pathFollower pct_path_adapter; do
+        echo "$NODE_LIST" | grep -q "/$node" || MISSING="$MISSING $node"
+    done
+    if [ -z "$MISSING" ]; then
+        NODES_OK=1
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+echo ""
+
+# 报告最终结果
 for node in terrainAnalysis terrainAnalysisExt localPlanner pathFollower pct_path_adapter; do
     if ros2 node list 2>/dev/null | grep -q "/$node"; then
         echo -e "  ${GREEN}✓${NC} $node"
     else
         echo -e "  ${RED}✗${NC} $node"
-        PRECHECK_FAIL=1
     fi
 done
-if [ "$PRECHECK_FAIL" -eq 1 ]; then
+
+if [ "$NODES_OK" -eq 0 ]; then
     echo -e "${RED}❌ 节点未完全启动，中止测试${NC}"
     echo "  查看启动日志: cat /tmp/autonomy_stub.log  cat /tmp/pct_adapter_stub.log"
     exit 1
