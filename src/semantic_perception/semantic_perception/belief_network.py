@@ -132,6 +132,17 @@ def build_affordance_vectors(kg, label2idx: Dict[str, int]) -> np.ndarray:
 
 
 NUM_AFFORDANCES = 12
+# Alias for backward compatibility
+NUM_AFFORDANCE_TYPES = NUM_AFFORDANCES
+
+# Alias: build_affordance_matrix → build_affordance_vectors
+build_affordance_matrix = build_affordance_vectors
+
+
+def build_dangerous_mask(kg, label2idx: Dict[str, int]) -> np.ndarray:
+    """Build boolean mask: True where object safety_level >= 'dangerous'."""
+    safety_vec = build_safety_vector(kg, label2idx)
+    return safety_vec >= SAFETY_ENCODING["dangerous"]
 
 
 def build_room_prior_vectors(kg, label2idx: Dict[str, int]) -> Dict[str, np.ndarray]:

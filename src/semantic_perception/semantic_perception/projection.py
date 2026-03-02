@@ -90,6 +90,10 @@ def project_to_3d(
     return np.array([x, y, z])
 
 
+# Alias for backward compatibility
+project_2d_to_3d = project_to_3d
+
+
 def transform_point(
     point_camera: np.ndarray,
     tf_camera_to_world: np.ndarray,
