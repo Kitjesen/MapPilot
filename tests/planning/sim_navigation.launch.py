@@ -67,6 +67,8 @@ def generate_launch_description():
                                         description='目标 X (m)')
     goal_y_arg = DeclareLaunchArgument('goal_y',   default_value='7.3',
                                         description='目标 Y (m)  (Corridor_E 默认)')
+    goal_z_arg = DeclareLaunchArgument('goal_z',   default_value='0.0',
+                                        description='目标 Z (m)  (>0.1 → 3D 跨楼层规划)')
     start_x_arg = DeclareLaunchArgument('start_x', default_value='-5.5',
                                          description='起点 X (m)')
     start_y_arg = DeclareLaunchArgument('start_y', default_value='7.3',
@@ -75,6 +77,7 @@ def generate_launch_description():
     map_path = LaunchConfiguration('map_path')
     goal_x   = LaunchConfiguration('goal_x')
     goal_y   = LaunchConfiguration('goal_y')
+    goal_z   = LaunchConfiguration('goal_z')
     start_x  = LaunchConfiguration('start_x')
     start_y  = LaunchConfiguration('start_y')
 
@@ -93,7 +96,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'tomogram_file':   map_path,
-            'obstacle_thr':    49.9,
+            'obstacle_thr':    50.1,  # 50.0 = 走廊隔断格 (恰好在边界), 需 >50 才能连通走廊
             # 降低重发频率, 防止 pct_adapter 每秒重置航点索引 (10s 内机器人能走完一个航点段)
             'republish_hz':    0.02,  # 50s 间隔, 不干扰 25s 导航循环 (防止重发引起路径闪烁)
             # 增大航点间距 → 每段 ~1.6m, 全程 ~6-7 航点 (减少快速索引跳跃)
@@ -286,6 +289,7 @@ def generate_launch_description():
         additional_env={
             'SIM_GOAL_X':       goal_x,
             'SIM_GOAL_Y':       goal_y,
+            'SIM_GOAL_Z':       goal_z,
             'SIM_START_X':      start_x,
             'SIM_START_Y':      start_y,
             'PYTHONUNBUFFERED': '1',
@@ -348,6 +352,6 @@ def generate_launch_description():
         nodes.append(rviz_node)
 
     return LaunchDescription([
-        map_path_arg, goal_x_arg, goal_y_arg, start_x_arg, start_y_arg,
+        map_path_arg, goal_x_arg, goal_y_arg, goal_z_arg, start_x_arg, start_y_arg,
         *nodes,
     ])
