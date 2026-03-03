@@ -23,6 +23,7 @@ PCT A* 全局规划节点 (Python 实现，零 .so 依赖)
   - 适合 building2_9.pickle 等预生成 tomogram
 """
 import heapq
+import math
 import os
 import pickle
 import threading
@@ -168,6 +169,92 @@ def _check_path_self_intersection(cells):
     return count
 
 
+def _smooth_z_path(poses_xyz, target_grade=0.6, res=0.2):
+    """将 3D A* 路径的 Z 跳变分摊到更长的水平段, 使高度变化更接近真实楼梯坡度.
+
+    PCT 番茄图 slice_dh(0.5m) >> res(0.2m), 导致 3D A* 路径楼层切换坡度 250%+.
+    本函数将每段连续 Z 变化整体拉伸到 target_grade 坡度对应的水平跨度.
+    多个连续跳变作为一个整体处理, 避免重叠窗口冲突.
+
+    Args:
+        poses_xyz:    [(wx, wy, wz), ...] 原始路径点
+        target_grade: 目标坡度 (垂直/水平比), 0.6 ≈ 30° ≈ 普通楼梯
+        res:          水平栅格分辨率 (m)
+
+    Returns:
+        [(wx, wy, wz_smoothed), ...] Z 平滑后的路径点 (XY 不变)
+    """
+    if len(poses_xyz) < 2:
+        return list(poses_xyz)
+
+    xs = [p[0] for p in poses_xyz]
+    ys = [p[1] for p in poses_xyz]
+    zs_raw = [p[2] for p in poses_xyz]
+
+    # 累计水平距离
+    horiz = [0.0]
+    for i in range(1, len(xs)):
+        horiz.append(horiz[-1] + math.hypot(xs[i] - xs[i-1], ys[i] - ys[i-1]))
+    total_h = horiz[-1]
+    if total_h < 1e-6:
+        return list(poses_xyz)
+
+    # 将连续 Z 跳变聚合成"过渡段" (consecutive steps where Z changes)
+    # transition: (i_first_jump, i_last_jump, z_start, z_end)
+    transitions = []
+    i = 1
+    while i < len(zs_raw):
+        dz = zs_raw[i] - zs_raw[i - 1]
+        if abs(dz) > 0.05:
+            j = i
+            z_start = zs_raw[i - 1]
+            while j + 1 < len(zs_raw) and abs(zs_raw[j + 1] - zs_raw[j]) > 0.05:
+                j += 1
+            z_end = zs_raw[j]
+            transitions.append([i, j, z_start, z_end])
+            i = j + 1
+        else:
+            i += 1
+
+    if not transitions:
+        return list(poses_xyz)
+
+    # 合并相邻过渡段: 若两段间隔 < 合并后所需水平跨度, 则合并为一段
+    # 防止独立窗口重叠导致前一段被后一段覆盖 (产生超高坡度)
+    merged = [transitions[0]]
+    for tr in transitions[1:]:
+        last = merged[-1]
+        gap = horiz[tr[0]] - horiz[last[1]]          # 两段间的水平间隔
+        combined_dz = abs(tr[3] - last[2])            # 合并后总 Z 变化
+        span_for_combined = combined_dz / target_grade  # 合并后所需水平跨度
+        if gap < span_for_combined:
+            # 间隔太小, 合并: 保留首段起点 + 末段终点
+            merged[-1] = [last[0], tr[1], last[2], tr[3]]
+        else:
+            merged.append(tr)
+    transitions = [tuple(m) for m in merged]
+
+    zs = list(zs_raw)
+
+    for i_first, i_last, z_start, z_end in transitions:
+        dz_total = z_end - z_start
+        span_needed = abs(dz_total) / target_grade  # 需要的水平跨度 (m)
+
+        # 以整段跳变的中心为基准, 向前后各延伸 span/2
+        h_center = (horiz[i_first] + horiz[i_last]) / 2.0
+        h_smooth_start = max(0.0, h_center - span_needed / 2.0)
+        h_smooth_end   = min(total_h, h_smooth_start + span_needed)
+        actual_span    = h_smooth_end - h_smooth_start
+
+        for k, h in enumerate(horiz):
+            if h_smooth_start <= h <= h_smooth_end:
+                t = (h - h_smooth_start) / max(actual_span, 1e-6)
+                zs[k] = z_start + t * dz_total
+            # 跳变段结束后的点保持 z_end (已由 zs_raw 覆盖, 无需额外处理)
+
+    return [(xs[i], ys[i], zs[i]) for i in range(len(xs))]
+
+
 def _astar_3d(trav_3d, start, goal, obs_thr, timeout_sec=10.0):
     """26-connected 3D A* on multi-slice traversability grid.
 
@@ -209,6 +296,10 @@ def _astar_3d(trav_3d, start, goal, obs_thr, timeout_sec=10.0):
                 for dy in (-1, 0, 1):
                     if dz == dx == dy == 0:
                         continue
+                    # 禁止纯垂直移动 (dz≠0 但 dx=dy=0): 物理上不存在竖直电梯/飞行
+                    # 楼梯/坡道必须同时有水平位移才能改变楼层
+                    if dz != 0 and dx == 0 and dy == 0:
+                        continue
                     nz, ni, nj = iz + dz, ix + dx, iy + dy
                     if not (0 <= nz < n_slices and 0 <= ni < nx and 0 <= nj < ny):
                         continue
@@ -219,6 +310,8 @@ def _astar_3d(trav_3d, start, goal, obs_thr, timeout_sec=10.0):
                     step = (1.732 if n_changed == 3 else
                             1.414 if n_changed == 2 else 1.0)
                     if dz != 0:
+                        # 坡道/楼梯惩罚: slice_dh(0.5m)/res(0.2m) = 2.5 倍水平距离当量
+                        # 配合禁纯垂直, 强制路径沿斜坡移动而非"飞"
                         step *= 2.5  # vertical movement penalty
                     ng = g + step
                     if ng < g_score.get(nb, float('inf')):
@@ -496,26 +589,37 @@ class PctPlannerAstar(Node):
 
             self._publish_status('SUCCESS')
 
-            # 构建带真实 Z 坐标的路径
-            path_msg = Path()
-            path_msg.header.stamp    = self.get_clock().now().to_msg()
-            path_msg.header.frame_id = 'map'
+            # 构建带真实 Z 坐标的路径 (含 Z 平滑: 将楼层切换分摊到足够长的水平段)
+            raw_poses = []
             for iz, ci, cj in cells_3d:
                 wx, wy = _g2w(ci, cj, self._cx, self._cy, self._res,
                               self._ox, self._oy)
                 wz = self._slice_h0 + iz * self._slice_dh
+                raw_poses.append((wx, wy, wz))
+
+            # Z 平滑后处理:
+            # PCT 番茄图 slice_dh=0.5m >> res=0.2m, 导致 A* 路径的 Z 跳变
+            # 以 250% 坡度出现 (等效"飞行"). 将跳变沿路径平滑分摊,
+            # 目标坡度 ≤ target_grade (60% 对应普通楼梯约 30°坡度).
+            smooth_poses = _smooth_z_path(
+                raw_poses, target_grade=0.6, res=self._res)
+
+            path_msg = Path()
+            path_msg.header.stamp    = self.get_clock().now().to_msg()
+            path_msg.header.frame_id = 'map'
+            for wx, wy, wz in smooth_poses:
                 ps = PoseStamped()
                 ps.header.frame_id = 'map'
                 ps.pose.position.x = wx
                 ps.pose.position.y = wy
-                ps.pose.position.z = wz   # ← 真实 3D 高度
+                ps.pose.position.z = wz   # ← Z 平滑后的高度
                 ps.pose.orientation.w = 1.0
                 path_msg.poses.append(ps)
 
             self._last_path = path_msg
             self._pub_path.publish(path_msg)
             self.get_logger().info(
-                f'[3D] A* path: {len(cells_3d)} cells '
+                f'[3D] A* path: {len(cells_3d)} cells (smooth→{len(smooth_poses)}) '
                 f'({sx:.2f},{sy:.2f},{sz:.2f})→({gx:.2f},{gy:.2f},{gz:.2f}), '
                 f'slices iz={iz_s}→{iz_g}')
 
