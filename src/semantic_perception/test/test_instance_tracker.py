@@ -3,7 +3,6 @@ test_instance_tracker.py — 实例追踪器单元测试
 
 覆盖:
   - infer_room_type() — 规则推断
-  - RoomNode.add_view_embedding() / query_similarity()
   - TrackedObject.update() — 位置融合/特征 EMA/信念更新
   - InstanceTracker.update() — 新建/匹配/去重
   - get_scene_graph_json() — JSON 序列化
@@ -103,75 +102,6 @@ class TestInferRoomType(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  RoomNode — view embeddings
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestRoomNodeEmbeddings(unittest.TestCase):
-
-    def _make_room(self) -> RoomNode:
-        return RoomNode(room_id=0, name="test_room", center=np.array([0.0, 0.0]))
-
-    def test_add_embedding_normalizes(self):
-        room = self._make_room()
-        e = np.array([3.0, 4.0, 0.0], dtype=np.float32)
-        room.add_view_embedding(e)
-        self.assertEqual(len(room.view_embeddings), 1)
-        np.testing.assert_almost_equal(np.linalg.norm(room.view_embeddings[0]), 1.0, decimal=5)
-
-    def test_add_zero_embedding_ignored(self):
-        room = self._make_room()
-        room.add_view_embedding(np.zeros(4, dtype=np.float32))
-        self.assertEqual(len(room.view_embeddings), 0)
-
-    def test_fifo_at_capacity_10(self):
-        room = self._make_room()
-        for i in range(12):
-            e = np.zeros(4, dtype=np.float32)
-            e[0] = float(i + 1)
-            room.add_view_embedding(e)
-        self.assertEqual(len(room.view_embeddings), 10)
-        # 最后一个应是第12个归一化后
-        last = room.view_embeddings[-1]
-        np.testing.assert_almost_equal(last[0], 1.0, decimal=5)
-
-    def test_query_similarity_empty(self):
-        room = self._make_room()
-        q = np.random.rand(4).astype(np.float32)
-        self.assertEqual(room.query_similarity(q), 0.0)
-
-    def test_query_similarity_perfect_match(self):
-        room = self._make_room()
-        e = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        room.add_view_embedding(e)
-        sim = room.query_similarity(e)
-        self.assertAlmostEqual(sim, 1.0, places=5)
-
-    def test_query_similarity_orthogonal(self):
-        room = self._make_room()
-        e1 = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        e2 = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-        room.add_view_embedding(e1)
-        sim = room.query_similarity(e2)
-        self.assertAlmostEqual(sim, 0.0, places=5)
-
-    def test_query_similarity_max_of_multiple(self):
-        room = self._make_room()
-        e1 = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        e2 = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-        room.add_view_embedding(e1)
-        room.add_view_embedding(e2)
-        # 查询 e1 → max(1.0, 0.0) = 1.0
-        sim = room.query_similarity(e1)
-        self.assertAlmostEqual(sim, 1.0, places=5)
-
-    def test_query_zero_query_returns_zero(self):
-        room = self._make_room()
-        room.add_view_embedding(np.array([1.0, 0.0, 0.0], dtype=np.float32))
-        sim = room.query_similarity(np.zeros(3, dtype=np.float32))
-        self.assertEqual(sim, 0.0)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 #  TrackedObject.update
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -211,22 +141,6 @@ class TestTrackedObjectUpdate(unittest.TestCase):
         det = _make_det(score=0.95)
         obj.update(det)
         self.assertAlmostEqual(obj.best_score, 0.95)
-
-    def test_feature_history_appended(self):
-        obj = self._make_obj()
-        feat = np.random.rand(512).astype(np.float32)
-        feat /= np.linalg.norm(feat)
-        det = _make_det(features=feat)
-        obj.update(det)
-        self.assertGreater(len(obj.feature_history), 0)
-
-    def test_feature_history_fifo_20(self):
-        obj = self._make_obj()
-        for _ in range(25):
-            feat = np.random.rand(512).astype(np.float32)
-            feat /= np.linalg.norm(feat)
-            obj.update(_make_det(features=feat))
-        self.assertLessEqual(len(obj.feature_history), 20)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

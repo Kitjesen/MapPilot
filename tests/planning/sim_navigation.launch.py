@@ -61,7 +61,7 @@ def generate_launch_description():
     map_path_arg = DeclareLaunchArgument(
         'map_path',
         default_value=pickle_default,
-        description='building2_9.pickle 番茄图路径',
+        description='番茄图 pickle 路径 (building2_9 或 factory_v4)',
     )
     # 起终点: 起点(-5.5,7.3) 恰在楼梯间 (Z=0.5→3.0m 全段可通行, trav=21.4)
     # 终点(2.0,-3.0) 在上层走廊 Z=2.0m (trav=0.0)
@@ -77,13 +77,27 @@ def generate_launch_description():
                                          description='起点 X (m)  (楼梯间入口)')
     start_y_arg = DeclareLaunchArgument('start_y', default_value='7.3',
                                          description='起点 Y (m)  (楼梯间入口)')
+    # 地图世界坐标边界 (building2_9 默认值; 工厂场景需覆盖)
+    map_x_min_arg = DeclareLaunchArgument('map_x_min', default_value='-7.5',  description='地图 X 最小值 (m)')
+    map_x_max_arg = DeclareLaunchArgument('map_x_max', default_value='10.5',  description='地图 X 最大值 (m)')
+    map_y_min_arg = DeclareLaunchArgument('map_y_min', default_value='-9.5',  description='地图 Y 最小值 (m)')
+    map_y_max_arg = DeclareLaunchArgument('map_y_max', default_value='9.0',   description='地图 Y 最大值 (m)')
+    # 可选: 建筑 PCD 可视化 + 场景名称
+    pcd_path_arg   = DeclareLaunchArgument('pcd_path',   default_value='', description='建筑 PCD 路径 (可视化用)')
+    scene_name_arg = DeclareLaunchArgument('scene_name', default_value='Building2_9', description='场景名称')
 
-    map_path = LaunchConfiguration('map_path')
-    goal_x   = LaunchConfiguration('goal_x')
-    goal_y   = LaunchConfiguration('goal_y')
-    goal_z   = LaunchConfiguration('goal_z')
-    start_x  = LaunchConfiguration('start_x')
-    start_y  = LaunchConfiguration('start_y')
+    map_path   = LaunchConfiguration('map_path')
+    goal_x     = LaunchConfiguration('goal_x')
+    goal_y     = LaunchConfiguration('goal_y')
+    goal_z     = LaunchConfiguration('goal_z')
+    start_x    = LaunchConfiguration('start_x')
+    start_y    = LaunchConfiguration('start_y')
+    map_x_min  = LaunchConfiguration('map_x_min')
+    map_x_max  = LaunchConfiguration('map_x_max')
+    map_y_min  = LaunchConfiguration('map_y_min')
+    map_y_max  = LaunchConfiguration('map_y_max')
+    pcd_path   = LaunchConfiguration('pcd_path')
+    scene_name = LaunchConfiguration('scene_name')
 
     # ── pct_planner_astar.py (Python A* 全局规划器) ───────────────────────────
     pct_share   = get_package_share_directory('pct_planner')
@@ -296,6 +310,12 @@ def generate_launch_description():
             'SIM_GOAL_Z':       goal_z,
             'SIM_START_X':      start_x,
             'SIM_START_Y':      start_y,
+            'SIM_MAP_X_MIN':    map_x_min,
+            'SIM_MAP_X_MAX':    map_x_max,
+            'SIM_MAP_Y_MIN':    map_y_min,
+            'SIM_MAP_Y_MAX':    map_y_max,
+            'SIM_PCD_PATH':     pcd_path,
+            'SIM_SCENE_NAME':   scene_name,
             'PYTHONUNBUFFERED': '1',
         },
     )
@@ -357,5 +377,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         map_path_arg, goal_x_arg, goal_y_arg, goal_z_arg, start_x_arg, start_y_arg,
+        map_x_min_arg, map_x_max_arg, map_y_min_arg, map_y_max_arg,
+        pcd_path_arg, scene_name_arg,
         *nodes,
     ])

@@ -53,8 +53,6 @@ from tf2_ros.transform_listener import TransformListener
 from .laplacian_filter import is_blurry
 from .clip_encoder import CLIPEncoder
 from .mobileclip_encoder import MobileCLIPEncoder
-from .scg_builder import SCGBuilder, SCGConfig
-from .scg_path_planner import SCGPathPlanner
 from .projection import (
     CameraIntrinsics,
     Detection3D,
@@ -122,10 +120,6 @@ class SemanticPerceptionNode(Node):
         self.declare_parameter("tracker.near_threshold", 1.5)
         self.declare_parameter("tracker.on_threshold", 0.3)
         self.declare_parameter("tracker.region_cluster_radius", 3.0)
-        # DovSG 增量更新参数 (动态场景图)
-        self.declare_parameter("tracker.incremental_update", True)   # 启用 update_local()
-        self.declare_parameter("tracker.update_radius", 5.0)         # 局部更新半径 (米)
-        self.declare_parameter("tracker.stale_remove_timeout", 30.0) # 失效物体超时 (秒)
         # 可配置阈值 (D13)
         self.declare_parameter("adaptive_blur_detection", False)
         # Room LLM 命名 (创新1 补强)
@@ -159,9 +153,6 @@ class SemanticPerceptionNode(Node):
         self._last_process_time = 0.0
         self._min_interval = 1.0 / max(self._target_fps, 0.1)
         self._warned_no_camera_info = False
-        # 检测结果限流: 2Hz（LOST-3DSG 启发 — 避免高频密集特征传输）
-        self._last_det_publish_time = 0.0
-        self._det_publish_interval = 0.5  # 500ms = 2 Hz
         self._warned_no_tf = False
         self._tf_fail_count = 0
         self._tf_total_count = 0
@@ -180,12 +171,6 @@ class SemanticPerceptionNode(Node):
             max_objects=self.get_parameter("scene_graph.max_objects").value,
             stale_timeout=self.get_parameter("tracker.stale_timeout").value,
         )
-
-        # DovSG 增量更新配置
-        self._incremental_update = self.get_parameter("tracker.incremental_update").value
-        self._update_radius = self.get_parameter("tracker.update_radius").value
-        self._stale_remove_timeout = self.get_parameter("tracker.stale_remove_timeout").value
-        self._robot_world_pos: Optional[np.ndarray] = None  # 最近一次的机器人世界坐标
 
         # 知识图谱注入 (ConceptBot / DovSG: 每个物体创建时查 KG 补属性)
         try:
@@ -235,51 +220,6 @@ class SemanticPerceptionNode(Node):
                 self.get_logger().warn(
                     f"Room LLM naming requested but {api_key_env} not set"
                 )
-
-        # ── SCG 路径规划参数 ──
-        self.declare_parameter("scg.enable", True)
-        self.declare_parameter("scg.request_topic", "/nav/scg/plan_request")
-        self.declare_parameter("scg.result_topic", "/nav/scg/plan_result")
-        # 探索模式: 自动多面体扩展 (USS-Nav Algorithm 1)
-        self.declare_parameter("scg.auto_expand", False)
-        self.declare_parameter("scg.expand_every_n_frames", 10)
-        self.declare_parameter("scg.min_new_polyhedra", 2)
-        # 全局覆盖掩码 (GCM): 追踪探索进度
-        self.declare_parameter("gcm.enable", False)
-        self.declare_parameter("gcm.resolution", 0.5)
-
-        # ── SCG 路径规划器初始化 ──
-        self._scg_enable = self.get_parameter("scg.enable").value
-        self._scg_builder = SCGBuilder(SCGConfig())
-        self._scg_planner = SCGPathPlanner(self._scg_builder)
-
-        # ── SCG 自动扩展初始化 ──
-        self._scg_auto_expand = self.get_parameter("scg.auto_expand").value
-        self._scg_expand_interval = self.get_parameter("scg.expand_every_n_frames").value
-        self._expand_frame_counter = 0
-        self._expander = None
-        self._gcm = None
-        self._gcm_enable = self.get_parameter("gcm.enable").value
-
-        if self._scg_auto_expand:
-            try:
-                from .polyhedron_expansion import PolyhedronExpander, PolyhedronExpansionConfig
-                self._expander = PolyhedronExpander(PolyhedronExpansionConfig())
-                self.get_logger().info("SCG auto-expand enabled (USS-Nav Algorithm 1)")
-            except Exception as e:
-                self.get_logger().warning(f"PolyhedronExpander unavailable, auto_expand disabled: {e}")
-                self._scg_auto_expand = False
-
-        if self._gcm_enable:
-            try:
-                from .global_coverage_mask import GlobalCoverageMask
-                self._gcm = GlobalCoverageMask(
-                    resolution=self.get_parameter("gcm.resolution").value
-                )
-                self.get_logger().info("Global Coverage Mask (GCM) enabled")
-            except Exception as e:
-                self.get_logger().warning(f"GlobalCoverageMask unavailable: {e}")
-                self._gcm_enable = False
 
         # ── TF2 (A1 修复: 精确 camera→map 变换) ──
         self._tf_buffer = Buffer()
@@ -348,20 +288,6 @@ class SemanticPerceptionNode(Node):
             self._costmap_callback,
             10,
         )
-
-        # SCG 路径规划: 订阅请求, 发布结果
-        if self._scg_enable:
-            scg_req_topic = self.get_parameter("scg.request_topic").value
-            scg_res_topic = self.get_parameter("scg.result_topic").value
-            self._pub_scg_result = self.create_publisher(String, scg_res_topic, 10)
-            self._sub_scg_request = self.create_subscription(
-                String, scg_req_topic,
-                self._scg_plan_request_callback,
-                10,
-            )
-            self.get_logger().info(
-                f"SCG path planning enabled: req={scg_req_topic}, res={scg_res_topic}"
-            )
 
         # 指令订阅 (开放词汇: 动态合并用户指令目标词到检测类别)
         if self._instruction_merge_enable:
@@ -544,154 +470,6 @@ class SemanticPerceptionNode(Node):
     def _costmap_callback(self, msg: OccupancyGrid):
         """缓存最新 costmap (A5: 为 FrontierScorer 提供数据)。"""
         self._latest_costmap = msg
-
-        # 解析 costmap 为 3D 栅格 (供 SCG 使用)
-        width = int(msg.info.width)
-        height = int(msg.info.height)
-        if width <= 0 or height <= 0 or len(msg.data) != width * height:
-            return
-
-        grid = np.asarray(msg.data, dtype=np.float32).reshape((height, width))
-        # 归一化到 [0,1]: nav_msgs/OccupancyGrid 值域是 0-100, -1=未知
-        grid = np.where(grid < 0, 1.0, grid / 100.0)
-        # 扩展为 3D (z 轴单层)
-        grid_3d = grid[:, :, np.newaxis]
-        res = float(msg.info.resolution)
-        ox = float(msg.info.origin.position.x)
-        oy = float(msg.info.origin.position.y)
-        origin = np.array([ox, oy, 0.0])
-
-        # 触发 SCG 边构建 (当 SCG 有节点时更新连通性)
-        if self._scg_enable and len(self._scg_builder.nodes) > 0:
-            try:
-                self._scg_builder.build_edges(grid_3d, res, origin)
-            except Exception as e:
-                self.get_logger().debug(f"SCG edge build failed: {e}")
-
-        # 探索模式: 自动多面体扩展 (USS-Nav Algorithm 1)
-        if self._scg_auto_expand and self._expander is not None:
-            self._expand_frame_counter += 1
-            if self._expand_frame_counter % self._scg_expand_interval == 0:
-                self._run_scg_expansion(grid_3d, res, origin)
-
-    def _run_scg_expansion(self, occ_grid: np.ndarray, resolution: float, origin: np.ndarray):
-        """
-        从当前局部栅格扩展多面体并更新 SCG (USS-Nav Algorithm 1)。
-
-        每 scg.expand_every_n_frames 帧调用一次，在探索模式下持续构建
-        Spatial Connectivity Graph 拓扑骨架。
-        """
-        try:
-            new_polyhedra = self._expander.expand(occ_grid, resolution, origin)
-            min_new = self.get_parameter("scg.min_new_polyhedra").value
-            if len(new_polyhedra) < min_new:
-                return
-
-            for poly in new_polyhedra:
-                self._scg_builder.add_polyhedron(poly)
-
-            # 更新全局覆盖掩码
-            if self._gcm_enable and self._gcm is not None:
-                for poly in new_polyhedra:
-                    self._gcm.update_from_polyhedron(poly)
-
-            # 重建 SCG 边 (新节点加入后连通性变化)
-            self._scg_builder.build_edges(occ_grid, resolution, origin)
-
-            self.get_logger().debug(
-                "SCG expanded: +%d polyhedra, total=%d nodes",
-                len(new_polyhedra),
-                len(self._scg_builder.nodes),
-            )
-        except Exception as e:
-            self.get_logger().warning(f"SCG expansion failed: {e}")
-
-    def _scg_plan_request_callback(self, msg: String):
-        """
-        SCG 路径规划请求回调。
-
-        接收 JSON: {"start": [x, y, z], "goal": [x, y, z]}
-        发布 JSON: {"success": bool, "waypoints": [[x,y,z], ...],
-                    "poly_count": N, "distance": D, "error": "..."}
-        """
-        import json
-        import numpy as np
-
-        result_msg = String()
-
-        try:
-            data = json.loads(msg.data)
-            start_raw = data.get("start", [0.0, 0.0, 0.0])
-            goal_raw = data.get("goal", [0.0, 0.0, 0.0])
-            start = np.array(start_raw, dtype=np.float64)
-            goal = np.array(goal_raw, dtype=np.float64)
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            result_msg.data = json.dumps({
-                "success": False,
-                "waypoints": [],
-                "poly_count": 0,
-                "distance": 0.0,
-                "error": f"Invalid request JSON: {e}",
-            })
-            self._pub_scg_result.publish(result_msg)
-            return
-
-        if len(self._scg_builder.nodes) == 0:
-            result_msg.data = json.dumps({
-                "success": False,
-                "waypoints": [],
-                "poly_count": 0,
-                "distance": 0.0,
-                "error": "SCG has no nodes (costmap not received or no polyhedra built)",
-            })
-            self._pub_scg_result.publish(result_msg)
-            return
-
-        try:
-            path = self._scg_planner.plan(start, goal)
-
-            if path.success:
-                # 收集所有路径点 (从所有 segments)
-                all_waypoints = []
-                seen = set()
-                for seg in path.segments:
-                    for pt in seg.waypoints:
-                        key = (round(pt[0], 4), round(pt[1], 4), round(pt[2], 4))
-                        if key not in seen:
-                            seen.add(key)
-                            all_waypoints.append([
-                                round(float(pt[0]), 4),
-                                round(float(pt[1]), 4),
-                                round(float(pt[2]), 4),
-                            ])
-
-                result_msg.data = json.dumps({
-                    "success": True,
-                    "waypoints": all_waypoints,
-                    "poly_count": len(path.polyhedron_sequence),
-                    "distance": round(path.total_distance, 4),
-                    "error": "",
-                })
-            else:
-                result_msg.data = json.dumps({
-                    "success": False,
-                    "waypoints": [],
-                    "poly_count": 0,
-                    "distance": 0.0,
-                    "error": "SCG planner could not find a path",
-                })
-
-        except Exception as e:
-            self.get_logger().warn(f"SCG plan failed: {e}")
-            result_msg.data = json.dumps({
-                "success": False,
-                "waypoints": [],
-                "poly_count": 0,
-                "distance": 0.0,
-                "error": str(e),
-            })
-
-        self._pub_scg_result.publish(result_msg)
 
     def _instruction_callback(self, msg: String):
         """
@@ -879,16 +657,10 @@ class SemanticPerceptionNode(Node):
         elif self._clip_encoder is not None:
             # Legacy: 图像裁剪编码 (慢, 仅 YOLO-World fallback)
             try:
-                for det in detections_2d:
-                    seg_mask = det.mask if hasattr(det, 'mask') else None
-                    if (seg_mask is not None
-                            and hasattr(self._clip_encoder, 'encode_three_source')):
-                        det.features = self._clip_encoder.encode_three_source(
-                            bgr, det.bbox, mask=seg_mask
-                        )
-                    else:
-                        feats = self._clip_encoder.encode_image_crops(bgr, [det.bbox])
-                        det.features = feats[0] if feats else np.array([])
+                bboxes = [d.bbox for d in detections_2d]
+                clip_features = self._clip_encoder.encode_image_crops(bgr, bboxes)
+                for det, feat in zip(detections_2d, clip_features):
+                    det.features = feat
             except Exception as e:
                 self.get_logger().warn(f"CLIP encoding failed: {e}")
 
@@ -938,29 +710,8 @@ class SemanticPerceptionNode(Node):
         if not detections_3d:
             return
 
-        # 记录机器人当前世界位置 (取相机位置近似)
-        self._robot_world_pos = tf_camera_to_world[:3, 3].copy()
-
         # 5. USS-Nav 双指标融合实例追踪
-        # DovSG 增量更新: update_local() 仅 CLIP-匹配 update_radius 内的物体，
-        # 并对远处物体做时间衰减 (减少不必要的计算)
-        if self._incremental_update and hasattr(self._tracker, "update_local"):
-            tracked_objs = self._tracker.update_local(
-                detections_3d,
-                robot_pos=self._robot_world_pos,
-                update_radius=self._update_radius,
-            )
-            # 周期性清理过期物体 (DovSG remove_stale_objects)
-            if self._frame_count % 30 == 0 and hasattr(self._tracker, "remove_stale_objects"):
-                removed = self._tracker.remove_stale_objects(
-                    stale_timeout_sec=self._stale_remove_timeout,
-                )
-                if removed:
-                    self.get_logger().debug(
-                        f"DovSG: removed {len(removed)} stale objects: {removed[:5]}"
-                    )
-        else:
-            tracked_objs = self._tracker.update(detections_3d)
+        tracked_objs = self._tracker.update(detections_3d)
 
         # 5.5 开放词汇: 未知物体 → KG 概念映射 (DovSG / LOVON)
         if self._knowledge_graph is not None:
@@ -1005,77 +756,58 @@ class SemanticPerceptionNode(Node):
             ],
         }, ensure_ascii=False)
 
-        # 2Hz 限速: planner 消费率 1Hz，每 0.5s 发一次已足够
-        # 消除 15Hz→2Hz 带宽差异 (-87%)，防止 planner 积压旧检测结果
-        _now = time.time()
-        if _now - self._last_det_publish_time >= self._det_publish_interval:
-            msg = String()
-            msg.data = det_json
-            self._pub_detections.publish(msg)
-            self._last_det_publish_time = _now
+        msg = String()
+        msg.data = det_json
+        self._pub_detections.publish(msg)
 
     def _publish_scene_graph(self):
-        """定时发布场景图 + DovSG diff + 语义地图 MarkerArray。
-
-        优化 (LOST-3DSG / Hydra 启发):
-          - JSON 只解析一次，解析结果在本次调用中复用
-          - MarkerArray 直接使用已解析的 dict，无需第三次 json.loads
-          - diff 发布路径也复用同一 sg_data
-        """
+        """定时发布场景图 + DovSG diff + 语义地图 MarkerArray。"""
         if not self._tracker.objects:
             if self._pub_semantic_markers:
                 self._publish_empty_semantic_markers()
             return
 
+        msg = String()
         sg_json = self._tracker.get_scene_graph_json()
-
-        # 一次解析，全程复用 ─────────────────────────────
-        try:
-            sg_data = json.loads(sg_json)
-        except Exception as e:
-            self.get_logger().error("Scene graph JSON parse failed: %s", e)
-            return
 
         # DovSG 动态场景图: 计算与上次快照的差异
         if self._prev_scene_snapshot:
             try:
                 diff = self._tracker.compute_scene_diff(self._prev_scene_snapshot)
                 if diff["total_events"] > 0:
+                    sg_data = json.loads(sg_json)
                     sg_data["scene_diff"] = diff
                     sg_json = json.dumps(sg_data, ensure_ascii=False)
                     diff_msg = String()
                     diff_msg.data = json.dumps(diff, ensure_ascii=False)
                     self._pub_scene_diff.publish(diff_msg)
-                    self.get_logger().info("Scene diff: %s", diff["summary"])
+                    self.get_logger().info(
+                        "Scene diff: %s", diff["summary"],
+                    )
             except Exception as e:
                 self.get_logger().debug("Scene diff failed: %s", e)
 
-        # 缓存快照用于下次 diff（浅拷贝即可，diff 只对比 id 和 label）
-        self._prev_scene_snapshot = sg_data
+        # 缓存快照用于下次 diff
+        try:
+            self._prev_scene_snapshot = json.loads(sg_json)
+        except Exception:
+            pass
 
-        msg = String()
         msg.data = sg_json
         self._pub_scene_graph.publish(msg)
 
-        # 直接传入已解析的 dict，避免第三次 json.loads
         if self._pub_semantic_markers:
-            self._publish_semantic_map_markers(sg_data)
+            self._publish_semantic_map_markers(msg.data)
 
-    def _publish_semantic_map_markers(self, scene_graph_data):
+    def _publish_semantic_map_markers(self, scene_graph_json: str):
         """
         从场景图发布 MarkerArray，用于 RViz/地图上叠加语义物体。
 
         点云到语义地图渲染: 将 3D 检测物体以球体+文本标签形式渲染到地图上，
         可与 /cloud_map 点云叠加显示。
-
-        Args:
-            scene_graph_data: 已解析的场景图 dict，或 JSON 字符串（兼容旧调用）
         """
         try:
-            if isinstance(scene_graph_data, str):
-                sg = json.loads(scene_graph_data)  # 兼容旧调用路径
-            else:
-                sg = scene_graph_data  # 直接使用已解析 dict，零额外开销
+            sg = json.loads(scene_graph_json)
             objects = sg.get("objects", [])
             if not isinstance(objects, list):
                 return

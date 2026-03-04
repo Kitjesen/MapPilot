@@ -223,27 +223,6 @@ class RoomNode:
     group_ids: List[int] = field(default_factory=list)
     semantic_labels: List[str] = field(default_factory=list)
     llm_named: bool = False        # 是否由 LLM 命名
-    view_embeddings: List[np.ndarray] = field(default_factory=list)  # HOV-SG K视角嵌入
-
-    def add_view_embedding(self, embed: np.ndarray) -> None:
-        """添加观察视角嵌入，FIFO保留最多10个。"""
-        norm = np.linalg.norm(embed)
-        if norm <= 0:
-            return
-        e = embed / norm
-        if len(self.view_embeddings) >= 10:
-            self.view_embeddings.pop(0)
-        self.view_embeddings.append(e)
-
-    def query_similarity(self, query_embed: np.ndarray) -> float:
-        """HOV-SG式 max cosine similarity over K view embeddings。"""
-        if not self.view_embeddings:
-            return 0.0
-        q_norm = np.linalg.norm(query_embed)
-        if q_norm <= 0:
-            return 0.0
-        q = query_embed / q_norm
-        return max(float(np.dot(q, v)) for v in self.view_embeddings)
 
 
 @dataclass
@@ -364,7 +343,6 @@ class ViewNode:
     room_id: int = -1
     object_ids: List[int] = field(default_factory=list)
     key_labels: List[str] = field(default_factory=list)
-    clip_feature: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -407,7 +385,6 @@ class TrackedObject:
     is_kg_expected: bool = False   # 此物体是否为当前房间类型的 KG 期望物体
     safety_nav_threshold: float = 0.25   # 导航避障用的安全阈值 (动态设置)
     safety_interact_threshold: float = 0.40  # 交互操作用的安全阈值
-    feature_history: List[np.ndarray] = field(default_factory=list)  # HOV-SG DBSCAN精化历史
 
     def update(self, det: Detection3D, alpha: float = 0.3) -> None:
         """用新检测更新位置、置信度、点云和信念状态 (USS-Nav + BA-HSG)。"""
@@ -436,13 +413,6 @@ class TrackedObject:
 
         if det.features.size > 0:
             self.features = self._fuse_feature(det.features)
-            # HOV-SG: 追加到特征历史 (FIFO max 20)
-            self.feature_history.append(self.features.copy())
-            if len(self.feature_history) > 20:
-                self.feature_history.pop(0)
-            # 每5次检测触发DBSCAN精化
-            if self.detection_count % 5 == 0:
-                self._try_refine_features()
         self._update_extent(det)
         self._update_credibility()
 
@@ -503,26 +473,6 @@ class TrackedObject:
         if fused_norm > 0:
             fused = fused / fused_norm
         return fused
-
-    def _try_refine_features(self) -> None:
-        """多帧特征DBSCAN精化（HOV-SG风格，防EMA噪声漂移）。"""
-        if len(self.feature_history) < 5:
-            return
-        try:
-            from sklearn.cluster import DBSCAN
-            X = np.stack(self.feature_history)
-            labels = DBSCAN(eps=0.3, min_samples=2, metric="cosine").fit_predict(X)
-            valid = labels[labels >= 0]
-            if len(valid) == 0:
-                return
-            best_label = int(np.bincount(valid).argmax())
-            cluster_feats = X[labels == best_label]
-            refined = cluster_feats.mean(axis=0)
-            norm = np.linalg.norm(refined)
-            if norm > 0:
-                self.features = refined / norm
-        except Exception:
-            pass  # 静默降级
 
     def _update_extent(self, det: Detection3D) -> None:
         """从 2D bbox 和深度估算 3D 包围盒半径。"""
@@ -676,11 +626,6 @@ class InstanceTracker:
         self._room_name_cache: Dict[int, str] = {}       # region_id -> LLM name
         self._region_stability: Dict[int, Tuple[frozenset, float]] = {}  # region_id -> (obj_id_set, stable_since)
 
-        # Region ID 稳定化映射 — 基于中心坐标复用 ID，防止 DBSCAN 每次重新编号
-        self._stable_region_centers: Dict[int, np.ndarray] = {}  # stable_id → center_xy
-        self._next_stable_region_id: int = 0
-        self._REGION_STABLE_MATCH_DIST: float = 1.5  # 1.5m 内认为是同一 region
-
         # 知识图谱 (ConceptBot / OpenFunGraph 增强)
         self._knowledge_graph = knowledge_graph
 
@@ -698,10 +643,11 @@ class InstanceTracker:
         # ── Neuro-Symbolic Belief GCN (KG-BELIEF) ──
         self._belief_model = None  # Optional[BeliefPredictor]
 
-        # ── CLIP 嵌入索引缓存 (build_embedding_index) ──
-        self._embedding_index: Optional[np.ndarray] = None
-        self._embedding_ids: List[int] = []
-        self._embedding_dirty: bool = True  # 物体增删后需重建
+        # ── Neuro-Symbolic Belief GCN (论文核心: 训练式信念推理) ──
+        self._belief_model = None  # Optional[BeliefPredictor]
+
+        # ── Neuro-Symbolic Belief GCN (KG-BELIEF) ──
+        self._belief_model = None  # Optional[BeliefPredictor]
 
     @property
     def objects(self) -> Dict[int, TrackedObject]:
@@ -754,7 +700,6 @@ class InstanceTracker:
                 self._enrich_from_kg(obj)
                 self._objects[self._next_id] = obj
                 self._next_id += 1
-                self._embedding_dirty = True
                 matched.append(obj)
 
         # BA-HSG: 负面证据 — 在视域内的已知物体未被检测到 → miss
@@ -981,8 +926,6 @@ class InstanceTracker:
         ]
         for oid in stale_ids:
             del self._objects[oid]
-        if stale_ids:
-            self._embedding_dirty = True
 
     @staticmethod
     def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -1139,25 +1082,6 @@ class InstanceTracker:
 
         return relations
 
-    def _get_stable_region_id(self, center: np.ndarray) -> int:
-        """为 region 分配稳定 ID（基于中心坐标匹配，防止 DBSCAN 每次重新编号）。"""
-        best_id = -1
-        best_dist = float('inf')
-        for sid, scenter in self._stable_region_centers.items():
-            d = float(np.linalg.norm(center - scenter))
-            if d < best_dist:
-                best_dist = d
-                best_id = sid
-        if best_dist <= self._REGION_STABLE_MATCH_DIST and best_id >= 0:
-            # 更新中心（EMA 平滑）
-            self._stable_region_centers[best_id] = 0.8 * self._stable_region_centers[best_id] + 0.2 * center
-            return best_id
-        # 新 region
-        new_id = self._next_stable_region_id
-        self._next_stable_region_id += 1
-        self._stable_region_centers[new_id] = center.copy()
-        return new_id
-
     def compute_regions(self) -> List[Region]:
         """
         将物体按空间位置聚类为区域 (SG-Nav 的"房间级"层次)。
@@ -1216,10 +1140,9 @@ class InstanceTracker:
                 cluster_to_objs.setdefault(cl_int, []).append(idx)
 
         regions: List[Region] = []
-        for obj_indices in cluster_to_objs.values():
+        for region_id, obj_indices in enumerate(cluster_to_objs.values()):
             obj_ids = [objs[i].object_id for i in obj_indices]
             center = positions_2d[obj_indices].mean(axis=0)
-            region_id = self._get_stable_region_id(center)
 
             for i in obj_indices:
                 objs[i].region_id = region_id
@@ -1339,22 +1262,17 @@ class InstanceTracker:
                     # 触发异步 LLM 命名 (fire-and-forget, 结果下次 compute 时可用)
                     self._trigger_room_llm_naming(r.region_id, labels)
 
-            room_node = RoomNode(
-                room_id=r.region_id,
-                name=room_name,
-                center=r.center.copy(),
-                object_ids=list(r.object_ids),
-                group_ids=room_to_groups.get(r.region_id, []),
-                semantic_labels=labels,
-                llm_named=is_llm_named,
+            rooms.append(
+                RoomNode(
+                    room_id=r.region_id,
+                    name=room_name,
+                    center=r.center.copy(),
+                    object_ids=list(r.object_ids),
+                    group_ids=room_to_groups.get(r.region_id, []),
+                    semantic_labels=labels,
+                    llm_named=is_llm_named,
+                )
             )
-            # HOV-SG: 从ViewNode CLIP特征填充房间视角嵌入
-            for vnode in self._views.values():
-                if (vnode.room_id == r.region_id
-                        and vnode.clip_feature is not None
-                        and len(vnode.clip_feature) > 0):
-                    room_node.add_view_embedding(vnode.clip_feature)
-            rooms.append(room_node)
         return rooms
 
     _LLM_NAMING_MAX_CONCURRENT = 3
@@ -2430,10 +2348,6 @@ class InstanceTracker:
                 },
                 "object_ids": rm.object_ids,
                 "group_ids": rm.group_ids,
-                "clip_feature": (
-                    np.mean(np.stack(rm.view_embeddings), axis=0).tolist()
-                    if rm.view_embeddings else None
-                ),
             }
             for rm in rooms
         ]
@@ -3257,11 +3171,7 @@ class InstanceTracker:
 
         将所有有 CLIP 特征的物体组织为矩阵,
         支持批量余弦相似度查询。
-        带脏标记: 仅在物体增删后重建，跳过不必要的 np.stack 开销。
         """
-        if not self._embedding_dirty and self._embedding_index is not None:
-            return True
-
         objects_with_features = [
             obj for obj in self._objects.values()
             if obj.features.size > 0
@@ -3269,7 +3179,6 @@ class InstanceTracker:
         if not objects_with_features:
             self._embedding_index = None
             self._embedding_ids = []
-            self._embedding_dirty = False
             return False
 
         features = np.stack([obj.features for obj in objects_with_features])
@@ -3277,7 +3186,6 @@ class InstanceTracker:
         norms = np.where(norms > 0, norms, 1.0)
         self._embedding_index = features / norms
         self._embedding_ids = [obj.object_id for obj in objects_with_features]
-        self._embedding_dirty = False
         return True
 
     def query_by_embedding(
@@ -3501,283 +3409,3 @@ class InstanceTracker:
         logger.info("Scene graph loaded from %s (%d objects, %d views)",
                      path, len(self._objects), len(self._views))
         return True
-
-    # ════════════════════════════════════════════════════════════
-    #  DovSG 增量更新扩展 (IEEE RA-L 2025 局部更新)
-    # ════════════════════════════════════════════════════════════
-
-    def update_local(
-        self,
-        detections: List[Detection3D],
-        robot_pos: np.ndarray,
-        update_radius: float = 5.0,
-    ) -> Dict:
-        """局部更新: 只处理 robot_pos 附近 update_radius 范围内的物体。
-
-        DovSG (IEEE RA-L 2025) 核心思路: 机器人视野范围内只更新受影响的
-        节点, 其余节点仅做时间衰减, 避免全量 CLIP 匹配和信念传播。
-
-        Args:
-            detections: 本帧 3D 检测列表
-            robot_pos:  机器人当前位置 [x, y, z] (world frame)
-            update_radius: 局部更新半径 (米), 只处理此范围内的已知物体
-
-        Returns:
-            diff dict: {
-                "added":   [object_id, ...],  # 新建物体
-                "updated": [object_id, ...],  # 匹配并更新的物体
-                "decayed": [object_id, ...],  # 仅做时间衰减的远处物体
-            }
-        """
-        robot_pos_arr = np.asarray(robot_pos, dtype=np.float64)
-
-        # 将现有物体按距离机器人的远近分成两组
-        local_obj_ids: set = set()
-        remote_obj_ids: set = set()
-        for oid, obj in self._objects.items():
-            dist = float(np.linalg.norm(obj.position - robot_pos_arr))
-            if dist < update_radius:
-                local_obj_ids.add(oid)
-            else:
-                remote_obj_ids.add(oid)
-
-        added_ids: List[int] = []
-        updated_ids: List[int] = []
-
-        # 只对局部物体做完整匹配 + 信念更新
-        local_candidates = {oid: self._objects[oid] for oid in local_obj_ids}
-        detected_local_ids: set = set()
-
-        for det in detections:
-            # 对局部候选集做 USS-Nav 风格匹配
-            best_obj: Optional[TrackedObject] = None
-            best_sem = -1.0
-            best_dist = self.merge_distance
-
-            det_has_points = (
-                hasattr(det, 'points') and det.points is not None
-                and len(det.points) > 0
-            )
-
-            for oid, obj in local_candidates.items():
-                dist = float(np.linalg.norm(obj.position - det.position))
-                if dist >= self.CANDIDATE_RADIUS:
-                    continue
-
-                # 优先用语义相似度匹配
-                if det.features.size > 0 and obj.features.size > 0:
-                    sem = self._cosine_similarity(det.features, obj.features)
-                    if sem > self.SEM_THRESHOLD and sem > best_sem:
-                        omega_geo = 0.0
-                        if det_has_points and len(obj.points) > 0:
-                            omega_geo = self._geometric_similarity(
-                                det.points, obj.points
-                            )
-                        else:
-                            omega_geo = max(0.0, 1.0 - dist / self.merge_distance)
-                        if omega_geo >= self.GEO_WEAK_THRESHOLD:
-                            best_sem = sem
-                            best_obj = obj
-
-                # Fallback: 同类别 + 空间距离
-                if best_obj is None and obj.label.lower() == det.label.lower():
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_obj = obj
-
-            if best_obj is not None:
-                best_obj.update(det)
-                detected_local_ids.add(best_obj.object_id)
-                updated_ids.append(best_obj.object_id)
-            else:
-                # 局部范围内的新物体: 正常添加
-                init_points = np.empty((0, 3))
-                if det_has_points:
-                    init_points = det.points.copy()
-                new_obj = TrackedObject(
-                    object_id=self._next_id,
-                    label=det.label,
-                    position=det.position.copy(),
-                    best_score=det.score,
-                    last_seen=time.time(),
-                    features=det.features.copy() if det.features.size > 0 else np.array([]),
-                    points=init_points,
-                )
-                self._enrich_from_kg(new_obj)
-                self._objects[self._next_id] = new_obj
-                local_obj_ids.add(self._next_id)
-                added_ids.append(self._next_id)
-                self._next_id += 1
-
-        # 局部物体中未被检测到的: 记录 miss (负面证据)
-        for oid in local_obj_ids - detected_local_ids - set(added_ids):
-            obj = self._objects.get(oid)
-            if obj is not None and obj.detection_count >= 2:
-                dt = time.time() - obj.last_seen
-                if dt > 5.0:
-                    obj.record_miss()
-
-        # 远处物体: 只做时间衰减 (freshness 更新), 不做 CLIP 匹配
-        decayed_ids: List[int] = []
-        now = time.time()
-        for oid in remote_obj_ids:
-            obj = self._objects.get(oid)
-            if obj is None:
-                continue
-            # 仅更新 credibility 缓存 (freshness 自然衰减)
-            obj._update_credibility()
-            decayed_ids.append(oid)
-
-        return {
-            "added": added_ids,
-            "updated": updated_ids,
-            "decayed": decayed_ids,
-        }
-
-    def remove_stale_objects(
-        self,
-        stale_timeout_sec: float = 30.0,
-        min_confidence: float = 0.1,
-    ) -> List[str]:
-        """移除长时间未见且置信度低于阈值的物体。
-
-        与私有 _prune_stale() 的区别:
-          - 可配置超时和最低可信度阈值 (双条件: 过期 AND 低置信度)
-          - 返回被移除的 object_id 字符串列表 (供调用方记录 diff)
-          - 不影响高置信度物体 (即使很久未见, 若可信度高则保留)
-
-        Args:
-            stale_timeout_sec: 超过此秒数未见的物体为过期候选
-            min_confidence:    credibility 低于此值才允许移除 (双条件)
-
-        Returns:
-            被移除的 object_id 列表 (字符串格式, 与 scene_graph JSON 一致)
-        """
-        now = time.time()
-        to_remove: List[int] = []
-
-        for oid, obj in self._objects.items():
-            elapsed = now - obj.last_seen if obj.last_seen > 0 else float('inf')
-            if elapsed > stale_timeout_sec and obj.credibility < min_confidence:
-                to_remove.append(oid)
-
-        for oid in to_remove:
-            del self._objects[oid]
-
-        removed_ids = [str(oid) for oid in to_remove]
-        if removed_ids:
-            logger.debug(
-                "remove_stale_objects: removed %d objects (timeout=%.1fs, min_conf=%.2f)",
-                len(removed_ids), stale_timeout_sec, min_confidence,
-            )
-        return removed_ids
-
-    def get_scene_graph_diff_json(self, prev_snapshot: dict) -> str:
-        """计算与上次快照的差异, 只返回变化的部分。
-
-        扩展 compute_scene_diff() 返回标准化的 diff JSON 字符串,
-        格式与 perception_node.py 中 _pub_scene_diff 发布的消息一致。
-
-        与 compute_scene_diff() 的区别:
-          - 返回 JSON 字符串 (直接可用于 ROS2 publisher)
-          - 输出字段名称对齐 scene_graph JSON ("added"/"updated"/"removed")
-          - 包含 timestamp 和摘要
-
-        Args:
-            prev_snapshot: 上次 get_scene_graph_json() 解析后的 dict
-
-        Returns:
-            JSON 字符串: {
-                "added":     [...],   # 新增物体的完整属性
-                "updated":   [...],   # 更新物体的 id + 变化字段
-                "removed":   [...],   # 消失物体的 id + 最后已知位置
-                "timestamp": float,
-                "summary":   str,
-            }
-        """
-        import json
-
-        prev_objects: Dict[int, dict] = {
-            o["id"]: o for o in prev_snapshot.get("objects", [])
-        }
-        curr_objects = self._objects
-
-        added_list: List[dict] = []
-        updated_list: List[dict] = []
-        removed_list: List[dict] = []
-
-        # 新增物体
-        for oid, obj in curr_objects.items():
-            if oid not in prev_objects:
-                added_list.append({
-                    "id": oid,
-                    "label": obj.label,
-                    "position": {
-                        "x": round(float(obj.position[0]), 3),
-                        "y": round(float(obj.position[1]), 3),
-                        "z": round(float(obj.position[2]), 3),
-                    },
-                    "score": round(obj.best_score, 3),
-                    "credibility": round(obj.credibility, 3),
-                })
-
-        # 消失的物体
-        for pid, pdata in prev_objects.items():
-            if pid not in curr_objects:
-                removed_list.append({
-                    "id": pid,
-                    "label": pdata.get("label", "unknown"),
-                    "last_position": pdata.get("position", {}),
-                })
-
-        # 位置或置信度显著变化的物体
-        MOVE_THRESHOLD = 0.3   # 米, 比 compute_scene_diff 更敏感
-        CRED_THRESHOLD = 0.15  # credibility 变化阈值
-        for oid, obj in curr_objects.items():
-            if oid not in prev_objects:
-                continue
-            pdata = prev_objects[oid]
-            ppos = pdata.get("position", {})
-            px, py, pz = ppos.get("x", 0.0), ppos.get("y", 0.0), ppos.get("z", 0.0)
-            dist = float(np.linalg.norm(
-                obj.position - np.array([px, py, pz], dtype=np.float64)
-            ))
-            prev_cred = pdata.get("belief", {}).get("credibility", 0.5)
-            cred_delta = abs(obj.credibility - prev_cred)
-
-            if dist > MOVE_THRESHOLD or cred_delta > CRED_THRESHOLD:
-                entry: dict = {"id": oid, "label": obj.label}
-                if dist > MOVE_THRESHOLD:
-                    entry["position"] = {
-                        "x": round(float(obj.position[0]), 3),
-                        "y": round(float(obj.position[1]), 3),
-                        "z": round(float(obj.position[2]), 3),
-                    }
-                    entry["displacement"] = round(dist, 3)
-                if cred_delta > CRED_THRESHOLD:
-                    entry["credibility"] = round(obj.credibility, 3)
-                    entry["prev_credibility"] = round(prev_cred, 3)
-                updated_list.append(entry)
-
-        # 自然语言摘要
-        parts: List[str] = []
-        if added_list:
-            labels = [e["label"] for e in added_list[:5]]
-            parts.append(f"{len(added_list)} added: {', '.join(labels)}")
-        if removed_list:
-            labels = [e["label"] for e in removed_list[:5]]
-            parts.append(f"{len(removed_list)} removed: {', '.join(labels)}")
-        if updated_list:
-            parts.append(f"{len(updated_list)} updated")
-        summary = " | ".join(parts) if parts else "no changes"
-
-        return json.dumps(
-            {
-                "added": added_list,
-                "updated": updated_list,
-                "removed": removed_list,
-                "timestamp": time.time(),
-                "summary": summary,
-            },
-            ensure_ascii=False,
-        )

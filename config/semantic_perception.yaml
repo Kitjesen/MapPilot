@@ -75,15 +75,6 @@ semantic_perception_node:
     semantic_map:
       enable: true
 
-    # ── SCG 路径规划 (默认开启) ──
-    scg:
-      enable: true
-      request_topic: "/nav/scg/plan_request"
-      result_topic: "/nav/scg/plan_result"
-      auto_expand: false                   # 探索模式下由 semantic_exploration.yaml 覆盖为 true
-      expand_every_n_frames: 10
-      min_new_polyhedra: 2
-
     # ── 性能 (USS-Nav 15Hz) ──
     target_fps: 15.0                     # USS-Nav: 15Hz on Jetson Orin NX
     skip_frames: 1                       # 处理每帧 (不跳帧)
