@@ -202,8 +202,9 @@ class TomogramPlanner(object):
             idx[0] = np.clip(idx[0], 0, self.map_dim[0] - 1)
             idx[1] = np.clip(idx[1], 0, self.map_dim[1] - 1)
 
-        idx = np.array([idx[1], idx[0]], dtype=np.float32)
-        return idx
+        # NOTE: 不做交换 — C++ ele_planner 把 start_idx[1] 解释为 x (dim0), start_idx[2] 为 y (dim1),
+        #       内部访问 trav[slice, y, x]. 返回 [idx[0], idx[1]] = [x_idx, y_idx] 与 C++ 期望一致.
+        return idx.astype(np.float32)
     
     def pos2slice(self, z):
         """将z坐标转换为切片索引 (Copied from reference project)"""
@@ -235,9 +236,10 @@ class TomogramPlanner(object):
         if self.layers_g is None or self.resolution is None or self.center is None:
             return float(self.slice_h0) if self.slice_h0 is not None else 0.0
         # 使用 pos2idx 得到与规划器一致的格网索引 (已 clamp)
+        # pos2idx 返回 [x_cpp, y_cpp]; 数组布局 layers_g[:, dim0=row=y, dim1=col=x]
         idx = self.pos2idx(pos)
-        ai = int(np.clip(idx[0], 0, self.layers_g.shape[1] - 1))
-        bi = int(np.clip(idx[1], 0, self.layers_g.shape[2] - 1))
+        ai = int(np.clip(idx[1], 0, self.layers_g.shape[1] - 1))  # row = y_cpp = idx[1]
+        bi = int(np.clip(idx[0], 0, self.layers_g.shape[2] - 1))  # col = x_cpp = idx[0]
         heights = self.layers_g[:, ai, bi]   # (n_slices,)
         valid_mask = ~np.isnan(heights)
         if not valid_mask.any():
