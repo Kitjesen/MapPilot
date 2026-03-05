@@ -4,7 +4,7 @@ Building2_9 全栈导航仿真启动文件 (ROS2 SITL)
 无需硬件 / LiDAR / SLAM. 节点拓扑:
 
   sim_robot_node.py      → /nav/odometry, /nav/map_cloud, /nav/terrain_map(+ext), /nav/stop
-  pct_planner_astar.py   → /nav/global_path      (building2_9.pickle A* 规划)
+  global_planner.py      → /nav/global_path      (ele_planner.so C++ 规划, 与 RViz demo 相同)
   pct_path_adapter (C++) → /nav/way_point         (航点序列 + /nav/adapter_status)
   localPlanner     (C++) → /nav/local_path        (局部避障路径)
   pathFollower     (C++) → /nav/cmd_vel           (速度指令 + /nav/planner_status)
@@ -99,28 +99,30 @@ def generate_launch_description():
     pcd_path   = LaunchConfiguration('pcd_path')
     scene_name = LaunchConfiguration('scene_name')
 
-    # ── pct_planner_astar.py (Python A* 全局规划器) ───────────────────────────
-    pct_share   = get_package_share_directory('pct_planner')
-    scripts_dir = os.path.join(pct_share, 'planner', 'scripts')
+    # ── global_planner.py (真实 ele_planner.so C++ 规划器, 与 RViz demo 同一套) ─
+    pct_share          = get_package_share_directory('pct_planner')
+    scripts_dir        = os.path.join(pct_share, 'planner', 'scripts')
+    global_planner_script = os.path.join(scripts_dir, 'global_planner.py')
 
-    # 必须把 scripts_dir 追加到现有 PYTHONPATH 前面 (不能替换, 否则 rclpy 不可见)
+    # venv_np1: numpy 1.26.4 隔离环境, 避免系统 numpy 2.x 与 ele_planner.so 的 ABI 冲突
+    _venv_python = '/tmp/venv_np1/bin/python3'
+    # 保留现有 PYTHONPATH (含 rclpy), 否则 venv python 找不到 ROS2 包
     _existing_pypath = os.environ.get('PYTHONPATH', '')
-    _full_pypath = f"{scripts_dir}:{_existing_pypath}" if _existing_pypath else scripts_dir
 
-    pct_planner_node = Node(
-        package='pct_planner',
-        executable='pct_planner_astar.py',
-        name='pct_planner_astar',
+    global_planner_proc = ExecuteProcess(
+        cmd=[
+            _venv_python,
+            global_planner_script,
+            '--ros-args',
+            # map_file 参数: 指向当前地图 pickle
+            '-p', ['map_file:=', map_path],
+            # goal_pose remap: sim_robot_node 发布到 /nav/goal_pose
+            '-r', '/goal_pose:=/nav/goal_pose',
+            # pct_path → /nav/global_path: pct_adapter 内部订阅 /pct_path (已 remap 到此)
+            '-r', '/pct_path:=/nav/global_path',
+        ],
         output='screen',
-        parameters=[{
-            'tomogram_file':   map_path,
-            'obstacle_thr':    49.9,  # 正确值: 50.0格是墙壁边界, 不可通行; 3D A*经楼梯间绕过
-            # 降低重发频率, 防止 pct_adapter 每秒重置航点索引 (10s 内机器人能走完一个航点段)
-            'republish_hz':    0.02,  # 50s 间隔, 不干扰 25s 导航循环 (防止重发引起路径闪烁)
-            # 增大航点间距 → 每段 ~1.6m, 全程 ~6-7 航点 (减少快速索引跳跃)
-            'smooth_min_dist': 8,
-        }],
-        additional_env={'PYTHONPATH': _full_pypath},
+        additional_env={'PYTHONPATH': _existing_pypath},
     )
 
     # ── pct_path_adapter (C++ 航点适配器) ────────────────────────────────────
@@ -366,7 +368,7 @@ def generate_launch_description():
     nodes = [
         sim_robot,              # 最先: 提供 odometry + terrain + /robot_description
         robot_state_pub_node,   # URDF TF (base_link → wheels)
-        pct_planner_node,       # 全局规划
+        global_planner_proc,    # 全局规划 (ele_planner.so, 与 RViz demo 同一套)
         pct_adapter_node,       # 航点适配
         local_planner_node,     # 局部规划
         path_follower_node,     # 速度控制
