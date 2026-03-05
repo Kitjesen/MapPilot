@@ -312,6 +312,9 @@ def generate_launch_description():
             'SIM_GOAL_Z':       goal_z,
             'SIM_START_X':      start_x,
             'SIM_START_Y':      start_y,
+            # building2_9 tomogram slice_h0=0.5: 机器人发布 TF z=0.5 匹配地图地面层
+            # global_planner.py 用 TF z 做 start_h → z=0.0 低于所有切片导致规划失败
+            'SIM_START_Z':      '0.5',
             'SIM_MAP_X_MIN':    map_x_min,
             'SIM_MAP_X_MAX':    map_x_max,
             'SIM_MAP_Y_MIN':    map_y_min,

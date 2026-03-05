@@ -43,6 +43,7 @@ from visualization_msgs.msg import Marker
 # ── 默认参数 (被环境变量覆盖) ──────────────────────────────────────────────────
 _DEF_START_X   = float(os.environ.get('SIM_START_X',   '-5.5'))
 _DEF_START_Y   = float(os.environ.get('SIM_START_Y',    '7.3'))
+_DEF_START_Z   = float(os.environ.get('SIM_START_Z',    '0.0'))  # 地图切片起始高度 (building2_9: 0.5)
 _DEF_START_YAW = 0.0   # rad
 _DEF_GOAL_X    = float(os.environ.get('SIM_GOAL_X',    '5.0'))
 _DEF_GOAL_Y    = float(os.environ.get('SIM_GOAL_Y',    '7.3'))
@@ -220,7 +221,7 @@ class SimRobotNode(Node):
         self.gy  = _DEF_GOAL_Y
 
         self.vx = self.vy = self.wz = 0.0
-        self.z    = 0.0   # 机器人当前Z高度 (3D模式下更新)
+        self.z    = _DEF_START_Z  # 机器人当前Z高度 (building2_9 地面层=0.5, 3D模式下更新)
         self.vz   = 0.0   # Z轴速度 (m/s)
         self._mode_3d    = False  # True=PCT 3D路径跟踪, False=PCT 2D控制
         self._3d_path    = []     # 3D路点列表 [(x,y,z), ...]（来自PCT 3D A*）
