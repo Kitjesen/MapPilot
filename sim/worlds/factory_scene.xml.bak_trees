@@ -1,0 +1,764 @@
+<!--
+  MapPilot Industrial Factory Scene
+  ==================================
+  Multi-level factory for quadruped robot 3D navigation.
+
+  Building footprint: 80m(X) × 55m(Y)   Total height: 13.5m (4 usable levels)
+  Outdoor yard: extends to X=-15~95, Y=-15~75
+
+  ┌─── Level RF  Z=13.5m ─── Roof Platform ────────────────────┐
+  │    X=48~80, Y=40~55 │  HVAC, antennas, safety railing       │
+  ├─── Level M2  Z= 9.0m ─── Control Room ─────────────────────┤
+  │    X=48~80, Y=28~55 │  Control panels, observation windows  │
+  ├─── Level M1  Z= 4.5m ─── Mezzanine ───────────────────────┤
+  │    X=48~80, Y=0~55  │  Catwalk (X=0~10, Y=28~55), bridge   │
+  ├─── Level G0  Z= 0.0m ─── Main Production + Warehouse ──────┤
+  │    Main Hall X=0~48 │  Columns, machines, conveyors          │
+  │    Warehouse X=50~80│  Racks, pallets, cylinders             │
+  │    Platform Z=+1.5  │  Elevated maintenance area X=15~27    │
+  ├─── Level B1  Z=-2.5m ─── Loading Dock ─────────────────────┤
+  │    X=0~60, Y=0~8    │  3 truck bays, pallets, drums          │
+  └─────────────────────────────────────────────────────────────┘
+
+  Vertical Connections:
+    Ramp  R1  : B1 → G0   X=0~60, Y=5→25, rise=2.5m, run=20m (12.5%, 7.1°)
+    Ramp  R2  : G0 → +1.5m X=15~27, Y=30→44, rise=1.5m, run=14m (10.7%, 6.1°)
+    Ramp  R3  : Outdoor slope, Y=-8→0, Z=-1.2→0 (vehicle approach)
+    Stair S1  : G0 → M1   X=5~8,   Y=28, 18 steps (center X=6.5)
+    Stair S2  : G0 → M1   X=55~58, Y=28, 18 steps (center X=56.5)
+    Stair S3  : M1 → M2   X=55~58, Y=34, 18 steps (center X=56.5)
+    Stair S4  : M2 → RF   X=55~58, Y=45, 18 steps (center X=56.5)
+
+  Navigation Route:
+    Start (5,3,-2.0) → Ramp R1 → G0 main hall → navigate columns/machines
+    → optional Ramp R2 (raised platform) → navigate to Stair S1 (6.5,28)
+    → M1 catwalk/bridge → navigate east to S2 top area → Stair S3 (56.5,34)
+    → M2 control room → Stair S4 (56.5,45) → Roof Platform → Goal (72,52,14.0)
+
+  Vertical gain: 16.5m  Horizontal distance: ~100m  Complexity: HIGH
+
+  Usage:
+    python sim/scripts/view_scene.py factory_scene
+    python -m mujoco.viewer sim/worlds/factory_scene.xml
+-->
+<mujoco model="mappilot_factory">
+
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
+
+  <visual>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.40 0.40 0.40" specular="0 0 0"/>
+    <rgba haze="0.12 0.18 0.25 1"/>
+    <global azimuth="-42" elevation="-16" fovy="48"/>
+  </visual>
+
+  <asset>
+    <material name="concrete"    rgba=".52 .52 .50 1" shininess="0.02" specular="0.05"/>
+    <material name="floor_mat"   rgba=".35 .35 .33 1" shininess="0.06" specular="0.08"/>
+    <material name="wall_mat"    rgba=".65 .62 .60 1" shininess="0.02" specular="0.05"/>
+    <material name="stair_mat"   rgba=".50 .48 .45 1" shininess="0.05" specular="0.08"/>
+    <material name="ramp_mat"    rgba=".42 .40 .22 1" shininess="0.05"/>
+    <material name="column_mat"  rgba=".78 .80 .85 1" shininess="0.20" specular="0.30"/>
+    <material name="machine_mat" rgba=".18 .30 .22 1" shininess="0.10" specular="0.15"/>
+    <material name="conveyor_mat" rgba=".22 .22 .22 1"/>
+    <material name="tank_mat"    rgba=".68 .70 .75 1" shininess="0.25" specular="0.35"/>
+    <material name="shelf_mat"   rgba=".72 .42 .10 1"/>
+    <material name="dock_mat"    rgba=".30 .28 .25 1" shininess="0.03"/>
+    <material name="stripe_mat"  rgba=".88 .75 .08 1"/>
+    <material name="container_mat" rgba=".18 .42 .65 1"/>
+    <material name="barrel_mat"  rgba=".68 .18 .12 1"/>
+    <material name="railing_mat" rgba=".65 .65 .68 1" shininess="0.15" specular="0.25"/>
+    <material name="glass_mat"   rgba=".60 .80 .90 0.25"/>
+    <material name="hvac_mat"    rgba=".72 .74 .78 1"/>
+    <material name="caution_mat" rgba=".90 .70 .08 1"/>
+    <material name="platform_mat" rgba=".42 .42 .38 1"/>
+    <material name="robot_mat"   rgba=".18 .38 .76 1"/>
+    <material name="lidar_mat"   rgba=".00 .78 .85 1"/>
+    <material name="start_mat"   rgba=".15 .78 .28 0.90"/>
+    <material name="goal_mat"    rgba=".90 .12 .12 0.90"/>
+    <material name="pipe_mat"    rgba=".50 .52 .58 1" shininess="0.12" specular="0.20"/>
+  </asset>
+
+  <worldbody>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         OUTDOOR GROUND & PERIMETER
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <geom name="outdoor_ground" type="plane" size="200 200 0.1"
+          material="concrete" conaffinity="1" condim="3"/>
+
+    <!-- Outdoor vehicle ramp R3 (approach from south, Z=-1.2→0) -->
+    <!-- α=atan2(1.2,8)=0.1489rad, ramp_length=8.09m, half=4.045m -->
+    <!-- Low end target: (30,-8,-1.2) → cy=-8+4.045*cos(0.1489)+0.12*sin(0.1489)=-8+4.026+0.018=-3.956, cz=-1.2+4.045*sin(0.1489)-0.12*cos(0.1489)=-1.2+0.602-0.119=-0.717 -->
+    <geom name="ramp_r3" type="box"
+          pos="30 -3.956 -0.717" size="30 4.045 0.12"
+          euler="0.1489 0 0"
+          material="concrete" conaffinity="1" condim="3"/>
+
+    <!-- Outdoor stacked shipping containers (east yard) -->
+    <geom name="cont_01" type="box" pos="88  8  1.25" size="3.0 1.20 1.25" material="container_mat" conaffinity="1"/>
+    <geom name="cont_02" type="box" pos="88 12  1.25" size="3.0 1.20 1.25" material="container_mat" conaffinity="1"/>
+    <geom name="cont_03" type="box" pos="88 16  1.25" size="3.0 1.20 1.25" material="container_mat" conaffinity="1"/>
+    <geom name="cont_04" type="box" pos="88 20  1.25" size="3.0 1.20 1.25" rgba=".65 .30 .12 1" conaffinity="1"/>
+    <geom name="cont_05" type="box" pos="88  8  3.75" size="3.0 1.20 1.25" rgba=".65 .30 .12 1" conaffinity="1"/>
+    <geom name="cont_06" type="box" pos="88 12  3.75" size="3.0 1.20 1.25" material="container_mat" conaffinity="1"/>
+    <geom name="cont_07" type="box" pos="88 16  3.75" size="3.0 1.20 1.25" rgba=".25 .55 .28 1" conaffinity="1"/>
+    <geom name="cont_08" type="box" pos="96 10  1.25" size="3.0 1.20 1.25" rgba=".25 .55 .28 1" conaffinity="1"/>
+    <geom name="cont_09" type="box" pos="96 14  1.25" size="3.0 1.20 1.25" material="container_mat" conaffinity="1"/>
+    <geom name="cont_10" type="box" pos="96 10  3.75" size="3.0 1.20 1.25" rgba=".55 .30 .10 1" conaffinity="1"/>
+
+    <!-- Outdoor oil drums (south yard) -->
+    <geom name="drum_out_01" type="cylinder" pos="-6  8  0.45" size="0.32 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="drum_out_02" type="cylinder" pos="-6  9.8 0.45" size="0.32 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="drum_out_03" type="cylinder" pos="-6 11.6 0.45" size="0.32 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="drum_out_04" type="cylinder" pos="-6  8  1.35" size="0.32 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="drum_out_05" type="cylinder" pos="-6  9.8 1.35" size="0.32 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="drum_out_06" type="cylinder" pos="42 -8  0.45" size="0.32 0.45" rgba=".70 .68 .10 1" conaffinity="1"/>
+    <geom name="drum_out_07" type="cylinder" pos="44 -8  0.45" size="0.32 0.45" rgba=".70 .68 .10 1" conaffinity="1"/>
+    <geom name="drum_out_08" type="cylinder" pos="46 -8  0.45" size="0.32 0.45" rgba=".70 .68 .10 1" conaffinity="1"/>
+
+    <!-- Guard booth + barrier (south entrance) -->
+    <geom name="booth_walls" type="box" pos="70 -4 1.20" size="1.50 1.50 1.20" material="wall_mat" conaffinity="1"/>
+    <geom name="booth_roof"  type="box" pos="70 -4 2.60" size="1.90 1.90 0.20" material="wall_mat" conaffinity="1"/>
+    <geom name="barrier_W"   type="box" pos="54 -1 0.60" size="0.15 0.80 0.60" material="railing_mat" conaffinity="1"/>
+    <geom name="barrier_E"   type="box" pos="66 -1 0.60" size="0.15 0.80 0.60" material="railing_mat" conaffinity="1"/>
+    <!-- barrier arm -->
+    <geom name="barrier_arm" type="box" pos="60 -0.8 1.15" size="6.0 0.06 0.06" rgba=".85 .20 .20 1" conaffinity="0" contype="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         BUILDING OUTER SHELL  (80m × 55m × 13.5m)
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- South wall — full height (0.3m thick) -->
+    <geom name="wall_S"  type="box" pos="40 0.15 6.75" size="40 0.15 6.75" material="wall_mat" conaffinity="1"/>
+    <!-- North wall -->
+    <geom name="wall_N"  type="box" pos="40 54.85 6.75" size="40 0.15 6.75" material="wall_mat" conaffinity="1"/>
+    <!-- West wall -->
+    <geom name="wall_W"  type="box" pos="0.15 27.5 6.75" size="0.15 27.5 6.75" material="wall_mat" conaffinity="1"/>
+    <!-- East wall -->
+    <geom name="wall_E"  type="box" pos="79.85 27.5 6.75" size="0.15 27.5 6.75" material="wall_mat" conaffinity="1"/>
+
+    <!-- Interior dividing wall Main Hall | Warehouse at X=50 -->
+    <!-- Door passage: Y=30~40 (10m wide) -->
+    <geom name="wall_int_S"      type="box" pos="50 15.0 4.50" size="0.15 15.0 4.50" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_int_N"      type="box" pos="50 47.5 4.50" size="0.15  7.5 4.50" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_int_lintel" type="box" pos="50 35.0 8.55" size="0.15  5.0 0.45" material="wall_mat" conaffinity="1"/>
+
+    <!-- Partial upper continuation of interior wall (M1→M2 level) -->
+    <geom name="wall_int_M1S" type="box" pos="50 15.0 9.0" size="0.15 15.0 4.50" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_int_M1N" type="box" pos="50 47.5 9.0" size="0.15  7.5 4.50" material="wall_mat" conaffinity="1"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LEVEL B1: LOADING DOCK  (Z = -2.5m)
+         Area: X=0~60, Y=0~8 at Z=-2.5
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Dock floor (flat section, 3 truck bays) -->
+    <geom name="dock_floor" type="box" pos="30 4.0 -2.60" size="30 4.0 0.10"
+          material="dock_mat" conaffinity="1" condim="3"/>
+
+    <!-- Dock side walls -->
+    <geom name="dock_wall_W" type="box" pos="0.30 4.0 -1.25" size="0.15 4.0 1.25" material="wall_mat" conaffinity="1"/>
+    <geom name="dock_wall_E" type="box" pos="59.70 4.0 -1.25" size="0.15 4.0 1.25" material="wall_mat" conaffinity="1"/>
+
+    <!-- Bay stripe markers (3 bays, yellow lines) -->
+    <geom name="stripe_bay1" type="box" pos="14 6.5 -2.49" size="0.12 2.0 0.01" material="stripe_mat" conaffinity="0" contype="0"/>
+    <geom name="stripe_bay2" type="box" pos="31 6.5 -2.49" size="0.12 2.0 0.01" material="stripe_mat" conaffinity="0" contype="0"/>
+    <geom name="stripe_bay3" type="box" pos="48 6.5 -2.49" size="0.12 2.0 0.01" material="stripe_mat" conaffinity="0" contype="0"/>
+
+    <!-- Dock equipment: pallets + crates + drums -->
+    <geom name="dock_pallet1" type="box" pos="9  2.5 -2.35" size="0.65 0.45 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="dock_crate1"  type="box" pos="9  2.5 -2.00" size="0.60 0.42 0.28" material="shelf_mat" conaffinity="1"/>
+    <geom name="dock_pallet2" type="box" pos="9  3.8 -2.35" size="0.65 0.45 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="dock_crate2"  type="box" pos="9  3.8 -2.00" size="0.60 0.42 0.28" material="shelf_mat" conaffinity="1"/>
+    <geom name="dock_pallet3" type="box" pos="25 2.5 -2.35" size="0.65 0.45 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="dock_crate3"  type="box" pos="25 2.5 -2.00" size="0.60 0.42 0.28" rgba=".60 .38 .12 1" conaffinity="1"/>
+    <geom name="dock_drum1"   type="cylinder" pos="43 2.0 -2.05" size="0.30 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="dock_drum2"   type="cylinder" pos="44.8 2.0 -2.05" size="0.30 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="dock_drum3"   type="cylinder" pos="43 3.6 -2.05" size="0.30 0.45" rgba=".55 .55 .18 1" conaffinity="1"/>
+    <!-- Forklift (simplified) -->
+    <geom name="fork_body"    type="box" pos="52 3 -2.05" size="0.80 0.55 0.45" rgba=".90 .62 .05 1" conaffinity="1"/>
+    <geom name="fork_cabin"   type="box" pos="52 3 -1.25" size="0.40 0.40 0.35" rgba=".90 .62 .05 1" conaffinity="1"/>
+    <geom name="fork_arm_L"   type="box" pos="52 2.25 -2.45" size="0.06 0.06 0.06" rgba=".40 .40 .40 1" conaffinity="0" contype="0"/>
+    <geom name="fork_arm_R"   type="box" pos="52 3.75 -2.45" size="0.06 0.06 0.06" rgba=".40 .40 .40 1" conaffinity="0" contype="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         RAMP R1: Loading Dock → G0
+         B1(Y=5,Z=-2.5) → G0(Y=25,Z=0)   rise=2.5m, run=20m
+         α=atan2(2.5,20)=0.1244rad, ramp_length=20.16m, half=10.08m
+         cx=30, cy=30-10.08*cos(0.1244)-0.15*sin(0.1244)=30-10.016-0.019=19.965→ cy=15.021
+         cz=-2.5+10.08*sin(0.1244)-0.15*cos(0.1244)=-2.5+1.255-0.149=-1.394
+    ═══════════════════════════════════════════════════════════════ -->
+    <geom name="ramp_r1" type="box"
+          pos="30 15.021 -1.394" size="29.5 10.08 0.15"
+          euler="0.1244 0 0"
+          material="ramp_mat" conaffinity="1" condim="3"/>
+    <!-- Ramp safety rails -->
+    <geom name="r1_rail_W" type="box" pos="0.60 15.021 -0.694" size="0.10 10.08 0.50"
+          euler="0.1244 0 0" material="railing_mat" conaffinity="0" contype="0"/>
+    <geom name="r1_rail_E" type="box" pos="59.40 15.021 -0.694" size="0.10 10.08 0.50"
+          euler="0.1244 0 0" material="railing_mat" conaffinity="0" contype="0"/>
+    <!-- Caution stripes on ramp surface -->
+    <geom name="r1_stripe1" type="box" pos="15 10 -2.10" size="0.08 0.50 0.02"
+          euler="0.1244 0 0" material="stripe_mat" conaffinity="0" contype="0"/>
+    <geom name="r1_stripe2" type="box" pos="30 15 -1.25" size="0.08 0.50 0.02"
+          euler="0.1244 0 0" material="stripe_mat" conaffinity="0" contype="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LEVEL G0: MAIN PRODUCTION FLOOR (Z=0)
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Main hall floor: X=0~50, Y=25~54 -->
+    <geom name="floor_G0_hall"  type="box" pos="25 39.5 -0.075" size="25 14.5 0.075"
+          material="floor_mat" conaffinity="1" condim="3"/>
+    <!-- Warehouse floor: X=50~80, Y=0~54 -->
+    <geom name="floor_G0_wh"    type="box" pos="65 27.0 -0.075" size="15 27.0 0.075"
+          material="floor_mat" conaffinity="1" condim="3"/>
+    <!-- Transition / corridor floor Y=25~28, X=0~50 -->
+    <geom name="floor_G0_trans" type="box" pos="25 26.5 -0.075" size="25  1.5 0.075"
+          material="floor_mat" conaffinity="1" condim="3"/>
+
+    <!-- ── STRUCTURAL COLUMNS (5×4 grid on main hall + 2×4 on warehouse) ── -->
+    <!-- Main hall: X=10,22,34,46 × Y=32,40,48 = 4×3=12 columns -->
+    <geom name="col_A1" type="cylinder" pos="10 32 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_A2" type="cylinder" pos="10 40 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_A3" type="cylinder" pos="10 48 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_B1" type="cylinder" pos="22 32 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_B2" type="cylinder" pos="22 40 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_B3" type="cylinder" pos="22 48 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_C1" type="cylinder" pos="34 32 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_C2" type="cylinder" pos="34 40 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_C3" type="cylinder" pos="34 48 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_D1" type="cylinder" pos="46 32 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_D2" type="cylinder" pos="46 40 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_D3" type="cylinder" pos="46 48 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <!-- Warehouse: X=58,70 × Y=12,24,36,48 = 2×4=8 columns -->
+    <geom name="col_E1" type="cylinder" pos="58 12 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_E2" type="cylinder" pos="58 24 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_E3" type="cylinder" pos="58 36 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_E4" type="cylinder" pos="58 48 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_F1" type="cylinder" pos="70 12 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_F2" type="cylinder" pos="70 24 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_F3" type="cylinder" pos="70 36 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+    <geom name="col_F4" type="cylinder" pos="70 48 6.75" size="0.35 6.75" material="column_mat" conaffinity="1"/>
+
+    <!-- ── LARGE MACHINES on Main Hall (4 presses + 4 tanks) ── -->
+    <!-- Industrial press 1 (large): X=8~14, Y=34~40, Z=0~3 -->
+    <geom name="mach_press1"  type="box" pos="11 37 1.50" size="3.0 3.0 1.50" material="machine_mat" conaffinity="1"/>
+    <geom name="mach_press1T" type="box" pos="11 37 3.40" size="1.80 1.80 0.40" material="machine_mat" conaffinity="1"/>
+    <!-- Industrial press 2: X=8~14, Y=43~49 -->
+    <geom name="mach_press2"  type="box" pos="11 46 1.50" size="3.0 3.0 1.50" material="machine_mat" conaffinity="1"/>
+    <geom name="mach_press2T" type="box" pos="11 46 3.40" size="1.80 1.80 0.40" material="machine_mat" conaffinity="1"/>
+    <!-- Stamping machine: X=26~30, Y=43~49 -->
+    <geom name="mach_stamp1"  type="box" pos="28 46 1.00" size="2.0 3.0 1.00" material="machine_mat" conaffinity="1"/>
+    <geom name="mach_stamp2"  type="box" pos="28 46 2.20" size="0.80 1.20 0.50" rgba=".25 .45 .28 1" conaffinity="1"/>
+    <!-- Robotic arm station: X=38~43, Y=43~49 -->
+    <geom name="mach_arm_base" type="cylinder" pos="40 46 0.60" size="0.80 0.60" material="machine_mat" conaffinity="1"/>
+    <geom name="mach_arm_body" type="cylinder" pos="40 46 1.80" size="0.35 0.60" material="machine_mat" conaffinity="1"/>
+    <geom name="mach_arm_head" type="box" pos="41.5 46 2.50" size="1.50 0.25 0.25" rgba=".25 .45 .28 1" conaffinity="1"/>
+
+    <!-- Large storage tanks (cylinders): near north wall -->
+    <geom name="tank1" type="cylinder" pos="6  29 2.00" size="2.00 2.00" material="tank_mat" conaffinity="1"/>
+    <geom name="tank2" type="cylinder" pos="6  35 2.00" size="2.00 2.00" material="tank_mat" conaffinity="1"/>
+    <geom name="tank3" type="cylinder" pos="6  41 2.00" size="1.50 1.80" rgba=".62 .58 .55 1" conaffinity="1"/>
+    <geom name="tank4" type="cylinder" pos="6  47 1.50" size="1.50 1.50" rgba=".62 .58 .55 1" conaffinity="1"/>
+    <!-- Pipe connecting tanks -->
+    <geom name="pipe_t12" type="cylinder" pos="6 32 3.50" size="0.15 1.50" material="pipe_mat" conaffinity="0" contype="0"/>
+    <geom name="pipe_t23" type="cylinder" pos="6 38 3.50" size="0.15 1.50" material="pipe_mat" conaffinity="0" contype="0"/>
+    <geom name="pipe_horiz" type="box" pos="6 38 4.20" size="0.12 6.0 0.12" material="pipe_mat" conaffinity="0" contype="0"/>
+
+    <!-- ── CONVEYOR BELT LINES ── -->
+    <!-- Conveyor 1: runs along X direction (support + belt) -->
+    <geom name="conv1_support" type="box" pos="27 33 0.60" size="12 0.40 0.60" material="conveyor_mat" conaffinity="1"/>
+    <geom name="conv1_belt"    type="box" pos="27 33 1.25" size="12 0.35 0.05" rgba=".15 .15 .15 1" conaffinity="0" contype="0"/>
+    <!-- Conveyor 2: runs along Y direction -->
+    <geom name="conv2_support" type="box" pos="38 36 0.60" size="0.40 8.0 0.60" material="conveyor_mat" conaffinity="1"/>
+    <geom name="conv2_belt"    type="box" pos="38 36 1.25" size="0.35 8.0 0.05" rgba=".15 .15 .15 1" conaffinity="0" contype="0"/>
+
+    <!-- ── RAISED MAINTENANCE PLATFORM (Z=0 → Z=1.5m) inside main hall ── -->
+    <!-- Ramp R2: from G0(Y=30,Z=0) to platform(Y=44,Z=1.5) -->
+    <!-- α=atan2(1.5,14)=0.1066rad, half_len=sqrt(7²+0.75²)=7.040m -->
+    <!-- Low end target: (21,30,0) → cy=30+7.040*cos(0.1066)+0.12*sin(0.1066)=30+7.005+0.013=37.018, cz=7.040*sin(0.1066)-0.12*cos(0.1066)=0.750-0.120=0.630 -->
+    <geom name="ramp_r2" type="box"
+          pos="21 37.018 0.630" size="6.0 7.040 0.12"
+          euler="0.1066 0 0"
+          material="ramp_mat" conaffinity="1" condim="3"/>
+    <!-- Ramp R2 guard rails -->
+    <geom name="r2_rail_W" type="box" pos="15.20 37.018 1.230" size="0.10 7.040 0.50"
+          euler="0.1066 0 0" material="railing_mat" conaffinity="0" contype="0"/>
+    <geom name="r2_rail_E" type="box" pos="26.80 37.018 1.230" size="0.10 7.040 0.50"
+          euler="0.1066 0 0" material="railing_mat" conaffinity="0" contype="0"/>
+    <!-- Platform floor: X=15~27, Y=44~54, Z=1.5 -->
+    <geom name="platform_floor" type="box" pos="21 49.0 1.425" size="6.0 5.0 0.075"
+          material="platform_mat" conaffinity="1" condim="3"/>
+    <!-- Platform railings (3 sides, open on south for ramp access) -->
+    <geom name="plat_rail_N"  type="box" pos="21 53.90 1.85" size="6.0 0.10 0.35" material="railing_mat" conaffinity="0" contype="0"/>
+    <geom name="plat_rail_W"  type="box" pos="15.10 49.0 1.85" size="0.10 5.0 0.35" material="railing_mat" conaffinity="0" contype="0"/>
+    <geom name="plat_rail_E"  type="box" pos="26.90 49.0 1.85" size="0.10 5.0 0.35" material="railing_mat" conaffinity="0" contype="0"/>
+    <!-- Platform equipment -->
+    <geom name="plat_ctrl1" type="box" pos="17 50 2.10" size="0.60 0.40 0.60" rgba=".45 .52 .60 1" conaffinity="1"/>
+    <geom name="plat_ctrl2" type="box" pos="25 52 2.10" size="0.60 0.40 0.60" rgba=".45 .52 .60 1" conaffinity="1"/>
+    <geom name="plat_cyl1"  type="cylinder" pos="20 52 1.90" size="0.45 0.40" material="tank_mat" conaffinity="1"/>
+
+    <!-- ── WAREHOUSE SHELVING RACKS (X=52~78, Y=2~26) ── -->
+    <!-- 3 rows of shelving, each 12m long, 4m tall, 1m deep -->
+    <geom name="rack1_base"  type="box" pos="56  6 0.60" size="0.50 6.0 0.60" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack1_shelf1" type="box" pos="56  6 1.40" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack1_shelf2" type="box" pos="56  6 2.20" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack1_shelf3" type="box" pos="56  6 3.00" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack1_top"   type="box" pos="56  6 3.80" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack2_base"  type="box" pos="65  6 0.60" size="0.50 6.0 0.60" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack2_shelf1" type="box" pos="65  6 1.40" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack2_shelf2" type="box" pos="65  6 2.20" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack2_shelf3" type="box" pos="65  6 3.00" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack2_top"   type="box" pos="65  6 3.80" size="0.50 6.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack3_base"  type="box" pos="74  8 0.60" size="0.50 8.0 0.60" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack3_shelf1" type="box" pos="74  8 1.40" size="0.50 8.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack3_shelf2" type="box" pos="74  8 2.20" size="0.50 8.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="rack3_top"   type="box" pos="74  8 3.80" size="0.50 8.0 0.08" material="shelf_mat" conaffinity="1"/>
+    <!-- Warehouse pallets on floor -->
+    <geom name="wh_pallet1" type="box" pos="60 18 0.08" size="1.2 0.9 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="wh_goods1"  type="box" pos="60 18 0.50" size="0.9 0.7 0.35" rgba=".50 .42 .35 1" conaffinity="1"/>
+    <geom name="wh_pallet2" type="box" pos="60 22 0.08" size="1.2 0.9 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="wh_goods2"  type="box" pos="60 22 0.50" size="0.9 0.7 0.35" rgba=".35 .48 .55 1" conaffinity="1"/>
+    <geom name="wh_pallet3" type="box" pos="68 20 0.08" size="1.2 0.9 0.08" material="shelf_mat" conaffinity="1"/>
+    <geom name="wh_barrel1" type="cylinder" pos="72 16 0.50" size="0.32 0.50" material="barrel_mat" conaffinity="1"/>
+    <geom name="wh_barrel2" type="cylinder" pos="73.8 16 0.50" size="0.32 0.50" material="barrel_mat" conaffinity="1"/>
+    <geom name="wh_barrel3" type="cylinder" pos="75.6 16 0.50" size="0.32 0.50" rgba=".55 .55 .18 1" conaffinity="1"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         STAIRCASE S1: G0(Z=0) → M1(Z=4.5)
+         Center X=6.5, Y_start=28, 18 steps, rising in +Y, width=3m
+         step i: y_ctr=28+(i+0.5)*0.30, z_ctr=(i+1)*0.125, size_z=(i+1)*0.125
+         Stair wall W (X=5) and E (X=8.15)
+    ═══════════════════════════════════════════════════════════════ -->
+    <!-- S1 top landing at Y=33.4, Z=4.5 ✓ -->
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         STAIRCASE S2: G0(Z=0) → M1(Z=4.5)
+         Center X=56.5, Y_start=28, same formula
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LEVEL M1: MEZZANINE (Z=4.5m)
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- West catwalk: X=0~10, Y=28~54 -->
+    <!-- Catwalk bridge across main hall: X=0~48, Y=33~36 -->
+
+        <!-- Staircase S1: cx=6.5, Y=28.0~35.5, Z=0.0~4.5 -->
+        <geom name="s1_00" type="box" pos="6.5 28.1500 0.0900" size="1.5 0.1500 0.0900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_01" type="box" pos="6.5 28.4500 0.1800" size="1.5 0.1500 0.1800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_02" type="box" pos="6.5 28.7500 0.2700" size="1.5 0.1500 0.2700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_03" type="box" pos="6.5 29.0500 0.3600" size="1.5 0.1500 0.3600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_04" type="box" pos="6.5 29.3500 0.4500" size="1.5 0.1500 0.4500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_05" type="box" pos="6.5 29.6500 0.5400" size="1.5 0.1500 0.5400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_06" type="box" pos="6.5 29.9500 0.6300" size="1.5 0.1500 0.6300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_07" type="box" pos="6.5 30.2500 0.7200" size="1.5 0.1500 0.7200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_08" type="box" pos="6.5 30.5500 0.8100" size="1.5 0.1500 0.8100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_09" type="box" pos="6.5 30.8500 0.9000" size="1.5 0.1500 0.9000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_10" type="box" pos="6.5 31.1500 0.9900" size="1.5 0.1500 0.9900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_11" type="box" pos="6.5 31.4500 1.0800" size="1.5 0.1500 1.0800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_12" type="box" pos="6.5 31.7500 1.1700" size="1.5 0.1500 1.1700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_13" type="box" pos="6.5 32.0500 1.2600" size="1.5 0.1500 1.2600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_14" type="box" pos="6.5 32.3500 1.3500" size="1.5 0.1500 1.3500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_15" type="box" pos="6.5 32.6500 1.4400" size="1.5 0.1500 1.4400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_16" type="box" pos="6.5 32.9500 1.5300" size="1.5 0.1500 1.5300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_17" type="box" pos="6.5 33.2500 1.6200" size="1.5 0.1500 1.6200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_18" type="box" pos="6.5 33.5500 1.7100" size="1.5 0.1500 1.7100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_19" type="box" pos="6.5 33.8500 1.8000" size="1.5 0.1500 1.8000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_20" type="box" pos="6.5 34.1500 1.8900" size="1.5 0.1500 1.8900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_21" type="box" pos="6.5 34.4500 1.9800" size="1.5 0.1500 1.9800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_22" type="box" pos="6.5 34.7500 2.0700" size="1.5 0.1500 2.0700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_23" type="box" pos="6.5 35.0500 2.1600" size="1.5 0.1500 2.1600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s1_24" type="box" pos="6.5 35.3500 2.2500" size="1.5 0.1500 2.2500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="sw1_W" type="box" pos="4.88 31.750 2.250" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+        <geom name="sw1_E" type="box" pos="8.12 31.750 2.250" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+
+        <!-- Staircase S2: cx=56.5, Y=28.0~35.5, Z=0.0~4.5 -->
+        <geom name="s2_00" type="box" pos="56.5 28.1500 0.0900" size="1.5 0.1500 0.0900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_01" type="box" pos="56.5 28.4500 0.1800" size="1.5 0.1500 0.1800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_02" type="box" pos="56.5 28.7500 0.2700" size="1.5 0.1500 0.2700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_03" type="box" pos="56.5 29.0500 0.3600" size="1.5 0.1500 0.3600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_04" type="box" pos="56.5 29.3500 0.4500" size="1.5 0.1500 0.4500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_05" type="box" pos="56.5 29.6500 0.5400" size="1.5 0.1500 0.5400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_06" type="box" pos="56.5 29.9500 0.6300" size="1.5 0.1500 0.6300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_07" type="box" pos="56.5 30.2500 0.7200" size="1.5 0.1500 0.7200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_08" type="box" pos="56.5 30.5500 0.8100" size="1.5 0.1500 0.8100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_09" type="box" pos="56.5 30.8500 0.9000" size="1.5 0.1500 0.9000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_10" type="box" pos="56.5 31.1500 0.9900" size="1.5 0.1500 0.9900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_11" type="box" pos="56.5 31.4500 1.0800" size="1.5 0.1500 1.0800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_12" type="box" pos="56.5 31.7500 1.1700" size="1.5 0.1500 1.1700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_13" type="box" pos="56.5 32.0500 1.2600" size="1.5 0.1500 1.2600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_14" type="box" pos="56.5 32.3500 1.3500" size="1.5 0.1500 1.3500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_15" type="box" pos="56.5 32.6500 1.4400" size="1.5 0.1500 1.4400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_16" type="box" pos="56.5 32.9500 1.5300" size="1.5 0.1500 1.5300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_17" type="box" pos="56.5 33.2500 1.6200" size="1.5 0.1500 1.6200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_18" type="box" pos="56.5 33.5500 1.7100" size="1.5 0.1500 1.7100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_19" type="box" pos="56.5 33.8500 1.8000" size="1.5 0.1500 1.8000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_20" type="box" pos="56.5 34.1500 1.8900" size="1.5 0.1500 1.8900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_21" type="box" pos="56.5 34.4500 1.9800" size="1.5 0.1500 1.9800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_22" type="box" pos="56.5 34.7500 2.0700" size="1.5 0.1500 2.0700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_23" type="box" pos="56.5 35.0500 2.1600" size="1.5 0.1500 2.1600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s2_24" type="box" pos="56.5 35.3500 2.2500" size="1.5 0.1500 2.2500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="sw2_W" type="box" pos="54.88 31.750 2.250" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+        <geom name="sw2_E" type="box" pos="58.12 31.750 2.250" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+
+        <!-- Staircase S3: cx=56.5, Y=36.5~44.0, Z=4.5~9.0 -->
+        <geom name="s3_00" type="box" pos="56.5 36.6500 4.5900" size="1.5 0.1500 0.0900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_01" type="box" pos="56.5 36.9500 4.6800" size="1.5 0.1500 0.1800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_02" type="box" pos="56.5 37.2500 4.7700" size="1.5 0.1500 0.2700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_03" type="box" pos="56.5 37.5500 4.8600" size="1.5 0.1500 0.3600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_04" type="box" pos="56.5 37.8500 4.9500" size="1.5 0.1500 0.4500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_05" type="box" pos="56.5 38.1500 5.0400" size="1.5 0.1500 0.5400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_06" type="box" pos="56.5 38.4500 5.1300" size="1.5 0.1500 0.6300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_07" type="box" pos="56.5 38.7500 5.2200" size="1.5 0.1500 0.7200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_08" type="box" pos="56.5 39.0500 5.3100" size="1.5 0.1500 0.8100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_09" type="box" pos="56.5 39.3500 5.4000" size="1.5 0.1500 0.9000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_10" type="box" pos="56.5 39.6500 5.4900" size="1.5 0.1500 0.9900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_11" type="box" pos="56.5 39.9500 5.5800" size="1.5 0.1500 1.0800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_12" type="box" pos="56.5 40.2500 5.6700" size="1.5 0.1500 1.1700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_13" type="box" pos="56.5 40.5500 5.7600" size="1.5 0.1500 1.2600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_14" type="box" pos="56.5 40.8500 5.8500" size="1.5 0.1500 1.3500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_15" type="box" pos="56.5 41.1500 5.9400" size="1.5 0.1500 1.4400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_16" type="box" pos="56.5 41.4500 6.0300" size="1.5 0.1500 1.5300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_17" type="box" pos="56.5 41.7500 6.1200" size="1.5 0.1500 1.6200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_18" type="box" pos="56.5 42.0500 6.2100" size="1.5 0.1500 1.7100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_19" type="box" pos="56.5 42.3500 6.3000" size="1.5 0.1500 1.8000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_20" type="box" pos="56.5 42.6500 6.3900" size="1.5 0.1500 1.8900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_21" type="box" pos="56.5 42.9500 6.4800" size="1.5 0.1500 1.9800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_22" type="box" pos="56.5 43.2500 6.5700" size="1.5 0.1500 2.0700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_23" type="box" pos="56.5 43.5500 6.6600" size="1.5 0.1500 2.1600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s3_24" type="box" pos="56.5 43.8500 6.7500" size="1.5 0.1500 2.2500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="sw3_W" type="box" pos="54.88 40.250 6.750" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+        <geom name="sw3_E" type="box" pos="58.12 40.250 6.750" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+
+        <!-- Staircase S4: cx=56.5, Y=45.5~53.0, Z=9.0~13.5 -->
+        <geom name="s4_00" type="box" pos="56.5 45.6500 9.0900" size="1.5 0.1500 0.0900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_01" type="box" pos="56.5 45.9500 9.1800" size="1.5 0.1500 0.1800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_02" type="box" pos="56.5 46.2500 9.2700" size="1.5 0.1500 0.2700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_03" type="box" pos="56.5 46.5500 9.3600" size="1.5 0.1500 0.3600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_04" type="box" pos="56.5 46.8500 9.4500" size="1.5 0.1500 0.4500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_05" type="box" pos="56.5 47.1500 9.5400" size="1.5 0.1500 0.5400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_06" type="box" pos="56.5 47.4500 9.6300" size="1.5 0.1500 0.6300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_07" type="box" pos="56.5 47.7500 9.7200" size="1.5 0.1500 0.7200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_08" type="box" pos="56.5 48.0500 9.8100" size="1.5 0.1500 0.8100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_09" type="box" pos="56.5 48.3500 9.9000" size="1.5 0.1500 0.9000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_10" type="box" pos="56.5 48.6500 9.9900" size="1.5 0.1500 0.9900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_11" type="box" pos="56.5 48.9500 10.0800" size="1.5 0.1500 1.0800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_12" type="box" pos="56.5 49.2500 10.1700" size="1.5 0.1500 1.1700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_13" type="box" pos="56.5 49.5500 10.2600" size="1.5 0.1500 1.2600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_14" type="box" pos="56.5 49.8500 10.3500" size="1.5 0.1500 1.3500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_15" type="box" pos="56.5 50.1500 10.4400" size="1.5 0.1500 1.4400" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_16" type="box" pos="56.5 50.4500 10.5300" size="1.5 0.1500 1.5300" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_17" type="box" pos="56.5 50.7500 10.6200" size="1.5 0.1500 1.6200" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_18" type="box" pos="56.5 51.0500 10.7100" size="1.5 0.1500 1.7100" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_19" type="box" pos="56.5 51.3500 10.8000" size="1.5 0.1500 1.8000" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_20" type="box" pos="56.5 51.6500 10.8900" size="1.5 0.1500 1.8900" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_21" type="box" pos="56.5 51.9500 10.9800" size="1.5 0.1500 1.9800" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_22" type="box" pos="56.5 52.2500 11.0700" size="1.5 0.1500 2.0700" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_23" type="box" pos="56.5 52.5500 11.1600" size="1.5 0.1500 2.1600" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="s4_24" type="box" pos="56.5 52.8500 11.2500" size="1.5 0.1500 2.2500" material="stair_mat" conaffinity="1" condim="3"/>
+        <geom name="sw4_W" type="box" pos="54.88 49.250 11.250" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+        <geom name="sw4_E" type="box" pos="58.12 49.250 11.250" size="0.12 3.750 2.250" material="wall_mat" conaffinity="1" condim="3"/>
+
+    <geom name="floor_M1_bridge" type="box" pos="24 34.5 4.425" size="24 1.5 0.075"
+          material="platform_mat" conaffinity="1" condim="3"/>
+
+        <!-- M1 mezzanine floors — openings for S1/S2/S3 -->
+        <geom name="floor_M1_walk_N" type="box" pos="5.000 44.750 4.425" size="5.000 9.250 0.075" material="platform_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_walk_SW" type="box" pos="2.500 31.750 4.425" size="2.500 3.750 0.075" material="platform_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_walk_SE" type="box" pos="9.000 31.750 4.425" size="1.000 3.750 0.075" material="platform_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_wh_S" type="box" pos="64.000 14.000 4.425" size="16.000 14.000 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_wh_S2W" type="box" pos="51.500 31.750 4.425" size="3.500 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_wh_S2E" type="box" pos="69.000 31.750 4.425" size="11.000 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_wh_gap" type="box" pos="64.000 36.000 4.425" size="16.000 0.500 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_wh_S3W" type="box" pos="51.500 40.250 4.425" size="3.500 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_wh_S3E" type="box" pos="69.000 40.250 4.425" size="11.000 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M1_wh_N" type="box" pos="64.000 49.000 4.425" size="16.000 5.000 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <!-- M2 control room floor — openings for S3/S4 -->
+        <geom name="floor_M2_S" type="box" pos="64.000 32.250 8.925" size="16.000 4.250 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M2_S3W" type="box" pos="51.500 40.250 8.925" size="3.500 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M2_S3E" type="box" pos="69.000 40.250 8.925" size="11.000 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M2_M" type="box" pos="64.000 44.750 8.925" size="16.000 0.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M2_S4W" type="box" pos="51.500 49.250 8.925" size="3.500 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M2_S4E" type="box" pos="69.000 49.250 8.925" size="11.000 3.750 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_M2_N" type="box" pos="64.000 53.500 8.925" size="16.000 0.500 0.075" material="floor_mat" conaffinity="1" condim="3"/>
+        <!-- RF roof platform — opening for S4 -->
+        <geom name="floor_RF_S" type="box" pos="64.000 42.750 13.425" size="16.000 2.750 0.075" material="platform_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_RF_S4W" type="box" pos="51.500 49.250 13.425" size="3.500 3.750 0.075" material="platform_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_RF_S4E" type="box" pos="69.000 49.250 13.425" size="11.000 3.750 0.075" material="platform_mat" conaffinity="1" condim="3"/>
+        <geom name="floor_RF_N" type="box" pos="64.000 53.500 13.425" size="16.000 0.500 0.075" material="platform_mat" conaffinity="1" condim="3"/>
+    <!-- Bridge railings -->
+    <geom name="bridge_rail_S" type="box" pos="24 33.10 4.90" size="24 0.10 0.40" material="railing_mat" conaffinity="0" contype="0"/>
+    <geom name="bridge_rail_N" type="box" pos="24 35.90 4.90" size="24 0.10 0.40" material="railing_mat" conaffinity="0" contype="0"/>
+
+    <!-- M1 mezzanine features (tanks, control boxes) -->
+    <geom name="m1_tank1" type="cylinder" pos="55 20 5.50" size="1.20 1.00" material="tank_mat" conaffinity="1"/>
+    <geom name="m1_tank2" type="cylinder" pos="55 24 5.50" size="1.20 1.00" material="tank_mat" conaffinity="1"/>
+    <geom name="m1_ctrl1" type="box" pos="62 20 5.10" size="0.80 0.35 0.60" rgba=".35 .45 .55 1" conaffinity="1"/>
+    <geom name="m1_ctrl2" type="box" pos="62 24 5.10" size="0.80 0.35 0.60" rgba=".35 .45 .55 1" conaffinity="1"/>
+    <geom name="m1_crate1" type="box" pos="68 10 4.90" size="0.70 0.70 0.40" material="shelf_mat" conaffinity="1"/>
+    <geom name="m1_crate2" type="box" pos="68 12 4.90" size="0.70 0.70 0.40" rgba=".55 .45 .35 1" conaffinity="1"/>
+    <geom name="m1_drum1"   type="cylinder" pos="75 10 4.95" size="0.32 0.45" material="barrel_mat" conaffinity="1"/>
+    <geom name="m1_drum2"   type="cylinder" pos="76.8 10 4.95" size="0.32 0.45" material="barrel_mat" conaffinity="1"/>
+    <!-- Catwalk west side obstacles -->
+    <geom name="m1_box1" type="box" pos="4 46 5.10" size="0.60 0.60 0.35" material="shelf_mat" conaffinity="1"/>
+    <geom name="m1_box2" type="box" pos="8 50 5.10" size="0.60 0.60 0.35" rgba=".42 .55 .38 1" conaffinity="1"/>
+    <geom name="m1_pipe_v1" type="cylinder" pos="3 43 6.00" size="0.12 1.50" material="pipe_mat" conaffinity="0" contype="0"/>
+    <geom name="m1_pipe_v2" type="cylinder" pos="7 52 6.00" size="0.12 1.50" material="pipe_mat" conaffinity="0" contype="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         STAIRCASE S3: M1(Z=4.5) → M2(Z=9.0)
+         Center X=56.5, Y_start=34, 18 steps rising in +Y
+         step i: y_ctr=34+(i+0.5)*0.30, z_ctr=4.5+(i+1)*0.125, size_z=(i+1)*0.125
+         Top at Y=39.4, Z=9.0 ✓
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LEVEL M2: CONTROL ROOM (Z=9.0m)
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Control room floor: X=48~80, Y=28~54 -->
+    <!-- Control room glazed walls (south + west sides, semi-transparent) -->
+    <geom name="m2_glass_S" type="box" pos="64 28.15 10.50" size="16 0.10 1.50" material="glass_mat" conaffinity="0" contype="0"/>
+    <geom name="m2_glass_W" type="box" pos="48.15 41.0 10.50" size="0.10 13.0 1.50" material="glass_mat" conaffinity="0" contype="0"/>
+    <!-- Solid upper walls M2 level -->
+    <geom name="m2_wall_S" type="box" pos="64 28.15 12.25" size="16 0.10 0.75" material="wall_mat" conaffinity="1"/>
+    <geom name="m2_wall_W" type="box" pos="48.15 41.0 12.25" size="0.10 13.0 0.75" material="wall_mat" conaffinity="1"/>
+
+    <!-- M2 control room equipment -->
+    <geom name="m2_console1" type="box" pos="52 38 9.90" size="4.0 0.50 0.60" rgba=".30 .40 .52 1" conaffinity="1"/>
+    <geom name="m2_console2" type="box" pos="52 38 10.60" size="4.0 0.40 0.40" rgba=".25 .35 .48 1" conaffinity="1"/>
+    <geom name="m2_console3" type="box" pos="72 40 9.90" size="4.0 0.50 0.60" rgba=".30 .40 .52 1" conaffinity="1"/>
+    <geom name="m2_server1"  type="box" pos="62 52 9.90" size="0.45 0.60 1.00" rgba=".20 .22 .28 1" conaffinity="1"/>
+    <geom name="m2_server2"  type="box" pos="63.8 52 9.90" size="0.45 0.60 1.00" rgba=".20 .22 .28 1" conaffinity="1"/>
+    <geom name="m2_server3"  type="box" pos="65.6 52 9.90" size="0.45 0.60 1.00" rgba=".20 .22 .28 1" conaffinity="1"/>
+    <geom name="m2_cabinet"  type="box" pos="78 44 9.90" size="0.50 1.50 1.20" rgba=".48 .50 .55 1" conaffinity="1"/>
+    <geom name="m2_cabinet2" type="box" pos="78 48 9.90" size="0.50 1.50 1.20" rgba=".48 .50 .55 1" conaffinity="1"/>
+    <geom name="m2_desk1"    type="box" pos="68 32 9.75" size="1.50 0.45 0.45" rgba=".55 .50 .42 1" conaffinity="1"/>
+    <geom name="m2_desk2"    type="box" pos="68 35 9.75" size="1.50 0.45 0.45" rgba=".55 .50 .42 1" conaffinity="1"/>
+    <!-- M2 structural columns (partial, M2 level only) -->
+    <geom name="col_M2_1" type="cylinder" pos="58 36 11.25" size="0.30 2.25" material="column_mat" conaffinity="1"/>
+    <geom name="col_M2_2" type="cylinder" pos="70 36 11.25" size="0.30 2.25" material="column_mat" conaffinity="1"/>
+    <geom name="col_M2_3" type="cylinder" pos="58 48 11.25" size="0.30 2.25" material="column_mat" conaffinity="1"/>
+    <geom name="col_M2_4" type="cylinder" pos="70 48 11.25" size="0.30 2.25" material="column_mat" conaffinity="1"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         STAIRCASE S4: M2(Z=9.0) → RF(Z=13.5)
+         Center X=56.5, Y_start=45, 18 steps rising in +Y
+         step i: y_ctr=45+(i+0.5)*0.30, z_ctr=9.0+(i+1)*0.125, size_z=(i+1)*0.125
+         Top at Y=50.4, Z=13.5 ✓
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LEVEL RF: ROOF PLATFORM  (Z=13.5m)
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Roof floor: X=48~80, Y=40~54 -->
+    <!-- Safety railing all around -->
+    <geom name="rf_rail_N" type="box" pos="64 53.85 13.85" size="16 0.15 0.35" material="railing_mat" conaffinity="0" contype="0"/>
+    <geom name="rf_rail_E" type="box" pos="79.85 47 13.85" size="0.15 7.0 0.35" material="railing_mat" conaffinity="0" contype="0"/>
+    <geom name="rf_rail_W" type="box" pos="48.15 47 13.85" size="0.15 7.0 0.35" material="railing_mat" conaffinity="0" contype="0"/>
+    <!-- HVAC units -->
+    <geom name="hvac1" type="box" pos="62 42 14.25" size="2.50 2.00 0.75" material="hvac_mat" conaffinity="1"/>
+    <geom name="hvac2" type="box" pos="72 42 14.25" size="2.50 2.00 0.75" material="hvac_mat" conaffinity="1"/>
+    <geom name="hvac3" type="box" pos="62 52 14.25" size="2.00 1.50 0.75" material="hvac_mat" conaffinity="1"/>
+    <!-- Antenna mast -->
+    <geom name="antenna_pole" type="cylinder" pos="77 52 16.00" size="0.10 2.50" material="column_mat" conaffinity="0" contype="0"/>
+    <geom name="antenna_top"  type="box"      pos="77 52 18.60" size="1.20 0.04 0.10" rgba=".88 .22 .22 1" conaffinity="0" contype="0"/>
+    <!-- Ventilation ducts on roof -->
+    <geom name="duct1" type="cylinder" pos="66 48 14.60" size="0.50 0.60" material="hvac_mat" conaffinity="1"/>
+    <geom name="duct2" type="cylinder" pos="70 50 14.60" size="0.50 0.60" material="hvac_mat" conaffinity="1"/>
+    <geom name="duct3" type="cylinder" pos="74 44 14.60" size="0.50 0.60" material="hvac_mat" conaffinity="1"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         OVERHEAD STRUCTURES: Crane tracks + ductwork (decorative)
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Overhead crane rail (running along X at Y=40, Z=4.0) -->
+    <geom name="crane_rail" type="box" pos="24 40 4.00" size="24 0.20 0.25" material="column_mat" conaffinity="0" contype="0"/>
+    <!-- Cross beams -->
+    <geom name="beam_1" type="box" pos="10 40 4.25" size="0.20 0.20 0.20" material="column_mat" conaffinity="0" contype="0"/>
+    <geom name="beam_2" type="box" pos="22 40 4.25" size="0.20 0.20 0.20" material="column_mat" conaffinity="0" contype="0"/>
+    <geom name="beam_3" type="box" pos="34 40 4.25" size="0.20 0.20 0.20" material="column_mat" conaffinity="0" contype="0"/>
+    <geom name="beam_4" type="box" pos="46 40 4.25" size="0.20 0.20 0.20" material="column_mat" conaffinity="0" contype="0"/>
+    <!-- Large HVAC duct running along ceiling of main hall -->
+    <geom name="duct_main1" type="box" pos="24 36 4.10" size="24 0.60 0.40" material="pipe_mat" conaffinity="0" contype="0"/>
+    <geom name="duct_main2" type="box" pos="24 44 4.10" size="24 0.60 0.40" material="pipe_mat" conaffinity="0" contype="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LIGHTING
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <light name="sun"      pos="20 -20 50" dir=".3 .5 -1"   diffuse=".75 .72 .68" specular=".10 .10 .08"/>
+    <light name="fill_1"   pos="0  80 40" dir=".2 -.6 -1"  diffuse=".30 .32 .35"/>
+    <light name="fill_2"   pos="80 0  30" dir="-.5 .3 -1"  diffuse=".20 .22 .25"/>
+    <!-- Factory floor lights -->
+    <light name="hall_1"   pos="15 36  4.0" dir="0 0 -1" diffuse=".70 .70 .65" castshadow="false"/>
+    <light name="hall_2"   pos="30 44  4.0" dir="0 0 -1" diffuse=".70 .70 .65" castshadow="false"/>
+    <light name="hall_3"   pos="42 36  4.0" dir="0 0 -1" diffuse=".65 .65 .60" castshadow="false"/>
+    <!-- Warehouse light -->
+    <light name="wh_1"     pos="62 15  4.0" dir="0 0 -1" diffuse=".65 .65 .60" castshadow="false"/>
+    <light name="wh_2"     pos="72 26  4.0" dir="0 0 -1" diffuse=".65 .65 .60" castshadow="false"/>
+    <!-- Upper level lights -->
+    <light name="m2_light" pos="65 41 11.0" dir="0 0 -1" diffuse=".60 .60 .58" castshadow="false"/>
+    <light name="rf_light" pos="65 47 16.0" dir="0 0 -1" diffuse=".50 .50 .50" castshadow="false"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         START / GOAL MARKERS
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- Start: Loading Dock B1 at (5, 3) -->
+    <geom name="start_disk" type="cylinder" pos="5 3 -2.49" size="0.80 0.01"
+          material="start_mat" conaffinity="0" contype="0"/>
+    <geom name="start_pole" type="cylinder" pos="5 3 -2.49" size="0.03 1.00"
+          rgba=".15 .78 .28 0.8" conaffinity="0" contype="0"/>
+
+    <!-- Goal: Roof Platform RF at (72, 52) -->
+    <geom name="goal_disk"  type="cylinder" pos="72 52 13.51" size="0.80 0.01"
+          material="goal_mat" conaffinity="0" contype="0"/>
+    <geom name="goal_pole"  type="cylinder" pos="72 52 13.51" size="0.03 1.20"
+          rgba=".90 .12 .12 0.9" conaffinity="0" contype="0"/>
+    <geom name="goal_flag"  type="box"      pos="72.40 52 14.65" size="0.40 0.03 0.25"
+          rgba=".90 .12 .12 1"  conaffinity="0" contype="0"/>
+    <geom name="goal_ball"  type="sphere"   pos="72 52 14.85" size="0.22"
+          rgba=".90 .12 .12 0.85" conaffinity="0" contype="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         ROBOT PLACEHOLDER
+         Start pos = (5, 3, -2.0)  [0.5m above B1 dock floor at Z=-2.5]
+         body names: base_link / lidar_link — bridge depends on these names
+    ═══════════════════════════════════════════════════════════════ -->
+    <body name="base_link" pos="5.0 3.0 -2.0">
+      <freejoint name="robot_root"/>
+
+      <!-- Chassis (replace with self-developed URDF) -->
+      <geom name="chassis" type="box" size="0.42 0.28 0.10"
+            material="robot_mat" mass="22" conaffinity="1"/>
+      <!-- Simplified legs -->
+      <geom name="leg_fl" type="capsule" size="0.030" fromto=" 0.30  0.20 -.10  0.30  0.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+      <geom name="leg_fr" type="capsule" size="0.030" fromto=" 0.30 -.20 -.10  0.30 -.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+      <geom name="leg_rl" type="capsule" size="0.030" fromto="-.30  0.20 -.10 -.30  0.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+      <geom name="leg_rr" type="capsule" size="0.030" fromto="-.30 -.20 -.10 -.30 -.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+
+      <!-- Livox MID-360 mount -->
+      <body name="lidar_link" pos="0 0 0.22">
+        <geom name="lidar_housing" type="cylinder" size="0.058 0.046"
+              material="lidar_mat" mass="0.50" conaffinity="0"/>
+        <geom name="lidar_pole"    type="capsule"  size="0.016"
+              fromto="0 0 -0.01  0 0 -0.14" rgba=".28 .28 .28 1" mass="0.08" conaffinity="0"/>
+        <site name="lidar_site" pos="0 0 0" size="0.001"/>
+      </body>
+      <!-- Forward direction indicator (yellow) -->
+      <geom name="dir_arrow" type="capsule" size="0.020"
+            fromto="0.05 0 0.12  0.44 0 0.12" rgba=".95 .75 .05 1" conaffinity="0"/>
+
+      <inertial pos="0 0 0" mass="22" diaginertia="0.78 1.18 1.18"/>
+    </body>
+
+  
+    <!-- ═══════════════════════════════════════════════════════════════
+         OBSTACLE COURSE FOR ROBOT NAVIGATION TESTING
+         9 zones × multi-type obstacles (box / cylinder)
+    ═══════════════════════════════════════════════════════════════ -->
+
+    <!-- ── Zone A: G0 入口走廊 slalom  (Y=25~32, X=12~44) ─────────────── -->
+    <!-- 木板箱叠摞 -->
+    <geom name="obs_a01" type="box" pos="18.0 26.2 0.42" size="0.55 0.55 0.42" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_a01t" type="box" pos="18.0 26.2 0.96" size="0.45 0.45 0.12" rgba=".55 .45 .32 1" conaffinity="1" condim="3"/>
+    <!-- 两只黄色油桶 -->
+    <geom name="obs_a02" type="cylinder" pos="24.0 27.0 0.50" size="0.32 0.50" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_a03" type="cylinder" pos="25.8 27.0 0.50" size="0.32 0.50" rgba=".70 .68 .10 1" conaffinity="1" condim="3"/>
+    <!-- 长托盘 -->
+    <geom name="obs_a04" type="box" pos="32.0 26.5 0.38" size="1.20 0.58 0.38" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_a04g" type="box" pos="32.0 26.5 0.88" size="0.90 0.48 0.12" rgba=".48 .38 .28 1" conaffinity="1" condim="3"/>
+    <!-- 警示黄箱 -->
+    <geom name="obs_a05" type="box" pos="40.0 27.0 0.50" size="0.60 0.60 0.50" material="caution_mat" conaffinity="1" condim="3"/>
+    <!-- 圆桶 -->
+    <geom name="obs_a06" type="cylinder" pos="44.0 26.8 0.45" size="0.35 0.45" material="barrel_mat" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone B: G0 大厅中央散布 (X=14~44, Y=33~48) ──────────────────── -->
+    <!-- 列A~D之间的散落货物 -->
+    <geom name="obs_b01" type="box" pos="16.0 35.0 0.50" size="0.60 0.60 0.50" rgba=".42 .55 .38 1" conaffinity="1" condim="3"/>
+    <geom name="obs_b02" type="box" pos="16.0 37.5 0.50" size="0.60 0.60 0.50" rgba=".42 .55 .38 1" conaffinity="1" condim="3"/>
+    <geom name="obs_b03" type="cylinder" pos="20.0 36.5 0.50" size="0.35 0.50" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_b04" type="box" pos="24.0 43.5 0.55" size="0.70 0.70 0.55" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_b05" type="cylinder" pos="28.0 38.5 0.50" size="0.32 0.50" material="barrel_mat" conaffinity="1" condim="3"/>
+    <!-- 侧卧的长托盘组 -->
+    <geom name="obs_b06" type="box" pos="33.0 44.5 0.40" size="1.50 0.50 0.40" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_b07" type="box" pos="36.0 35.5 0.55" size="0.65 0.65 0.55" rgba=".55 .45 .32 1" conaffinity="1" condim="3"/>
+    <geom name="obs_b08" type="box" pos="36.0 38.0 0.55" size="0.65 0.65 0.55" rgba=".55 .45 .32 1" conaffinity="1" condim="3"/>
+    <geom name="obs_b09" type="cylinder" pos="42.0 43.0 0.50" size="0.32 0.50" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_b10" type="box" pos="42.0 38.5 0.40" size="1.00 0.50 0.40" rgba=".48 .38 .28 1" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone C: 仓库 G0 货架区穿行 (X=52~76, Y=14~26) ───────────────── -->
+    <geom name="obs_c01" type="box" pos="53.0 14.5 0.45" size="0.60 0.60 0.45" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_c02" type="box" pos="58.0 16.0 0.45" size="0.60 0.60 0.45" rgba=".45 .38 .28 1" conaffinity="1" condim="3"/>
+    <geom name="obs_c03" type="cylinder" pos="62.0 14.5 0.50" size="0.32 0.50" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_c04" type="cylinder" pos="63.8 14.5 0.50" size="0.32 0.50" rgba=".70 .68 .10 1" conaffinity="1" condim="3"/>
+    <geom name="obs_c05" type="box" pos="68.0 18.5 0.40" size="1.20 0.60 0.40" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_c06" type="box" pos="73.0 22.5 0.45" size="0.70 0.70 0.45" rgba=".42 .52 .62 1" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone D: 仓库门廊前 (X=52~76, Y=26~29) ──────────────────────── -->
+    <!-- 进主厅大门前的收窄障碍 -->
+    <geom name="obs_d01" type="box" pos="55.0 27.2 0.40" size="1.20 0.55 0.40" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_d02" type="cylinder" pos="63.0 27.5 0.45" size="0.35 0.45" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_d03" type="box" pos="72.0 27.2 0.50" size="0.65 0.65 0.50" rgba=".30 .42 .55 1" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone E: M1 大桥散布 (X=10~44, Y=33.5~35.5, Z=4.5) ─────────── -->
+    <!-- 桥上散落的维修物料迫使机器人绕行 -->
+    <geom name="obs_e01" type="box" pos="14.0 34.5 5.10" size="0.65 0.65 0.35" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_e02" type="cylinder" pos="20.0 35.0 5.05" size="0.30 0.35" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_e03" type="box" pos="28.0 34.2 5.10" size="0.65 0.65 0.35" rgba=".42 .55 .38 1" conaffinity="1" condim="3"/>
+    <geom name="obs_e04" type="box" pos="36.0 35.2 5.10" size="0.70 0.50 0.35" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_e05" type="cylinder" pos="42.0 34.5 5.05" size="0.30 0.35" rgba=".70 .68 .10 1" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone F: M1 西侧走廊 (X=2~8, Y=38~52, Z=4.5) ──────────────── -->
+    <geom name="obs_f01" type="box" pos="5.0 39.5 5.10" size="0.60 0.60 0.35" rgba=".45 .38 .28 1" conaffinity="1" condim="3"/>
+    <geom name="obs_f02" type="box" pos="3.0 45.5 5.10" size="0.55 0.55 0.35" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_f03" type="cylinder" pos="7.0 49.5 5.05" size="0.28 0.35" material="barrel_mat" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone G: M1 仓库层 (X=52~76, Y=4~24, Z=4.5) ─────────────────── -->
+    <geom name="obs_g01" type="box" pos="55.0 12.0 5.10" size="0.65 0.65 0.35" material="shelf_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_g02" type="cylinder" pos="62.0 18.0 5.05" size="0.32 0.35" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_g03" type="box" pos="70.0 22.0 5.10" size="0.70 0.70 0.35" rgba=".55 .45 .32 1" conaffinity="1" condim="3"/>
+    <geom name="obs_g04" type="box" pos="75.0 14.0 5.10" size="0.60 0.60 0.35" rgba=".42 .52 .62 1" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone H: M2 控制室附加障碍 (X=52~76, Y=30~50, Z=9.0) ────────── -->
+    <geom name="obs_h01" type="box" pos="56.0 31.0 9.90" size="0.70 0.70 0.45" rgba=".35 .38 .45 1" conaffinity="1" condim="3"/>
+    <geom name="obs_h02" type="box" pos="60.0 44.5 9.90" size="0.65 0.65 0.45" rgba=".38 .42 .50 1" conaffinity="1" condim="3"/>
+    <geom name="obs_h03" type="cylinder" pos="68.0 31.0 9.90" size="0.30 0.45" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_h04" type="box" pos="74.0 44.0 9.90" size="0.80 0.60 0.50" rgba=".35 .38 .45 1" conaffinity="1" condim="3"/>
+
+    <!-- ── Zone I: 屋顶平台最后障碍 (X=52~76, Y=42~52, Z=13.5) ─────────── -->
+    <geom name="obs_i01" type="box" pos="56.0 44.0 14.10" size="0.65 0.65 0.35" material="hvac_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_i02" type="cylinder" pos="64.0 46.0 14.05" size="0.30 0.35" material="barrel_mat" conaffinity="1" condim="3"/>
+    <geom name="obs_i03" type="box" pos="76.0 50.0 14.10" size="0.60 0.60 0.35" material="hvac_mat" conaffinity="1" condim="3"/>
+
+  </worldbody>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       LiDAR SENSOR (mujoco_ray_caster plugin)
+       Uncomment on server after MUJOCO_PLUGIN_PATH is set correctly.
+       Local Windows verification: keep commented out.
+  ═══════════════════════════════════════════════════════════════════ -->
+  <!--
+  <extension>
+    <plugin plugin="mujoco.sensor.ray_caster_lidar"/>
+  </extension>
+  <sensor>
+    <plugin name="lidar_mid360" plugin="mujoco.sensor.ray_caster_lidar"
+            objtype="site" objname="lidar_site" cutoff="50">
+      <config key="fov_h"             value="360"/>
+      <config key="fov_v"             value="59"/>
+      <config key="size"              value="360 16"/>
+      <config key="dis_range"         value="0.1 50"/>
+      <config key="sensor_data_types" value="pos_w noise_data"/>
+      <config key="num_thread"        value="4"/>
+    </plugin>
+  </sensor>
+  -->
+
+</mujoco>

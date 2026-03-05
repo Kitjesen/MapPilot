@@ -1,0 +1,51 @@
+<!-- ============================================================
+  MapPilot Robot MJCF — 占位文件
+
+  填入方式：
+    把自研底盘的 URDF 转成 MJCF：
+      python -m mujoco.scripts.converturdf your_robot.urdf robot.xml
+
+    或直接在此处按 MuJoCo MJCF 格式定义。
+
+  必须保留的 body 名称（bridge 依赖）：
+    base_link    — 机体主体（发布 odometry / TF）
+    lidar_link   — Livox MID-360 安装位（LiDAR raycaster 原点）
+
+  Actuator 接口：
+    自研底层运动控制器接管 ctrl[]，bridge 透传速度目标。
+    具体关节和 actuator 由自研 URDF 决定。
+
+  参考：
+    https://mujoco.readthedocs.io/en/stable/modeling.html
+    https://github.com/unitreerobotics/unitree_mujoco/tree/main/config
+============================================================ -->
+
+<mujoco model="mappilot_robot">
+  <compiler angle="radian" autolimits="true"/>
+
+  <!-- ── 占位机体（等待替换为自研 MJCF）──────────────────────── -->
+  <worldbody>
+    <body name="base_link" pos="0 0 0.5">
+      <freejoint name="root"/>
+
+      <!-- TODO: 替换为自研底盘几何 -->
+      <geom name="chassis" type="box" size="0.4 0.3 0.12"
+            rgba=".2 .4 .8 1" mass="25" conaffinity="1"/>
+
+      <!-- Livox MID-360 安装位（不要改名，bridge 依赖）-->
+      <body name="lidar_link" pos="0 0 0.32">
+        <geom name="lidar_housing" type="cylinder" size="0.06 0.05"
+              rgba="0 .8 .8 1" mass="0.5" conaffinity="0"/>
+      </body>
+
+      <inertial pos="0 0 0" mass="25" diaginertia="0.8 1.2 1.2"/>
+    </body>
+  </worldbody>
+
+  <!-- ── Actuators（TODO: 按自研底层接口填写）────────────────────
+  <actuator>
+    ...
+  </actuator>
+  ────────────────────────────────────────────────────────────── -->
+
+</mujoco>

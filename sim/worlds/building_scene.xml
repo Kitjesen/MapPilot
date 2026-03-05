@@ -1,0 +1,264 @@
+<!--
+  MapPilot Demo Building — MuJoCo 仿真场景
+  ==========================================
+  两层楼 + 楼梯 + 障碍物，机器狗三维导航演示
+
+  布局（俯视）：
+    Y(m)
+    14 ┌──────────────────────────────────────────┐
+       │  2F: 走廊 + Room A    │    Room B / Goal │
+     8 │──────── 门 ──────────  │                  │
+       │  2F Landing (楼梯顶)   │                  │
+     5 │         ┌──────────┐   │                  │
+       │         │ 楼梯间    │   │                  │
+     0 └─────────┴──────────┴───┴──────────────────┘
+       0    4    8   12  14.8  17.7   22   (X轴)
+
+  剖面（楼梯 X=16.25，沿 Y 方向上升）：
+    Z(m)
+    7.0 ─── 2F 天花板
+    3.5 ════════════ 2F 楼板 + 楼梯顶
+        ╱╱╱╱╱╱╱╱╱╱╱ 14级台阶(每级25cm高×30cm深)
+    0.0 ════════════ 1F 地板
+
+  参数：
+    楼层高度: 3.5m | 台阶: 14级 × rise=0.25m × run=0.30m
+    楼梯宽度: 2.5m | 走廊宽: 2.5m | 门洞: 2.0m
+    Start: (2, 3, 0.5)  →  Goal: (18, 11, 4.0)
+
+  本地验证（Windows, 需 mujoco 已安装）：
+    python -m mujoco.viewer sim/worlds/building_scene.xml
+  或:
+    python sim/scripts/view_scene.py
+-->
+<mujoco model="mappilot_demo_building">
+
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.35 0.35 0.35" specular="0.0 0.0 0.0"/>
+    <rgba haze="0.12 0.18 0.24 1"/>
+    <global azimuth="-40" elevation="-18" fovy="50"/>
+  </visual>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       材质 & 颜色方案
+       建筑: 中性暖灰 | 台阶: 浅棕 | 障碍: 橙色 | 机器人: 蓝色 | LiDAR: 青色
+  ════════════════════════════════════════════════════════════════════ -->
+  <asset>
+    <material name="floor_mat"  rgba=".86 .83 .78 1" shininess="0.05" specular="0.1"/>
+    <material name="wall_mat"   rgba=".93 .91 .88 1" shininess="0.03" specular="0.05"/>
+    <material name="stair_mat"  rgba=".78 .72 .64 1" shininess="0.05" specular="0.1"/>
+    <material name="glass_mat"  rgba=".70 .85 .90 0.35"/>
+    <material name="robot_mat"  rgba=".18 .38 .76 1"/>
+    <material name="lidar_mat"  rgba=".00 .78 .85 1"/>
+    <material name="obs_mat"    rgba=".82 .45 .18 1"/>
+    <material name="start_mat"  rgba=".15 .78 .28 0.85"/>
+    <material name="goal_mat"   rgba=".90 .12 .12 0.90"/>
+    <material name="rail_mat"   rgba=".55 .55 .60 1"/>
+    <material name="arrow_mat"  rgba=".95 .75 .05 1"/>
+  </asset>
+
+  <worldbody>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         1F — 地面层  (Z = 0 ~ 3.5m)
+    ══════════════════════════════════════════════════════════════════ -->
+
+    <!-- 地板 -->
+    <geom name="floor_1" type="box"
+          pos="11 7 -0.05" size="11 7 0.05"
+          material="floor_mat" conaffinity="1" condim="3"/>
+
+    <!-- 外墙（厚 0.2m，高 3.5m）-->
+    <geom name="wall_1_S" type="box" pos="11 0.10 1.75" size="11 0.10 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_1_N" type="box" pos="11 13.90 1.75" size="11 0.10 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_1_W" type="box" pos="0.10 7 1.75" size="0.10 7 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_1_E" type="box" pos="21.90 7 1.75" size="0.10 7 1.75" material="wall_mat" conaffinity="1"/>
+
+    <!-- 1F 内部隔墙：X=12, 把大厅和楼梯间分开
+         门洞留在 Y=5.5~8.5（3m 宽）-->
+    <geom name="wall_1_int_S" type="box" pos="12.0 2.65 1.75" size="0.10 2.55 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_1_int_N" type="box" pos="12.0 11.25 1.75" size="0.10 2.65 1.75" material="wall_mat" conaffinity="1"/>
+    <!-- 门洞上方过梁（高 0.8m，Z=2.7~3.5）-->
+    <geom name="wall_1_int_lintel" type="box" pos="12.0 7 3.10" size="0.10 1.50 0.40" material="wall_mat" conaffinity="1"/>
+
+    <!-- 1F 大厅障碍物 -->
+    <geom name="obs_1_box"   type="box"      pos="5.0 5.0  0.60" size="0.55 0.55 0.60" material="obs_mat" conaffinity="1"/>
+    <geom name="obs_2_box"   type="box"      pos="8.5 10.5 0.50" size="0.70 0.35 0.50" material="obs_mat" conaffinity="1"/>
+    <geom name="obs_3_cyl"   type="cylinder" pos="3.5 9.0  0.80" size="0.42 0.80"      material="obs_mat" conaffinity="1"/>
+    <geom name="obs_4_box"   type="box"      pos="10.5 3.5 0.40" size="0.45 0.80 0.40" material="obs_mat" conaffinity="1"/>
+    <geom name="obs_5_cyl"   type="cylinder" pos="6.0  2.0 0.50" size="0.30 0.50"      material="obs_mat" conaffinity="1"/>
+
+    <!-- ─────────────────────────────────────────────────────────────────
+         楼梯间侧墙（引导机器人进楼梯口）
+         楼梯位于 X=15~17.5, Y=0.8~5.0，宽 2.5m
+    ─────────────────────────────────────────────────────────────────── -->
+    <geom name="stair_wall_W" type="box" pos="14.80 2.90 2.50"
+          size="0.10 2.10 2.50" material="wall_mat" conaffinity="1"/>
+    <geom name="stair_wall_E" type="box" pos="17.70 2.90 2.50"
+          size="0.10 2.10 2.50" material="wall_mat" conaffinity="1"/>
+
+    <!-- ─────────────────────────────────────────────────────────────────
+         楼梯：14 级台阶
+         参数: rise=0.25m, run=0.30m, 宽=2.5m, 沿 +Y 方向上升
+         起始 Y=0.80, X 中心=16.25
+         每级台阶用 "累积矩形截面" 实现（从地板堆砌到台阶面）
+         Step i: y_center = 0.80+(i+0.5)*0.30, z_center = (i+1)*0.125
+    ─────────────────────────────────────────────────────────────────── -->
+    <!-- X半=1.25(宽2.5m), Y半=0.15(run/2), Z半=(i+1)*0.125 -->
+    <geom name="step_00" type="box" pos="16.25 0.95 0.1250" size="1.25 0.15 0.1250" material="stair_mat" conaffinity="1"/>
+    <geom name="step_01" type="box" pos="16.25 1.25 0.2500" size="1.25 0.15 0.2500" material="stair_mat" conaffinity="1"/>
+    <geom name="step_02" type="box" pos="16.25 1.55 0.3750" size="1.25 0.15 0.3750" material="stair_mat" conaffinity="1"/>
+    <geom name="step_03" type="box" pos="16.25 1.85 0.5000" size="1.25 0.15 0.5000" material="stair_mat" conaffinity="1"/>
+    <geom name="step_04" type="box" pos="16.25 2.15 0.6250" size="1.25 0.15 0.6250" material="stair_mat" conaffinity="1"/>
+    <geom name="step_05" type="box" pos="16.25 2.45 0.7500" size="1.25 0.15 0.7500" material="stair_mat" conaffinity="1"/>
+    <geom name="step_06" type="box" pos="16.25 2.75 0.8750" size="1.25 0.15 0.8750" material="stair_mat" conaffinity="1"/>
+    <geom name="step_07" type="box" pos="16.25 3.05 1.0000" size="1.25 0.15 1.0000" material="stair_mat" conaffinity="1"/>
+    <geom name="step_08" type="box" pos="16.25 3.35 1.1250" size="1.25 0.15 1.1250" material="stair_mat" conaffinity="1"/>
+    <geom name="step_09" type="box" pos="16.25 3.65 1.2500" size="1.25 0.15 1.2500" material="stair_mat" conaffinity="1"/>
+    <geom name="step_10" type="box" pos="16.25 3.95 1.3750" size="1.25 0.15 1.3750" material="stair_mat" conaffinity="1"/>
+    <geom name="step_11" type="box" pos="16.25 4.25 1.5000" size="1.25 0.15 1.5000" material="stair_mat" conaffinity="1"/>
+    <geom name="step_12" type="box" pos="16.25 4.55 1.6250" size="1.25 0.15 1.6250" material="stair_mat" conaffinity="1"/>
+    <geom name="step_13" type="box" pos="16.25 4.85 1.7500" size="1.25 0.15 1.7500" material="stair_mat" conaffinity="1"/>
+    <!-- 楼梯顶端面: Y=5.0, Z=3.5m ✓ -->
+
+    <!-- 楼梯扶手（两侧各三根立柱）-->
+    <geom name="rail_W_0"  type="cylinder" pos="14.95 1.0 1.40" size="0.04 1.40" material="rail_mat" conaffinity="0"/>
+    <geom name="rail_W_7"  type="cylinder" pos="14.95 3.1 2.25" size="0.04 2.25" material="rail_mat" conaffinity="0"/>
+    <geom name="rail_W_13" type="cylinder" pos="14.95 4.9 2.90" size="0.04 2.90" material="rail_mat" conaffinity="0"/>
+    <geom name="rail_E_0"  type="cylinder" pos="17.55 1.0 1.40" size="0.04 1.40" material="rail_mat" conaffinity="0"/>
+    <geom name="rail_E_7"  type="cylinder" pos="17.55 3.1 2.25" size="0.04 2.25" material="rail_mat" conaffinity="0"/>
+    <geom name="rail_E_13" type="cylinder" pos="17.55 4.9 2.90" size="0.04 2.90" material="rail_mat" conaffinity="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         2F — 二层  (Z = 3.5 ~ 7.0m)
+         楼板分4块，中间留楼梯口 (X=14.8~17.7, Y=0.8~5.1)
+    ══════════════════════════════════════════════════════════════════ -->
+
+    <!-- 2F 楼板（避开楼梯开口）-->
+    <!-- 西侧大块: X=0~14.8, Y=0~14 -->
+    <geom name="floor_2_W" type="box" pos="7.40 7.00 3.45" size="7.40 7.00 0.05" material="floor_mat" conaffinity="1" condim="3"/>
+    <!-- 东侧: X=17.7~22, Y=0~14 -->
+    <geom name="floor_2_E" type="box" pos="19.85 7.00 3.45" size="2.15 7.00 0.05" material="floor_mat" conaffinity="1" condim="3"/>
+    <!-- 北侧楼梯上方: X=14.8~17.7, Y=5.1~14 -->
+    <geom name="floor_2_N" type="box" pos="16.25 9.55 3.45" size="1.45 4.45 0.05" material="floor_mat" conaffinity="1" condim="3"/>
+    <!-- 南侧楼梯下方: X=14.8~17.7, Y=0~0.8 -->
+    <geom name="floor_2_S" type="box" pos="16.25 0.40 3.45" size="1.45 0.40 0.05" material="floor_mat" conaffinity="1" condim="3"/>
+
+    <!-- 2F 外墙 (Z=3.5~7.0) -->
+    <geom name="wall_2_S" type="box" pos="11 0.10 5.25" size="11 0.10 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_2_N" type="box" pos="11 13.90 5.25" size="11 0.10 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_2_W" type="box" pos="0.10 7 5.25" size="0.10 7 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_2_E" type="box" pos="21.90 7 5.25" size="0.10 7 1.75" material="wall_mat" conaffinity="1"/>
+
+    <!-- 2F 内隔墙：X=12 将走廊和 Room B 分开，门洞 Y=7.5~10 -->
+    <geom name="wall_2_int_S" type="box" pos="12 3.80 5.25" size="0.10 3.70 1.75" material="wall_mat" conaffinity="1"/>
+    <geom name="wall_2_int_N" type="box" pos="12 11.75 5.25" size="0.10 2.15 1.75" material="wall_mat" conaffinity="1"/>
+    <!-- 门洞上方过梁 -->
+    <geom name="wall_2_lintel" type="box" pos="12 8.75 6.90" size="0.10 1.25 0.20" material="wall_mat" conaffinity="1"/>
+
+    <!-- 2F 走廊障碍物（西侧大厅区）-->
+    <geom name="obs_2f_1" type="box"      pos="4.0 6.0  4.10" size="0.45 0.45 0.35" material="obs_mat" conaffinity="1"/>
+    <geom name="obs_2f_2" type="box"      pos="9.5 6.5  4.05" size="0.55 0.30 0.30" material="obs_mat" conaffinity="1"/>
+    <geom name="obs_2f_3" type="cylinder" pos="2.5 11.0 4.30" size="0.38 0.55"      material="obs_mat" conaffinity="1"/>
+
+    <!-- 2F Room B 障碍物（东侧，X>12）-->
+    <geom name="obs_2f_4" type="box"      pos="18.0 6.5  4.10" size="0.50 0.50 0.35" material="obs_mat" conaffinity="1"/>
+    <geom name="obs_2f_5" type="cylinder" pos="15.5 9.5  4.20" size="0.35 0.45"      material="obs_mat" conaffinity="1"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         Start 标记（绿色圆盘，1F）和 Goal 标记（红色旗帜，2F）
+    ══════════════════════════════════════════════════════════════════ -->
+
+    <!-- Start: (2, 3) 1F 大厅 -->
+    <geom name="start_disk" type="cylinder" pos="2.0 3.0 0.01" size="0.65 0.01"
+          material="start_mat" conaffinity="0" contype="0"/>
+    <!-- "S" 文字代替：用小圆柱组成 -->
+    <geom name="start_pole" type="cylinder" pos="2.0 3.0 0.80" size="0.025 0.80"
+          rgba=".15 .78 .28 0.7" conaffinity="0" contype="0"/>
+
+    <!-- Goal: (18, 11) 2F Room B -->
+    <geom name="goal_disk"   type="cylinder" pos="18.0 11.0 3.51" size="0.65 0.01"
+          material="goal_mat" conaffinity="0" contype="0"/>
+    <geom name="goal_pole"   type="cylinder" pos="18.0 11.0 4.25" size="0.025 0.75"
+          rgba=".90 .12 .12 0.9" conaffinity="0" contype="0"/>
+    <geom name="goal_flag"   type="box"      pos="18.10 11.0 4.95" size="0.30 0.02 0.20"
+          rgba=".90 .12 .12 1" conaffinity="0" contype="0"/>
+    <geom name="goal_ball"   type="sphere"   pos="18.0 11.0 5.05" size="0.18"
+          rgba=".90 .12 .12 0.85" conaffinity="0" contype="0"/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         机器人 Placeholder
+         (pos = Start 位置 + 机体高度 0.5m)
+         body 名称不要改：base_link / lidar_link — bridge 依赖这两个名字
+    ══════════════════════════════════════════════════════════════════ -->
+    <body name="base_link" pos="2.0 3.0 0.50">
+      <freejoint name="robot_root"/>
+
+      <!-- 机体（替换为自研 URDF mesh）-->
+      <geom name="chassis" type="box" size="0.42 0.28 0.10"
+            material="robot_mat" mass="22" conaffinity="1"/>
+
+      <!-- 简化腿（视觉占位，等待自研 URDF）-->
+      <geom name="leg_fl" type="capsule" size="0.032"
+            fromto=" 0.30  0.20 -.10  0.30  0.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+      <geom name="leg_fr" type="capsule" size="0.032"
+            fromto=" 0.30 -.20 -.10  0.30 -.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+      <geom name="leg_rl" type="capsule" size="0.032"
+            fromto="-.30  0.20 -.10 -.30  0.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+      <geom name="leg_rr" type="capsule" size="0.032"
+            fromto="-.30 -.20 -.10 -.30 -.20 -.40" rgba=".12 .32 .72 1" mass="0.8" conaffinity="1"/>
+
+      <!-- Livox MID-360 安装体（机体顶部中央 +0.22m）-->
+      <body name="lidar_link" pos="0 0 0.22">
+        <geom name="lidar_housing" type="cylinder" size="0.058 0.046"
+              material="lidar_mat" mass="0.50" conaffinity="0"/>
+        <geom name="lidar_pole" type="capsule" size="0.016"
+              fromto="0 0 -0.01  0 0 -0.13" rgba=".28 .28 .28 1" mass="0.08" conaffinity="0"/>
+        <!-- LiDAR 原点 site（ray_caster_lidar plugin 用）-->
+        <site name="lidar_site" pos="0 0 0" size="0.001"/>
+      </body>
+
+      <!-- 前向指示箭头（黄色，X+ 方向）-->
+      <geom name="dir_arrow" type="capsule" size="0.022"
+            fromto="0.05 0 0.12  0.42 0 0.12" material="arrow_mat" conaffinity="0"/>
+
+      <inertial pos="0 0 0" mass="22" diaginertia="0.78 1.18 1.18"/>
+    </body>
+
+    <!-- ─── 光源 ──────────────────────────────────────────────────────── -->
+    <light name="sun"     pos="8  4 25" dir="-.2 -.1 -1" diffuse=".82 .80 .75" specular=".1 .1 .1"/>
+    <light name="fill_1"  pos="0  0 15" dir=".4  .3 -1"  diffuse=".25 .28 .32"/>
+    <light name="fill_2"  pos="20 14 10" dir="-.3 -.4 -1" diffuse=".20 .22 .25"/>
+    <!-- 2F 室内灯 -->
+    <light name="light_2f_1" pos="6 7 6.8"  dir="0 0 -1" diffuse=".60 .60 .55" castshadow="false"/>
+    <light name="light_2f_2" pos="17 7 6.8" dir="0 0 -1" diffuse=".55 .55 .50" castshadow="false"/>
+
+  </worldbody>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       LiDAR Sensor（mujoco_ray_caster plugin）
+       本地 Windows 验证时注释掉本段（未编译 plugin 时会报错）
+       服务器上解注释并确保 MUJOCO_PLUGIN_PATH 设置正确
+  ═══════════════════════════════════════════════════════════════════ -->
+  <!--
+  <extension>
+    <plugin plugin="mujoco.sensor.ray_caster_lidar"/>
+  </extension>
+
+  <sensor>
+    <plugin name="lidar_mid360" plugin="mujoco.sensor.ray_caster_lidar"
+            objtype="site" objname="lidar_site" cutoff="30">
+      <config key="fov_h"              value="360"/>
+      <config key="fov_v"              value="59"/>
+      <config key="size"               value="360 16"/>
+      <config key="dis_range"          value="0.1 30"/>
+      <config key="sensor_data_types"  value="pos_w noise_data"/>
+      <config key="num_thread"         value="4"/>
+    </plugin>
+  </sensor>
+  -->
+
+</mujoco>

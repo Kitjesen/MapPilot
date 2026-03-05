@@ -1,0 +1,92 @@
+<!-- MapPilot MuJoCo — 平地测试场景
+     LiDAR: mujoco_ray_caster plugin (https://github.com/Albusgive/mujoco_ray_caster)
+     编译后需设置: export MUJOCO_PLUGIN_PATH=/path/to/mujoco/build/bin/mujoco_plugin
+-->
+<mujoco model="open_field">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
+
+  <!-- ── mujoco_ray_caster plugin 声明 ──────────────────────────────── -->
+  <extension>
+    <plugin plugin="mujoco.sensor.ray_caster_lidar"/>
+  </extension>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker"
+             rgb1=".92 .92 .92" rgb2=".78 .78 .78" width="512" height="512"/>
+    <material name="grid_mat"  texture="grid" texrepeat="10 10" reflectance="0.05"/>
+    <material name="robot_mat" rgba=".18 .38 .76 1"/>
+    <material name="lidar_mat" rgba=".0 .78 .85 1"/>
+    <material name="obs_mat"   rgba=".75 .3 .25 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- 地面 -->
+    <geom name="floor" type="plane" size="80 80 0.1"
+          material="grid_mat" conaffinity="1" condim="3"/>
+
+    <!-- 测试障碍物（用于验证 LiDAR 命中）-->
+    <geom name="box1"  type="box"      size="1.0 0.5 0.8" pos=" 6  0  0.8" material="obs_mat" conaffinity="1"/>
+    <geom name="box2"  type="box"      size="0.5 1.8 1.2" pos=" 9  4  1.2" rgba=".3 .75 .3 1" conaffinity="1"/>
+    <geom name="cyl1"  type="cylinder" size="0.4 1.0"     pos=" 4 -5  1.0" rgba=".8 .7 .2 1"  conaffinity="1"/>
+    <geom name="wall1" type="box"      size="0.2 8.0 2.0" pos="-8  0  2.0" rgba=".6 .6 .6 1"  conaffinity="1"/>
+    <geom name="wall2" type="box"      size="8.0 0.2 2.0" pos=" 0 -8  2.0" rgba=".6 .6 .6 1"  conaffinity="1"/>
+
+    <!-- ── 机器人（待替换为自研 MJCF）──────────────────────────────────── -->
+    <body name="base_link" pos="0 0 0.45">
+      <freejoint name="root"/>
+
+      <!-- 机体 placeholder -->
+      <geom name="chassis" type="box" size="0.42 0.28 0.10"
+            material="robot_mat" mass="22" conaffinity="1"/>
+
+      <!-- 腿（简化，等待自研 URDF）-->
+      <geom name="leg_fl" type="capsule" size="0.035" fromto=" 0.28  0.18 -0.10  0.28  0.18 -0.42" rgba=".15 .35 .7 1" mass="0.8"/>
+      <geom name="leg_fr" type="capsule" size="0.035" fromto=" 0.28 -0.18 -0.10  0.28 -0.18 -0.42" rgba=".15 .35 .7 1" mass="0.8"/>
+      <geom name="leg_rl" type="capsule" size="0.035" fromto="-.28  0.18 -0.10 -.28  0.18 -0.42" rgba=".15 .35 .7 1" mass="0.8"/>
+      <geom name="leg_rr" type="capsule" size="0.035" fromto="-.28 -0.18 -0.10 -.28 -0.18 -0.42" rgba=".15 .35 .7 1" mass="0.8"/>
+
+      <!-- Livox MID-360 安装体（机体顶部中央 +0.28m）-->
+      <body name="lidar_link" pos="0 0 0.28">
+        <geom name="lidar_housing" type="cylinder" size="0.060 0.048"
+              material="lidar_mat" mass="0.52" conaffinity="0"/>
+        <geom name="lidar_pole"    type="capsule"  size="0.018"
+              fromto="0 0 0  0 0 -0.13" rgba=".3 .3 .3 1" mass="0.1"/>
+
+        <!-- ── Livox MID-360 LiDAR 传感器 ─────────────────────────────
+             mujoco_ray_caster plugin 配置
+             MID-360 规格: H=360°, V=-7°~+52° (fov_v≈59°)
+             400×16 rays @ 10Hz ≈ 6400 pts/frame（轻量版，可调大）
+        ──────────────────────────────────────────────────────────────── -->
+        <site name="lidar_site" pos="0 0 0" size="0.001"/>
+      </body>
+
+      <inertial pos="0 0 0" mass="22" diaginertia="0.75 1.15 1.15"/>
+    </body>
+
+    <!-- 光源 -->
+    <light name="sun"  pos="0 0 30" dir="0 0 -1"    diffuse=".85 .85 .85" specular=".2 .2 .2"/>
+    <light name="fill" pos="5 5 15" dir="-1 -1 -0.5" diffuse=".3 .3 .3"/>
+  </worldbody>
+
+  <!-- ── mujoco_ray_caster LiDAR 传感器配置 ──────────────────────────────
+       sensor 绑定到 lidar_link body（通过 site）
+       fov_h=360  : 水平 360°（全向）
+       fov_v=59   : 垂直 59°（MID-360: -7°~+52°）
+       size="400 16": 水平400线 × 垂直16线 = 6400 pts/scan
+       dis_range="0.1 70": 0.1m~70m（MID-360 量程）
+       sensor_data_types: pos_w=世界坐标点云, noise_data=加噪
+  ─────────────────────────────────────────────────────────────────────── -->
+  <sensor>
+    <plugin name="lidar_mid360" plugin="mujoco.sensor.ray_caster_lidar"
+            objtype="site" objname="lidar_site" cutoff="70">
+      <config key="fov_h"              value="360"/>
+      <config key="fov_v"              value="59"/>
+      <config key="size"               value="400 16"/>
+      <config key="dis_range"          value="0.1 70"/>
+      <config key="sensor_data_types"  value="pos_w noise_data"/>
+      <config key="num_thread"         value="4"/>
+    </plugin>
+  </sensor>
+
+</mujoco>
