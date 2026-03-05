@@ -11,7 +11,7 @@ Building2_9 全栈导航仿真启动文件 (ROS2 SITL)
   sim_robot_node.py      ← /nav/cmd_vel           (积分运动学 → 更新位姿)
 
 用法:
-  # 基本用法 (Corridor_E: (-5.5,7.3) → (5.0,7.3))
+  # 基本用法 (Corridor_E: (-5.5,7.3,floor1) → (5.0,7.3,floor1), ele_planner.so C++ 规划)
   ros2 launch tests/planning/sim_navigation.launch.py
 
   # 指定地图和目标
@@ -65,14 +65,13 @@ def generate_launch_description():
     )
     # 起终点: 起点(-5.5,7.3) 恰在楼梯间 (Z=0.5→3.0m 全段可通行, trav=21.4)
     # 终点(2.0,-3.0) 在上层走廊 Z=2.0m (trav=0.0)
-    # 3D A* 路径: 地面层出发 → 经楼梯间上至 Z=1.0m 走廊层 → 到达目标 Z=2.0m
-    # Z=1.0m 走廊层: 4123格连通, 起终点均可达
-    goal_x_arg = DeclareLaunchArgument('goal_x',   default_value='2.0',
+    # Z=1.0m 走廊层: 4123格连通, 起终点均可达; tomogram_ground_h=1.0 保证 start 被 snap 到此层
+    goal_x_arg = DeclareLaunchArgument('goal_x',   default_value='5.0',
                                         description='目标 X (m)')
-    goal_y_arg = DeclareLaunchArgument('goal_y',   default_value='-3.0',
+    goal_y_arg = DeclareLaunchArgument('goal_y',   default_value='7.3',
                                         description='目标 Y (m)')
-    goal_z_arg = DeclareLaunchArgument('goal_z',   default_value='2.0',
-                                        description='目标 Z (m)  (2.0=上层楼面, 3D楼梯间规划)')
+    goal_z_arg = DeclareLaunchArgument('goal_z',   default_value='1.0',
+                                        description='目标 Z (m)  (1.0=Z=1.0m 走廊层, 与 tomogram_ground_h 一致)')
     start_x_arg = DeclareLaunchArgument('start_x', default_value='-5.5',
                                          description='起点 X (m)  (楼梯间入口)')
     start_y_arg = DeclareLaunchArgument('start_y', default_value='7.3',
@@ -116,8 +115,9 @@ def generate_launch_description():
             '--ros-args',
             # map_file 参数: 指向当前地图 pickle
             '-p', ['map_file:=', map_path],
-            # building2_9 slice_h0=0.5: snap start_h 到地面切片 (真实机器人 z≈0.0 < 0.5)
-            '-p', 'tomogram_ground_h:=0.5',
+            # building2_9: floor0(z=0.5) 西区仅231格且无 gateway; floor1(z=1.0) 4123格全连通
+            # snap start_h 到 1.0m 层, 确保起点落在有效连通区域 (真实机器人 z≈0.0 < 1.0)
+            '-p', 'tomogram_ground_h:=1.0',
             # goal_pose remap: sim_robot_node 发布到 /nav/goal_pose
             '-r', '/goal_pose:=/nav/goal_pose',
             # pct_path → /nav/global_path: pct_adapter 内部订阅 /pct_path (已 remap 到此)
