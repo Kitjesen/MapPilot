@@ -49,10 +49,14 @@ __pycache__/
 *.a
 *.o
 
-# 大型地图文件（根据需要调整）
+# 大型地图/模型/媒体文件
 maps/*.pcd
 src/global_planning/PCT_planner/rsc/PCD/*.pcd
 src/global_planning/PCT_planner/rsc/tomogram/*.pickle
+tools/*.pcd
+tools/*.mp4
+tools/*.obj
+tools/*.ply
 
 # IDE 文件
 .vscode/
