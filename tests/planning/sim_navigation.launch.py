@@ -81,6 +81,10 @@ def generate_launch_description():
     map_x_max_arg = DeclareLaunchArgument('map_x_max', default_value='10.5',  description='地图 X 最大值 (m)')
     map_y_min_arg = DeclareLaunchArgument('map_y_min', default_value='-9.5',  description='地图 Y 最小值 (m)')
     map_y_max_arg = DeclareLaunchArgument('map_y_max', default_value='9.0',   description='地图 Y 最大值 (m)')
+    # tomogram_ground_h: 机器人 z < 此值时 snap 到最低有效切片
+    # building2_9: 1.0 (floor1 走廊层); factory: 1.5 (slice_h0)
+    tomo_gh_arg = DeclareLaunchArgument('tomogram_ground_h', default_value='1.0',
+                                         description='tomogram_ground_h 参数 (snap 起始高度)')
     # 可选: 建筑 PCD 可视化 + 场景名称
     pcd_path_arg   = DeclareLaunchArgument('pcd_path',   default_value='', description='建筑 PCD 路径 (可视化用)')
     scene_name_arg = DeclareLaunchArgument('scene_name', default_value='Building2_9', description='场景名称')
@@ -95,8 +99,9 @@ def generate_launch_description():
     map_x_max  = LaunchConfiguration('map_x_max')
     map_y_min  = LaunchConfiguration('map_y_min')
     map_y_max  = LaunchConfiguration('map_y_max')
-    pcd_path   = LaunchConfiguration('pcd_path')
-    scene_name = LaunchConfiguration('scene_name')
+    pcd_path       = LaunchConfiguration('pcd_path')
+    scene_name     = LaunchConfiguration('scene_name')
+    tomogram_ground_h = LaunchConfiguration('tomogram_ground_h')
 
     # ── global_planner.py (真实 ele_planner.so C++ 规划器, 与 RViz demo 同一套) ─
     pct_share          = get_package_share_directory('pct_planner')
@@ -115,9 +120,8 @@ def generate_launch_description():
             '--ros-args',
             # map_file 参数: 指向当前地图 pickle
             '-p', ['map_file:=', map_path],
-            # building2_9: floor0(z=0.5) 西区仅231格且无 gateway; floor1(z=1.0) 4123格全连通
-            # snap start_h 到 1.0m 层, 确保起点落在有效连通区域 (真实机器人 z≈0.0 < 1.0)
-            '-p', 'tomogram_ground_h:=1.0',
+            # snap start_h 到有效切片层 (building2_9: 1.0; factory: 1.5)
+            '-p', ['tomogram_ground_h:=', tomogram_ground_h],
             # goal_pose remap: sim_robot_node 发布到 /nav/goal_pose
             '-r', '/goal_pose:=/nav/goal_pose',
             # pct_path → /nav/global_path: pct_adapter 内部订阅 /pct_path (已 remap 到此)
@@ -399,6 +403,6 @@ def generate_launch_description():
     return LaunchDescription([
         map_path_arg, goal_x_arg, goal_y_arg, goal_z_arg, start_x_arg, start_y_arg,
         map_x_min_arg, map_x_max_arg, map_y_min_arg, map_y_max_arg,
-        pcd_path_arg, scene_name_arg,
+        tomo_gh_arg, pcd_path_arg, scene_name_arg,
         *nodes,
     ])

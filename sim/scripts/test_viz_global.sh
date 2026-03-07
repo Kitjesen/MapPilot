@@ -64,19 +64,27 @@ ros2 run terrain_analysis terrainAnalysis \
 TA_PID=$!
 sleep 2
 
-# 3. pct_planner_astar.py (纯 Python A*, 无需 ele_planner.so / numpy 1.x venv)
-echo "[3/6] Starting global_planner (Python A*)..."
+# 3. global_planner.py (C++ ele_planner.so — 生产级规划器)
+echo "[3/6] Starting global_planner (C++ ele_planner.so)..."
 PCT_SHARE=$(ros2 pkg prefix pct_planner)/share/pct_planner
-PLANNER_SCRIPT=${PCT_SHARE}/planner/scripts/pct_planner_astar.py
+PLANNER_SCRIPT=${PCT_SHARE}/planner/scripts/global_planner.py
 
-python3 ${PLANNER_SCRIPT} \
+# ele_planner.so 需要 numpy 1.x；使用 venv 但保留系统 PYTHONPATH
+VENV_PYTHON=/tmp/venv_np1/bin/python3
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "ERROR: numpy 1.x venv not found at $VENV_PYTHON"
+    echo "Create it: python3 -m venv /tmp/venv_np1 && /tmp/venv_np1/bin/pip install 'numpy<2'"
+    exit 1
+fi
+
+$VENV_PYTHON ${PLANNER_SCRIPT} \
     --ros-args \
-    -r /nav/goal_pose:=/nav/goal_pose \
-    -r /nav/global_path:=/nav/global_path \
-    -r /nav/planner_status:=/nav/planner_status \
-    -p tomogram_file:="${MAP_FILE}.pickle" \
-    -p obstacle_thr:=49.9 \
-    -p republish_hz:=1.0 \
+    -r /goal_pose:=/nav/goal_pose \
+    -r /pct_path:=/nav/global_path \
+    -r /pct_planner/status:=/nav/planner_status \
+    -p map_file:="${MAP_FILE}.pickle" \
+    -p obstacle_thr:=50 \
+    -p tomogram_ground_h:=0.0 \
     > /tmp/global_planner.log 2>&1 &
 GP_PID=$!
 sleep 3

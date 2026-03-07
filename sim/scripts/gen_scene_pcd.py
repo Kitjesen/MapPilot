@@ -68,7 +68,12 @@ SCENE_XML = """
 # ── LiDAR 参数 ──────────────────────────────────────────────────
 N_RAYS = 6400
 GOLDEN_ANG = np.pi * (3 - np.sqrt(5))
-RANGE_MAX = 70.0
+RANGE_MAX = 30.0
+
+# 场景边界裁剪 (建筑外轮廓 + 2m 余量)
+CLIP_X = (-2, 27)
+CLIP_Y = (-2, 20)
+CLIP_Z = (-0.5, 5.0)
 
 
 def build_ray_dirs(n, vfov_min_deg=-30, vfov_max_deg=60):
@@ -141,6 +146,15 @@ def main():
 
     cloud = np.concatenate(all_pts, axis=0)
     print(f"Raw points: {len(cloud)}")
+
+    # 场景边界裁剪 — 去除穿过门洞打到建筑外地面的远处噪声点
+    mask = (
+        (cloud[:, 0] >= CLIP_X[0]) & (cloud[:, 0] <= CLIP_X[1]) &
+        (cloud[:, 1] >= CLIP_Y[0]) & (cloud[:, 1] <= CLIP_Y[1]) &
+        (cloud[:, 2] >= CLIP_Z[0]) & (cloud[:, 2] <= CLIP_Z[1])
+    )
+    cloud = cloud[mask]
+    print(f"After bbox clip: {len(cloud)} points")
 
     # 体素降采样
     import open3d as o3d
