@@ -28,7 +28,7 @@
   ros2 launch navigation_explore.launch.py target:="找到餐桌"
 
   # 四足机器人模式
-  ros2 launch navigation_explore.launch.py driver_mode:=dog dog_host:=192.168.4.100
+  ros2 launch navigation_explore.launch.py driver_mode:=dog dog_host:=<狗板WiFi IP>
 
   # 仿真/无硬件测试
   ros2 launch navigation_explore.launch.py slam_profile:=stub

@@ -1,10 +1,11 @@
 # RobotState.msg - 机器人综合状态
 std_msgs/Header header
 
-# 关节角度 (12 DOF: FR_hip/thigh/calf, FL_hip/thigh/calf, RR_hip/thigh/calf, RL_hip/thigh/calf)
-float32[12] joint_positions    # 关节位置 (rad)
-float32[12] joint_velocities   # 关节速度 (rad/s)
-float32[12] joint_efforts      # 关节力矩 (N*m)
+# 关节角度 (16 DOF: 4 legs × 4 joints: hip, thigh, calf, foot)
+# 顺序: FR(hip,thigh,calf,foot), FL(...), RR(...), RL(...)
+float32[16] joint_positions    # 关节位置 (rad)
+float32[16] joint_velocities   # 关节速度 (rad/s)
+float32[16] joint_efforts      # 关节力矩 (N*m)
 
 # 电池
 BatteryState battery

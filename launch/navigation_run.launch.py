@@ -13,7 +13,7 @@
   ros2 launch navigation_run.launch.py
   ros2 launch navigation_run.launch.py maxSpeed:=1.0
   ros2 launch navigation_run.launch.py slam_profile:=stub planner_profile:=stub  # 无硬件
-  ros2 launch navigation_run.launch.py dog_host:=192.168.4.100 dog_port:=13145
+  ros2 launch navigation_run.launch.py dog_host:=<狗板WiFi IP> dog_port:=13145  # WiFi 通信
 """
 
 import os

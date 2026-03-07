@@ -6,7 +6,7 @@ Han Dog gRPC Bridge — 将 MapPilot 导航栈接入四足机器人
 功能:
   1. 订阅 /cmd_vel (TwistStamped) → 转换为 han_dog CMS gRPC Walk() 调用
   2. 流式订阅 CMS.ListenImu()  → 发布 /Odometry (IMU 姿态) + /robot_state (IMU 字段)
-  3. 流式订阅 CMS.ListenJoint() → 发布 /robot_state (关节角度/速度/力矩)
+  3. 流式订阅 CMS.ListenJoint() → 发布 /robot_state (16 DOF 关节角度/速度/力矩)
   4. 管理机器人生命周期: Enable/Disable, StandUp/SitDown
   5. 独立看门狗: cmd_vel 超时 → 自动发送零速
 
@@ -16,12 +16,16 @@ Han Dog gRPC Bridge — 将 MapPilot 导航栈接入四足机器人
   GrpcGateway (MapPilot)
       ↓ ROS2 /cmd_vel
   ★ han_dog_bridge (本节点) ★
-      ↓ gRPC :13145
-  四足机器人 CMS 服务
+      ↓ gRPC (WiFi / localhost)
+  四足机器人 brainstem CMS
+
+通信方式:
+  同板测试: dog_host:=127.0.0.1 (导航板和 brainstem 在同一台机器)
+  分板部署: dog_host:=<狗板 WiFi IP> (通过 WiFi 通信，无需 eth0 直连)
 
 用法:
   ros2 run robot_driver han_dog_bridge.py --ros-args \\
-      -p dog_host:=192.168.4.100 -p dog_port:=13145
+      -p dog_host:=127.0.0.1 -p dog_port:=13145
 """
 
 import asyncio
@@ -124,10 +128,10 @@ class HanDogBridge(Node):
         self._latest_gyro = (0.0, 0.0, 0.0)
         self._imu_stamp = None
 
-        # 最新关节数据缓存 (用于发布 RobotState)
-        self._latest_joint_pos = [0.0] * 12
-        self._latest_joint_vel = [0.0] * 12
-        self._latest_joint_eff = [0.0] * 12
+        # 最新关节数据缓存 (16 DOF: 4 legs × 4 joints)
+        self._latest_joint_pos = [0.0] * 16
+        self._latest_joint_vel = [0.0] * 16
+        self._latest_joint_eff = [0.0] * 16
 
         # ─── 看门狗定时器 ───
         self._watchdog_timer = self.create_timer(
@@ -309,10 +313,10 @@ class HanDogBridge(Node):
         state = RobotState()
         state.header.stamp = self.get_clock().now().to_msg()
 
-        # 关节数据 (12 DOF: 4 legs × 3 joints)
-        state.joint_positions = self._latest_joint_pos[:12]
-        state.joint_velocities = self._latest_joint_vel[:12]
-        state.joint_efforts = self._latest_joint_eff[:12]
+        # 关节数据 (16 DOF: 4 legs × 4 joints)
+        state.joint_positions = self._latest_joint_pos[:16]
+        state.joint_velocities = self._latest_joint_vel[:16]
+        state.joint_efforts = self._latest_joint_eff[:16]
 
         # 足端力 (暂无数据, 填零)
         state.foot_forces = [0.0, 0.0, 0.0, 0.0]
@@ -455,23 +459,18 @@ class HanDogBridge(Node):
         async for joint in self._stub.ListenJoint(dog_msg.Empty()):
             if joint.HasField('all_joints'):
                 aj = joint.all_joints
-                # han_dog Matrix4: 16 个值 (4 legs × 4 joints: hip,thigh,calf,foot)
-                # RobotState: 12 个值 (4 legs × 3 joints: hip,thigh,calf)
-                # 需要跳过 foot 关节 (index 12,13,14,15 → 每条腿第4个)
+                # 16 DOF: 4 legs × 4 joints (hip, thigh, calf, foot)
                 pos = list(aj.position.values) if aj.position.values else [0.0] * 16
                 vel = list(aj.velocity.values) if aj.velocity.values else [0.0] * 16
                 tor = list(aj.torque.values) if aj.torque.values else [0.0] * 16
 
-                # 提取 12 DOF (跳过 foot)
-                # dog 顺序: FR(hip,thigh,calf), FL(hip,thigh,calf), RR(hip,thigh,calf), RL(hip,thigh,calf), FR_foot, FL_foot, RR_foot, RL_foot
-                self._latest_joint_pos = pos[:12]
-                self._latest_joint_vel = vel[:12]
-                self._latest_joint_eff = tor[:12]
+                self._latest_joint_pos = pos[:16]
+                self._latest_joint_vel = vel[:16]
+                self._latest_joint_eff = tor[:16]
 
             elif joint.HasField('single_joint'):
                 sj = joint.single_joint
-                # 单关节更新 (id 0-11 → 12 DOF, 12-15 → foot, 跳过)
-                if sj.id < 12:
+                if sj.id < 16:
                     self._latest_joint_pos[sj.id] = sj.position
                     self._latest_joint_vel[sj.id] = sj.velocity
                     self._latest_joint_eff[sj.id] = sj.torque

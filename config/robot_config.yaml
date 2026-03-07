@@ -43,6 +43,9 @@ safety:
   tilt_limit_deg: 30.0        # 倾斜限制 (deg)
 
 # ── 底盘驱动 ──
+# dog_host: brainstem CMS 地址，通过 WiFi 通信
+#   同板测试: "127.0.0.1"
+#   分板部署: 填狗板 WiFi IP (如 "192.168.66.xxx")
 driver:
   dog_host: "127.0.0.1"
   dog_port: 13145
