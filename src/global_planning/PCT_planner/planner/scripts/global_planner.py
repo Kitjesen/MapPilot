@@ -53,6 +53,7 @@ class GlobalPlanner(Node):
                 ('publish_tomogram', cfg.node.publish_tomogram),
                 ('use_quintic', cfg.planner.use_quintic),
                 ('max_heading_rate', cfg.planner.max_heading_rate),
+                ('obstacle_thr', cfg.planner.obstacle_thr),
             ]
         )
         self.tomo_file = self.get_parameter('map_file').value
@@ -67,6 +68,7 @@ class GlobalPlanner(Node):
         self.publish_tomogram = self.get_parameter('publish_tomogram').value
         self.use_quintic = self.get_parameter('use_quintic').value
         self.max_heading_rate = self.get_parameter('max_heading_rate').value
+        self.obstacle_thr = self.get_parameter('obstacle_thr').value
         cfg.node.map_file = self.tomo_file
         cfg.node.map_frame = self.map_frame
         cfg.node.robot_frame = self.robot_frame
@@ -79,6 +81,7 @@ class GlobalPlanner(Node):
         cfg.wrapper.tomogram_ground_h = self.tomogram_ground_h
         cfg.planner.use_quintic = self.use_quintic
         cfg.planner.max_heading_rate = self.max_heading_rate
+        cfg.planner.obstacle_thr = self.obstacle_thr
 
         self.planner = TomogramPlanner(cfg)
         try:
@@ -209,8 +212,9 @@ class GlobalPlanner(Node):
             resolution = self.planner.resolution
             center = self.planner.center
             slice_dh = self.planner.slice_dh
+            # map_dim is [x=W, y=H]; GRID_POINTS_XYZI expects (rows=H, cols=W) for layers_g indexing
             map_dim_x, map_dim_y = self.planner.map_dim[0], self.planner.map_dim[1]
-            VISPROTO_I, VISPROTO_P = GRID_POINTS_XYZI(resolution, map_dim_x, map_dim_y)
+            VISPROTO_I, VISPROTO_P = GRID_POINTS_XYZI(resolution, map_dim_y, map_dim_x)
             layer_points = VISPROTO_P.copy()
             layer_points[:, :2] += center
             n_slice = layers_g.shape[0]
@@ -302,7 +306,9 @@ class GlobalPlanner(Node):
             start_height = self.tomogram_ground_h
 
         self.last_plan_time = current_time
-        self.get_logger().info(f"Goal received ({source}): ({x:.2f}, {y:.2f}, {z:.2f})")
+        self.get_logger().info(
+            f"Goal received ({source}): ({x:.2f}, {y:.2f}, {z:.2f}), "
+            f"robot_pos=({start_pos[0]:.2f}, {start_pos[1]:.2f}, z={start_height:.2f})")
         self.pct_plan(start_pos, start_height, np.array([x, y], dtype=np.float32), z)
 
     def pct_plan(self, start_pos, start_h, end_pos, end_h):

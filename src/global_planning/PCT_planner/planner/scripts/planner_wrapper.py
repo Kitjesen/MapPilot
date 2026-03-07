@@ -24,6 +24,7 @@ class TomogramPlanner(object):
         _wrapper = getattr(cfg, "wrapper", None)
         self.use_quintic = getattr(_planner, "use_quintic", True)
         self.max_heading_rate = getattr(_planner, "max_heading_rate", 10)
+        self.obstacle_thr = getattr(_planner, "obstacle_thr", 50)
         tomo_dir = getattr(_wrapper, "tomo_dir", "/rsc/tomogram/")
         self.tomo_dir = rsg_root + tomo_dir
         self.pcd_dir = getattr(_wrapper, "pcd_dir", None)
@@ -46,7 +47,9 @@ class TomogramPlanner(object):
         self.n_slice = tomogram.shape[1]
         self.slice_h0 = float(data_dict['slice_h0'])
         self.slice_dh = float(data_dict['slice_dh'])
-        self.map_dim = [tomogram.shape[2], tomogram.shape[3]]
+        # map_dim: [x_dim=cols=W, y_dim=rows=H] — 与 C++ ele_planner 的 (max_x, max_y) 对齐
+        # tomogram shape = (channels, n_slice, H=rows, W=cols)
+        self.map_dim = [tomogram.shape[3], tomogram.shape[2]]
         self.offset = np.array([int(self.map_dim[0] / 2), int(self.map_dim[1] / 2)], dtype=np.int32)
         # Keep raw layers for ROS publishing (tomogram / traversability visualization)
         self.layers_g = tomogram[3].copy()
@@ -55,9 +58,15 @@ class TomogramPlanner(object):
         trav_gx = tomogram[1]
         trav_gy = tomogram[2]
         elev_g = tomogram[3].copy()
-        elev_g = np.nan_to_num(elev_g, nan=-100, copy=False)
+        # Fill NaN with per-slice nominal height (not -100) — prevents GPMP optimizer
+        # from producing extreme Z values at smoothed points near NaN cells
+        for s in range(self.n_slice):
+            mask = np.isnan(elev_g[s])
+            elev_g[s][mask] = self.slice_h0 + s * self.slice_dh
         elev_c = tomogram[4].copy()
-        elev_c = np.nan_to_num(elev_c, nan=1e6, copy=False)
+        for s in range(self.n_slice):
+            mask = np.isnan(elev_c[s])
+            elev_c[s][mask] = self.slice_h0 + s * self.slice_dh + 3.0
         self.initPlanner(trav, trav_gx, trav_gy, elev_g, elev_c)
 
     def loadTomogram(self, tomo_file, resolution=None, slice_dh=None, ground_h=None):
@@ -139,7 +148,7 @@ class TomogramPlanner(object):
             max_heading_rate=self.max_heading_rate, use_quintic=self.use_quintic
         )
         self.planner.init_map(
-            40, 30, self.resolution, self.n_slice, 0.5,
+            self.obstacle_thr, 30, self.resolution, self.n_slice, 0.5,
             trav.reshape(-1, trav.shape[-1]).astype(np.double),
             elev_g.reshape(-1, elev_g.shape[-1]).astype(np.double),
             elev_c.reshape(-1, elev_c.shape[-1]).astype(np.double),
@@ -164,7 +173,9 @@ class TomogramPlanner(object):
         self.end_idx[0] = self.pos2slice(end_height)
         
         # 调试信息
-        # print(f"Plan request: StartIdx={self.start_idx}, EndIdx={self.end_idx}")
+        print(f"[planner_wrapper] plan: start_idx={self.start_idx}, end_idx={self.end_idx}, "
+              f"obstacle_thr={self.obstacle_thr}, map_dim={self.map_dim}, center={self.center}",
+              flush=True)
 
         self.planner.plan(self.start_idx, self.end_idx, True)
         path_finder: a_star.Astar = self.planner.get_path_finder()
@@ -189,7 +200,10 @@ class TomogramPlanner(object):
         traj = np.concatenate([traj_raw, layers.reshape(-1, 1)], axis=-1)
         y_idx = (traj.shape[-1] - 1) // 2
         traj_3d = np.stack([traj[:, 0], traj[:, y_idx], heights / self.resolution], axis=1)
+        print(f"[planner_wrapper] traj_grid first={traj_3d[0]}, last={traj_3d[-1]}, "
+              f"y_idx={y_idx}, traj_shape={traj.shape}", flush=True)
         traj_3d = transTrajGrid2Map(self.map_dim, self.center, self.resolution, traj_3d)
+        print(f"[planner_wrapper] traj_world first={traj_3d[0]}, last={traj_3d[-1]}", flush=True)
 
         return traj_3d
     

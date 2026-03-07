@@ -14,6 +14,7 @@ class ConfigPlanner():
     """轨迹规划与优化。默认在此，运行时可配置。"""
     use_quintic = True
     max_heading_rate = 10
+    obstacle_thr = 50
 
 
 class ConfigWrapper():
