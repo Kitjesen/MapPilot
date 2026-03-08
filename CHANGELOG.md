@@ -6,6 +6,46 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.8.0] — 2026-03-09 (全链路集成完成 + brainstem 上板)
+
+### 集成测试全通 (T1-T8)
+
+所有节点间通信集成测试在 S100P 实机验证通过：
+
+| 测试 | 结果 | 耗时 |
+|------|------|------|
+| T1 terrain_analysis 点云→地形 | ✅ PASS | — |
+| T2 localPlanner 地形+waypoint→路径 | ✅ 4/4 PASS | — |
+| T3 pathFollower 路径→速度命令 | ✅ PASS | — |
+| T4 global_planner goal→path | ✅ 5/5 PASS | — |
+| T5 pct_path_adapter 路径→waypoint | ✅ PASS | — |
+| T6 全链路闭环 (6节点) | ✅ 5/5 PASS | 18s |
+| T7 安全信号链 stop/slow_down | ✅ 4/4 PASS | — |
+| T8 han_dog_bridge → brainstem | ✅ 8/8 PASS | — |
+
+### 新增测试文件
+- `tests/integration/test_full_chain.py` + `test_full_chain.sh` — T6 全链路虚拟机器人 harness
+- `tests/integration/test_safety_signals.py` + `test_safety_signals.sh` — T7 安全信号 3 阶段测试
+
+### Bug 修复
+- `src/drivers/robot_driver/han_dog_bridge.py`: `joint_positions/velocities/efforts` 从 `[:16]` 改为 `[:12]`；`interface::msg::RobotState` 只接受 12 个关节槽（hip/thigh/calf × 4 腿），原来 16 个值触发 `AssertionError` 导致看门狗 timer 崩溃
+- `src/semantic_planner/semantic_planner/planner_node.py`: 18 处 printf 风格 logger 调用改为 f-string，防止 TypeError 静默丢日志
+
+### 语义导航 SITL 验证
+- `sim/semantic/factory_stub_test.py`: 场景图 score 统一为 0.92+，目标区域位置调整为 (9,3)（7m 射程）
+- "导航到目标区域" fast path conf=0.95 命中，107s goal_reached
+- 已验证: 工厂大门 3m (PASS)、机械设备 6.4m/71s (PASS)、目标区域 7m/107s (PASS)
+
+### brainstem 部署至 S100P
+- Dart SDK 3.11.1 安装至 `/home/sunrise/dart-sdk/`
+- brainstem workspace 部署至 `/home/sunrise/brainstem/`
+- `MEDULLA_STANDALONE=1` 模式运行 `server.dart`，CMS gRPC 监听 `:13145`
+- ONNX 策略 `policy_260106.onnx` 加载成功，ProfileManager 就绪 (default/mini)
+- `han_dog_bridge → 127.0.0.1:13145` 连接验证：motors ENABLED，IMU/Joint/History 三路流启动
+- 启动脚本：`/tmp/launch_brainstem.sh`
+
+---
+
 ## [1.7.5] — 2026-03-02 (全测试套件 13/13 通过)
 
 ### 测试修复
