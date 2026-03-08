@@ -311,9 +311,9 @@ class SemanticPlannerNode(Node):
             from semantic_perception.knowledge_graph import IndustrialKnowledgeGraph
             _kg = IndustrialKnowledgeGraph()
             TaskDecomposer.set_knowledge_graph(_kg)
-            self.get_logger().info("KG injected into TaskDecomposer (%d concepts)", len(_kg.get_all_concepts()))
+            self.get_logger().info(f"KG injected into TaskDecomposer ({len(_kg.get_all_concepts())} concepts)")
         except Exception as e:
-            self.get_logger().warning("KG injection into TaskDecomposer failed (non-critical): %s", e)
+            self.get_logger().warning(f"KG injection into TaskDecomposer failed (non-critical): {e}")
         self._decomposer = TaskDecomposer()
         self._topo_memory = TopologicalMemory(
             new_node_distance=self.get_parameter("topo_memory.new_node_distance").value,
@@ -931,7 +931,7 @@ class SemanticPlannerNode(Node):
                 for room_type, labels, confs in room_data:
                     self._runtime_kg.observe_room(room_type, labels, confs)
             except (ImportError, TypeError, KeyError, ValueError) as e:
-                self.get_logger().debug("Runtime KG update failed (non-critical): %s", e)
+                self.get_logger().debug(f"Runtime KG update failed (non-critical): {e}")
 
         # 更新情节记忆（复用已解析的 scene_data）
         try:
@@ -941,7 +941,7 @@ class SemanticPlannerNode(Node):
                 _pos = np.array([rp['x'], rp['y'], rp.get('z', 0.0)])
                 self._episodic_memory.add(position=_pos, labels=_labels)
         except (TypeError, KeyError, ValueError) as e:
-            self.get_logger().debug("Episodic memory update failed: %s", e)
+            self.get_logger().debug(f"Episodic memory update failed: {e}")
 
         # 更新 PersonTracker（复用已解析 dict，消除第二次 json.loads）
         if self._follow_mode:
@@ -1399,7 +1399,7 @@ class SemanticPlannerNode(Node):
             "active_task": str(self._current_plan.instruction) if self._current_plan else None,
             "follow_mode": getattr(self, "_follow_mode", False),
         }
-        self.get_logger().info("Status report: %s", report)
+        self.get_logger().info(f"Status report: {report}")
 
     def _execute_look_around(self, subgoal: SubGoal):
         """执行 LOOK_AROUND (LOVON: 原地 360° 扫描)。"""
@@ -2280,7 +2280,7 @@ class SemanticPlannerNode(Node):
                             sigma = belief.get("sigma_pos", 1.0)
                             target_var = min(target_var, sigma * sigma)
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-                self.get_logger().debug("VoI scheduler state parse failed: %s", e)
+                self.get_logger().debug(f"VoI scheduler state parse failed: {e}")
 
         return SchedulerState(
             target_credibility=target_cred,
@@ -2334,7 +2334,7 @@ class SemanticPlannerNode(Node):
                             try:
                                 self._nav2_goal_handle.cancel_goal_async()
                             except (RuntimeError, AttributeError) as e:
-                                self.get_logger().debug("cancel_goal_async failed: %s", e)
+                                self.get_logger().debug(f"cancel_goal_async failed: {e}")
                         self._current_goal = result
                         # 重新发送 Nav2 目标
                         from geometry_msgs.msg import PoseStamped
@@ -2924,7 +2924,7 @@ class SemanticPlannerNode(Node):
                         _current_room_id = -1
                         _current_room_name = ""
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-                self.get_logger().debug("Topo memory scene graph parse failed: %s", e)
+                self.get_logger().debug(f"Topo memory scene graph parse failed: {e}")
 
             self._topo_memory.update_position(
                 position=np.array([
@@ -3081,18 +3081,18 @@ class SemanticPlannerNode(Node):
         if os.path.exists(kg_path):
             loaded = self._resolver._semantic_prior_engine.load_learned_priors(kg_path)
             if loaded:
-                self.get_logger().info("Loaded room-object KG from %s", kg_path)
+                self.get_logger().info(f"Loaded room-object KG from {kg_path}")
             else:
-                self.get_logger().info("Room-object KG at %s empty or failed, using defaults", kg_path)
+                self.get_logger().info(f"Room-object KG at {kg_path} empty or failed, using defaults")
         else:
-            self.get_logger().info("No room-object KG at %s, using hand-coded priors", kg_path)
+            self.get_logger().info(f"No room-object KG at {kg_path}, using hand-coded priors")
 
         # 加载拓扑记忆
         if os.path.exists(topo_path):
             if self._topo_memory.load_from_file(topo_path):
-                self.get_logger().info("Loaded topo memory from %s", topo_path)
+                self.get_logger().info(f"Loaded topo memory from {topo_path}")
             else:
-                self.get_logger().warning("Failed to load topo memory from %s", topo_path)
+                self.get_logger().warning(f"Failed to load topo memory from {topo_path}")
 
     def _save_semantic_data(self, data_dir: str) -> None:
         """保存语义数据到目录 (shutdown 时调用)。"""
@@ -3115,17 +3115,17 @@ class SemanticPlannerNode(Node):
                         kg.observe_adjacency(from_name, to_name)
 
                 kg.save(kg_path)
-                self.get_logger().info("Room-object KG saved to %s", kg_path)
+                self.get_logger().info(f"Room-object KG saved to {kg_path}")
         except Exception as e:
-            self.get_logger().warning("Failed to save room-object KG: %s", e)
+            self.get_logger().warning(f"Failed to save room-object KG: {e}")
 
         # 保存拓扑记忆
         try:
             topo_path = os.path.join(data_dir, "topo_memory.json")
             self._topo_memory.save_to_file(topo_path)
-            self.get_logger().info("Topo memory saved to %s", topo_path)
+            self.get_logger().info(f"Topo memory saved to {topo_path}")
         except Exception as e:
-            self.get_logger().warning("Failed to save topo memory: %s", e)
+            self.get_logger().warning(f"Failed to save topo memory: {e}")
 
     # ================================================================
     #  生命周期
@@ -3138,7 +3138,7 @@ class SemanticPlannerNode(Node):
             try:
                 self._save_semantic_data(self._semantic_data_dir)
             except Exception as e:
-                self.get_logger().warning("Failed to save semantic data on shutdown: %s", e)
+                self.get_logger().warning(f"Failed to save semantic data on shutdown: {e}")
 
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._async_thread.join(timeout=3.0)
