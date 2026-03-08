@@ -31,6 +31,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -93,6 +96,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -183,6 +189,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -248,6 +257,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_PAT }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
