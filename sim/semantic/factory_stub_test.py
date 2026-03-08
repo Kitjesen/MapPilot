@@ -26,13 +26,13 @@ from nav_msgs.msg import Odometry
 # ── 工厂场景图 (一楼, 机器人在 2,2,0.35 附近) ──────────────────────
 FACTORY_SCENE_GRAPH = json.dumps({
     "objects": [
-        {"id": "obj_01", "label": "传送带",   "position": [10.0,  3.0, 0.35], "score": 0.90, "detection_count": 5},
-        {"id": "obj_02", "label": "工厂大门", "position": [ 5.0,  2.0, 0.35], "score": 0.88, "detection_count": 5},
-        {"id": "obj_03", "label": "楼梯",     "position": [ 4.0,  8.0, 0.35], "score": 0.85, "detection_count": 5},
+        {"id": "obj_01", "label": "传送带",   "position": [10.0,  3.0, 0.35], "score": 0.92, "detection_count": 5},
+        {"id": "obj_02", "label": "工厂大门", "position": [ 5.0,  2.0, 0.35], "score": 0.92, "detection_count": 5},
+        {"id": "obj_03", "label": "楼梯",     "position": [ 4.0,  8.0, 0.35], "score": 0.92, "detection_count": 5},
         {"id": "obj_04", "label": "目标区域", "position": [14.0,  3.0, 0.35], "score": 0.95, "detection_count": 5},
-        {"id": "obj_05", "label": "控制室",   "position": [12.0,  5.0, 0.35], "score": 0.82, "detection_count": 5},
-        {"id": "obj_06", "label": "仓储区",   "position": [18.0,  2.0, 0.35], "score": 0.80, "detection_count": 5},
-        {"id": "obj_07", "label": "机械设备", "position": [ 8.0,  4.0, 0.35], "score": 0.78, "detection_count": 5},
+        {"id": "obj_05", "label": "控制室",   "position": [12.0,  5.0, 0.35], "score": 0.92, "detection_count": 5},
+        {"id": "obj_06", "label": "仓储区",   "position": [18.0,  2.0, 0.35], "score": 0.92, "detection_count": 5},
+        {"id": "obj_07", "label": "机械设备", "position": [ 8.0,  4.0, 0.35], "score": 0.92, "detection_count": 5},
     ],
     "relations": [],
     "regions": [
