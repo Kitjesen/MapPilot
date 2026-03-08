@@ -132,14 +132,17 @@ except Exception as e:
     print(f"    {out}")
 
     # 5. 运行导航测试
-    print(f"\n[5] Running navigation test (goal=14,3,0.35) ...")
+    import sys as _sys
+    viz_flag = "viz" if "--viz" in _sys.argv else ""
+    mode_str = "viz (MuJoCo viewer)" if viz_flag else "headless"
+    print(f"\n[5] Running navigation test (goal=14,3,0.35, mode={mode_str}) ...")
     print("    (monitoring up to 240s, 'Goal Reached!' = PASS)")
     print("─" * 60)
 
     rc = stream_run(
         ssh,
         "source /opt/ros/humble/setup.bash 2>/dev/null; "
-        "bash /tmp/test_factory_nova.sh 14 3 0.35 240",
+        f"bash /tmp/test_factory_nova.sh 14 3 0.35 240 {viz_flag}",
         timeout=280
     )
 

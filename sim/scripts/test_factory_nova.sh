@@ -10,9 +10,10 @@
 #   python3 gen_factory_nova_map.py
 #
 # 用法:
-#   bash test_factory_nova.sh [goal_x] [goal_y] [goal_z] [monitor_sec]
-#   bash test_factory_nova.sh 14 3 0.35 120    # 1F 目标 (z=0.35=机体高度)
-#   bash test_factory_nova.sh 22 10 0.35 120   # 1F 穿内墙门洞
+#   bash test_factory_nova.sh [goal_x] [goal_y] [goal_z] [monitor_sec] [viz]
+#   bash test_factory_nova.sh 14 3 0.35 240        # 无头模式
+#   bash test_factory_nova.sh 14 3 0.35 240 viz    # MuJoCo viewer 可视化
+#   bash test_factory_nova.sh 22 10 0.35 240 viz   # 1F 穿内墙门洞 + 可视化
 #
 # 注意: goal_z=0.0 会触发 auto-terrain 误判到最高楼层 → A* 失败
 #       1F 请用 z=0.35, 2F 用 z=3.35, 3F 用 z=6.35
@@ -22,6 +23,7 @@ GOAL_X=${1:-14.0}
 GOAL_Y=${2:-3.0}
 GOAL_Z=${3:-0.35}
 MONITOR_SEC=${4:-240}
+VIZ=${5:-}       # "viz" 开启 MuJoCo viewer 可视化 (DISPLAY=:0)
 
 # ── 路径 ─────────────────────────────────────────────────────────
 SIM_DIR=/tmp/nova_sim
@@ -71,15 +73,25 @@ echo "  Map:     ${MAP_FILE}"
 echo "  Start:   (2.0, 2.0, 0.35)"
 echo "  Goal:    ($GOAL_X, $GOAL_Y, $GOAL_Z)"
 echo "  Monitor: ${MONITOR_SEC}s"
+echo "  Mode:    ${VIZ:-headless}"
 echo ""
 
 # ── [1] nova_nav_bridge.py — ONNX policy + MuJoCo physics ────────
 echo "[1/6] Starting nova_nav_bridge (ONNX + factory scene) ..."
-MUJOCO_GL=egl python3 ${BRIDGE_SCRIPT} \
-    --headless \
-    --scene ${SCENE_XML} \
-    --start 2.0 2.0 0.35 \
-    > /tmp/nova_bridge.log 2>&1 &
+if [ "${VIZ}" = "viz" ]; then
+    # 可视化模式: DISPLAY=:0, MuJoCo viewer 窗口
+    DISPLAY=:0 python3 ${BRIDGE_SCRIPT} \
+        --scene ${SCENE_XML} \
+        --start 2.0 2.0 0.35 \
+        > /tmp/nova_bridge.log 2>&1 &
+else
+    # 无头模式: EGL 软件渲染
+    MUJOCO_GL=egl python3 ${BRIDGE_SCRIPT} \
+        --headless \
+        --scene ${SCENE_XML} \
+        --start 2.0 2.0 0.35 \
+        > /tmp/nova_bridge.log 2>&1 &
+fi
 BRIDGE_PID=$!
 echo "  PID=$BRIDGE_PID"
 sleep 5
