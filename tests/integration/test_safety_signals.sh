@@ -107,6 +107,7 @@ ros2 run local_planner localPlanner --ros-args \
     -r /speed:=/nav/speed \
     -r /stop:=/nav/stop \
     -r /slow_down:=/nav/slow_down \
+    -r /path:=/nav/local_path \
     -p pathFolder:="$PATHS_DIR" \
     -p autonomyMode:=true \
     -p autonomySpeed:=1.0 \
