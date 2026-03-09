@@ -69,9 +69,9 @@ case $SAVE_CHOICE in
             ros2 service call /pgo/save_maps interface/srv/SaveMaps \
                 "{file_path: '$MAP_DIR/$MAP_NAME', save_patches: false}"
         else
-            echo -e "${YELLOW}警告: /pgo/save_maps 服务不可用，尝试 FastLIO2 /save_map 服务...${NC}"
-            if ros2 service list 2>/dev/null | grep -q "^/save_map$"; then
-                ros2 service call /save_map interface/srv/SaveMaps \
+            echo -e "${YELLOW}警告: /pgo/save_maps 服务不可用，尝试 SLAM /nav/save_map 服务...${NC}"
+            if ros2 service list 2>/dev/null | grep -q "/nav/save_map"; then
+                ros2 service call /nav/save_map interface/srv/SaveMaps \
                     "{file_path: '$MAP_DIR/$MAP_NAME', save_patches: false}"
             else
                 echo -e "${RED}错误: 未找到地图保存服务，请确认 SLAM 节点正在运行${NC}"
@@ -93,8 +93,8 @@ case $SAVE_CHOICE in
             ros2 service call /pgo/save_maps interface/srv/SaveMaps \
                 "{file_path: '$MAP_DIR/$MAP_NAME', save_patches: false}"
         else
-            echo -e "${YELLOW}警告: PGO 服务不可用，尝试 FastLIO2 /save_map ...${NC}"
-            ros2 service call /save_map interface/srv/SaveMaps \
+            echo -e "${YELLOW}警告: PGO 服务不可用，尝试 SLAM /nav/save_map ...${NC}"
+            ros2 service call /nav/save_map interface/srv/SaveMaps \
                 "{file_path: '$MAP_DIR/$MAP_NAME', save_patches: false}"
         fi
         
