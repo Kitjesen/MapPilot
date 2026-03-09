@@ -218,6 +218,14 @@ class HanDogBridge(Node):
         wd_msg.data = self._watchdog_triggered
         self.watchdog_pub.publish(wd_msg)
 
+        # 每 10s 打印连接状态心跳，便于现场诊断
+        self._heartbeat_counter = getattr(self, '_heartbeat_counter', 0) + 1
+        if self._heartbeat_counter >= int(10.0 / 0.05):  # watchdog timer ~50Hz
+            self._heartbeat_counter = 0
+            self.get_logger().info(
+                f'[driver] connected={self._connected} standing={self._standing} '
+                f'enabled={self._enabled} watchdog={self._watchdog_triggered}')
+
         # 按 odom_pub_rate 降频发布里程计
         self._odom_pub_counter += 1
         if self._odom_pub_counter >= self._odom_skip:
@@ -412,13 +420,19 @@ class HanDogBridge(Node):
             self.get_logger().error(f'Disable failed: {e}')
 
     async def _stand_up(self):
-        """站立."""
-        try:
-            await self._stub.StandUp(dog_msg.Empty())
-            self._standing = True
-            self.get_logger().info('Dog STANDING UP')
-        except Exception as e:
-            self.get_logger().error(f'StandUp failed: {e}')
+        """站立 (最多重试 3 次，间隔 1s)."""
+        for attempt in range(1, 4):
+            try:
+                await self._stub.StandUp(dog_msg.Empty())
+                self._standing = True
+                self.get_logger().info('Dog STANDING UP')
+                return
+            except Exception as e:
+                self.get_logger().error(f'StandUp attempt {attempt}/3 failed: {e}')
+                if attempt < 3:
+                    await asyncio.sleep(1.0)
+        # 三次全失败 — 抛出异常让 _async_main 重新建立连接
+        raise RuntimeError('StandUp failed after 3 attempts')
 
     async def _sit_down(self):
         """坐下."""

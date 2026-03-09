@@ -14,6 +14,18 @@ NAV_INIT_Y="${NAV_INIT_Y:-0.0}"
 NAV_INIT_Z="${NAV_INIT_Z:-0.0}"
 NAV_INIT_YAW="${NAV_INIT_YAW:-0.0}"
 
-echo "[nav-planning] map_path=${NAV_MAP_PATH:-<from env>}"
+# 地图路径必填校验 — 空值立刻报错，不进入 ros2 launch 静默失败循环
+if [ -z "${NAV_MAP_PATH}" ]; then
+    echo "[nav-planning] FATAL: NAV_MAP_PATH is not set." >&2
+    echo "[nav-planning] Set it in /etc/nav/planning.env or export before starting." >&2
+    exit 1
+fi
+if [ ! -f "${NAV_MAP_PATH}.pcd" ] && [ ! -f "${NAV_MAP_PATH}.pickle" ] && [ ! -f "${NAV_MAP_PATH}" ]; then
+    echo "[nav-planning] FATAL: map file not found: ${NAV_MAP_PATH}" >&2
+    exit 1
+fi
+
+echo "[nav-planning] map_path=${NAV_MAP_PATH}"
 exec ros2 launch "${NAV_DIR}/launch/subsystems/planning.launch.py" \
+    map_path:="${NAV_MAP_PATH}" \
     x:="$NAV_INIT_X" y:="$NAV_INIT_Y" z:="$NAV_INIT_Z" yaw:="$NAV_INIT_YAW"

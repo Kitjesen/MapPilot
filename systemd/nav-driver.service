@@ -1,30 +1,30 @@
 [Unit]
-Description=Navigation - Terrain Analysis + Local Planner
-After=nav-slam.service nav-driver.service
-Requires=nav-slam.service
-Wants=nav-driver.service
+Description=Navigation - Robot Driver (han_dog_bridge gRPC)
+After=nav-slam.service nav-planning.service brainstem.service
+Wants=brainstem.service
 
 [Service]
 Type=simple
 User=sunrise
 Group=sunrise
 WorkingDirectory=/opt/nav
-ExecStart=/bin/bash /opt/nav/scripts/services/nav-autonomy.sh
+ExecStart=/bin/bash /opt/nav/scripts/services/nav-driver.sh
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=15
+TimeoutStartSec=20
+TimeoutStopSec=10
 KillMode=mixed
 KillSignal=SIGINT
 SuccessExitStatus=130 SIGINT
 
-MemoryMax=3G
+MemoryMax=512M
 
 Environment=HOME=/home/sunrise
 Environment=LANG=en_US.UTF-8
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=nav-autonomy
+SyslogIdentifier=nav-driver
 
 [Install]
 WantedBy=multi-user.target
