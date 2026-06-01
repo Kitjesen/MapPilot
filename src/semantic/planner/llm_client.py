@@ -179,7 +179,10 @@ class OpenAIClient(LLMClientBase):
                             wait, attempt + 1, self.config.max_retries,
                         )
                         await asyncio.sleep(wait + random.uniform(0, 0.5 * wait))
-                    elif status_code in (500, 502, 503) or (status_code is None and any(s in err_str for s in ("500", "502", "503"))):
+                    elif (
+                        status_code in (500, 502, 503)
+                        or (status_code is None and any(s in err_str for s in ("500", "502", "503")))
+                    ):
                         wait = 2 ** attempt
                         logger.warning(
                             "Server error on attempt %d: %s, retrying in %ds",
@@ -369,7 +372,10 @@ class ClaudeClient(LLMClientBase):
                             wait, attempt + 1, self.config.max_retries,
                         )
                         await asyncio.sleep(wait + random.uniform(0, 0.5 * wait))
-                    elif status_code in (500, 502, 503) or (status_code is None and any(s in err_str for s in ("500", "502", "503"))):
+                    elif (
+                        status_code in (500, 502, 503)
+                        or (status_code is None and any(s in err_str for s in ("500", "502", "503")))
+                    ):
                         wait = 2 ** attempt
                         logger.warning(
                             "Claude server error on attempt %d: %s, retrying in %ds",
@@ -460,7 +466,10 @@ class QwenClient(LLMClientBase):
                             wait, attempt + 1, self.config.max_retries,
                         )
                         await asyncio.sleep(wait + random.uniform(0, 0.5 * wait))
-                    elif status_code in (500, 502, 503) or (status_code is None and any(s in err_str for s in ("500", "502", "503"))):
+                    elif (
+                        status_code in (500, 502, 503)
+                        or (status_code is None and any(s in err_str for s in ("500", "502", "503")))
+                    ):
                         wait = 2 ** attempt
                         logger.warning(
                             "Qwen server error on attempt %d: %s, retrying in %ds",

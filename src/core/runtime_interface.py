@@ -1198,13 +1198,22 @@ ADAPTER_TOPIC_ALIASES = {
         AdapterTopicAlias(source="/cloud_map", target=TOPICS.map_cloud, msg_format="map_cloud"),
         AdapterTopicAlias(source="/terrain_map", target=TOPICS.terrain_map, msg_format="map_cloud"),
         AdapterTopicAlias(source="/terrain_map_ext", target=TOPICS.terrain_map_ext, msg_format="map_cloud"),
-        AdapterTopicAlias(source="/way_point", target=TOPICS.nav_way_point, msg_format="geometry_msgs/msg/PointStamped"),
+        AdapterTopicAlias(
+            source="/way_point", target=TOPICS.nav_way_point,
+            msg_format="geometry_msgs/msg/PointStamped",
+        ),
         AdapterTopicAlias(source="/speed", target=TOPICS.speed, msg_format="std_msgs/msg/Float32"),
         AdapterTopicAlias(source="/path", target=TOPICS.local_path, msg_format="nav_msgs/msg/Path"),
         AdapterTopicAlias(source="/stop", target=TOPICS.stop, msg_format="std_msgs/msg/Bool"),
         AdapterTopicAlias(source="/slow_down", target=TOPICS.slow_down, msg_format="std_msgs/msg/Float32"),
-        AdapterTopicAlias(source="/navigation_boundary", target=TOPICS.navigation_boundary, msg_format="geometry_msgs/msg/PolygonStamped"),
-        AdapterTopicAlias(source="/added_obstacles", target=TOPICS.added_obstacles, msg_format="sensor_msgs/msg/PointCloud2"),
+        AdapterTopicAlias(
+            source="/navigation_boundary", target=TOPICS.navigation_boundary,
+            msg_format="geometry_msgs/msg/PolygonStamped",
+        ),
+        AdapterTopicAlias(
+            source="/added_obstacles", target=TOPICS.added_obstacles,
+            msg_format="sensor_msgs/msg/PointCloud2",
+        ),
         AdapterTopicAlias(source="/check_obstacle", target=TOPICS.check_obstacle, msg_format="std_msgs/msg/Bool"),
     ),
     "path_follower": (

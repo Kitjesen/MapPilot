@@ -207,8 +207,8 @@ class TestKGLocationsAndCategories(unittest.TestCase):
         locs = self.kg.get_typical_locations("fire extinguisher")
         self.assertGreater(len(locs), 0)
         # 应包含走廊相关
-        locs_lower = [l.lower() for l in locs]
-        self.assertTrue(any("corridor" in l or "走廊" in l for l in locs_lower))
+        locs_lower = [loc.lower() for loc in locs]
+        self.assertTrue(any("corridor" in loc or "走廊" in loc for loc in locs_lower))
 
     def test_unknown_locations_empty(self):
         locs = self.kg.get_typical_locations("xyz_unknown")

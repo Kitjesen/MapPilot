@@ -105,16 +105,22 @@ def register_camera_routes(app, gw=None) -> None:
         # Write script to avoid shell escaping issues.
         with open(script, "w") as f:
             f.write(
-                "import rclpy, sys\n"
-                "from sensor_msgs.msg import CompressedImage\n"
-                "rclpy.init()\n"
-                "n=rclpy.create_node('cam_snap')\n"
-                "msg=[None]\n"
-                "n.create_subscription(CompressedImage,'/camera/color/image_raw/compressed',lambda m:msg.__setitem__(0,m),1)\n"
-                "import time; t=time.time()\n"
-                "while msg[0] is None and time.time()-t<2: rclpy.spin_once(n,timeout_sec=0.1)\n"
-                "n.destroy_node(); rclpy.shutdown()\n"
-                f"open('{out}','wb').write(msg[0].data) if msg[0] else None\n"
+                (
+                    "import rclpy, sys\n"
+                    "from sensor_msgs.msg import CompressedImage\n"
+                    "rclpy.init()\n"
+                    "n=rclpy.create_node('cam_snap')\n"
+                    "msg=[None]\n"
+                    "n.create_subscription(CompressedImage,"
+                    "'/camera/color/image_raw/compressed',"
+                    "lambda m:msg.__setitem__(0,m),1)\n"
+                    "import time; t=time.time()\n"
+                    "while msg[0] is None and time.time()-t<2:"
+                    " rclpy.spin_once(n,timeout_sec=0.1)\n"
+                    "n.destroy_node(); rclpy.shutdown()\n"
+                    f"open('{out}','wb').write(msg[0].data)"
+                    " if msg[0] else None\n"
+                )
             )
         try:
             # Unset RMW to use default fastrtps (camera uses fastrtps).

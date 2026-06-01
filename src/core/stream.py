@@ -563,4 +563,7 @@ class In(Generic[T]):
         policy_str = f", policy={self._policy}" if self._policy != "all" else ""
         drop_str = f", dropped={self._drop_count}" if self._drop_count else ""
         rate_str = f", {self._rate_hz:.1f}Hz" if self._rate_hz > 0 else ""
-        return f"In('{self._name}', {self._msg_type.__name__}, n={self._msg_count}, {status}{policy_str}{drop_str}{rate_str})"
+        return (
+            f"In('{self._name}', {self._msg_type.__name__}, n={self._msg_count}, "
+            f"{status}{policy_str}{drop_str}{rate_str})"
+        )

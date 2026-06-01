@@ -426,7 +426,9 @@ def tsg_to_prompt_context(
             fstrs = []
             for f in frontiers:
                 pred = f"→可能是{f.predicted_room_type}" if f.predicted_room_type else ""
-                dx, dy = (f.frontier_direction[0], f.frontier_direction[1]) if f.frontier_direction is not None else (0, 0)
+                dx, dy = (
+                    f.frontier_direction[0], f.frontier_direction[1],
+                ) if f.frontier_direction is not None else (0, 0)
                 fstrs.append(f"{f.name}({direction_name_zh(dx, dy)}{pred})")
             parts.append(f"未探索前沿: {', '.join(fstrs)}")
         visited_rooms = [r for r in rooms if r.visited]
@@ -450,7 +452,9 @@ def tsg_to_prompt_context(
             fstrs = []
             for f in frontiers:
                 pred = f"→{f.predicted_room_type}" if f.predicted_room_type else ""
-                dx, dy = (f.frontier_direction[0], f.frontier_direction[1]) if f.frontier_direction is not None else (0, 0)
+                dx, dy = (
+                    f.frontier_direction[0], f.frontier_direction[1],
+                ) if f.frontier_direction is not None else (0, 0)
                 fstrs.append(f"{f.name}({direction_name_en(dx, dy)}{pred})")
             parts.append(f"Frontiers: {', '.join(fstrs)}")
         visited_rooms = [r for r in rooms if r.visited]

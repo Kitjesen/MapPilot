@@ -312,7 +312,10 @@ class VectorMemoryModule(Module, layer=3):
         'find backpack' matches 'backpack, bench'.
         """
         import re
-        _STOP = {"go", "to", "the", "find", "where", "is", "a", "an", "my", "at", "in", "on", "for", "of", "area", "place", "spot"}
+        _STOP = {
+            "go", "to", "the", "find", "where", "is", "a", "an", "my",
+            "at", "in", "on", "for", "of", "area", "place", "spot",
+        }
         words = re.split(r'[,\s]+', text.lower().strip())
         words = [w for w in words if w and w not in _STOP]
         vec = np.zeros(dim, dtype=np.float32)

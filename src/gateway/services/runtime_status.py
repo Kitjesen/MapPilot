@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import json
 import math
@@ -19,6 +20,8 @@ from gateway.services.safety_status import (
     safety_stop_active,
     safety_summary,
 )
+
+logger = logging.getLogger(__name__)
 
 
 LOCALIZATION_STATUS_SCHEMA_VERSION = 1

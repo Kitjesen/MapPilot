@@ -1,7 +1,3 @@
-import pytest
-
-pytestmark = [pytest.mark.ros2]
-
 """Tests for the TARE exploration bridge and the exploration stack factory.
 
 Runs without any C++ binary or DDS transport — relies on the module's
@@ -10,6 +6,10 @@ contracts (ports, skills, waypoint → PoseStamped conversion).
 """
 
 from __future__ import annotations
+
+import pytest
+
+pytestmark = [pytest.mark.ros2]
 
 import os
 import sys

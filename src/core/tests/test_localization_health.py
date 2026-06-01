@@ -842,7 +842,7 @@ class TestSlamBridgeDegeneracyParsing(unittest.TestCase):
         with self.assertLogs("slam.slam_bridge_module", level=logging.WARNING) as cm:
             m._on_rclpy_degeneracy_detail(msg)
             m._on_rclpy_degeneracy_detail(msg)  # second call — should be throttled
-        severe_lines = [l for l in cm.output if "SEVERE" in l]
+        severe_lines = [line for line in cm.output if "SEVERE" in line]
         self.assertEqual(len(severe_lines), 1,
                          f"Expected exactly one SEVERE warning, got {len(severe_lines)}: {severe_lines}")
 

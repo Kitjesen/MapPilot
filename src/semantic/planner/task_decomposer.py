@@ -214,7 +214,7 @@ class TaskDecomposer(TaskRulesMixin):
             if scene_summary:
                 user_content += f"\n\n## 当前场景\n{scene_summary}"
         else:
-            system = f"""You are a robot task planner. Decompose the user's instruction into a sequence of executable subgoals.
+            system = f"""You are a robot task planner. Decompose the instruction into subgoals.
 
 Available actions: {available_actions}
 

@@ -442,7 +442,8 @@ class HybridPlanner:
         )
 
     def _locate_room(self, position: np.ndarray) -> int | None:
-        """Locate the room containing a position (three-stage lookup: get_room_by_position → convex hull → nearest centroid)."""
+        """Locate the room containing a position (three-stage lookup:
+        get_room_by_position -> convex hull -> nearest centroid)."""
         room_id = self.tsg.get_room_by_position(position[0], position[1], radius=5.0)
         if room_id is not None:
             return room_id

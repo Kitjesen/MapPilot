@@ -1,7 +1,3 @@
-import pytest
-
-pytestmark = [pytest.mark.ros2]
-
 """Tests for nav service modules, driver modules, and frontier explorer.
 
 Covers:
@@ -17,6 +13,10 @@ All tests are pure-Python, no ROS2 / hardware required.
 """
 
 from __future__ import annotations
+
+import pytest
+
+pytestmark = [pytest.mark.ros2]
 
 import json
 import math

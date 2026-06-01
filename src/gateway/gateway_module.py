@@ -2794,7 +2794,9 @@ class GatewayModule(Module, layer=6):
                     if line.startswith("DATA"):
                         break
                 data = f.read(n_points * point_step)
-            pts = np.frombuffer(data[:n_points * point_step], dtype=np.float32).reshape(n_points, point_step // 4)[:, :3]
+            pts = np.frombuffer(
+                data[:n_points * point_step], dtype=np.float32,
+            ).reshape(n_points, point_step // 4)[:, :3]
             valid = np.isfinite(pts).all(axis=1)
             pts = pts[valid]
             with self._map_cloud_lock:

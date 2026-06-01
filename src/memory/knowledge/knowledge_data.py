@@ -1775,7 +1775,10 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             condition="任何接触或操作",
             response="block",
             message_zh="⚠️ 配电箱 (220V/380V) 高压危险, 机器人禁止触碰。需专业电工操作。",
-            message_en="⚠️ Electrical panel (220V/380V) - HIGH VOLTAGE. Robot interaction forbidden. Requires licensed electrician.",
+            message_en=(
+                "⚠️ Electrical panel (220V/380V) - HIGH VOLTAGE."
+                " Robot interaction forbidden. Requires licensed electrician."
+            ),
             max_approach_distance=1.0,
         ),
         # 气瓶 — 禁止抓取
@@ -1787,7 +1790,10 @@ def _build_safety_constraints(safety_constraints: list[SafetyConstraint]) -> Non
             condition="抓取或移动",
             response="block",
             message_zh="⚠️ 高压气瓶 (可爆炸), 机器人禁止抓取或移动。需人工固定搬运。",
-            message_en="⚠️ Compressed gas cylinder (explosive risk). Robot MUST NOT grasp or move. Requires manual handling.",
+            message_en=(
+                "Compressed gas cylinder (explosive risk)."
+                " Robot MUST NOT grasp or move. Requires manual handling."
+            ),
             max_approach_distance=0.5,
         ),
         SafetyConstraint(

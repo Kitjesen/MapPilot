@@ -138,7 +138,11 @@ class PerceptionService:
 
         # 6. Build result
         sg_json = self.tracker.get_scene_graph_json() if self.tracker else "{}"
-        n_objects = len(self.tracker._tracked_objects) if self.tracker and hasattr(self.tracker, '_tracked_objects') else 0
+        n_objects = (
+            len(self.tracker._tracked_objects)
+            if self.tracker and hasattr(self.tracker, '_tracked_objects')
+            else 0
+        )
 
         return FrameResult(
             detections_3d=dets_3d,

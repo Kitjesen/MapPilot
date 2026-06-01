@@ -241,7 +241,7 @@ T(
 )
 
 # 28 Zero ambiguity
-warnings = [l for l in buf.getvalue().split("\n") if "ambiguity" in l.lower()]
+warnings = [line for line in buf.getvalue().split("\n") if "ambiguity" in line.lower()]
 T("28.Zero ambiguity", len(warnings) == 0)
 
 # 29 MCP skills

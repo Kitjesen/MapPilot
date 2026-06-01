@@ -285,8 +285,14 @@ class RerunBridgeModule(Module, layer=6):
                 self._ros2_node.create_subscription(Image, TOPICS.camera_depth, self._on_ros2_depth, qos),
                 self._ros2_node.create_subscription(TFMessage, "/tf", self._on_ros2_tf, qos_be),
                 self._ros2_node.create_subscription(TFMessage, "/tf_static", self._on_ros2_tf_static, qos_be),
-                self._ros2_node.create_subscription(OccupancyGrid, TOPICS.semantic_costmap, self._on_ros2_costmap, qos_be),
-                self._ros2_node.create_subscription(MarkerArray, TOPICS.visualization_detections, self._on_ros2_detections, qos_be),
+                self._ros2_node.create_subscription(
+                    OccupancyGrid, TOPICS.semantic_costmap,
+                    self._on_ros2_costmap, qos_be,
+                ),
+                self._ros2_node.create_subscription(
+                    MarkerArray, TOPICS.visualization_detections,
+                    self._on_ros2_detections, qos_be,
+                ),
                 self._ros2_node.create_subscription(Path, TOPICS.global_path, self._on_ros2_path, qos_be),
             ]
             get_shared_executor().add_node(self._ros2_node)

@@ -13,6 +13,7 @@ NOVA Dog 导航仿真 Bridge — 真实 ONNX 步态 + ROS2 全链路
   MUJOCO_GL=egl python3 nova_nav_bridge.py --headless # 无头模式
 """
 import argparse
+import logging
 import sys
 import time
 import threading
@@ -21,6 +22,8 @@ from collections import deque
 
 import numpy as np
 import mujoco
+
+logger = logging.getLogger(__name__)
 
 # ── 路径 ─────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).resolve().parent

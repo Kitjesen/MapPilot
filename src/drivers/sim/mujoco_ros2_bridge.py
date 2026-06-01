@@ -67,8 +67,8 @@ DEFAULT_XML = """
       <freejoint name="root"/>
       <geom name="chassis" type="box" size="0.4 0.25 0.1" group="0" mass="20" conaffinity="1"
             rgba=".18 .38 .76 1"/>
-      <geom name="leg_fl" type="capsule" size="0.035" fromto=" 0.28  0.18 -0.10  0.28  0.18 -0.42" group="0" mass="0.8"/>
-      <geom name="leg_fr" type="capsule" size="0.035" fromto=" 0.28 -0.18 -0.10  0.28 -0.18 -0.42" group="0" mass="0.8"/>
+      <geom name="leg_fl" type="capsule" size="0.035" fromto="0.28 0.18 -0.10 0.28 0.18 -0.42" group="0" mass="0.8"/>
+      <geom name="leg_fr" type="capsule" size="0.035" fromto="0.28 -0.18 -0.10 0.28 -0.18 -0.42" group="0" mass="0.8"/>
       <geom name="leg_rl" type="capsule" size="0.035" fromto="-.28  0.18 -0.10 -.28  0.18 -0.42" group="0" mass="0.8"/>
       <geom name="leg_rr" type="capsule" size="0.035" fromto="-.28 -0.18 -0.10 -.28 -0.18 -0.42" group="0" mass="0.8"/>
       <body name="lidar" pos="0 0 0.25">

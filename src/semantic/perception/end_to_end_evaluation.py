@@ -340,7 +340,10 @@ class EndToEndEvaluator:
                 planning_time = np.mean([r.path.planning_time_ms for r in results if r.path])
                 smoothness = np.mean([r.path.path_smoothness for r in results if r.path])
 
-                f.write(f"| {method_name} | {memory:.2f} | {update_time:.2f} | {planning_time:.2f} | {smoothness:.2f} |\n")
+                f.write(
+                    f"| {method_name} | {memory:.2f} | {update_time:.2f}"
+                    f" | {planning_time:.2f} | {smoothness:.2f} |\n"
+                )
 
             f.write("\n---\n\n")
             f.write("## 结论\n\n")

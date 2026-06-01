@@ -4,7 +4,8 @@
 # perception_node.py        ROS2 主节点，驱动完整感知流水线
 # perception_publishers.py  ROS2 话题统一发布出口
 
-# --- Detector 目标检测 (detector_base / yolo_world_detector / bpu_detector / yoloe_detector / grounding_dino_detector) ---
+# --- Detector 目标检测 (detector_base / yolo_world_detector / bpu_detector /
+#         yoloe_detector / grounding_dino_detector) ---
 # detector_base.py              DetectorBase 抽象接口
 # yolo_world_detector.py        YOLO-World 开放词汇，125 类，10-15 FPS
 # bpu_detector.py               Nash BPU YOLO11s-seg，~45ms/帧，实例分割

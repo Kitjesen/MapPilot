@@ -584,9 +584,6 @@ def test_inspection_acceptance_previews_saved_location_without_publishing():
 def test_inspection_acceptance_request_rejects_arbitrary_point_payloads():
     import pytest
 
-pytestmark = [pytest.mark.sim]
-    from pydantic import ValidationError
-
     from gateway.schemas import InspectionAcceptanceRequest
 
     with pytest.raises(ValidationError):

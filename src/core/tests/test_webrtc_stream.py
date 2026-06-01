@@ -30,7 +30,7 @@ def test_force_h264_first_moves_h264_payload_type_to_front():
         "a=rtpmap:98 H264/90000",
     ])
     out = _force_h264_first(sdp)
-    m_line = next(l for l in out.split("\r\n") if l.startswith("m=video"))
+    m_line = next(line for line in out.split("\r\n") if line.startswith("m=video"))
     assert m_line == "m=video 9 UDP/TLS/RTP/SAVPF 98 96 97"
 
 
@@ -56,7 +56,7 @@ def test_force_h264_first_handles_multiple_h264_payload_types():
         "a=rtpmap:97 VP9/90000",
     ])
     out = _force_h264_first(sdp)
-    m_line = next(l for l in out.split("\r\n") if l.startswith("m=video"))
+    m_line = next(line for line in out.split("\r\n") if line.startswith("m=video"))
     assert m_line == "m=video 9 UDP/TLS/RTP/SAVPF 100 102 96 97"
 
 

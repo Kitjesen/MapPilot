@@ -64,6 +64,6 @@ class TestEpisodicMemoryBasic:
         self.mem._records[-1].timestamp = time.time() - 3700
         self.mem.add(np.array([5.0, 0.0]), labels=["new_obj"])
         results = self.mem.query_by_text("obj", max_age_sec=3600)
-        labels_in_results = [l for r in results for l in r.labels]
+        labels_in_results = [label for r in results for label in r.labels]
         assert "new_obj" in labels_in_results
         assert "old_obj" not in labels_in_results

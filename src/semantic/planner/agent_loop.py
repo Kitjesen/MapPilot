@@ -237,7 +237,8 @@ Rules:
 - Use query_memory for fuzzy location requests ("去上次放背包的地方").
 - Use navigate_to_object for objects currently in view.
 - Use navigate_to for known coordinates.
-- Use follow_person(description) to continuously follow a specific person (e.g. "follow the person in red"); call stop_servo to cancel following.
+- Use follow_person(description) to continuously follow a specific person
+  (e.g. "follow the person in red"); call stop_servo to cancel following.
 - Use describe_scene() when you need to understand what the robot currently sees.
 - Use assess_situation(goal) when you are unsure whether the current view is helpful.
 - Call done() when the task is complete.

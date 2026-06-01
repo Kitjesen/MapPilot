@@ -1,7 +1,3 @@
-import pytest
-
-pytestmark = [pytest.mark.sim]
-
 #!/usr/bin/env python3
 """S100P full pipeline test: MuJoCo + terrain_core + PCT/A* + navigation.
 
@@ -9,12 +5,16 @@ Run on S100P:
     cd ~/data/inovxio/lingtu/src
     PYTHONPATH=. python3 drivers/sim/test_full_pipeline_s100p.py
 """
+
 import math
 import os
 import sys
 import time
 
 import numpy as np
+import pytest
+
+pytestmark = [pytest.mark.sim]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "../.."))
