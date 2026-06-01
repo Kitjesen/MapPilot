@@ -217,7 +217,7 @@ def test_real_task_decomposer_satisfies_protocol():
 def test_real_topological_memory_satisfies_spatial():
     """TopologicalMemory should satisfy SpatialMemory protocol."""
     try:
-        from semantic.planner.topological_memory import TopologicalMemory
+        from memory.spatial.topological import TopologicalMemory
     except ImportError:
         pytest.skip("semantic_planner not importable in this environment")
     assert hasattr(TopologicalMemory, "update_position")
@@ -227,7 +227,7 @@ def test_real_topological_memory_satisfies_spatial():
 def test_real_episodic_memory_satisfies_protocol():
     """EpisodicMemory should have add() and format_for_llm()."""
     try:
-        from semantic.planner.episodic_memory import EpisodicMemory
+        from memory.spatial.episodic import EpisodicMemory
     except ImportError:
         pytest.skip("semantic_planner not importable in this environment")
     assert hasattr(EpisodicMemory, "add")

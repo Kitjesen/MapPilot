@@ -13,7 +13,7 @@ test_knowledge_graph.py — 工业知识图谱单元测试
 import json
 import unittest
 
-from semantic.perception.knowledge_graph import (
+from memory.knowledge.knowledge_graph import (
     AffordanceType,
     IndustrialKnowledgeGraph,
     ObjectConcept,

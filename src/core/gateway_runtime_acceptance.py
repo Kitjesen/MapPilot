@@ -1,4 +1,13 @@
-"""Gateway-only runtime acceptance checks for product-facing field use."""
+"""Gateway-only runtime acceptance checks for product-facing field use.
+
+Lives in core/ rather than gateway/ because this module is a *consumer* of
+Gateway data — it fetches Gateway HTTP endpoints, validates them against
+product specifications, and produces an acceptance verdict.  Putting it in
+core/ avoids circular imports (Gateway modules already import from core/)
+and keeps acceptance logic separate from Gateway implementation.  All
+gateway imports are lazy (inside function bodies) to preserve module-level
+import purity.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +23,6 @@ from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from core.runtime_interface import REAL_RUNTIME_CONTRACT, TOPICS
-
 
 GATEWAY_RUNTIME_ACCEPTANCE_SCHEMA_VERSION = "lingtu.gateway_runtime_acceptance.v1"
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:5050"

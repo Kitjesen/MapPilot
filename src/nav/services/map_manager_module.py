@@ -41,8 +41,8 @@ from core.runtime_interface import TOPICS, topic_default_frame_id
 from core.same_source_map_artifacts import (
     build_saved_map_metadata,
     sha256_file,
-    validate_saved_map_artifact_dir,
     validate_same_source_map_metadata,
+    validate_saved_map_artifact_dir,
 )
 from core.yaml_helpers import load_yaml, save_yaml
 
@@ -691,6 +691,9 @@ class MapManagerModule(Module, layer=6):
             }
 
         try:
+            # Lazy: global_planning is a nav-layer package.  Import inside
+            # method body so nav/ modules load without triggering global_planning
+            # at module level.
             from global_planning.pct_planner.tomography.scripts.build_tomogram import (
                 build_tomogram_from_pcd,
             )

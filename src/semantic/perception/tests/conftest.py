@@ -101,7 +101,7 @@ def make_room_dict():
 @pytest.fixture(scope="module")
 def kg():
     """共享的 IndustrialKnowledgeGraph 实例 (模块范围)。"""
-    from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+    from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
     return IndustrialKnowledgeGraph()
 
 

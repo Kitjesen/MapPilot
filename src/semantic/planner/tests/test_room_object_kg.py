@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 
-from semantic.planner.room_object_kg import (
+from memory.knowledge.room_object_kg import (
     RoomObjectKG,
     extract_room_objects_from_scene_graph,
 )
@@ -198,7 +198,7 @@ class TestSemanticPriorIntegration(unittest.TestCase):
     """SemanticPriorEngine 与 KG 集成测试。"""
 
     def test_load_learned_priors(self):
-        from semantic.planner.semantic_prior import SemanticPriorEngine
+        from memory.knowledge.semantic_prior import SemanticPriorEngine
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "kg.json")
@@ -218,7 +218,7 @@ class TestSemanticPriorIntegration(unittest.TestCase):
             self.assertIn("lathe", engine._priors["workshop"])
 
     def test_fallback_without_kg(self):
-        from semantic.planner.semantic_prior import SemanticPriorEngine
+        from memory.knowledge.semantic_prior import SemanticPriorEngine
 
         # Without KG, should use hand-coded priors
         engine = SemanticPriorEngine()
@@ -227,7 +227,7 @@ class TestSemanticPriorIntegration(unittest.TestCase):
         self.assertTrue(len(predictions) > 0)
 
     def test_reload_priors(self):
-        from semantic.planner.semantic_prior import SemanticPriorEngine
+        from memory.knowledge.semantic_prior import SemanticPriorEngine
 
         engine = SemanticPriorEngine()
         custom = {"testroom": {"sonar": 0.9}}
@@ -240,7 +240,7 @@ class TestSemanticPriorIntegration(unittest.TestCase):
         self.assertIn("sonar", engine._inverse_index)
 
     def test_kg_path_nonexistent_uses_defaults(self):
-        from semantic.planner.semantic_prior import SemanticPriorEngine
+        from memory.knowledge.semantic_prior import SemanticPriorEngine
 
         # Non-existent KG path should fall back to hand-coded priors
         engine = SemanticPriorEngine(kg_path="/nonexistent/kg.json")
@@ -307,7 +307,7 @@ class TestTopologicalMemoryPersistence(unittest.TestCase):
     def test_save_and_load(self):
         import numpy as np
 
-        from semantic.planner.topological_memory import TopologicalMemory
+        from memory.spatial.topological import TopologicalMemory
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "topo.json")
@@ -337,7 +337,7 @@ class TestTopologicalMemoryPersistence(unittest.TestCase):
             self.assertIn("desk", labels)
 
     def test_load_nonexistent(self):
-        from semantic.planner.topological_memory import TopologicalMemory
+        from memory.spatial.topological import TopologicalMemory
 
         mem = TopologicalMemory()
         self.assertFalse(mem.load_from_file("/nonexistent.json"))

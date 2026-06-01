@@ -48,7 +48,7 @@ from semantic.planner.goal_resolver import (
 from semantic.planner.task_decomposer import (
     TaskDecomposer, SubGoalAction, SubGoalStatus,
 )
-from semantic.planner.voi_scheduler import (
+from memory.scheduling.voi_scheduler import (
     VoIScheduler, VoIConfig, SchedulerState, SchedulerAction,
 )
 
@@ -1075,7 +1075,7 @@ class TestIntentInference:
     def test_print_intent_maps_to_office(self):
         """'I need to print' → office (printer prior=0.40)。"""
         try:
-            from semantic.planner.semantic_prior import SemanticPriorEngine
+            from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
             return
 
@@ -1088,7 +1088,7 @@ class TestIntentInference:
     def test_hungry_intent_maps_to_kitchen(self):
         """'I am hungry' → kitchen (refrigerator prior=0.90)。"""
         try:
-            from semantic.planner.semantic_prior import SemanticPriorEngine
+            from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
             return
 
@@ -1101,7 +1101,7 @@ class TestIntentInference:
     def test_rest_intent_maps_to_lounge(self):
         """'I need a break' → lounge (sofa prior=0.70)。"""
         try:
-            from semantic.planner.semantic_prior import SemanticPriorEngine
+            from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
             return
 
@@ -1114,7 +1114,7 @@ class TestIntentInference:
     def test_restroom_intent_maps_to_bathroom(self):
         """'I need to use the restroom' → bathroom。"""
         try:
-            from semantic.planner.semantic_prior import SemanticPriorEngine
+            from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
             return
 
@@ -1126,7 +1126,7 @@ class TestIntentInference:
     def test_storage_intent(self):
         """'where can I store things' → storage (shelf=0.90)。"""
         try:
-            from semantic.planner.semantic_prior import SemanticPriorEngine
+            from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
             return
 
@@ -1139,7 +1139,7 @@ class TestIntentInference:
     def test_meeting_intent(self):
         """'take me to the meeting' → meeting_room。"""
         try:
-            from semantic.planner.semantic_prior import SemanticPriorEngine
+            from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
             return
 
@@ -1738,7 +1738,7 @@ class TestKnowledgeGraphEnhanced:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.knowledge_graph import (
+        from memory.knowledge.knowledge_graph import (
             IndustrialKnowledgeGraph, SafetyLevel, AffordanceType,
         )
         self.kg = IndustrialKnowledgeGraph()
@@ -1937,7 +1937,7 @@ class TestKGDetailedProperties:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.kg = IndustrialKnowledgeGraph()
 
     def test_total_concepts_gte_60(self):
@@ -2080,7 +2080,7 @@ class TestKGIntegrationWithDecomposer:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_planner"))
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
         from semantic.planner.task_decomposer import TaskDecomposer, SubGoalAction
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.kg = IndustrialKnowledgeGraph()
         TaskDecomposer.set_knowledge_graph(self.kg)
         self.decomposer = TaskDecomposer()
@@ -2253,7 +2253,7 @@ class TestSceneGraphDynamic:
 
     def test_open_vocabulary_with_kg(self):
         """带 KG 的开放词汇查询应增强匹配。"""
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         kg = IndustrialKnowledgeGraph()
         tracker = self.InstanceTracker(merge_distance=0.5, knowledge_graph=kg)
         tracker.update([
@@ -2526,7 +2526,7 @@ class TestLoopyBeliefPropagation:
             BP_MAX_ITERATIONS, BP_CONVERGENCE_EPS,
             SAFETY_THRESHOLDS_NAVIGATION, SAFETY_THRESHOLDS_INTERACTION,
         )
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.TrackedObject = TrackedObject
@@ -2693,7 +2693,7 @@ class TestPhantomNodes:
         from semantic.perception.instance_tracker import (
             InstanceTracker, Detection3D, PhantomNode,
         )
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.PhantomNode = PhantomNode
@@ -2897,7 +2897,7 @@ class TestExplorationTargets:
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
         from semantic.perception.instance_tracker import InstanceTracker, Detection3D
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph
@@ -2952,7 +2952,7 @@ class TestBPDiagnostics:
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
         from semantic.perception.instance_tracker import InstanceTracker, Detection3D
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph
@@ -3087,7 +3087,7 @@ class TestBeliefNetwork:
             reason="belief_network module not available",
         )
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from semantic.perception.belief_network import (
             _TORCH_AVAILABLE, build_object_vocabulary,
             build_cooccurrence_matrix, build_safety_vector,
@@ -3174,7 +3174,7 @@ class TestBeliefNetwork:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         from semantic.perception.belief_network import KGBeliefGCN, NUM_AFFORDANCE_TYPES
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         import torch
         kg = IndustrialKnowledgeGraph()
         vocab, _ = self.build_vocab(kg)
@@ -3194,7 +3194,7 @@ class TestBeliefNetwork:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         from semantic.perception.belief_network import KGBeliefGCN, NUM_AFFORDANCE_TYPES
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         import torch
         kg = IndustrialKnowledgeGraph()
         vocab, _ = self.build_vocab(kg)
@@ -3232,7 +3232,7 @@ class TestKGDataGeneration:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from semantic.perception.belief_network import (
             _TORCH_AVAILABLE, build_object_vocabulary,
             build_cooccurrence_matrix, build_safety_vector,
@@ -3351,7 +3351,7 @@ class TestBeliefTraining:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from semantic.perception.belief_network import _TORCH_AVAILABLE
         self.KG = IndustrialKnowledgeGraph
         self.torch_ok = _TORCH_AVAILABLE
@@ -3450,7 +3450,7 @@ class TestModelIntegration:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
         from semantic.perception.instance_tracker import InstanceTracker
         from semantic.perception.projection import Detection3D
-        from semantic.perception.knowledge_graph import IndustrialKnowledgeGraph
+        from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from semantic.perception.belief_network import _TORCH_AVAILABLE
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D

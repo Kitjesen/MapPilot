@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 
 from core.backend_status import BackendStatus
+from core.encoder_protocol import EncoderProtocol
 from core.module import Module, skill
 from core.msgs.nav import Odometry
 from core.msgs.semantic import SceneGraph
@@ -69,7 +70,7 @@ class VectorMemoryModule(Module, layer=3):
         self._max_results = max_results
 
         self._collection = None      # ChromaDB collection
-        self._encoder = None         # CLIP text/image encoder (set in _init_encoder)
+        self._encoder: EncoderProtocol | None = None
         self._st_model = None        # sentence-transformers model (fallback to CLIP)
         self._encoder_type = "none"  # "mobileclip" | "clip" | "sentence_transformers" | "lexical_hash" | "none"
         self._embedding_dim: int | None = None

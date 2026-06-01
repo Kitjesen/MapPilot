@@ -1,8 +1,13 @@
 """Product-facing field readiness summary.
 
-This module intentionally aggregates existing validation gates instead of
-creating another runtime path. The output is a compact operator view; the
-underlying evidence remains Gateway acceptance, saved-map artifact validation,
+Lives in core/ rather than gateway/ because it aggregates validation from
+multiple independent sources — Gateway acceptance, saved-map artifacts,
+algorithm benchmarks, runtime switch plans — into a single operator view.
+This is a cross-cutting validation concern, not a Gateway-specific function.
+All non-core imports are lazy (inside function bodies).  The module-level
+imports are limited to core utilities and stdlib.
+
+The underlying evidence remains Gateway acceptance, saved-map artifact validation,
 and real-runtime-evidence.
 """
 
@@ -12,7 +17,6 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-
 
 FIELD_CHECK_SCHEMA_VERSION = "lingtu.product_field_check.v1"
 HARDWARE_COMMAND_SINK = "hardware_driver_after_cmd_vel_mux"
@@ -449,6 +453,9 @@ def collect_product_field_check(
     from core.gateway_runtime_acceptance import collect_gateway_runtime_acceptance
     from gateway.services.runtime_switch_plan import build_runtime_switch_plan
 
+    # Note: gateway/service imports above are lazy (inside function body)
+    # to keep core/ pure at module level.
+
     gateway_acceptance = collect_gateway_runtime_acceptance(
         gateway_url=gateway_url,
         timeout_sec=timeout_sec,
@@ -458,10 +465,10 @@ def collect_product_field_check(
     map_gate = None
     resolved_map_dir = map_dir or _active_map_artifact_dir()
     if resolved_map_dir:
+        from core.runtime_validation_gates import runtime_validation_gates
         from core.same_source_map_artifacts import (
             validate_saved_map_artifact_dir,
         )
-        from core.runtime_validation_gates import runtime_validation_gates
 
         map_gate = validate_saved_map_artifact_dir(
             Path(resolved_map_dir),

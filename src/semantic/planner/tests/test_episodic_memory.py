@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 
-from semantic.planner.episodic_memory import EpisodicMemory
+from memory.spatial.episodic import EpisodicMemory
 
 
 class TestEpisodicMemoryBasic:

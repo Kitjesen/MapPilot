@@ -10,7 +10,7 @@ import os
 import tempfile
 
 
-from semantic.planner.tagged_locations import TaggedLocationStore
+from memory.spatial.tagged_locations import TaggedLocationStore
 
 # ---------------------------------------------------------------------------
 # 基本增删查测试

@@ -14,7 +14,7 @@ test_semantic_prior.py — SemanticPriorEngine 单元测试
 
 import unittest
 
-from semantic.planner.semantic_prior import (
+from memory.knowledge.semantic_prior import (
     RoomPrior,
     SemanticPriorEngine,
     TopologyEdge,

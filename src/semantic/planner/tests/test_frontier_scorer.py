@@ -235,7 +235,7 @@ class TestKGRoomScore(unittest.TestCase):
     """P2: KG 目标-房间概率评分测试。"""
 
     def test_kg_room_score_with_kg(self):
-        from semantic.planner.room_object_kg import RoomObjectKG
+        from memory.knowledge.room_object_kg import RoomObjectKG
 
         kg = RoomObjectKG()
         for _ in range(10):

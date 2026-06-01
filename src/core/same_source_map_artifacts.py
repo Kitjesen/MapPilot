@@ -26,7 +26,6 @@ from core.runtime_interface import (
     topic_default_frame_id,
 )
 
-
 _SAVED_MAP_ARTIFACT_FRAMES = runtime_topic_allowed_frame_ids(None)[
     TOPICS.saved_map_cloud
 ]
@@ -438,6 +437,9 @@ def build_tomogram_artifact(
     slice_dh: float,
     ground_h: float,
 ) -> dict[str, Any]:
+    # Lazy: global_planning is a nav/semantic-layer package.  This import is
+    # inside the build_tomogram_artifact() function so core/ modules remain
+    # importable without triggering global_planning dependencies at module level.
     from global_planning.pct_planner.tomography.scripts.build_tomogram import (
         build_tomogram_from_pcd,
     )

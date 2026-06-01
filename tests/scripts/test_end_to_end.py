@@ -250,7 +250,7 @@ print()
 # ============================================================================
 print("Test 7: Topological memory...")
 try:
-    from semantic.planner.topological_memory import TopologicalMemory
+    from memory.spatial.topological import TopologicalMemory
 
     memory = TopologicalMemory()
 

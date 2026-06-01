@@ -31,7 +31,7 @@ from semantic.perception.projection import Detection3D
 from semantic.planner.goal_resolver import (
     TargetBeliefManager, TargetHypothesis, GoalResult,
 )
-from semantic.planner.voi_scheduler import (
+from memory.scheduling.voi_scheduler import (
     VoIScheduler, VoIConfig, SchedulerState, SchedulerAction,
 )
 

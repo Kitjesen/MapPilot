@@ -13,7 +13,7 @@ import unittest
 
 import numpy as np
 
-from semantic.planner.topological_memory import TopologicalMemory
+from memory.spatial.topological import TopologicalMemory
 
 
 class TestNodeCreation(unittest.TestCase):

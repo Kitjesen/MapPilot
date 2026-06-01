@@ -4,8 +4,11 @@ Pure data classes + constants. No algorithm logic, no external dependencies.
 Extracted from semantic/perception/tracked_objects.py for cross-module sharing.
 """
 
+from __future__ import annotations
+
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -97,6 +100,10 @@ def infer_room_type(labels: list[str]) -> str:
         common = Counter(labels).most_common(2)
         return f"area_{'_'.join(label for label, _ in common)}"
     return "unknown_area"
+
+
+if TYPE_CHECKING:
+    from semantic.perception.tracked_objects import TrackedObject
 
 
 # -- Data classes --

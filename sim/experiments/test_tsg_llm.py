@@ -25,7 +25,7 @@ from semantic.planner.prompt_templates import (
     build_goal_resolution_prompt,
     build_exploration_prompt,
 )
-from semantic.planner.semantic_prior import SemanticPriorEngine
+from memory.knowledge.semantic_prior import SemanticPriorEngine
 from semantic.perception.topology_graph import TopologySemGraph
 
 import numpy as np

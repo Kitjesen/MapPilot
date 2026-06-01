@@ -382,6 +382,8 @@ class Lidar:
         - SIGTERM → SIGKILL graceful shutdown
         - Subprocess log piping to Python logger
         """
+        # Lazy: slam is a cross-layer package.  Import inside method body
+        # so drivers/ modules load without triggering slam/ at module level.
         from slam.native_factories import livox_driver
 
         self._native = livox_driver(cfg)
