@@ -1,10 +1,10 @@
-import pytest
-
-pytestmark = [pytest.mark.sim]
-
 """Tests for shared CLI runtime boundary formatting."""
 
 from __future__ import annotations
+
+import pytest
+
+pytestmark = [pytest.mark.sim]
 
 from types import SimpleNamespace
 

@@ -1,8 +1,8 @@
+from __future__ import annotations
+
 import pytest
 
 pytestmark = [pytest.mark.sim]
-
-from __future__ import annotations
 
 import argparse
 import struct
