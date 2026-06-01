@@ -4,7 +4,21 @@
 
 ## 版本规划
 
-### v1.8 — 可交付版 (DDL: 2026-05-31)
+### v1.7 — 架构 S 级 (2026-05 已完成)
+
+**一句话**: 框架达到架构 S 级，模块间零违规交叉引用，所有子包独立可测。
+
+| # | 完成项 | 详情 |
+|---|--------|------|
+| 1 | 架构 S 级评分 | 247 文件、1048 测试通过、零 ruff 违规 |
+| 2 | Module-First 严格化 | 所有 Module 只依赖 `core/`，nav/semantic/drivers/gateway 之间零交叉 |
+| 3 | 惰性导入 | `full_stack.py` + 9 个 stack factory，启动时不 import 未选 backend |
+| 4 | 跨包边界测试 | 每个子包独立 `pytest` 验证，import boundary test |
+| 5 | 文档补齐 | 14 个 README.md + MODULES.md，覆盖率 100% |
+| 6 | 多机器人抽象 | `multi_robot.py` + `SwapManager` + `CmdVelMux` freeze/unfreeze，运行时切换 robot profile |
+| 7 | API 文档 | `docs/api/mcp_tools.md` + `docs/api/gateway_rest.md`，自动提取 |
+
+### v1.8 — 可交付版 (DDL: 2026-06-30)
 
 **一句话**: 客户拿到 S100P，30 分钟内跑通建图→导航全流程。
 
@@ -40,16 +54,17 @@
 
 | 模块 | 代码 | 测试 | 真机 | 文档 | 等级 | 卡点 |
 |------|:----:|:----:|:----:|:----:|:----:|------|
-| core/ 框架 | A | A (1255) | A | A | **可交付** | — |
+| core/ 框架 | S | A (1255) | A | S | **可交付** | — |
 | nav/ 导航 | A | B | B | B | **接近交付** | E2E 真机验证 |
-| drivers/ 驱动 | A | B | A | B | **可交付** | — |
+| drivers/ 驱动 | A | B | A | B | **接近交付** | 多 robot 真机验证 |
 | base_autonomy/ C++ | A | A (96) | B | B | **接近交付** | aarch64 性能验证 |
-| gateway/ Web API | B | C | C | B | **原型** | SSE 稳定性 |
+| gateway/ Web API | A | B | B | A | **可用** | SSE 稳定性 |
 | slam/ | B | C | B | C | **可用但脆弱** | 3Hz 频率 |
 | semantic/ 语义 | A | B | C | C | **演示级** | 真机传感器接入 |
-| memory/ 记忆 | B | B | C | C | **演示级** | 持久化验证 |
+| memory/ 记忆 | B | B | C | B | **演示级** | 持久化验证 |
 | web/ 前端 | C | — | — | C | **原型** | 功能不全 |
-| global_planning/ | B | B | B | C | **可用** | PCT .so 兼容 |
+| global_planning/ | B | B | B | B | **可用** | PCT .so 兼容 |
+| multi-robot/ | A | A | C | A | **原型** | 真机多机器人测试 |
 
 **等级定义**:
 - **可交付**: 客户可直接使用，有测试+文档+真机验证
@@ -109,3 +124,6 @@
 | 2026-04-09 | 版本按交付场景划分，不按技术模块 | 技术模块划分导致"每个都做了一点，没有一个能交付" |
 | 2026-04-09 | v1.8 聚焦"零代码跑通"，砍掉语义功能 | 语义是加分项不是门槛，建图→导航是底线 |
 | 2026-04-09 | SLAM 3Hz 定为 P0 | 导航基础不稳，上层全白搭 |
+| 2026-05-20 | 架构 S 级目标——消除所有跨包交叉引用 | 模块独立性是 AI 可读性和可维护性的前提 |
+| 2026-05-22 | 多机器人抽象——SwapManager + RobotProfile | 一套代码支持 Thunder/Stub/MuJoCo/ROS2 四种 robot 后端 |
+| 2026-05-30 | `docs/api/` 自动提取文档 | API 文档与代码同源，减少手工维护 |

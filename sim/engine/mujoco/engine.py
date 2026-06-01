@@ -838,6 +838,19 @@ class MuJoCoEngine(SimEngine):
     def has_policy(self) -> bool:
         return self._policy is not None
 
+    def remove_robot(self, robot_id: str) -> None:
+        """Single-robot engine stub.
+
+        Args:
+            robot_id: robot identifier to remove
+
+        Raises:
+            ValueError: if robot_id is not the expected single robot
+        """
+        if robot_id not in ("robot_0", self._robot_cfg.name or "robot_0"):
+            raise ValueError(f"Unknown robot: {robot_id}")
+        self.close()
+
     @property
     def drive_mode(self) -> str:
         return self._drive_mode

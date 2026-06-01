@@ -46,15 +46,15 @@ Four pre-built environments are provided, each targeting different navigation ch
 
 | Scene | File | Description | Terrain Generation |
 |-------|------|-------------|-------------------|
-| Open Field | `worlds/open_field.xml` | Flat ground for basic validation | None |
-| Spiral Terrain | `worlds/spiral_terrain.xml` | 4-layer spiral ramp with elevation changes | `gen_terrain_mesh.py` |
-| Building | `worlds/building_scene.xml` | Multi-room indoor building with corridors | None |
-| Factory | `worlds/factory_scene.xml` | Warehouse layout with shelving and obstacles | None |
+| Open Field | `worlds/mujoco/open_field.xml` | Flat ground for basic validation | None |
+| Spiral Terrain | `worlds/mujoco/spiral_terrain.xml` | 4-layer spiral ramp with elevation changes | `gen_terrain_mesh.py` |
+| Building | `worlds/mujoco/building_scene.xml` | Multi-room indoor building with corridors | None |
+| Factory | `worlds/mujoco/factory_scene.xml` | Warehouse layout with shelving and obstacles | None |
 
-Additional composite scenes are kept in `worlds/` alongside the base
+Additional composite scenes are kept in `worlds/mujoco/` alongside the base
 environments (for example, `go2_room_nova.xml` places a Go2 in a furnished
-room). `sim/worlds/` is the canonical scene path used by profiles and runtime
-contracts.
+room). `sim/worlds/mujoco/` is the canonical MuJoCo scene path used by profiles
+and runtime contracts. Gazebo SDF scenes reside in `sim/worlds/gazebo/`.
 
 ## 4. LiDAR Simulation
 

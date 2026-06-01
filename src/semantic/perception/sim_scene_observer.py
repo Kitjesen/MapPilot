@@ -16,7 +16,7 @@ _WORLD_FILES = {
     "spiral": "spiral_terrain.xml",
     "spiral_terrain": "spiral_terrain.xml",
 }
-_SIM_WORLDS = Path(__file__).resolve().parents[4] / "sim" / "worlds"
+_SIM_WORLDS = Path(__file__).resolve().parents[3] / "sim" / "worlds" / "mujoco"
 _AGGREGATE_LABELS = {"stairs", "goal", "forklift"}
 
 

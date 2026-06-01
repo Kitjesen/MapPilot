@@ -1,7 +1,7 @@
 # Go1 Playground Assets
 
 This directory is a placeholder for optional external assets used by the legacy
-Go1 demos and `sim/worlds/indoor_office.xml`.
+Go1 demos and `sim/worlds/mujoco/indoor_office.xml`.
 
 The expected external files are:
 

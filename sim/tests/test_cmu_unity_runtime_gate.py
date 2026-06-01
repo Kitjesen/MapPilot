@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("rclpy", reason="Needs ROS2 runtime (CMU Unity)")
 pytestmark = [pytest.mark.sim]
 
 import argparse

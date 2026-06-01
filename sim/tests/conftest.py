@@ -5,6 +5,13 @@ import os
 import sys
 import warnings
 
+try:
+    import rclpy  # noqa: F401
+
+    ROS2_AVAILABLE = True
+except ImportError:
+    ROS2_AVAILABLE = False
+
 _repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _src = os.path.join(_repo, "src")
 

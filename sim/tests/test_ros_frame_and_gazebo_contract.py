@@ -6,7 +6,9 @@ import math
 
 import pytest
 
+pytest.importorskip("rclpy", reason="Needs ROS2 runtime (Gazebo)")
 pytestmark = [pytest.mark.sim]
+
 import yaml
 
 from core.runtime_interface import (

@@ -163,7 +163,7 @@ unit; SLAM and other C++ subsystems are managed via `NativeModule` (see
 | Which modules a profile pulls in | `cli/profiles_data.py` + `src/core/blueprints/full_stack.py` |
 | All cross-stack wires | `src/core/blueprints/full_stack.py` |
 | Which backends are registered for a category | `src/core/registry.py` plus the `@register(...)` calls in each Module file |
-| Simulation folder boundaries | `sim/README.md` (engine/core bridge scenarios worlds, mujoco runtime, gazebo SDF scenes, datasets/sensors/scripts, validation/evaluation, following/) |
+| Simulation folder boundaries | `sim/README.md` (worlds, assets, robots, scripts, validation/evaluation — full details in engine/core bridge/sensors/datasets scenarios, mujoco/gazebo scenes, following/) |
 | Server-side simulation evidence | `artifacts/server_sim_closure/` generated reports plus `artifacts/server_sim_closure_summary_g4_current.json` |
 | Root Gazebo simulation scaffold | `launch/gazebo_simulation.launch.py` (kept at root because ROS-native launchers reference it directly) |
 | Robot physical parameters | `config/robot_config.yaml` (single source of truth) |

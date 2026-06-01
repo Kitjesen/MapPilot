@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # Resolve sim/ directory relative to this file
 _SIM_ROOT = Path(__file__).resolve().parents[3] / "sim"
-_WORLDS_DIR = _SIM_ROOT / "worlds"
+_WORLDS_DIR = _SIM_ROOT / "worlds" / "mujoco"
 _THUNDER_MJCF = _SIM_ROOT / "assets" / "mjcf" / "thunder_v3_lingtu.xml"
 _LEGACY_ROBOTS_DIR = _SIM_ROOT / "robots" / "nova_dog"
 _ROBOT_XML = _THUNDER_MJCF

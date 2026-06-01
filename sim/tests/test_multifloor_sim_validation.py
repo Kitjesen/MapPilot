@@ -5,6 +5,8 @@ import pickle
 import numpy as np
 import pytest
 
+pytest.importorskip("rclpy", reason="Needs ROS2 runtime")
+
 pytestmark = [pytest.mark.sim]
 
 from global_planning.pct_planner_runnable.runtime import prepare_tomogram_for_pct
