@@ -3,7 +3,7 @@
 <package format="3">
   <name>pgo</name>
   <version>1.7.2</version>
-  <description>TODO: Package description</description>
+  <description>PGO — Pose-graph optimization for LingTu SLAM map refinement, runs after Fast-LIO2 mapping to correct drift</description>
   <maintainer email="2605400720@qq.com">zhouzhou</maintainer>
   <license>MIT</license>
 

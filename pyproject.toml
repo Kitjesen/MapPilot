@@ -99,6 +99,10 @@ known-first-party = ["core", "nav", "semantic", "drivers", "gateway", "memory", 
 "calibration/**" = ["W191", "E731", "F821"]
 "docs/**" = ["E702", "E701"]
 "src/gateway/map_dashboard.py" = ["E501"]
+# E501 in test files with embedded shell scripts or \uXXXX docstrings
+"src/core/tests/test_deployment_service_contracts.py" = ["E501"]
+"src/semantic/planner/tests/test_fast_slow_benchmark.py" = ["E501"]
+"src/semantic/planner/tests/test_fast_slow_efficiency.py" = ["E501"]
 "src/semantic/planner/task_rules.py" = ["E501"]
 "src/semantic/planner/prompt_templates.py" = ["E501"]
 "src/core/msgs/scene.py" = ["E501"]

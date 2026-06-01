@@ -213,7 +213,8 @@ T("24.instr GW->Planner", any("Gateway" in c[0] and "SemanticPlanner" in c[2] an
 T("24.instr MCP->Planner", any("MCP" in c[0] and "SemanticPlanner" in c[2] and "instruction" in c[1] for c in conns))
 
 # 25
-T("25.goal Planner->Nav", any("SemanticPlanner" in c[0] and "Navigation" in c[2] and "goal_pose" in c[1] for c in conns))
+T("25.goal Planner->Nav",
+  any("SemanticPlanner" in c[0] and "Navigation" in c[2] and "goal_pose" in c[1] for c in conns))
 
 # 26 Fast Path
 for mod in system.modules.values():
@@ -250,8 +251,10 @@ T("29.MCP skills", mcp is not None and len(getattr(mcp, "_tool_list", [])) > 0)
 
 # 30 Profile builds
 for pname, kw in [
-    ("stub", dict(robot="stub", slam_profile="none", enable_native=False, enable_semantic=False, enable_gateway=True)),
-    ("sim", dict(robot="sim_ros2", slam_profile="bridge", enable_native=True, enable_semantic=True, enable_gateway=True))]:
+    ("stub", dict(robot="stub", slam_profile="none",
+                  enable_native=False, enable_semantic=False, enable_gateway=True)),
+    ("sim", dict(robot="sim_ros2", slam_profile="bridge",
+                 enable_native=True, enable_semantic=True, enable_gateway=True))]:
     try:
         full_stack_blueprint(**kw).build()
         T(f"30.Profile {pname}", True)

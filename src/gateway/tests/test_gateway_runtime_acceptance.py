@@ -1099,7 +1099,10 @@ def test_gateway_runtime_acceptance_field_requires_live_traversable_frontier_pre
 
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
 
-    assert "runtime dataflow missing product topics: /nav/traversable_frontiers, /nav/frontier_candidate" in payload["blockers"]
+    assert (
+        "runtime dataflow missing product topics: "
+        "/nav/traversable_frontiers, /nav/frontier_candidate"
+    ) in payload["blockers"]
     assert "runtime dataflow missing required stages: traversable_frontier_preview" in payload["blockers"]
     assert "field acceptance requires live traversable frontier preview" in payload["blockers"]
     assert payload["checks"]["frontier_preview"]["ok"] is False

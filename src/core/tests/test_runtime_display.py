@@ -500,8 +500,14 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                     "ok": True,
                     "blockers": [],
                     "commands": {
-                        "runtime_audit": "python lingtu.py runtime-audit --json-out artifacts/runtime_contract_audit.json",
-                        "real_runtime_evidence": "python lingtu.py real-runtime-evidence --duration-sec 20 --json-out artifacts/real_s100p_runtime/report.json",
+                        "runtime_audit": (
+                            "python lingtu.py runtime-audit "
+                            "--json-out artifacts/runtime_contract_audit.json"
+                        ),
+                        "real_runtime_evidence": (
+                            "python lingtu.py real-runtime-evidence --duration-sec 20 "
+                            "--json-out artifacts/real_s100p_runtime/report.json"
+                        ),
                     },
                     "acceptance": {
                         "runtime_audit": {

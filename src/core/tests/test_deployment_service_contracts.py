@@ -1257,7 +1257,8 @@ def test_lingtu_slamcheck_validates_recovery_signal_and_action_contract():
     assert 'recovery_signal=$(pjson "$LOCJ"' in text
     assert 'recovery_action=$(pjson "$LOCJ"' in text
     assert '[ "$recovery_signal" = "NONE" ] || [ "$recovery_signal" = "RECOVERED" ]' in text
-    assert '[ "$recovery_action" = "none" ] || [ "$recovery_action" = "-" ] || [ "$recovery_action" = "$expected_recovery" ]' in text
+    assert '[ "$recovery_action" = "none" ] || [ "$recovery_action" = "-" ]' in text
+    assert '[ "$recovery_action" = "$expected_recovery" ]' in text
     assert '[ "$recovery_signal_ok" = "1" ]' in text
     assert '[ "$recovery_action_ok" = "1" ]' in text
     assert "LOC_DIVERGED" in _read("src/slam/slam_bridge_module.py")
@@ -1679,8 +1680,14 @@ def test_lingtu_routecheck_previews_baseline_candidate_and_rolls_back(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASS: route validation preflight completed without motion" in result.stdout
-    assert "baseline route plan preview feasible (points=3 planner=pct policy=fallback_astar safety=true fallback=- rejected=0)" in result.stdout
-    assert "candidate route plan preview feasible (points=3 planner=pct policy=fallback_astar safety=true fallback=- rejected=0)" in result.stdout
+    assert (
+        "baseline route plan preview feasible "
+        "(points=3 planner=pct policy=fallback_astar safety=true fallback=- rejected=0)"
+    ) in result.stdout
+    assert (
+        "candidate route plan preview feasible "
+        "(points=3 planner=pct policy=fallback_astar safety=true fallback=- rejected=0)"
+    ) in result.stdout
     calls = (harness["root"] / "calls.log").read_text(encoding="utf-8")
     assert "switch:localizer" in calls
     assert "switch:super_lio_relocation" in calls

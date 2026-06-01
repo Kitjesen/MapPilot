@@ -174,7 +174,8 @@ def test_trajectory_loading():
         print(f"加载的帧数: {len(frames)}")
 
         for i, frame in enumerate(frames):
-            print(f"  帧 {i}: ID={frame.frame_id}, 点云={len(frame.point_cloud) if frame.point_cloud is not None else 0}")
+            pc_len = len(frame.point_cloud) if frame.point_cloud is not None else 0
+            print(f"  帧 {i}: ID={frame.frame_id}, 点云={pc_len}")
 
         assert len(frames) == 5
         assert frames[0].frame_id == 0

@@ -3,8 +3,8 @@
 <package format="3">
   <name>localizer</name>
   <version>1.7.2</version>
-  <description>TODO: Package description</description>
-  <maintainer email="zhouzhou@todo.todo">zhouzhou</maintainer>
+  <description>Localizer — Fast-LIO2 loop-closure + ICP-based localization against pre-built maps for LingTu outdoor navigation</description>
+  <maintainer email="2605400720@qq.com">zhouzhou</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
