@@ -127,9 +127,9 @@ class _PCTBackend:
         import pickle
         try:
             with open(tomogram_path, "rb") as f:
-                raw = pickle.load(f)
+                raw = pickle.load(f)  # noqa: S301  # trusted local tomogram  # noqa: S301  # trusted local tomogram
         except Exception:
-            logger.warning("PCT: could not load tomogram pickle for grid extraction")
+            logger.warning("PCT: could not load tomogram pickle for grid extraction", exc_info=True)
             return
 
         if not isinstance(raw, dict):
@@ -523,7 +523,7 @@ class _AStarBackend:
     def _load_tomogram(self, path: str) -> None:
         import pickle
         with open(path, "rb") as f:
-            raw = pickle.load(f)
+            raw = pickle.load(f)  # noqa: S301  # trusted local tomogram
         if not isinstance(raw, dict):
             logger.error("A* backend: unexpected tomogram format in %s", path)
             return

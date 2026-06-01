@@ -287,7 +287,7 @@ class OpenAIClient(LLMClientBase):
         if self._client is not None:
             try:
                 await self._client.close()
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
             self._client = None
 
@@ -399,7 +399,7 @@ class ClaudeClient(LLMClientBase):
         if self._client is not None:
             try:
                 await self._client.close()
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
             self._client = None
 

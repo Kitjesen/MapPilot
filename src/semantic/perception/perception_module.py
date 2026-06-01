@@ -1041,7 +1041,7 @@ class PerceptionModule(Module, layer=3):
         if self._tracker is not None:
             try:
                 tracked = len(self._tracker.get_objects())
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
         info["tracked_objects"] = tracked
         info["latest_detections"] = len(self._latest_core_detections)

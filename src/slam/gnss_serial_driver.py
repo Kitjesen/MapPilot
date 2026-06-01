@@ -277,10 +277,10 @@ class GnssSerialDriver:
                         except Exception as e:
                             logger.debug("GnssSerialDriver: callback error: %s", e)
 
-            except Exception as e:
+            except OSError as e:
                 if self._running:
                     logger.warning("GnssSerialDriver: read error: %s", e)
-                    time.sleep(0.5)
+                    time.sleep(0.05)  # brief backoff; serial read already uses timeout
 
 
 # ── Standalone mode ──────────────────────────────────────────────────

@@ -660,7 +660,7 @@ class MapManagerModule(Module, layer=6):
     def _load_tomogram_shape(cls, path: Path) -> list[int]:
         try:
             with path.open("rb") as fh:
-                return cls._tomogram_shape_from_data(pickle.load(fh))
+                return cls._tomogram_shape_from_data(pickle.load(fh))  # noqa: S301  # trusted local map file
         except Exception as e:
             logger.debug("_load_tomogram_shape failed for %s: %s", path, e)
             return []

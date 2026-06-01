@@ -158,7 +158,7 @@ class RobotState:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
+            with urllib.request.urlopen(req, timeout=2.0) as resp:  # noqa: S310  # trusted localhost gateway
                 log.info("E-stop sent to gateway: HTTP %d", resp.status)
         except Exception as e:
             log.error("E-stop HTTP call failed: %s — "
@@ -356,7 +356,7 @@ def get_adapter_address() -> str:
         for line in result.stdout.split("\n"):
             if "BD Address:" in line:
                 return line.split("BD Address:")[1].split()[0].strip()
-    except Exception:
+    except (subprocess.CalledProcessError, OSError):
         pass
     return "00:00:00:00:00:00"
 

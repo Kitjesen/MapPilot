@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
+    @pytest.mark.sim
 def test_lingtu_gazebo_industrial_demo_has_single_visible_entrypoint():
     script = ROOT / "sim/scripts/launch_lingtu_gazebo_industrial_demo.sh"
     rviz = ROOT / "sim/planning/lingtu_industrial_demo.rviz"

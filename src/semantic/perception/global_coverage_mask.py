@@ -245,7 +245,7 @@ class GlobalCoverageMask:
             filepath: 加载路径
         """
         with open(filepath, 'rb') as f:
-            data = pickle.load(f)
+            data = pickle.load(f)  # noqa: S301  # trusted local coverage file
 
         self.resolution = data['resolution']
         self.coverage_map = data['coverage_map']

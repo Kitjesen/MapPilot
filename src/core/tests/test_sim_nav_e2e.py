@@ -19,6 +19,8 @@ import time
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 _scipy_available = True
 try:
     import scipy.ndimage  # noqa: F401 -- availability check for skipUnless

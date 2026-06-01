@@ -592,7 +592,7 @@ def register_map_routes(app, gw) -> None:
                 errors="replace",
                 timeout=30,
             )
-        except Exception:
+        except (FileNotFoundError, OSError):
             pass
 
         if not os.path.isfile(pcd_path) and slam_profile == "super_lio":

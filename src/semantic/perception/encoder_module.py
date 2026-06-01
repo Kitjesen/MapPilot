@@ -184,7 +184,7 @@ class EncoderModule(Module, layer=3):
         if self._backend and hasattr(self._backend, 'shutdown'):
             try:
                 self._backend.shutdown()
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
         super().stop()
 

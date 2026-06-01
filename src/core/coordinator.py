@@ -79,6 +79,7 @@ class ModuleCoordinator:
                 if callable(attr) and getattr(attr, "__rpc__", False):
                     rpc_methods.add(name)
             except Exception:
+                logger.debug("coordinator: error inspecting %s.%s", module_cls.__name__, name)
                 continue
 
         proxy = RPCClient(self._mgr, worker_id, module_id, rpc_methods)

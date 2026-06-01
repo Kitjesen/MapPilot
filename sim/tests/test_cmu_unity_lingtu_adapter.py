@@ -7,6 +7,8 @@ import types
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from sim.engine.bridge import cmu_unity_lingtu_adapter as adapter

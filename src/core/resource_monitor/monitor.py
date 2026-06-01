@@ -136,7 +136,7 @@ class ResourceMonitor:
         for proc in procs.values():
             try:
                 proc.cpu_percent(interval=None)
-            except Exception:
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
 
         while self._running:
@@ -154,7 +154,7 @@ class ResourceMonitor:
                         "status":  proc.status(),
                         "threads": proc.num_threads(),
                     }
-                except Exception as exc:
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as exc:
                     new_stats[label] = {"error": str(exc)}
             with self._lock:
                 self._stats = new_stats
@@ -169,7 +169,7 @@ class ResourceMonitor:
             if existing is None or existing.pid != pid:
                 try:
                     procs[label] = psutil_mod.Process(pid)
-                except Exception:
+                except (psutil_mod.NoSuchProcess, psutil_mod.AccessDenied):
                     procs.pop(label, None)
 
         for label in list(procs):

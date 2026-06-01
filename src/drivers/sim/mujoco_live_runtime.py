@@ -70,7 +70,7 @@ def scene_start(scene_xml: Path) -> list[float] | None:
             parts = [float(v) for v in body.attrib.get("pos", "").split()]
             if len(parts) >= 3:
                 return parts[:3]
-    except Exception:
+    except (ET.ParseError, AttributeError, KeyError, ValueError, TypeError):
         return None
     return None
 

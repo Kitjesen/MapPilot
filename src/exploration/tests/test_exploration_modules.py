@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.ros2]
+
 
 # =============================================================================
 # TAREExplorerModule
@@ -419,3 +421,31 @@ def test_all_exploration_modules_have_alive_port():
         mod = cls()
         assert "alive" in mod._ports_out
         assert mod._ports_out["alive"].msg_type is bool
+
+
+def test_supervisor_tare_explorer_wiring():
+    """ExplorationSupervisorModule wires to TAREExplorerModule via Blueprint.
+
+    Verifies that both modules coexist in a single Blueprint and their
+    shared exploration ports (tare_stats, supervisor_state) are declared
+    for wiring.
+    """
+    from exploration.tare_explorer_module import TAREExplorerModule
+    from exploration.exploration_supervisor_module import ExplorationSupervisorModule
+    from core.blueprint import Blueprint
+
+    bp = Blueprint()
+    bp.add(TAREExplorerModule)
+    bp.add(ExplorationSupervisorModule)
+
+    system = bp.build()
+
+    assert "TAREExplorerModule" in system.modules
+    assert "ExplorationSupervisorModule" in system.modules
+
+    # Verify port declarations exist for wiring (wires not checked at build)
+    tare_mod = system.modules["TAREExplorerModule"]
+    sup_mod = system.modules["ExplorationSupervisorModule"]
+    assert "tare_stats" in tare_mod.ports_out, f"TARE out ports: {list(tare_mod.ports_out)}"
+    assert "tare_stats" in sup_mod.ports_in, f"Supervisor in ports: {list(sup_mod.ports_in)}"
+    assert "supervisor_state" in sup_mod.ports_out, f"Supervisor out ports: {list(sup_mod.ports_out)}"

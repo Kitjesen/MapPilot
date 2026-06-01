@@ -31,3 +31,30 @@ def test_import_all_subpackages():
 
     assert pct_adapters is not None
     assert pct_planner_runnable is not None
+
+
+def test_pct_planner_config_and_instantiation():
+    """PCT planner Config and its nested sub-configs instantiate cleanly."""
+    from global_planning.pct_planner.planner.config.param import (
+        Config, ConfigNode, ConfigPlanner, ConfigWrapper,
+    )
+
+    cfg = Config()
+    assert isinstance(cfg.node, ConfigNode)
+    assert isinstance(cfg.planner, ConfigPlanner)
+    assert isinstance(cfg.wrapper, ConfigWrapper)
+
+    # Verify default values on the node config
+    assert cfg.node.map_frame == "map"
+    assert cfg.node.robot_frame == "body"
+    assert cfg.node.min_plan_interval > 0.0
+
+
+def test_global_planner_module_instantiation():
+    """GlobalPlannerModule can be instantiated (stub/AStar backend, no ROS2)."""
+    from nav.global_planner_service import GlobalPlannerService
+
+    svc = GlobalPlannerService()
+    assert svc is not None
+    assert hasattr(svc, "plan")
+    assert hasattr(svc, "_find_safe_goal")

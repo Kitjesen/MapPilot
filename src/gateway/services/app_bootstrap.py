@@ -285,7 +285,7 @@ def _traffic_summary(gw: Any) -> dict[str, Any]:
         snapshot = gw._traffic_stats_snapshot()
         if isinstance(snapshot, Mapping):
             return dict(snapshot)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
     return {
         "sse": {
@@ -379,7 +379,7 @@ def _command_policy(gw: Any) -> dict[str, Any]:
         snapshot = gw._command_stats_snapshot()
         if isinstance(snapshot, Mapping):
             return dict(snapshot)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
     return {
         "idempotency_supported": False,
@@ -571,7 +571,7 @@ def prewarm_app_capability_contracts(gw: Any) -> bool:
 
         payload = build_app_capabilities(gw)
         AppCapabilitiesResponse.model_validate(payload).model_dump(mode="json")
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         pass
     return contracts_ready
 

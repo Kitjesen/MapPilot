@@ -2,6 +2,8 @@ from dataclasses import asdict, replace
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 from cli.profiles_data import PROFILES
 from core.blueprints.profile_graph import resolve_profile_config
 from core.blueprints.runtime_endpoint import (
@@ -27,6 +29,7 @@ from core.runtime_switch import (
 )
 
 
+    @pytest.mark.sim
 def test_sim_to_real_switch_changes_command_sink_and_simulation_only():
     sim_cfg = resolve_profile_config("explore", runtime_endpoint="mujoco_live")
     real_cfg = resolve_profile_config("explore")
@@ -138,6 +141,7 @@ def test_runtime_spec_summary_is_json_native():
     assert "warnings" in summary["validation"]
 
 
+    @pytest.mark.sim
 def test_runtime_summary_reports_mujoco_explore_product_semantic_overrides():
     config = resolve_profile_config("explore", runtime_endpoint="mujoco_live")
     spec = resolve_runtime_run_spec("explore", config)

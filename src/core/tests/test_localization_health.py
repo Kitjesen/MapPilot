@@ -20,6 +20,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = [pytest.mark.ros2]
+
 # Ensure src/ is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -53,7 +55,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         received = []
         m.localization_status._add_callback(received.append)
         m.start()
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
         self.assertTrue(len(received) > 0)
         self.assertEqual(received[0]["state"], "UNINIT")
@@ -66,7 +68,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         m._mark_odom_received()
         m._mark_cloud_received()
         m.start()
-        time.sleep(0.04)
+        time.sleep(0.025)
         m.stop()
         # Should have transitioned to TRACKING
         states = [r["state"] for r in received]
@@ -79,7 +81,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         m._mark_odom_received()
         m._mark_cloud_received()
         m.start()
-        time.sleep(0.04)
+        time.sleep(0.025)
         m.stop()
 
         tracking = next(r for r in received if r["state"] == "TRACKING")
@@ -107,7 +109,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         m._mark_odom_received()
         m._mark_cloud_received()
         m.start()
-        time.sleep(0.04)
+        time.sleep(0.025)
         m.stop()
 
         tracking = next(r for r in received if r["state"] == "TRACKING")
@@ -132,7 +134,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         m._mark_odom_received()
         m._mark_cloud_received()
         m.start()
-        time.sleep(0.04)
+        time.sleep(0.025)
         m.stop()
 
         tracking = next(r for r in received if r["state"] == "TRACKING")
@@ -142,6 +144,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         self.assertEqual(tracking["localizer_health_source"], "localizer_health_topic")
         self.assertIsNotNone(tracking["localizer_health_topic_age_ms"])
 
+    @pytest.mark.ros2
     def test_ros2_shaped_odom_cloud_and_health_topic_drive_bridge_status(self):
         import numpy as np
 
@@ -213,7 +216,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
             while time.time() < deadline and not any(
                 item.get("state") == "TRACKING" for item in status_seen
             ):
-                time.sleep(0.01)
+                time.sleep(0.006)
         finally:
             m.stop()
 
@@ -257,7 +260,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         )
         m._mark_cloud_received()
         m.start()
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
 
         tracking = next(r for r in received if r["state"] == "TRACKING")
@@ -301,7 +304,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
 
         m.start()
         self.assertTrue(restarted.wait(timeout=0.6))
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
 
         self.assertEqual(len(called), 1)
@@ -441,7 +444,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
 
         m.start()
         self.assertTrue(restarted.wait(timeout=0.6))
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
 
         self.assertEqual(len(called), 1)
@@ -511,7 +514,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         )
         m._mark_cloud_received()
         m.start()
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
 
         lost = next(r for r in received if r["state"] == "LOST")
@@ -527,11 +530,11 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         # Simulate odom arrival then timeout
         m._mark_odom_received()
         m._mark_cloud_received()
-        time.sleep(0.03)  # Within timeout — should be TRACKING
+        time.sleep(0.02)  # Within timeout — should be TRACKING
         # Now let odom age past timeout (0.1s)
         m._last_odom_time = time.time() - 0.2  # Artificially stale
         m._last_odom_mono = 0.0
-        time.sleep(0.08)
+        time.sleep(0.05)
         m.stop()
         states = [r["state"] for r in received]
         self.assertIn("LOST", states)
@@ -544,7 +547,7 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         m._last_cloud_time = time.time() - 0.5
         m._last_cloud_mono = 0.0
         m.start()
-        time.sleep(0.04)
+        time.sleep(0.025)
         m.stop()
         states = [r["state"] for r in received]
         self.assertIn("DEGRADED", states)
@@ -559,12 +562,12 @@ class TestSlamBridgeWatchdog(unittest.TestCase):
         m._last_odom_mono = 0.0
         m._last_cloud_mono = 0.0
         m.start()
-        time.sleep(0.05)
+        time.sleep(0.02)
         # Recover
         for _ in range(10):
             m._mark_odom_received()
             m._mark_cloud_received()
-            time.sleep(0.01)
+            time.sleep(0.006)
         m.stop()
         states = [r["state"] for r in received]
         self.assertIn("LOST", states)
@@ -635,7 +638,7 @@ class TestSlamBridgeFallbackTransition(unittest.TestCase):
                 return True
             if refresh_gnss:
                 self._stub_healthy_gnss(m)
-            time.sleep(0.01)
+            time.sleep(0.006)
         return any(r["state"] == state for r in received)
 
     def test_degraded_promotes_to_fallback_when_gnss_healthy(self):
@@ -669,7 +672,7 @@ class TestSlamBridgeFallbackTransition(unittest.TestCase):
         m._last_cloud_time = time.time() - 0.5
         m._last_cloud_mono = 0.0
         m.start()
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
         states = [r["state"] for r in received]
         self.assertIn("DEGRADED", states)
@@ -686,7 +689,7 @@ class TestSlamBridgeFallbackTransition(unittest.TestCase):
         m._last_cloud_time = time.time() - 0.5
         m._last_cloud_mono = 0.0
         m.start()
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
         states = [r["state"] for r in received]
         self.assertNotIn("FALLBACK_GNSS_ONLY", states)
@@ -707,7 +710,7 @@ class TestSlamBridgeFallbackTransition(unittest.TestCase):
         m._last_cloud_time = time.time() - 0.5
         m._last_cloud_mono = 0.0
         m.start()
-        time.sleep(0.05)
+        time.sleep(0.02)
         m.stop()
         states = [r["state"] for r in received]
         self.assertNotIn("FALLBACK_GNSS_ONLY", states)
@@ -730,7 +733,7 @@ class TestSlamBridgeFallbackTransition(unittest.TestCase):
         for _ in range(20):
             m._mark_odom_received()
             m._mark_cloud_received()
-            time.sleep(0.01)
+            time.sleep(0.006)
         m.stop()
         states = [r["state"] for r in received]
         self.assertIn("FALLBACK_GNSS_ONLY", states)
@@ -894,6 +897,7 @@ class TestSlamBridgeDegeneracyParsing(unittest.TestCase):
         m._on_rclpy_odom(msg)
         self.assertAlmostEqual(m._max_pos_cov, 150.0, places=3)
 
+    @pytest.mark.ros2
     def test_rclpy_odom_uses_drift_guard_for_z_divergence(self):
         """The rclpy fallback must suppress impossible Z drift before fan-out."""
         m = self._make()
@@ -1463,7 +1467,7 @@ class TestSlamDegeneracyDetection(unittest.TestCase):
         m._mark_cloud_received()
         m._degen_level = DEGEN_CRITICAL
         m.start()
-        time.sleep(0.04)
+        time.sleep(0.025)
         m.stop()
         # Should get DEGRADED with low confidence
         degraded = [r for r in received if r["state"] == "DEGRADED"]
@@ -1475,7 +1479,7 @@ class TestSlamDegeneracyDetection(unittest.TestCase):
         received = []
         m.localization_status._add_callback(received.append)
         m.start()
-        time.sleep(0.03)
+        time.sleep(0.02)
         m.stop()
         self.assertTrue(len(received) > 0)
         self.assertIn("degeneracy", received[0])

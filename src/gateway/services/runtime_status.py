@@ -220,7 +220,7 @@ def safe_session(gw: Any) -> dict[str, Any]:
         if isinstance(snapshot, Mapping):
             return dict(snapshot)
     except Exception:
-        pass
+        logger.debug("safe_session_snapshot failed", exc_info=True)
     return {
         "mode": getattr(gw, "_session_mode", "unknown"),
         "active_map": getattr(gw, "_session_map", None),
@@ -240,7 +240,7 @@ def safe_lease(gw: Any) -> dict[str, Any]:
             data = lease.to_dict()
             if isinstance(data, Mapping):
                 return dict(data)
-        except Exception:
+        except (AttributeError, TypeError):
             pass
     return {}
 

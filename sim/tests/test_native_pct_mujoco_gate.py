@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 from sim.scripts.native_pct_mujoco_gate import (
     PctRoute,
     _build_safe_follow_path,

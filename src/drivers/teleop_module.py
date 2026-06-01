@@ -94,7 +94,7 @@ class TeleopModule(Module, layer=6):
         try:
             from core.config import get_config
             self._cam_rotate = int(get_config().raw.get("camera", {}).get("rotate", 0))
-        except Exception:
+        except (KeyError, TypeError, ValueError):
             self._cam_rotate = 0
         self._idle_thread: threading.Thread | None = None
 
@@ -239,8 +239,8 @@ class TeleopModule(Module, layer=6):
         try:
             with self._det_lock:
                 self._latest_detections = list(sg.objects) if sg.objects else []
-        except Exception:
-            pass
+        except (AttributeError, TypeError):
+                logger.debug("TeleopModule: scene graph callback error", exc_info=True)
 
     def _draw_detections(self, frame, cv2):
         """Draw bounding boxes + labels on the frame (in-place)."""
@@ -359,7 +359,7 @@ class TeleopModule(Module, layer=6):
                     if ok:
                         gw.push_jpeg(buf.tobytes())
                 except Exception:
-                    pass
+                    logger.debug("TeleopModule: encode iteration error", exc_info=True)
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()

@@ -182,8 +182,8 @@ class NovaDogConnection(Module, layer=1):
         if loop:
             try:
                 loop.close()
-            except Exception:
-                pass
+            except RuntimeError:
+                logger.debug("connection: loop close error", exc_info=True)
         self._loop = None
         self.alive.publish(False)
         super().stop()
@@ -417,7 +417,7 @@ class NovaDogConnection(Module, layer=1):
             await self._stub.Disable(dog_msg.Empty())
             logger.info("Safe shutdown complete")
         except Exception:
-            pass
+            logger.warning("Connection safe shutdown error", exc_info=True)
 
     # -- Health --
 

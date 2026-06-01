@@ -140,7 +140,7 @@ class Worker(multiprocessing.Process):
                     for _mod_id, mod in list(self._modules.items()):
                         try:
                             mod.stop()
-                        except Exception:
+                        except RuntimeError:
                             pass
                     self._modules.clear()
                     self._resp_q.put(("OK", "shutdown"))

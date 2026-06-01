@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 from pathlib import Path
 
 from drivers.sim.mujoco_scene_metadata import extract_robot_height_obstacle_boxes

@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 
 pytest.importorskip("fastapi")
 

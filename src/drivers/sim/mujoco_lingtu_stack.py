@@ -32,7 +32,7 @@ class MuJoCoLingTuStack:
 def _optional_module(system: Any, name: str) -> Any | None:
     try:
         return system.get_module(name)
-    except Exception:
+    except (KeyError, AttributeError):
         return None
 
 

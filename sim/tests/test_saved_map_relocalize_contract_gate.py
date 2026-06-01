@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 from __future__ import annotations
 
 import json

@@ -1,5 +1,7 @@
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 from core.blueprints.full_stack import full_stack_blueprint
 
 

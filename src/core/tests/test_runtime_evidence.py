@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 from __future__ import annotations
 
 import importlib.util
@@ -220,6 +224,7 @@ def _template_data_flow_evidence() -> dict:
     }
 
 
+    @pytest.mark.sim
 def test_simulator_world_frame_id_is_canonical_runtime_contract() -> None:
     assert simulator_world_frame_id() == "world"
 
@@ -529,6 +534,7 @@ def _load_runtime_contract_audit_module():
     return audit
 
 
+    @pytest.mark.sim
 def test_safe_simulation_report_passes():
     result = validate_runtime_evidence(_safe_report(), "cmu_unity_external")
 
@@ -795,6 +801,7 @@ def test_unobserved_frame_link_fails_when_required():
     assert "frame evidence missing or failed for odom_to_body" in result.blockers
 
 
+    @pytest.mark.sim
 def test_hardware_command_in_simulation_fails():
     report = _safe_report()
     report["cmd_vel_sent_to_hardware"] = True

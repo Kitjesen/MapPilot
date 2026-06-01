@@ -307,7 +307,7 @@ class ReconKeyframeExporterModule(Module, layer=3):
                 headers={"Content-Type": "multipart/form-data; boundary=" + boundary.decode()},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310  # trusted local server
                 resp.read()
 
             self._total_exported += len(batch)

@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.ros2]
+
 """Tests for nav service modules, driver modules, and frontier explorer.
 
 Covers:

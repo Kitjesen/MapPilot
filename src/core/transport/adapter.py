@@ -116,19 +116,19 @@ class TransportAdapter:
         for pub in self._publishers.values():
             try:
                 pub.close()
-            except Exception:
+            except (RuntimeError, OSError):
                 pass
         for subs in self._subscribers.values():
             for sub in subs:
                 try:
                     sub.close()
-                except Exception:
+                except (RuntimeError, OSError):
                     pass
         self._publishers.clear()
         self._subscribers.clear()
         try:
             self._backend.close()
-        except Exception:
+        except (RuntimeError, OSError):
             pass
 
     @property

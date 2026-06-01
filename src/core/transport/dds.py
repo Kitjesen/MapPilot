@@ -96,7 +96,7 @@ class DDSPublisher(Publisher):
     def close(self) -> None:
         try:
             self._writer.close()
-        except Exception:
+        except (RuntimeError, OSError):
             pass
 
 
@@ -119,7 +119,7 @@ if _CYCLONE_AVAILABLE:
                 # Convert sequence[uint8] back to bytes
                 raw_bytes = bytes(sample.data)
                 try:
-                    msg = pickle.loads(raw_bytes)
+                    msg = pickle.loads(raw_bytes)  # noqa: S301  # trusted intra-robot DDS
                 except Exception:
                     # Deliver raw bytes if deserialisation fails
                     msg = raw_bytes
@@ -148,7 +148,7 @@ class DDSSubscriber(Subscriber):
     def close(self) -> None:
         try:
             self._reader.close()
-        except Exception:
+        except (RuntimeError, OSError):
             pass
 
 
@@ -216,7 +216,7 @@ class DDSTransport(TransportABC):
         self._publishers.clear()
         try:
             self._participant.close()
-        except Exception:
+        except (RuntimeError, OSError):
             pass
 
     @property

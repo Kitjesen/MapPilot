@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 from core.msgs.geometry import Pose, PoseStamped, Vector3
 from core.msgs.nav import Path as NavPath
 from sim.scripts import dynamic_obstacle_local_planner_gate

@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 """Tests for shared CLI runtime boundary formatting."""
 
 from __future__ import annotations
@@ -328,6 +332,7 @@ def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
     assert "  LINGTU_RUNTIME_CONTRACT=mujoco_fastlio2_live" in output
 
 
+    @pytest.mark.sim
 def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
     from cli.runtime_display import format_runtime_switch_plan
 

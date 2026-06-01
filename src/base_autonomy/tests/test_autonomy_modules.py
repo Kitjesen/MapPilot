@@ -329,3 +329,38 @@ def test_all_three_modules_have_alive_port():
         mod = cls(backend=backend)
         assert "alive" in mod._ports_out
         assert mod._ports_out["alive"].msg_type is bool
+
+
+# =============================================================================
+# Integration: all three modules together in a Blueprint
+# =============================================================================
+
+def test_three_module_blueprint_wiring():
+    """All three base_autonomy modules coexist in a single Blueprint.
+
+    Verifies that TerrainModule, LocalPlannerModule, and PathFollowerModule
+    can be added to a Blueprint and built without wiring conflicts.
+    """
+    from base_autonomy.modules.terrain_module import TerrainModule
+    from base_autonomy.modules.local_planner_module import LocalPlannerModule
+    from base_autonomy.modules.path_follower_module import PathFollowerModule
+    from core.blueprint import Blueprint
+
+    bp = Blueprint()
+    bp.add(TerrainModule, backend="simple")
+    bp.add(LocalPlannerModule, backend="simple")
+    bp.add(PathFollowerModule, backend="pid")
+
+    system = bp.build()
+    system.start()
+
+    assert "TerrainModule" in system.modules
+    assert "LocalPlannerModule" in system.modules
+    assert "PathFollowerModule" in system.modules
+
+    # All three modules must be in running state
+    assert system.modules["TerrainModule"]._running
+    assert system.modules["LocalPlannerModule"]._running
+    assert system.modules["PathFollowerModule"]._running
+
+    system.stop()

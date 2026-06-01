@@ -773,7 +773,7 @@ def register_operation_routes(app, gw) -> None:
             except (ProcessLookupError, PermissionError, AttributeError):
                 try:
                     proc.terminate()
-                except Exception:
+                except OSError:
                     pass
             return {"status": "stopping", "path": gw._bag_path, "pid": proc.pid}
 

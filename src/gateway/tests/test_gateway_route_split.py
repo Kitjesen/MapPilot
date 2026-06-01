@@ -14,6 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 
 fastapi = pytest.importorskip("fastapi")
 

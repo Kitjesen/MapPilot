@@ -282,7 +282,7 @@ class PathFollowerModule(Module, layer=2):
         try:
             self._nc_state = self._nc.PathFollowerState()
             return
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         state = self._nc_state
         if state is None:
@@ -291,7 +291,7 @@ class PathFollowerModule(Module, layer=2):
             if hasattr(state, attr):
                 try:
                     setattr(state, attr, 0)
-                except Exception:
+                except (AttributeError, TypeError):
                     pass
 
     def _publish_zero(self, *, reset_nav_core_state: bool = False) -> None:

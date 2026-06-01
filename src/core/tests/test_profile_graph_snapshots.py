@@ -2,6 +2,8 @@ import sys
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 from core.blueprints.profile_graph import (
     OPTIONAL_NATIVE_PRODUCT_PROFILES,
     PROFILE_SNAPSHOT_TARGETS,
@@ -203,6 +205,7 @@ def test_s100p_profiles_drive_real_brainstem_driver_by_default():
         assert "ROS2SimDriverModule" not in graph.modules
 
 
+    @pytest.mark.sim
 def test_sim_gazebo_profile_uses_ros2_driver_and_map_planning_frame():
     graph = graph_for_profile("sim_gazebo")
     wires = _wire_set(graph)
@@ -229,6 +232,7 @@ def test_sim_gazebo_profile_uses_ros2_driver_and_map_planning_frame():
     assert not graph.dangling_wires()
 
 
+    @pytest.mark.sim
 def test_sim_industrial_profile_is_lingtu_owned_exploration_profile():
     graph = graph_for_profile("sim_industrial")
     wires = _wire_set(graph)
@@ -256,6 +260,7 @@ def test_sim_industrial_profile_is_lingtu_owned_exploration_profile():
     assert not graph.dangling_wires()
 
 
+    @pytest.mark.sim
 def test_sim_mujoco_live_profile_is_raw_fastlio_simulation_entry():
     graph = graph_for_profile("sim_mujoco_live")
     wires = _wire_set(graph)

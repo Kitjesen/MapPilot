@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 # Ensure src/ on path for standalone pytest runs
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _SRC = _ROOT / "src"

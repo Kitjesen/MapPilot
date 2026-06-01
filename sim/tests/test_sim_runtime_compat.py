@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+pytestmark = [pytest.mark.sim]
 from sim.engine.core.robot import RobotConfig
 
 from core.blueprints.full_stack import full_stack_blueprint

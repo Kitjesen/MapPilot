@@ -300,7 +300,7 @@ class LLMModule(Module, layer=4):
         if loop is not None:
             try:
                 loop.close()
-            except Exception:
+            except RuntimeError:
                 pass
         self._loop = None
         self._loop_thread = None

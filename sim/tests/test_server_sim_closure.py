@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 from core.blueprints.simulation_contract import simulation_runtime_contract
 from core.runtime_interface import resolved_runtime_data_flow
 from sim.scripts import server_sim_closure

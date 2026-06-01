@@ -10,6 +10,8 @@ import time
 
 import pytest
 
+pytestmark = [pytest.mark.ros2]
+
 from core.transport.abc import TopicConfig, TransportStrategy
 from core.transport.local import LocalTransport, Transport
 
@@ -123,10 +125,10 @@ class TestSHMTransport:
         transport.create_subscriber(sub_topic, lambda data, ts: received.append(data))
 
         # Give subscriber time to start polling
-        time.sleep(0.02)
+        time.sleep(0.012)
 
         pub.publish(b"hello shm")
-        time.sleep(0.02)  # wait for poll to pick it up
+        time.sleep(0.012)  # wait for poll to pick it up
 
         transport.close()
         assert len(received) >= 1
@@ -143,9 +145,9 @@ class TestSHMTransport:
         sub_topic = TopicConfig(name="/test/shm_pickle", strategy=TransportStrategy.SHM)
         transport.create_subscriber(sub_topic, lambda data, ts: received.append(data))
 
-        time.sleep(0.02)
+        time.sleep(0.012)
         pub.publish({"key": "value", "n": 42})
-        time.sleep(0.02)
+        time.sleep(0.012)
 
         transport.close()
         # SHM delivers raw bytes for pickle; verify we got something
@@ -181,13 +183,13 @@ class TestTransportAdapter:
 
         # Publish first to create the SHM region, then subscribe
         adapter.publish("/test/adapter_shm2", {"init": True})
-        time.sleep(0.01)
+        time.sleep(0.006)
 
         adapter.subscribe("/test/adapter_shm2", received.append)
-        time.sleep(0.02)  # subscriber poll startup
+        time.sleep(0.012)  # subscriber poll startup
 
         adapter.publish("/test/adapter_shm2", {"key": "value"})
-        time.sleep(0.02)  # poll picks it up
+        time.sleep(0.012)  # poll picks it up
 
         adapter.close()
         assert len(received) >= 1
@@ -298,14 +300,14 @@ class TestDDSTransport:
         pub = transport.create_publisher(topic)
 
         # Allow DDS discovery to complete before publishing
-        time.sleep(0.05)
+        time.sleep(0.03)
 
         pub.publish({"hello": "dds", "value": 42})
 
         # Wait for listener delivery
         deadline = time.time() + 2.0
         while not received and time.time() < deadline:
-            time.sleep(0.02)
+            time.sleep(0.012)
 
         transport.close()
         assert len(received) == 1

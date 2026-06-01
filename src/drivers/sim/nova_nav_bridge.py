@@ -578,7 +578,7 @@ class NavBridge:
                     try:
                         rclpy.spin_once(self.node, timeout_sec=0)
                     except Exception:
-                        pass  # viewer shutdown may invalidate rclpy context
+                        logger.debug("nova_nav_bridge: rclpy spin_once error (viewer may have shutdown)")
                     viewer.sync()
         else:
             try:

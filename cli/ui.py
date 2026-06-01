@@ -527,7 +527,7 @@ def cmd_health_external(as_json: bool = False) -> None:
     url = f"http://localhost:{port}/api/v1/health"
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310  # trusted localhost
             data = json.loads(resp.read())
     except (urllib.error.URLError, OSError) as e:
         print(f"  {T.red('无法连接 Gateway')}: {e}")

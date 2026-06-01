@@ -130,7 +130,7 @@ class WorkerManager:
         for wid in list(self._workers):
             try:
                 self._send(wid, ("SHUTDOWN",), timeout=10.0)
-            except Exception:
+            except (OSError, RuntimeError):
                 pass
         for w in self._workers.values():
             w.join(timeout=5.0)

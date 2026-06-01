@@ -188,6 +188,7 @@ class TraversableFrontierModule(WavefrontFrontierExplorer):
         support_height = _sample_payload_grid(elevation_map, x, y, key="max_z")
         if support_height is None:
             support_height = _sample_payload_grid(elevation_map, x, y, key="grid")
+        z = 0.0 if support_height is None else float(support_height)
 
         cost_score = 1.0
         if terrain_cost is not None:
@@ -199,7 +200,7 @@ class TraversableFrontierModule(WavefrontFrontierExplorer):
         if clearance_m is not None:
             clearance_score = max(0.0, min(1.0, float(clearance_m) / max(self._safe_dist, 1e-6)))
 
-        semantic_evidence = _semantic_evidence(scene_graph, x, y, z=0.0)
+        semantic_evidence = _semantic_evidence(scene_graph, x, y, z=z)
         semantic_value = semantic_evidence["semantic_value"]
         reachable_score = (
             0.50 * base_score
@@ -240,7 +241,6 @@ class TraversableFrontierModule(WavefrontFrontierExplorer):
             self._max_slope_deg,
             self._max_frontier_cost,
         )
-        z = 0.0 if support_height is None else float(support_height)
         centroid = [x, y, z]
         return {
             "id": f"traversable_frontier_{index}",

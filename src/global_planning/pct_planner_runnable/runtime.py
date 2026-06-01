@@ -414,7 +414,7 @@ def prepare_tomogram_for_pct(
 
     try:
         with source.open("rb") as handle:
-            raw = pickle.load(handle)
+            raw = pickle.load(handle)  # noqa: S301  # trusted local tomogram
     except Exception:
         return source
 

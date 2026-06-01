@@ -5,6 +5,8 @@ import xml.etree.ElementTree as ET
 import math
 
 import pytest
+
+pytestmark = [pytest.mark.sim]
 import yaml
 
 from core.runtime_interface import (

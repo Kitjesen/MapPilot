@@ -81,7 +81,7 @@ def _probe_brainstem() -> dict[str, Any]:
             v = stub.GetVoltage(bapi.Empty(), timeout=1.0)
             if v.values:
                 info["voltage_avg"] = round(sum(v.values) / len(v.values), 1)
-        except Exception:
+        except (grpc.RpcError, AttributeError, KeyError):
             pass
         return info
     finally:

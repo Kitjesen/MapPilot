@@ -141,7 +141,7 @@ class TestNativeModuleLifecycle(unittest.TestCase):
         mod._shutdown_event.set()
         mod._process = proc
         proc.poll.return_value = 0
-        time.sleep(0.05)
+        time.sleep(0.03)
         mod.stop()
 
     @patch("core.native_module.subprocess.Popen")
@@ -194,17 +194,17 @@ class TestNativeModuleLifecycle(unittest.TestCase):
         # Start with process running
         proc.poll.return_value = None
         mod.start()
-        time.sleep(0.02)
+        time.sleep(0.012)
 
         # Simulate crash
         proc.poll.return_value = 1
         proc.returncode = 1
-        time.sleep(0.08)  # let watchdog detect
+        time.sleep(0.05)  # let watchdog detect
 
         # Should have published False
         self.assertIn(False, alive_values)
         mod._shutdown_event.set()
-        time.sleep(0.05)
+        time.sleep(0.03)
 
     @patch("core.native_module.subprocess.Popen")
     def test_watchdog_auto_restart(self, mock_popen):
@@ -229,7 +229,7 @@ class TestNativeModuleLifecycle(unittest.TestCase):
 
         proc1.poll.return_value = None
         mod.start()
-        time.sleep(0.02)
+        time.sleep(0.012)
 
         # Simulate crash
         proc1.poll.return_value = 1
@@ -239,11 +239,11 @@ class TestNativeModuleLifecycle(unittest.TestCase):
         # Deterministic gating beats time.sleep — race-tolerant on slow runners.
         deadline = time.time() + 1.0
         while time.time() < deadline and mod._restart_count < 1:
-            time.sleep(0.01)
+            time.sleep(0.006)
 
         # Stop watchdog ASAP so subsequent ticks don't pile on extra restarts
         mod._shutdown_event.set()
-        time.sleep(0.05)
+        time.sleep(0.03)
 
         # Watchdog must have triggered at least one restart
         self.assertGreaterEqual(mod._restart_count, 1)

@@ -116,7 +116,7 @@ def _scene_placeholder_start(scene_xml: Path) -> list[float] | None:
             parts = [float(v) for v in pos_str.split()]
             if len(parts) >= 3:
                 return parts[:3]
-    except Exception:
+    except (ET.ParseError, AttributeError, ValueError, TypeError):
         logger.debug("Failed to parse robot_placeholder pose from %s", scene_xml, exc_info=True)
     return None
 
@@ -445,7 +445,7 @@ class MujocoDriverModule(Module, layer=1):
                             )
                             self.map_cloud.publish(world_cloud)
                     except Exception:
-                        pass
+                        logger.debug("mujoco_driver: cloud publish error", exc_info=True)
 
                 # Publish camera (every 10th step = ~5 Hz)
                 if step_count % 10 == 0:

@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 #!/usr/bin/env python3
 """S100P full pipeline test: MuJoCo + terrain_core + PCT/A* + navigation.
 

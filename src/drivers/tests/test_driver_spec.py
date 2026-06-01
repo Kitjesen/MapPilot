@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 from core.registry import get
 from drivers.spec import (
     driver_capabilities,

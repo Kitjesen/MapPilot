@@ -144,7 +144,7 @@ class ROS2SimDriverModule(Module, layer=1):
             from sensor_msgs.msg import Image as ROS2Image
             try:
                 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-            except Exception:
+            except ImportError:
                 MutuallyExclusiveCallbackGroup = None
 
             from core.ros2_context import ensure_rclpy, get_shared_executor
@@ -253,11 +253,11 @@ class ROS2SimDriverModule(Module, layer=1):
                 if executor is not None:
                     executor.remove_node(node)
             except Exception:
-                pass
+                logger.debug("ros2_sim: error removing node from executor", exc_info=True)
             try:
                 node.destroy_node()
             except Exception:
-                pass
+                logger.debug("ros2_sim: error destroying node", exc_info=True)
         if node is self._node:
             self._node = None
         if executor is self._executor:

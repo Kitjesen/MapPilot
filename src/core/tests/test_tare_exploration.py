@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.ros2]
+
 """Tests for the TARE exploration bridge and the exploration stack factory.
 
 Runs without any C++ binary or DDS transport — relies on the module's

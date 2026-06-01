@@ -186,8 +186,8 @@ class ThunderDriver(Module, layer=1):
         if loop:
             try:
                 loop.close()
-            except Exception:
-                pass
+            except RuntimeError:
+                logger.debug("han_dog: loop close error", exc_info=True)
         self._loop = None
         self.alive.publish(False)
         self._publish_robot_state()
@@ -445,7 +445,7 @@ class ThunderDriver(Module, layer=1):
             logger.info("Safe shutdown complete")
             self._publish_robot_state()
         except Exception:
-            pass
+            logger.warning("HanDog safe shutdown error", exc_info=True)
 
     # ── 健康报告 ──
 

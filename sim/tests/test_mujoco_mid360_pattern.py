@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 import json
 from pathlib import Path
 from types import SimpleNamespace

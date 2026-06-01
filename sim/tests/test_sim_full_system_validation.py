@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = [pytest.mark.sim]
+
 from pathlib import Path
 
 from sim.validation.full_system import (

@@ -1479,7 +1479,7 @@ def register_diagnostic_routes(app, gw) -> None:
                                 str(logfile),
                                 arcname=f"diag/logs/{log_dir.name}/{logfile.name}",
                             )
-                        except Exception:
+                        except OSError:
                             pass
 
         return FileResponse(

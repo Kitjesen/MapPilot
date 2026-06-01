@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.ros2]
+
 from core.runtime_interface import TOPICS, topic_default_frame_id
 
 

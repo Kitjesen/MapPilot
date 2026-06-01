@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 
 def _topic_entry(
     topic: str,

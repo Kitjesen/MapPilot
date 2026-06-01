@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.sim]
+
 
 class _FakeGateway:
     def __init__(self, run_result: bool):
@@ -169,6 +171,7 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
     assert system.started is True
 
 
+    @pytest.mark.sim
 def test_external_simulation_profile_runs_relative_launcher(monkeypatch):
     import subprocess
 
@@ -1099,6 +1102,7 @@ def test_saved_map_artifact_gate_cli_invokes_script(monkeypatch, tmp_path):
     assert "--json" not in cmd
 
 
+    @pytest.mark.sim
 def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(
     monkeypatch, tmp_path, capsys
 ):
@@ -1739,6 +1743,7 @@ def test_mujoco_live_endpoint_accepts_inspection_video_action(monkeypatch):
     assert captured["env"]["LINGTU_RUNTIME_CONTRACT"] == "mujoco_fastlio2_live"
 
 
+    @pytest.mark.sim
 def test_tare_product_task_endpoint_routes_to_cmu_unity_launcher(monkeypatch):
     import subprocess
 

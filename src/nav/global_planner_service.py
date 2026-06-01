@@ -992,7 +992,7 @@ class GlobalPlannerService:
         update_map = getattr(self._backend, "update_map", None)
         if callable(update_map):
             with open(self._tomogram, "rb") as f:
-                data = pickle.load(f)
+                data = pickle.load(f)  # noqa: S301  # trusted local tomogram
             grid = data.get("grid") if isinstance(data, dict) else None
             if grid is None:
                 return {
