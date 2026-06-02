@@ -93,7 +93,7 @@ def _write_pcd_binary(path: Path, pts: np.ndarray, viewpoint: tuple[float, ...])
 def _parse_poses(poses_path: Path) -> dict[str, tuple[float, ...]]:
     """poses.txt → {patch_name: (tx,ty,tz,qw,qx,qy,qz)}."""
     out: dict[str, tuple[float, ...]] = {}
-    with open(poses_path) as f:
+    with open(poses_path, encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split()
             if len(parts) >= 8:

@@ -103,7 +103,7 @@ def register_camera_routes(app, gw=None) -> None:
         out = os.path.join(tempfile.gettempdir(), "lingtu_cam_snap.jpg")
         script = os.path.join(tempfile.gettempdir(), "lingtu_cam_snap.py")
         # Write script to avoid shell escaping issues.
-        with open(script, "w") as f:
+        with open(script, "w", encoding="utf-8") as f:
             f.write(
                 (
                     "import rclpy, sys\n"

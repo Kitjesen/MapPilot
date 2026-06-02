@@ -159,7 +159,7 @@ def _load_paths(paths_dir: str) -> dict | None:
     corr_txt = pd / "correspondences.txt"
     correspondences: dict[int, list[int]] = {}
     max_voxel_id = 0
-    with open(corr_txt) as f:
+    with open(corr_txt, encoding="utf-8") as f:
         for line in f:
             tokens = line.split()
             if not tokens:

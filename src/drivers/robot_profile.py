@@ -352,7 +352,7 @@ def load_profiles_from_yaml(path: str) -> int:
     Returns:
         Number of profiles loaded (currently always 1).
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     if not isinstance(data, dict):

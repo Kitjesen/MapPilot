@@ -329,7 +329,7 @@ MuJoCoSimNode = MuJoCoROS2Bridge
 def main():
     xml = DEFAULT_XML
     if len(sys.argv) > 1:
-        with open(sys.argv[1]) as f:
+        with open(sys.argv[1], encoding="utf-8") as f:
             xml = f.read()
         print(f"Loading scene from {sys.argv[1]}")
     else:

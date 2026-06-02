@@ -123,7 +123,7 @@ class NerfstudioBackend(ReconBackendBase):
             "frames": frames_json,
         }
         transforms_path = data_dir / "transforms.json"
-        with open(transforms_path, "w") as f:
+        with open(transforms_path, "w", encoding="utf-8") as f:
             json.dump(transforms, f, indent=2)
 
         # ── Run ns-train ────────────────────────────────────────────────

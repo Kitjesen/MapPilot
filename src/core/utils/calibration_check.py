@@ -242,7 +242,7 @@ def _check_lidar_imu_consistency(
 
     try:
         import yaml
-        with open(FASTLIO2_CONFIG) as f:
+        with open(FASTLIO2_CONFIG, encoding="utf-8") as f:
             lio = yaml.safe_load(f) or {}
     except Exception:
         return
@@ -294,7 +294,7 @@ def _extract_pointlio_time_offset() -> float | None:
         return None
     try:
         import yaml
-        with open(POINTLIO_CONFIG) as f:
+        with open(POINTLIO_CONFIG, encoding="utf-8") as f:
             pl = yaml.safe_load(f) or {}
     except Exception:
         return None
@@ -324,7 +324,7 @@ def _check_time_offset(report: CalibrationReport, required: bool) -> None:
     lio_offset = None
     if FASTLIO2_CONFIG.exists():
         try:
-            with open(FASTLIO2_CONFIG) as f:
+            with open(FASTLIO2_CONFIG, encoding="utf-8") as f:
                 lio = yaml.safe_load(f) or {}
             lio_offset = lio.get("time_diff_lidar_to_imu")
         except Exception:
@@ -369,7 +369,7 @@ def _check_rotation_validity(report: CalibrationReport) -> None:
 
     try:
         import yaml
-        with open(FASTLIO2_CONFIG) as f:
+        with open(FASTLIO2_CONFIG, encoding="utf-8") as f:
             lio = yaml.safe_load(f) or {}
     except Exception:
         return

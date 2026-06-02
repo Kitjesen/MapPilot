@@ -64,7 +64,7 @@ def load_dataset(path: str | Path) -> list[Keyframe]:
 
 def _load_transforms_json(base: Path) -> list[Keyframe]:
     """加载 DatasetRecorderModule / nerfstudio 格式数据集。"""
-    with open(base / "transforms.json") as f:
+    with open(base / "transforms.json", encoding="utf-8") as f:
         data = json.load(f)
 
     fx  = float(data.get("fl_x", 615.0))

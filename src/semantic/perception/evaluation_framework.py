@@ -428,7 +428,7 @@ class BenchmarkFramework:
 
         data = [asdict(result) for result in self.results]
 
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
         logger.info(f"Results saved to {filepath}")

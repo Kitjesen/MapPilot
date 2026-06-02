@@ -274,14 +274,14 @@ class EndToEndEvaluator:
                 pass  # 已经是基本类型
             data.append(result_dict)
 
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
         logger.info(f"Results saved to {filepath}")
 
     def generate_report(self, filepath: str):
         """生成 Markdown 格式的报告。"""
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write("# 端到端系统评估报告\n\n")
             f.write(f"**生成时间**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             f.write(f"**评估场景数**: {len(set(r.scene_id for r in self.results))}\n\n")

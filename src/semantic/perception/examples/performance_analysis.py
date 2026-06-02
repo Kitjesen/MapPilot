@@ -345,7 +345,7 @@ def main():
     # 保存结果
     import json
     output_file = Path("performance_analysis_results.json")
-    with open(output_file, 'w') as f:
+    with open(output_file, 'w', encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
     print(f"\n结果已保存到: {output_file}")

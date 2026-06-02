@@ -227,7 +227,7 @@ class HM3DLoader(BaseDatasetLoader):
         # 读取场景信息（如果有 metadata.json）
         metadata_file = scene_path / "metadata.json"
         if metadata_file.exists():
-            with open(metadata_file) as f:
+            with open(metadata_file, encoding="utf-8") as f:
                 metadata_dict = json.load(f)
         else:
             metadata_dict = {}
