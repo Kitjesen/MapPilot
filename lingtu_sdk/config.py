@@ -25,6 +25,7 @@ class LingTuConfig:
 
     @property
     def base_url(self) -> str:
+        """Full HTTP base URL (``http://host:port``)."""
         return f"http://{self.host}:{self.port}"
 
     def merge(self, **overrides: object) -> LingTuConfig:

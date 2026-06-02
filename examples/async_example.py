@@ -22,41 +22,38 @@ from lingtu_sdk.mcp import LingTuMCP
 async def main(host: str = "127.0.0.1") -> None:
     """Run the async SDK demonstration."""
     async with AsyncLingTuClient(host, port=5050) as robot:
-        # ── Concurrent state queries ────────────────────────────────────
+        # -- Concurrent state queries ------------------------------------
         health_task = asyncio.create_task(robot.health())
         state_task = asyncio.create_task(robot.state())
 
         health = await health_task
         state = await state_task
 
-        print(f"Modules: {health.get('modules_ok', '?')} ok")
-        print(f"Mode: {state.get('mode', '?')}")
+        print(f"Modules: {health.modules_ok}/{health.modules_total} ok")
+        print(f"Mode: {state.mode}")
 
-        # ── Navigation ──────────────────────────────────────────────────
+        # -- Navigation --------------------------------------------------
         await robot.go(10.0, 5.0)
         pos = await robot.position()
-        print(f"Position: x={pos['x']:.2f}, y={pos['y']:.2f}")
+        print(f"Position: x={pos.x:.2f}, y={pos.y:.2f}")
 
-        # ── Maps & locations ────────────────────────────────────────────
-        maps_data = await robot.maps()
-        if isinstance(maps_data, dict):
-            for m in maps_data.get("maps", []):
-                print(f"  Map: {m.get('name')}  "
-                      f"Active: {m.get('is_active', False)}")
+        # -- Maps & locations --------------------------------------------
+        ml = await robot.maps()
+        for m in ml.maps:
+            print(f"  Map: {m.name}  Active: {m.is_active}")
 
         await robot.tag_location("出发点", use_current_pose=True)
 
-        # ── Session lifecycle ───────────────────────────────────────────
+        # -- Session lifecycle -------------------------------------------
         await robot.start_session("navigating", map_name="factory_01")
-        session = await robot.session()
-        print(f"Session: {session.get('mode', '?')} / "
-              f"map: {session.get('active_map', '?')}")
+        sess = await robot.session()
+        print(f"Session: {sess.mode} / map: {sess.active_map}")
         await robot.end_session()
 
-        # ── Explore ────────────────────────────────────────────────────
+        # -- Explore -----------------------------------------------------
         await robot.start_session("exploring")
-        status = await robot.session()
-        print(f"Explore session: {status.get('mode', '?')}")
+        sess = await robot.session()
+        print(f"Explore session: {sess.mode}")
         await robot.end_session()
 
 

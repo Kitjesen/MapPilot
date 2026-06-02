@@ -1,6 +1,6 @@
 """AI Agent controlling LingTu via MCP tools.
 
-Demonstrates the ``LingTuMCP`` client pattern — the same interface an LLM
+Demonstrates the ``LingTuMCP`` client pattern -- the same interface an LLM
 (Claude, GPT) would use through the MCP protocol.
 
 Requirements:
@@ -24,47 +24,64 @@ def main(host: str = "127.0.0.1") -> None:
     robot = LingTuClient(host, port=5050)
     mcp = LingTuMCP(robot)
 
-    # ── System health ────────────────────────────────────────────────────
+    # -- System health ----------------------------------------------------
     health = mcp.call("get_health")
     print(f"Health: {health}")
 
-    # ── Scene understanding ─────────────────────────────────────────────
+    # -- Scene understanding ---------------------------------------------
     scene = mcp.call("get_scene_graph")
     print(f"Scene objects: {scene.get('count', 0)}")
 
-    # ── Memory & locations ──────────────────────────────────────────────
+    # -- Memory & locations ----------------------------------------------
     tags = mcp.call("list_tagged_locations")
     print(f"Tagged locations: {tags}")
 
-    # ── Navigate using coordinates (MCP tool: navigate_to) ──────────────
+    # -- Navigate using coordinates (MCP tool: navigate_to) --------------
     mcp.call("navigate_to", {"x": 10.0, "y": 5.0})
 
-    # ── Navigate using semantic description (MCP tool: navigate_to_object)
+    # -- Navigate using semantic description (MCP tool: navigate_to_object)
     mcp.call("navigate_to_object", {"instruction": "go to the charger station"})
 
-    # ── Query memory ────────────────────────────────────────────────────
+    # -- Query memory ----------------------------------------------------
     memory = mcp.call("query_memory", {"query": "背包"})
     print(f"Memory results: {memory.get('count', 0)}")
 
-    # ── Detect objects ──────────────────────────────────────────────────
+    # -- Detect objects --------------------------------------------------
     objects = mcp.call("detect_objects", {"query": "person"})
     print(f"Detected: {objects}")
 
-    # ── Tag current position ────────────────────────────────────────────
+    # -- Tag current position --------------------------------------------
     result = mcp.call("tag_location", {"name": "实验室入口"})
     print(f"Tagged: {result}")
 
-    # ── Convenience methods (same tools, typed) ────────────────────────
+    # -- Convenience methods (same tools, typed) ------------------------
     mcp.navigate_to(5.0, 3.0)
     mcp.find_object("fire extinguisher")
     mcp.query_memory("where did I see the backpack")
     mcp.stop()
 
-    # ── Exploration ────────────────────────────────────────────────────
+    # -- Patrol ----------------------------------------------------------
+    mcp.start_patrol([
+        {"x": 0.0, "y": 0.0},
+        {"x": 5.0, "y": 3.0, "yaw": 1.57},
+    ])
+
+    # -- Exploration ----------------------------------------------------
     print(mcp.begin_exploration())
     print(mcp.get_frontiers())
 
-    # ── Cleanup ─────────────────────────────────────────────────────────
+    # -- TARE exploration -----------------------------------------------
+    print(mcp.start_tare_exploration())
+    print(mcp.get_tare_status())
+
+    # -- Voxel query ----------------------------------------------------
+    print(mcp.get_voxel_stats())
+
+    # -- GNSS fusion ----------------------------------------------------
+    print(mcp.get_gnss_fusion_status())
+    mcp.set_gnss_fusion(True)
+
+    # -- Cleanup ---------------------------------------------------------
     robot.close()
 
 
