@@ -1245,6 +1245,8 @@ class TestSLAMModule(unittest.TestCase):
         self.assertEqual(m.layer, 1)
 
     def test_backends_registered(self):
+        # Import SLAMModule to trigger @register decorators
+        from slam.slam_module import SLAMModule  # noqa: F401
         from core.registry import list_plugins
         backends = list_plugins("slam")
         self.assertIn("fastlio2", backends)

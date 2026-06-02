@@ -34,7 +34,7 @@ import numpy as np
 from core.runtime_interface import map_frame_id
 from core.utils.sanitize import safe_json_dump, safe_json_dumps, sanitize_position
 from .projection import Detection3D
-from .room_manager import RoomManagerMixin
+from memory.spatial.room_manager import RoomManagerMixin
 
 INSTANCE_TRACKER_MAP_FRAME_ID = map_frame_id()
 
