@@ -975,7 +975,7 @@ class MapManagerModule(Module, layer=6):
             from core.yaml_helpers import yaml as _yaml
             if _yaml is None:
                 raise ImportError
-            with open(yaml_path, "w") as f:
+            with open(yaml_path, "w", encoding="utf-8") as f:
                 _yaml.safe_dump(yaml_body, f, default_flow_style=False, sort_keys=False)
         except ImportError:
             yaml_path.write_text(
@@ -1032,7 +1032,7 @@ class MapManagerModule(Module, layer=6):
     def _parse_poses_txt(path: Path) -> list[dict]:
         """Parse PGO poses.txt: each line 'patch.pcd tx ty tz qw qx qy qz'."""
         poses: list[dict] = []
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split()
                 if len(parts) != 8:
@@ -1088,7 +1088,7 @@ class MapManagerModule(Module, layer=6):
         try:
             pts_list: list[list[float]] = []
             in_data = False
-            with open(pcd_path, errors="replace") as f:
+            with open(pcd_path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if not in_data:

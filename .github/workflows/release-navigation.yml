@@ -1,13 +1,13 @@
 name: Release Navigation Package
 
-# 导航功能包自动构建与发布
-# 触发方式:
-#   1. 推送 v* tag (如 v1.0.0)
-#   2. 手动触发 (workflow_dispatch)
+# Automatic navigation package build and release.
+# Trigger:
+#   1. Push v* tag (e.g., v1.0.0)
+#   2. Manual trigger (workflow_dispatch)
 #
-# 产出:
-#   - navigation-<version>-aarch64.tar.gz (ARM64 交叉编译)
-#   - manifest.json (带 Ed25519 签名)
+# Artifacts:
+#   - navigation-<version>-aarch64.tar.gz (ARM64 cross-compiled)
+#   - manifest.json (with Ed25519 signature)
 #   - GitHub Release
 
 on:
@@ -20,7 +20,7 @@ on:
       release_notes:
         description: 'Release notes (Markdown)'
         required: false
-        default: '导航系统更新'
+        default: 'Navigation system update'
         type: string
       prerelease:
         description: 'Pre-release'
@@ -52,7 +52,7 @@ jobs:
           else
             TAG="${GITHUB_REF#refs/tags/}"
             echo "version=$TAG" >> "$GITHUB_OUTPUT"
-            echo "notes=导航系统 ${TAG} 发布" >> "$GITHUB_OUTPUT"
+            echo "notes=Navigation system ${TAG} release" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -78,7 +78,7 @@ jobs:
             libopencv-dev \
             libgrpc++-dev \
             protobuf-compiler-grpc
-          # 安装签名依赖
+          # Install signing dependency
           pip install cryptography
 
       - name: Sync versions
@@ -108,7 +108,7 @@ jobs:
             exit 1
           fi
           SIZE_MB=$(du -m "$TARBALL" | awk '{print $1}')
-          echo "Artifact: $TARBALL — ${SIZE_MB} MB"
+          echo "Artifact: $TARBALL -- ${SIZE_MB} MB"
           if [ "$SIZE_MB" -gt 500 ]; then
             echo "ERROR: Artifact exceeds 500 MB limit (${SIZE_MB} MB). Check for accidentally packaged large files."
             exit 1
@@ -117,7 +117,7 @@ jobs:
 
       - name: Generate & sign manifest
         run: |
-          # 写入签名密钥 (从 GitHub Secret)
+          # Write signing key (from GitHub Secret)
           if [ -n "${{ secrets.OTA_PRIVATE_KEY }}" ]; then
             echo "${{ secrets.OTA_PRIVATE_KEY }}" > /tmp/ota_key.pem
             python3 scripts/ota/generate_manifest.py \
@@ -146,11 +146,11 @@ jobs:
 
             ---
 
-            **OTA 部署:**
-            1. MapPilot App → 设置 → 云端更新 → 检查更新
-            2. 选择 navigation 包 → 下载并安装
+            **OTA Deploy:**
+            1. MapPilot App -> Settings -> Cloud Update -> Check Updates
+            2. Select the navigation package -> Download and Install
 
-            **手动部署:**
+            **Manual Deploy:**
             ```bash
             ./scripts/ota/push_to_robot.sh sunrise@<robot_ip>
             ```
@@ -174,7 +174,7 @@ jobs:
           VERSION_CLEAN="${VERSION#v}"
           NOTES="${{ steps.version.outputs.notes }}"
 
-          # 找到打包的 navigation tarball
+          # Find the packaged navigation tarball
           TARBALL=$(ls dist/navigation-*.tar.gz 2>/dev/null | head -1)
           if [ -z "$TARBALL" ]; then
             echo "ERROR: No navigation tarball found in dist/"
@@ -182,7 +182,7 @@ jobs:
           fi
           echo "Uploading: $TARBALL"
 
-          # Step 1: 上传包 (multipart/form-data)
+          # Step 1: Upload package (multipart/form-data)
           UPLOAD_RESP=$(curl -sf \
             -H "X-API-Key: ${OTA_API_KEY}" \
             -F "name=navigation" \
@@ -195,7 +195,7 @@ jobs:
           PKG_ID=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
           echo "Package uploaded: id=${PKG_ID}"
 
-          # Step 2: 创建发布（初始灰度 10%，LINGTU-NAV 产品策略）
+          # Step 2: Create release (initial 10% canary rollout, LINGTU-NAV product policy)
           curl -sf \
             -H "X-API-Key: ${OTA_API_KEY}" \
             -H "Content-Type: application/json" \

@@ -2850,5 +2850,10 @@ class GatewayModule(Module, layer=6):
         # zmax, cx, cy, rx, ry, ryaw, robot_visible) into the HTML via f-string.
         # Those dynamic values are now documented in the template header comment
         # at src/gateway/templates/map_viewer.html.
+        #
+        # TODO: Serve this via FastAPI StaticFiles mount at startup instead of
+        # reading the file inline on every request. The template is fully static
+        # (dynamic data now flows via SSE), so StaticFiles avoids I/O per-request
+        # and simplifies caching headers.
         template_path = FilePath(__file__).parent / "templates" / "map_viewer.html"
         return template_path.read_text(encoding="utf-8")

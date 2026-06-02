@@ -158,7 +158,7 @@ class VoxelGridModule(Module, layer=2):
             if not self._voxels:
                 return
 
-            keys_arr = np.array(list(self._voxels.keys()), dtype=np.int64)
+            keys_arr = np.fromiter(self._voxels.keys(), dtype=np.int64)
 
         centers = (keys_arr.astype(np.float32) + 0.5) * self._res
         column_count = int(np.unique(keys_arr[:, :2], axis=0).shape[0])

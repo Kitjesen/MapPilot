@@ -191,14 +191,20 @@ def render_png(handle: Any, output_path: str, **kwargs: Any) -> None:
 
 
 def _run_graphviz(dot_code: str, output_path: str, fmt: str) -> None:
-    result = subprocess.run(
-        ["dot", f"-T{fmt}", "-o", output_path],
-        input=dot_code,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            ["dot", f"-T{fmt}", "-o", output_path],
+            input=dot_code,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"graphviz 'dot' timed out rendering {fmt} to {output_path}"
+        ) from None
     if result.returncode != 0:
         raise RuntimeError(
             f"graphviz 'dot' failed (exit {result.returncode}):\n{result.stderr}"

@@ -1,7 +1,7 @@
 name: Release Models & Firmware
 
-# 手动触发 - 用于发布训练好的模型、地图、配置、固件到 GitHub Release
-# App 端的 "云端更新" 功能会从这里拉取最新资产
+# Manual trigger — publish trained models, maps, configs, firmware to GitHub Release
+# The "cloud update" feature in the mobile App pulls latest assets from here
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ on:
       release_notes:
         description: 'Release notes (Markdown supported)'
         required: false
-        default: '模型/固件更新包，可通过 MapPilot App 的 "云端更新" 自动部署到机器人。'
+        default: 'Model/firmware update package. Deployable to robot via MapPilot App "Cloud Update".'
         type: string
       models_path:
         description: 'Models glob pattern (e.g. models/*.pt models/*.onnx)'
@@ -35,7 +35,7 @@ on:
         required: false
         default: false
         type: boolean
-  # 也支持 tag push 触发 (例如推送 models-v1.0.0 tag)
+  # Also triggered by tag push (e.g., pushing models-v1.0.0 tag)
   push:
     tags:
       - 'models-*'
@@ -51,41 +51,41 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          lfs: true  # 如果模型文件使用 Git LFS
+          lfs: true  # Fetch model files stored with Git LFS
 
       - name: Collect release assets
         id: collect
         run: |
           mkdir -p release_assets
 
-          # 收集模型文件 (如果指定)
+          # Collect model files (if specified)
           if [ -n "${{ inputs.models_path }}" ]; then
             for pattern in ${{ inputs.models_path }}; do
               cp -v $pattern release_assets/ 2>/dev/null || true
             done
           fi
 
-          # 收集配置文件 (如果指定)
+          # Collect config files (if specified)
           if [ -n "${{ inputs.configs_path }}" ]; then
             for pattern in ${{ inputs.configs_path }}; do
               cp -v $pattern release_assets/ 2>/dev/null || true
             done
           fi
 
-          # 如果通过 tag 触发，自动收集 models/ 和 configs/ 目录下的文件
+          # For tag-triggered releases, auto-collect common model/config files
           if [ "${{ github.event_name }}" = "push" ]; then
-            # 收集常见模型文件
+            # Collect model files with common extensions
             find . -maxdepth 3 \( \
               -name "*.pt" -o -name "*.pth" -o -name "*.onnx" \
               -o -name "*.tflite" -o -name "*.engine" \
             \) -exec cp -v {} release_assets/ \; 2>/dev/null || true
           fi
 
-          # 列出收集到的文件
+          # List collected assets
           echo "=== Collected Assets ==="
           ls -la release_assets/ || echo "No assets found"
 
-          # 检查是否有文件
+          # Check if any files were collected
           ASSET_COUNT=$(find release_assets/ -type f | wc -l)
           echo "asset_count=$ASSET_COUNT" >> "$GITHUB_OUTPUT"
 
@@ -101,7 +101,7 @@ jobs:
             TAG="${GITHUB_REF#refs/tags/}"
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
             echo "name=Release $TAG" >> "$GITHUB_OUTPUT"
-            echo "notes=自动发布 - 通过 MapPilot App 云端更新部署到机器人。" >> "$GITHUB_OUTPUT"
+            echo "notes=Auto release — deployable via MapPilot App cloud update." >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -115,14 +115,14 @@ jobs:
 
             ---
 
-            **通过 MapPilot App 部署到机器人:**
-            1. 打开 MapPilot App → 设置 → 云端更新
-            2. 点击「检查更新」
-            3. 选择文件，点击 ☁️ 按钮自动下载并部署
+            **Deploy to robot via MapPilot App:**
+            1. Open MapPilot App -> Settings -> Cloud Update
+            2. Tap "Check for Updates"
+            3. Select the file, tap the cloud button to download and deploy
 
-            **手动部署:**
+            **Manual deploy:**
             ```bash
-            # 下载文件到机器人
+            # Copy the file to the robot
             scp <asset_file> sunrise@<robot_ip>:/home/sunrise/models/
             ```
           files: release_assets/*
