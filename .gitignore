@@ -99,6 +99,7 @@ docs/media/videos/*.gif
 # 鈹€鈹€ AI agent / OMC state 鈹€鈹€
 **/.omc/
 **/.omx/
+.qoder/
 .chat_history
 
 # 鈹€鈹€ Temporary files 鈹€鈹€

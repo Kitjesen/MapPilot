@@ -130,7 +130,6 @@ Pluggable inter-module communication backends:
 | `utils/` | Cross-layer utilities: `calibration_check.py`, `sanitize.py`, `validation.py`, `robustness.py`, `binary_codec.py`, `blackbox_recorder.py`, `scene_mode_detector.py`, `livox_config.py`, `redact.py` |
 | `contracts/` | Contract message definitions for cross-module communication |
 | `introspection/` | System introspection: DOT graph export (`dot.py`), text visualization (`text.py`) |
-| `spec/` | Module-specific configuration specs: `driver.py`, `llm.py`, `memory.py`, `nav.py`, `perception.py`, `planning.py`, `safety.py` |
 | `resource_monitor/` | Background resource usage monitor (`monitor.py`) |
 | `tests/` | 1226+ framework tests (no ROS2 needed) |
 
