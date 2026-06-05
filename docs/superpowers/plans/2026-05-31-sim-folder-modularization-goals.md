@@ -292,7 +292,7 @@ Fresh checks from this pass:
 python -m pytest src/core/tests/test_plugin_seed.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/core/tests/test_server_sim_closure.py::test_server_sim_closure_multifloor_surfaces_pct_runtime_blocker src/core/tests/test_multifloor_sim_validation.py::test_partial_global_plan_is_kept_for_diagnostics_but_not_feasible src/core/tests/test_multifloor_sim_validation.py::test_far_projected_safe_goal_is_not_counted_as_requested_goal -q
 # 10 passed
 
-python -m py_compile src/core/blueprints/stacks/_registry.py src/core/blueprints/stacks/safety.py src/core/blueprints/stacks/lidar.py src/core/blueprints/stacks/gateway.py src/drivers/real/lidar/lidar_module.py src/nav/cmd_vel_mux_module.py src/nav/services/nav_services/geofence_manager_module.py sim/scripts/multifloor_nav_validation.py sim/scripts/server_sim_closure.py
+python -m py_compile src/core/blueprints/stacks/_registry.py src/core/blueprints/stacks/safety.py src/core/blueprints/stacks/lidar.py src/core/blueprints/stacks/gateway.py src/drivers/real/lidar/lidar_module.py src/nav/cmd_vel_mux_module.py src/nav/services/geofence_manager_module.py sim/scripts/multifloor_nav_validation.py sim/scripts/server_sim_closure.py
 # passed
 
 PYTHONPATH=src:. python sim/scripts/large_terrain_nav_validation.py --output-dir artifacts/server_sim_closure/large_terrain --planners pct,astar --json-out artifacts/server_sim_closure/large_terrain/report.json
@@ -521,7 +521,7 @@ Latest safe validation evidence for G16:
 python -m pytest src/core/tests/test_stack_registry_resolution.py::test_maps_stack_prefers_registered_modules_with_canonical_aliases src/core/tests/test_stack_registry_resolution.py::test_planner_stack_prefers_registered_modules_with_canonical_aliases src/core/tests/test_stack_registry_resolution.py::test_memory_stack_prefers_registered_modules_with_canonical_aliases -q
 # RED before implementation: 3 failed because maps/planner/memory ignored registry replacements.
 
-python -m py_compile src/core/blueprints/stacks/maps.py src/core/blueprints/stacks/planner.py src/core/blueprints/stacks/memory.py src/nav/services/nav_services/map_manager_module.py src/nav/ros2_grid_bridge_module.py src/core/plugin_seed.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py
+python -m py_compile src/core/blueprints/stacks/maps.py src/core/blueprints/stacks/planner.py src/core/blueprints/stacks/memory.py src/nav/services/map_manager_module.py src/nav/ros2_grid_bridge_module.py src/core/plugin_seed.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py
 # passed
 
 python -m pytest src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py -q

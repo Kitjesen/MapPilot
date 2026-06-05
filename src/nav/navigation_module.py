@@ -764,11 +764,11 @@ class NavigationModule(Module, layer=5):
                 resolution=data.get("resolution", 0.2),
                 origin=data.get("origin"),
             )
-        if (self._get_state() in (MissionState.EXECUTING, MissionState.PATROLLING,
-                            MissionState.FAILED)
+        if (self._get_state() in (MissionState.EXECUTING, MissionState.PATROLLING)
                 and self._goal is not None
                 and not self._using_external_strategy_path
                 and self._replan_on_costmap_update
+                and not self._is_recovery_active()
                 and time.time() - self._last_costmap_replan_time > 3.0):
             self._last_costmap_replan_time = time.time()
             self._plan()
@@ -1198,6 +1198,7 @@ class NavigationModule(Module, layer=5):
                     return
             self._publish_motion_stop()
             self._set_state(MissionState.SUCCESS)
+            return
 
         elif status.event == EV_WAYPOINT_REACHED:
             self.adapter_status.publish({
@@ -1225,8 +1226,9 @@ class NavigationModule(Module, layer=5):
                 self._failure_reason = "stuck after max replans"
                 self._set_state(MissionState.STUCK)
 
-        # Mission timeout
-        if (self._mission_start_time > 0
+        # Mission timeout — only applies while mission is active
+        if (self._get_state() in (MissionState.EXECUTING, MissionState.PATROLLING)
+                and self._mission_start_time > 0
                 and time.time() - self._mission_start_time > self._mission_timeout):
             self._failure_reason = f"mission timeout ({self._mission_timeout}s)"
             self._set_state(MissionState.FAILED)
@@ -1398,6 +1400,14 @@ class NavigationModule(Module, layer=5):
 
         # Stop
         _finish(True)
+
+    def _is_recovery_active(self) -> bool:
+        """True if a recovery-motion thread is currently driving cmd_vel."""
+        with self._recovery_lock:
+            return bool(
+                self._recovery_thread is not None
+                and self._recovery_thread.is_alive()
+            )
 
     def _finish_recovery_motion(self, post_action: str, reason: str) -> None:
         if post_action == "none":
@@ -1821,7 +1831,7 @@ class NavigationModule(Module, layer=5):
                     self._defer_empty_path_failure(str(exc), planned_state)
                     return
                 else:
-                    logger.error("Planning failed: %s", exc)
+                    logger.exception("Planning failed: %s", exc)
                     self._failure_reason = str(exc)
                     self._set_state(MissionState.FAILED)
                     return

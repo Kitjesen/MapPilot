@@ -182,8 +182,8 @@ Note: `calibration/` and `sim/` live at repo root (not under `src/`). See [Senso
 | `src/slam/slam_module.py` | SLAM managed mode (fastlio2/pointlio/localizer) |
 | `src/slam/slam_bridge_module.py` | ROS2 SLAM bridge mode (map鈫抩dom TF transform point) |
 | `src/gateway/gateway_module.py` | FastAPI HTTP/WS/SSE + drift watchdog + save hooks |
-| `src/nav/services/nav_services/dynamic_filter.py` | DUFOMap wrapper (subprocess repack/run/backup) |
-| `src/nav/services/nav_services/map_manager_module.py` | Save pipeline: PGO →DUFOMap →tomogram →occupancy |
+| `src/nav/services/dynamic_filter.py` | DUFOMap wrapper (subprocess repack/run/backup) |
+| `src/nav/services/map_manager_module.py` | Save pipeline: PGO →DUFOMap →tomogram →occupancy |
 | `scripts/lingtu` | **Unified Operations CLI** (status/watch/map/nav/svc/log/health) |
 | `scripts/build_dufomap.sh` | Idempotent aarch64 build of DUFOMap (apt + patch + cmake) |
 | `scripts/dufomap_offline_test.py` | Standalone validator: run DUFOMap on existing map, print stats |

@@ -61,7 +61,7 @@ The next refactor target is:
 - keep `sim/scripts/mujoco_fastlio2_live_gate.py` as a thin launcher/evidence
   collector/assertion layer;
 - keep same-source map and tomogram writing in
-  `src/nav/services/nav_services/same_source_map_artifacts.py` so the gate only
+  `src/nav/services/same_source_map_artifacts.py` so the gate only
   calls a reusable service;
 - keep raw MuJoCo LiDAR/IMU message conversion in
   `src/drivers/sim/mujoco_sensor_bridge.py` so the gate only calls a reusable
@@ -465,7 +465,7 @@ Exit criteria:
 Latest accepted evidence:
 
 - Code now saves same-source map artifacts by default in
-  `src/nav/services/nav_services/same_source_map_artifacts.py`, with the gate
+  `src/nav/services/same_source_map_artifacts.py`, with the gate
   acting as the caller/evidence collector.
 - Raw MuJoCo LiDAR/IMU ROS message conversion now lives in
   `src/drivers/sim/mujoco_sensor_bridge.py`; the gate imports that bridge

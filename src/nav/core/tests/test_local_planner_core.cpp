@@ -42,7 +42,18 @@ TEST(AngDiffDeg, WrapAround) {
   EXPECT_NEAR(angDiffDeg(350.0, 10.0), 20.0, 1e-10);
 }
 
+TEST(AngDiffDeg, MultipleTurns) {
+  EXPECT_NEAR(angDiffDeg(0.0, 720.0), 0.0, 1e-10);
+  EXPECT_NEAR(angDiffDeg(-450.0, 90.0), 180.0, 1e-10);
+}
+
 // ── worldToVoxel ──
+
+TEST(VoxelGridParams, DefaultsMatchPlannerGrid) {
+  VoxelGridParams g;
+  EXPECT_DOUBLE_EQ(g.gridVoxelOffsetY, 4.5);
+  EXPECT_EQ(g.gridVoxelNumY, 451);
+}
 
 TEST(WorldToVoxel, CenterPoint) {
   VoxelGridParams g;

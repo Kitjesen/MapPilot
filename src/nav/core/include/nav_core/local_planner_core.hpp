@@ -66,8 +66,7 @@ inline const RotLUT& rotLUT() {
 // ── 角度差 (degree, 0~180) ──
 
 inline double angDiffDeg(double a, double b) {
-  double d = std::fabs(a - b);
-  if (d > 360.0) d -= 360.0;
+  double d = std::fmod(std::fabs(a - b), 360.0);
   if (d > 180.0) d = 360.0 - d;
   return d;
 }
@@ -79,10 +78,10 @@ inline double angDiffDeg(double a, double b) {
 struct VoxelGridParams {
   double gridVoxelSize    = 0.02;
   double gridVoxelOffsetX = 3.2;
-  double gridVoxelOffsetY = 5.25;
+  double gridVoxelOffsetY = 4.5;
   double searchRadius     = 0.45;
   int    gridVoxelNumX    = 161;   // 默认值, 启动时从 paths 文件读取
-  int    gridVoxelNumY    = 531;
+  int    gridVoxelNumY    = 451;
 };
 
 inline bool worldToVoxel(double x2, double y2,

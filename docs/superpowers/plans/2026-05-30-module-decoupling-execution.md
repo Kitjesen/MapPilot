@@ -26,21 +26,21 @@ Decoupling is not a substitute for algorithm performance. Treat algorithm effici
 - Create `src/core/same_source_map_artifacts.py`: canonical shared saved-map artifact contract used by `core`, `nav`, and `gateway`.
 - Create `src/core/dynamic_filter.py`: canonical DUFOMap save-time filtering helper used by map save paths.
 - Create `src/core/yaml_helpers.py`: canonical YAML/JSON persistence helper used by diagnostics and nav services.
-- Modify `src/nav/services/nav_services/same_source_map_artifacts.py`: keep a backward-compatible shim for existing imports.
-- Modify `src/nav/services/nav_services/dynamic_filter.py`: keep a backward-compatible shim for existing imports and monkeypatch paths.
-- Modify `src/nav/services/nav_services/yaml_helpers.py`: keep a backward-compatible shim for existing imports.
+- Modify `src/nav/services/same_source_map_artifacts.py`: keep a backward-compatible shim for existing imports.
+- Modify `src/nav/services/dynamic_filter.py`: keep a backward-compatible shim for existing imports and monkeypatch paths.
+- Modify `src/nav/services/yaml_helpers.py`: keep a backward-compatible shim for existing imports.
 - Modify `src/nav/global_planner_service.py`: import the shared artifact contract from `core`.
-- Modify `src/nav/services/nav_services/map_manager_module.py`: import the shared artifact contract from `core`.
+- Modify `src/nav/services/map_manager_module.py`: import the shared artifact contract from `core`.
 - Modify `src/gateway/routes/maps.py`: remove direct `gateway -> nav` import.
 - Modify `src/gateway/routes/session.py`: remove direct `gateway -> nav` import.
 - Modify `src/gateway/routes/diagnostics.py`: remove lazy direct `gateway -> nav` import.
 - Modify `src/gateway/services/map_safety.py`: consume the dynamic filter helper from `core`.
 - Modify `src/gateway/gateway_module.py`: remove stale lazy `gateway -> nav` dynamic-filter import.
 - Modify `src/core/product_field_check.py`: avoid `core -> nav` dependency for saved-map artifact validation.
-- Modify `src/nav/services/nav_services/map_manager_module.py`: avoid `nav -> gateway` dynamic-filter helper import.
-- Modify `src/nav/services/nav_services/task_scheduler_module.py`: import YAML helpers from `core`.
-- Modify `src/nav/services/nav_services/patrol_manager_module.py`: import YAML helpers from `core`.
-- Modify `src/nav/services/nav_services/geofence_manager_module.py`: import YAML helpers from `core`.
+- Modify `src/nav/services/map_manager_module.py`: avoid `nav -> gateway` dynamic-filter helper import.
+- Modify `src/nav/services/task_scheduler_module.py`: import YAML helpers from `core`.
+- Modify `src/nav/services/patrol_manager_module.py`: import YAML helpers from `core`.
+- Modify `src/nav/services/geofence_manager_module.py`: import YAML helpers from `core`.
 
 ## Task 1: Record The Boundary Guard Before Fixing It
 
@@ -114,14 +114,14 @@ Observed: FAIL showing six direct `gateway -> nav` imports across saved-map arti
 - Create: `src/core/same_source_map_artifacts.py`
 - Create: `src/core/dynamic_filter.py`
 - Create: `src/core/yaml_helpers.py`
-- Modify: `src/nav/services/nav_services/same_source_map_artifacts.py`
-- Modify: `src/nav/services/nav_services/dynamic_filter.py`
-- Modify: `src/nav/services/nav_services/yaml_helpers.py`
+- Modify: `src/nav/services/same_source_map_artifacts.py`
+- Modify: `src/nav/services/dynamic_filter.py`
+- Modify: `src/nav/services/yaml_helpers.py`
 - Modify: `src/nav/global_planner_service.py`
-- Modify: `src/nav/services/nav_services/map_manager_module.py`
-- Modify: `src/nav/services/nav_services/task_scheduler_module.py`
-- Modify: `src/nav/services/nav_services/patrol_manager_module.py`
-- Modify: `src/nav/services/nav_services/geofence_manager_module.py`
+- Modify: `src/nav/services/map_manager_module.py`
+- Modify: `src/nav/services/task_scheduler_module.py`
+- Modify: `src/nav/services/patrol_manager_module.py`
+- Modify: `src/nav/services/geofence_manager_module.py`
 - Modify: `src/gateway/routes/maps.py`
 - Modify: `src/gateway/routes/session.py`
 - Modify: `src/gateway/routes/diagnostics.py`
@@ -134,9 +134,9 @@ Observed: FAIL showing six direct `gateway -> nav` imports across saved-map arti
 Copy the current contents of these nav-local shared helpers to core without changing behavior:
 
 ```text
-src/nav/services/nav_services/same_source_map_artifacts.py -> src/core/same_source_map_artifacts.py
-src/nav/services/nav_services/dynamic_filter.py -> src/core/dynamic_filter.py
-src/nav/services/nav_services/yaml_helpers.py -> src/core/yaml_helpers.py
+src/nav/services/same_source_map_artifacts.py -> src/core/same_source_map_artifacts.py
+src/nav/services/dynamic_filter.py -> src/core/dynamic_filter.py
+src/nav/services/yaml_helpers.py -> src/core/yaml_helpers.py
 ```
 
 - [x] **Step 2: Replace the old nav modules with compatibility shims**

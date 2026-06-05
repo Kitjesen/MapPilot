@@ -15,6 +15,7 @@
 
 import json
 import logging
+from typing import Any
 
 import pytest
 
@@ -574,6 +575,79 @@ class TestBlueprint:
         src.pose.publish(p)
         assert sink.pose.latest is p
 
+    def test_auto_wire_typed_out_to_any_in(self):
+        """typing.Any input accepts a typed output with the same port name."""
+
+        class TypedSource(Module, layer=1):
+            data: Out[Vector3]
+
+        class AnySink(Module, layer=2):
+            data: In[Any]
+
+        system = (
+            Blueprint()
+            .add(TypedSource)
+            .add(AnySink)
+            .auto_wire()
+            .build()
+        )
+
+        msg = Vector3(1.0, 2.0, 3.0)
+        system.get_module("TypedSource").data.publish(msg)
+        assert system.get_module("AnySink").data.latest is msg
+
+    def test_auto_wire_any_out_to_typed_in(self):
+        """typing.Any output accepts a typed input with the same port name."""
+
+        class AnySource(Module, layer=1):
+            data: Out[Any]
+
+        class TypedSink(Module, layer=2):
+            data: In[Vector3]
+
+        system = (
+            Blueprint()
+            .add(AnySource)
+            .add(TypedSink)
+            .auto_wire()
+            .build()
+        )
+
+        msg = Vector3(4.0, 5.0, 6.0)
+        system.get_module("AnySource").data.publish(msg)
+        assert system.get_module("TypedSink").data.latest is msg
+
+    def test_auto_wire_prefers_exact_type_over_any(self):
+        """Exact type matches stay preferred when Any outputs are also present."""
+
+        class TypedSource(Module, layer=1):
+            data: Out[Vector3]
+
+        class AnySource(Module, layer=1):
+            data: Out[Any]
+
+        class TypedSink(Module, layer=2):
+            data: In[Vector3]
+
+        system = (
+            Blueprint()
+            .add(TypedSource, alias="typed")
+            .add(AnySource, alias="any_source")
+            .add(TypedSink)
+            .auto_wire()
+            .build()
+        )
+
+        any_msg = Vector3(9.0, 9.0, 9.0)
+        typed_msg = Vector3(1.0, 2.0, 3.0)
+        sink = system.get_module("TypedSink")
+
+        system.get_module("any_source").data.publish(any_msg)
+        assert sink.data.latest is None
+
+        system.get_module("typed").data.publish(typed_msg)
+        assert sink.data.latest is typed_msg
+
     def test_auto_wire_no_self_connect(self):
         """auto_wire 不会自连接 (同一模块的 Out→In)。"""
         system = (
@@ -609,6 +683,39 @@ class TestBlueprint:
         sg1 = SceneGraph(objects=[Detection3D(label="from_src1")])
         src1.scene_graph.publish(sg1)
         assert sink.scene_graph.latest is sg1
+
+    def test_worker_build_failure_shuts_down_coordinator(self, monkeypatch):
+        """Worker-mode build failures release the started coordinator."""
+
+        class WorkerModule(Module, layer=1):
+            _run_in_worker = True
+            data: Out[Vector3]
+
+        instances = []
+
+        class FakeCoordinator:
+            def __init__(self, n_workers):
+                self.n_workers = n_workers
+                self.shutdown_called = False
+                instances.append(self)
+
+            def start(self):
+                pass
+
+            def deploy(self, *args, **kwargs):
+                raise RuntimeError("deploy failed")
+
+            def shutdown(self):
+                self.shutdown_called = True
+
+        import core.coordinator as coordinator_mod
+
+        monkeypatch.setattr(coordinator_mod, "ModuleCoordinator", FakeCoordinator)
+        with pytest.raises(RuntimeError, match="deploy failed"):
+            Blueprint().add(WorkerModule).build(n_workers=1)
+
+        assert instances
+        assert instances[0].shutdown_called
 
     def test_build_with_custom_transport(self):
         """build 接受自定义 Transport。"""

@@ -77,7 +77,15 @@ Smaller voxel = finer detail, more CPU. On S100P aarch64, 0.1 is the sweet spot.
 local_planner:
   min_path_range: 2.5     # m, MUST be >= path_follower.max_look_ahead
   adjacent_range: 3.5     # m, obstacle consideration radius
+  path_scale: 1.0
+  min_path_scale: 0.75
+  path_scale_step: 0.25
+  path_range_step: 0.5
 ```
+
+`adjacent_range` controls the local point-cloud crop. `path_scale*` changes the
+candidate-path bank scale, while `path_range_step` shortens the horizon after a
+blocked attempt. Keep `min_path_range` large enough for the follower lookahead.
 
 ### Cost weights
 
@@ -85,10 +93,14 @@ local_planner:
 local_planner:
   dir_weight: 0.02        # higher -> prefers straight path
   slope_weight: 0.0       # 0 disables; 3-6 for outdoor slopes
+  point_per_path_thre: 2  # obstacle hits before a path is blocked
   use_cost: true          # enable terrain cost (requires terrain analysis)
 ```
 
 `slope_weight` was added so outdoor courses penalize ramps; defaults to 0 indoor.
+The `nanobind` backend reports the applied values under
+`LocalPlannerModule.health()["local_planner"]["effective_params"]`; use that
+instead of assuming the YAML reached the active backend.
 
 ---
 

@@ -4905,7 +4905,7 @@ def run_gate(
         "src/drivers/sim/mujoco_lingtu_stack.py",
         "src/drivers/sim/mujoco_live_runtime.py",
         "src/drivers/sim/mujoco_sensor_bridge.py",
-        "src/nav/services/nav_services/same_source_map_artifacts.py",
+        "src/nav/services/same_source_map_artifacts.py",
         "src/slam/fastlio2_live_bridge.py",
         "src/slam/fastlio2_nav_bridge.py",
         "src/slam/slam_bridge_module.py",

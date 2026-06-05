@@ -79,7 +79,7 @@ DUFOMap needs **per-frame poses + per-frame scans** for ray-casting; a fused
 - `<map>/patches/*.pcd` — body-frame keyframe scans (~1500 pts each)
 - `<map>/poses.txt` — `patch.pcd tx ty tz qw qx qy qz` per line
 
-`src/nav/services/nav_services/dynamic_filter.py:refilter_map` does:
+`src/nav/services/dynamic_filter.py:refilter_map` does:
 
 1. Parse `poses.txt`.
 2. For each patch: read points, rewrite the PCD `VIEWPOINT` header to the
@@ -97,7 +97,7 @@ Both save paths run Phase 2 unconditionally:
 | Caller | File |
 |--------|------|
 | Web button `POST /api/v1/map/save` | `src/gateway/gateway_module.py` |
-| MCP / programmatic save | `src/nav/services/nav_services/map_manager_module.py:_map_save` |
+| MCP / programmatic save | `src/nav/services/map_manager_module.py:_map_save` |
 
 ### Build script
 
@@ -155,8 +155,8 @@ Won't pursue unless Phase 1 + 2 prove insufficient.
 | File | Role |
 |------|------|
 | `src/gateway/gateway_module.py` (`_on_map_cloud`, `/api/v1/map/save`) | Phase 1 voxel voting + Phase 2 entry on the web path |
-| `src/nav/services/nav_services/map_manager_module.py:_map_save` | Phase 2 entry on the MCP path |
-| `src/nav/services/nav_services/dynamic_filter.py` | DUFOMap subprocess wrapper, atomic overwrite, backup |
+| `src/nav/services/map_manager_module.py:_map_save` | Phase 2 entry on the MCP path |
+| `src/nav/services/dynamic_filter.py` | DUFOMap subprocess wrapper, atomic overwrite, backup |
 | `scripts/build_dufomap.sh` | Idempotent aarch64 build |
 | `scripts/dufomap_offline_test.py` | Standalone offline validator |
 | `config/dufomap.toml` | LingTu-tuned DUFOMap config |

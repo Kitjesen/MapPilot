@@ -89,7 +89,7 @@ class DeviceManager(Module, layer=0):
             try:
                 d.close()
             except Exception:
-                pass
+                logger.debug("DeviceManager: error closing device %s", d.id, exc_info=True)
         super().stop()
 
     # ── Spec loading ──────────────────────────────────────────────────

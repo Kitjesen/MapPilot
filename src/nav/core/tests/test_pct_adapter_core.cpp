@@ -25,8 +25,7 @@ TEST(DownsamplePath, EmptyInput) {
 TEST(DownsamplePath, SinglePoint) {
   Path single = {makePose(1.0, 2.0, 3.0)};
   auto result = downsamplePath(single, 0.5);
-  // front + back (same point) = 2
-  EXPECT_EQ(result.size(), 2u);
+  EXPECT_EQ(result.size(), 1u);
 }
 
 TEST(DownsamplePath, DenseToSparse) {
@@ -65,6 +64,17 @@ TEST(DownsamplePath, AlwaysIncludesEndpoint) {
   // 首点 + 终点 (没有中间点满足距离)
   EXPECT_EQ(result.size(), 2u);
   EXPECT_DOUBLE_EQ(result.back().position.x, 0.9);
+}
+
+TEST(DownsamplePath, DoesNotDuplicateSampledEndpoint) {
+  Path path = {
+      makePose(0.0, 0.0, 0.0),
+      makePose(0.5, 0.0, 0.0),
+      makePose(1.0, 0.0, 0.0),
+  };
+  auto result = downsamplePath(path, 0.5);
+  EXPECT_EQ(result.size(), 3u);
+  EXPECT_DOUBLE_EQ(result.back().position.x, 1.0);
 }
 
 // ── WaypointTracker ──

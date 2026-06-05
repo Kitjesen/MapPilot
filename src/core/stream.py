@@ -104,25 +104,27 @@ class Out(Generic[T]):
             try:
                 cb(msg)
             except Exception:
-                self._publish_errors += 1
-                if now - self._last_error_log_ts >= 5.0:
-                    self._last_error_log_ts = now
-                    logger.exception(
-                        "Out[%s] callback error (total errors: %d)",
-                        self._name, self._publish_errors,
-                    )
+                with self._lock:
+                    self._publish_errors += 1
+                    if now - self._last_error_log_ts >= 5.0:
+                        self._last_error_log_ts = now
+                        logger.exception(
+                            "Out[%s] callback error (total errors: %d)",
+                            self._name, self._publish_errors,
+                        )
         # External transport
         if self._transport and self._transport_topic:
             try:
                 self._transport.publish(self._transport_topic, msg)
             except Exception:
-                self._publish_errors += 1
-                if now - self._last_error_log_ts >= 5.0:
-                    self._last_error_log_ts = now
-                    logger.exception(
-                        "Out[%s] transport publish error (total errors: %d)",
-                        self._name, self._publish_errors,
-                    )
+                with self._lock:
+                    self._publish_errors += 1
+                    if now - self._last_error_log_ts >= 5.0:
+                        self._last_error_log_ts = now
+                        logger.exception(
+                            "Out[%s] transport publish error (total errors: %d)",
+                            self._name, self._publish_errors,
+                        )
 
     # -- public API ----------------------------------------------------------------
 
@@ -324,6 +326,7 @@ class In(Generic[T]):
             "throttle" — max N messages/sec (interval=seconds between delivers)
             "sample"   — deliver every Nth message (n=skip count)
             "buffer"   — collect N messages, deliver as batch list (size=batch size)
+            "async"    — deliver on a single-worker background executor
 
         Usage in Module.setup()::
 
@@ -354,102 +357,116 @@ class In(Generic[T]):
     def _deliver(self, msg: T) -> None:
         """Deliver a message (called by Out callback or Transport)."""
         now = time.time()
-        self._msg_count += 1
-        self._last_ts = now
-        self._latest = msg
+        with self._lock:
+            self._msg_count += 1
+            self._last_ts = now
+            self._latest = msg
 
-        # Rate estimation (2-second sliding window)
-        self._rate_window_count += 1
-        elapsed = now - self._rate_window_start
-        if elapsed >= 2.0:
-            self._rate_hz = self._rate_window_count / elapsed if elapsed > 0 else 0.0
-            self._rate_window_start = now
-            self._rate_window_count = 0
+            # Rate estimation (2-second sliding window)
+            self._rate_window_count += 1
+            elapsed = now - self._rate_window_start
+            if elapsed >= 2.0:
+                self._rate_hz = self._rate_window_count / elapsed if elapsed > 0 else 0.0
+                self._rate_window_start = now
+                self._rate_window_count = 0
 
         if not self._callback:
             return
 
         # -- Policy: async (fire-and-forget on thread pool) --
         if self._policy == "async":
-            self._deliver_count += 1
+            with self._lock:
+                self._deliver_count += 1
             self._executor.submit(self._callback, msg)
             return
 
         # -- Policy: latest (atomic lock — thread-safe drop if busy) --
         if self._policy == "latest":
             if not self._deliver_lock.acquire(blocking=False):
-                self._drop_count += 1
+                with self._lock:
+                    self._drop_count += 1
                 return
-            self._deliver_count += 1
+            with self._lock:
+                self._deliver_count += 1
             t0 = time.time()
             try:
                 self._callback(msg)
             except Exception:
-                self._callback_errors += 1
+                with self._lock:
+                    self._callback_errors += 1
                 logger.exception("In[%s] callback error", self._name)
             finally:
                 dt_ms = (time.time() - t0) * 1000.0
-                self._total_callback_ms += dt_ms
-                if dt_ms > self._max_callback_ms:
-                    self._max_callback_ms = dt_ms
-                self._record_latency(dt_ms)
+                with self._lock:
+                    self._total_callback_ms += dt_ms
+                    if dt_ms > self._max_callback_ms:
+                        self._max_callback_ms = dt_ms
+                    self._record_latency(dt_ms)
                 self._deliver_lock.release()
             return
 
         # -- Policy: throttle (rate limit) --
         if self._policy == "throttle":
-            if now - self._last_deliver_ts < self._throttle_interval:
-                self._drop_count += 1
-                return
-            self._last_deliver_ts = now
+            with self._lock:
+                if now - self._last_deliver_ts < self._throttle_interval:
+                    self._drop_count += 1
+                    return
+                self._last_deliver_ts = now
 
         # -- Policy: sample (every Nth) --
         if self._policy == "sample":
-            self._sample_counter += 1
-            if self._sample_counter < self._sample_n:
-                self._drop_count += 1
-                return
-            self._sample_counter = 0
+            with self._lock:
+                self._sample_counter += 1
+                if self._sample_counter < self._sample_n:
+                    self._drop_count += 1
+                    return
+                self._sample_counter = 0
 
         # -- Policy: buffer (collect batch) --
         if self._policy == "buffer":
-            self._buffer.append(msg)
-            if len(self._buffer) < self._buffer_size:
-                return
-            batch = list(self._buffer)
-            self._buffer.clear()
-            self._deliver_count += 1
+            with self._lock:
+                self._buffer.append(msg)
+                if len(self._buffer) < self._buffer_size:
+                    return
+                batch = list(self._buffer)
+                self._buffer.clear()
+                self._deliver_count += 1
             self._in_callback = True
             t0 = time.time()
             try:
                 self._callback(batch)
             except Exception:
-                self._callback_errors += 1
+                with self._lock:
+                    self._callback_errors += 1
                 logger.exception("In[%s] buffer callback error", self._name)
             finally:
                 dt_ms = (time.time() - t0) * 1000.0
-                self._total_callback_ms += dt_ms
-                if dt_ms > self._max_callback_ms:
-                    self._max_callback_ms = dt_ms
-                self._record_latency(dt_ms)
+                with self._lock:
+                    self._total_callback_ms += dt_ms
+                    if dt_ms > self._max_callback_ms:
+                        self._max_callback_ms = dt_ms
+                    self._record_latency(dt_ms)
                 self._in_callback = False
             return
 
         # -- Policy: all / latest / throttle / sample → deliver single --
-        self._deliver_count += 1
+        with self._lock:
+            self._deliver_count += 1
         self._in_callback = True
         t0 = time.time()
         try:
             self._callback(msg)
         except Exception:
-            self._callback_errors += 1
+            with self._lock:
+                self._callback_errors += 1
             logger.exception("In[%s] callback error", self._name)
         finally:
             dt_ms = (time.time() - t0) * 1000.0
-            self._total_callback_ms += dt_ms
-            if dt_ms > self._max_callback_ms:
-                self._max_callback_ms = dt_ms
-            self._record_latency(dt_ms)
+            with self._lock:
+                self._total_callback_ms += dt_ms
+                if dt_ms > self._max_callback_ms:
+                    self._max_callback_ms = dt_ms
+                self._record_latency(dt_ms)
             self._in_callback = False
 
     # -- properties ----------------------------------------------------------------
@@ -486,7 +503,7 @@ class In(Generic[T]):
 
     @property
     def policy(self) -> str:
-        """Delivery policy: "all" or "latest"."""
+        """Delivery policy — see set_policy() for supported values."""
         return self._policy
 
     @property

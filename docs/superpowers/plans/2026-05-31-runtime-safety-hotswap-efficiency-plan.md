@@ -40,7 +40,7 @@
 
 - `src/core/blueprints/full_stack_wiring.py`: Owns explicit safety-critical full-stack wires.
 - `src/core/tests/test_profile_graph_snapshots.py`: Locks explicit profile graph edges.
-- `src/nav/services/nav_services/geofence_manager_module.py`: Owns geofence intrusion detection and stop publication.
+- `src/nav/services/geofence_manager_module.py`: Owns geofence intrusion detection and stop publication.
 - `src/gateway/auth.py`: Owns API-key middleware behavior.
 - `src/gateway/mcp_server.py`: Owns MCP server binding and middleware configuration.
 - `src/nav/safety_ring_module.py`: Owns L0 safety state and stop publication.

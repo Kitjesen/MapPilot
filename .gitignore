@@ -54,6 +54,12 @@ pytest_tmp/
 *.out
 src/nav/core/build_nb*/
 
+# C++ build artifacts in global_planning
+src/global_planning/**/build/
+src/global_planning/**/CMakeFiles/
+src/global_planning/**/*.o
+src/global_planning/**/*.a
+
 # 鈹€鈹€ Model weights (large binaries 鈥?distribute via release-models.yml) 鈹€鈹€
 *.pt
 *.pth
@@ -160,5 +166,7 @@ generate_paper_figures*.py
 src/global_planning/pct_planner/planner/lib/3rdparty/
 .claude/worktrees/
 mobileclip_blt.ts
+src/mobileclip_blt.ts
+src/yoloe-11l-seg.pt
 web/node_modules
 .claude/

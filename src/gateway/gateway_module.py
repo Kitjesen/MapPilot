@@ -1393,15 +1393,6 @@ class GatewayModule(Module, layer=6):
                 "degeneracy_count": getattr(self, "_degeneracy_count", 0),
             })
 
-    @staticmethod
-    def _voxel_downsample(pts: np.ndarray, voxel_size: float) -> np.ndarray:
-        """Voxel grid downsample: keep one point per cell (by first occurrence)."""
-        if len(pts) == 0:
-            return pts
-        voxels = np.floor(pts[:, :3] / voxel_size).astype(np.int32)
-        _, unique_idx = np.unique(voxels, axis=0, return_index=True)
-        return pts[np.sort(unique_idx)]
-
     def _on_icp_quality(self, q: float) -> None:
         try:
             self._icp_quality = float(q)
@@ -1478,16 +1469,19 @@ class GatewayModule(Module, layer=6):
                 if not os.path.isfile(pcd_path):
                     logger.warning("auto-relocalize: map pcd missing: %s", pcd_path)
                     return
-                env = (
+                reloc_env = os.environ.copy()
+                reloc_env["RMW_IMPLEMENTATION"] = "rmw_cyclonedds_cpp"
+                reloc_env["LINGTU_PCD_PATH"] = pcd_path
+                reloc_env["LINGTU_RELOC_X"] = str(x)
+                reloc_env["LINGTU_RELOC_Y"] = str(y)
+                reloc_env["LINGTU_RELOC_YAW"] = str(yaw)
+                cmd = (
                     "source /opt/ros/humble/setup.bash && "
                     "source ~/data/SLAM/navigation/install/setup.bash 2>/dev/null; "
-                    "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && "
-                )
-                cmd = (
-                    env
-                    + f"ros2 service call /nav/relocalize interface/srv/Relocalize "
-                      f"\"{{pcd_path: '{pcd_path}', x: {x}, y: {y}, z: 0.0, "
-                      f"yaw: {yaw}, pitch: 0.0, roll: 0.0}}\""
+                    'ros2 service call /nav/relocalize interface/srv/Relocalize '
+                    '"{pcd_path: \'$LINGTU_PCD_PATH\', x: $LINGTU_RELOC_X, '
+                    'y: $LINGTU_RELOC_Y, z: 0.0, '
+                    'yaw: $LINGTU_RELOC_YAW, pitch: 0.0, roll: 0.0}"'
                 )
                 r = subprocess.run(
                     ["bash", "-c", cmd],
@@ -1496,6 +1490,7 @@ class GatewayModule(Module, layer=6):
                     encoding="utf-8",
                     errors="replace",
                     timeout=20,
+                    env=reloc_env,
                 )
                 ok = "success=True" in r.stdout
                 logger.info("auto-relocalize: map=%s pose=(%.2f,%.2f,yaw=%.2f) ok=%s",
@@ -1915,9 +1910,11 @@ class GatewayModule(Module, layer=6):
     @staticmethod
     def _voxel_downsample(pts: np.ndarray, voxel: float) -> np.ndarray:
         """Fast numpy voxel grid downsample."""
+        if len(pts) == 0:
+            return pts
         keys = (pts[:, :3] / voxel).astype(np.int32)
         _, idx = np.unique(keys, axis=0, return_index=True)
-        return pts[idx]
+        return pts[np.sort(idx)]
 
     def _pack_voxel_keys(self, pts_xyz: np.ndarray) -> np.ndarray:
         """Pack (x,y,z) voxel coords into int64 keys for dict lookup.

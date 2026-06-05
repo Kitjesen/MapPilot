@@ -39,7 +39,7 @@ DUFOMAP_BIN = os.environ.get(
 
 def _default_config_path() -> str:
     """Prefer project's config/dufomap.toml (Livox-tuned), fall back to upstream."""
-    # Walk up from this file (src/nav/services/nav_services/) to repo root,
+    # Walk up from this file (src/nav/services/) to repo root,
     # then check config/dufomap.toml.
     here = os.path.dirname(os.path.abspath(__file__))
     for _ in range(6):

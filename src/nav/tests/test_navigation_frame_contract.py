@@ -473,6 +473,8 @@ def test_navigation_patrol_recovery_from_failed_empty_path_keeps_patrolling():
     assert nav._state == "FAILED"
     assert nav._patrol_index == 0
 
+    # After Bug 3 fix: FAILED state does NOT auto-recover on costmap update.
+    # Patrol must be explicitly re-started with a new goal.
     nav._last_costmap_replan_time = 0.0
     nav._on_costmap({
         "grid": np.zeros((10, 10), dtype=np.int8),
@@ -481,18 +483,9 @@ def test_navigation_patrol_recovery_from_failed_empty_path_keeps_patrolling():
         "frame_id": "map",
     })
 
-    assert planner.calls == 3
-    assert nav._state == "PATROLLING"
+    assert planner.calls == 2  # unchanged — no auto-recovery from FAILED
+    assert nav._state == "FAILED"
     assert nav._patrol_index == 0
-
-    nav._on_odom(Odometry(
-        pose=Pose(position=Vector3(1.0, 0.0, 0.0), orientation=Quaternion()),
-        frame_id="map",
-    ))
-
-    assert nav._state == "PATROLLING"
-    assert nav._patrol_index == 1
-    assert np.allclose(nav._goal, np.array([2.0, 0.0, 0.0]))
 
 
 def test_navigation_defers_unreachable_safe_goal_until_costmap_retry_succeeds():

@@ -21,6 +21,7 @@ namespace nav_core {
 
 inline Path downsamplePath(const Path& input, double minDist) {
   if (input.empty()) return {};
+  if (input.size() == 1) return input;
 
   Path result;
   result.reserve(input.size());
@@ -35,8 +36,10 @@ inline Path downsamplePath(const Path& input, double minDist) {
     }
   }
 
-  // 始终包含终点 (pct_path_adapter.cpp:146)
-  result.push_back(input.back());
+  // Always include a distinct endpoint, but do not duplicate an already accepted endpoint.
+  if (distance3D(result.back().position, input.back().position) > 1e-9) {
+    result.push_back(input.back());
+  }
   return result;
 }
 

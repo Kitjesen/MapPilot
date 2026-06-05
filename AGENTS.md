@@ -198,8 +198,8 @@ profile.
 | `src/nav/global_planner_service.py` | A*/PCT backend dispatch and safe-goal search |
 | `src/nav/safety_ring_module.py` | safety evaluator and reflexes |
 | `src/nav/cmd_vel_mux_module.py` | priority-based velocity arbitration |
-| `src/nav/services/nav_services/map_manager_module.py` | map lifecycle: save/use/build/delete |
-| `src/nav/services/nav_services/dynamic_filter.py` | DUFOMap subprocess wrapper |
+| `src/nav/services/map_manager_module.py` | map lifecycle: save/use/build/delete |
+| `src/nav/services/dynamic_filter.py` | DUFOMap subprocess wrapper |
 | `src/semantic/planner/semantic_planner/goal_resolver.py` | fast/slow goal resolution |
 | `src/semantic/planner/semantic_planner/visual_servo_module.py` | bbox/depth visual servo |
 | `src/semantic/planner/semantic_planner/agent_loop.py` | multi-turn tool-calling agent loop |

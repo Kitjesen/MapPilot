@@ -35,7 +35,6 @@ from typing import Any
 from .module import Module
 from .stream import In, Out
 from .transport.local import LocalTransport, Transport
-
 logger = logging.getLogger(__name__)
 
 
@@ -361,74 +360,95 @@ class Blueprint:
         coord = ModuleCoordinator(n_workers=actual_workers)
         coord.start()
 
-        # Assign each group to a dedicated worker index
-        group_worker_id: dict[str, int] = {}
-        for idx, grp_name in enumerate(sorted(groups.keys())):
-            group_worker_id[grp_name] = idx
+        try:
+            # Assign each group to a dedicated worker index
+            group_worker_id: dict[str, int] = {}
+            for idx, grp_name in enumerate(sorted(groups.keys())):
+                group_worker_id[grp_name] = idx
 
-        proxies: dict[str, Any] = {}
-        for entry in worker_entries:
-            grp = getattr(entry.module_cls, '_worker_group', '') or 'default'
-            wid = group_worker_id[grp]
-            proxies[entry.name] = coord.deploy(
-                entry.module_cls, entry.name, kwargs=entry.config, worker_id=wid)
+            proxies: dict[str, Any] = {}
+            for entry in worker_entries:
+                grp = getattr(entry.module_cls, '_worker_group', '') or 'default'
+                wid = group_worker_id[grp]
+                proxies[entry.name] = coord.deploy(
+                    entry.module_cls, entry.name, kwargs=entry.config, worker_id=wid)
 
-        local_instances: dict[str, Any] = {}
-        for entry in local_entries:
-            inst = entry.instance if entry.instance is not None else entry.module_cls(**entry.config)
-            local_instances[entry.name] = inst
+            local_instances: dict[str, Any] = {}
+            for entry in local_entries:
+                inst = entry.instance if entry.instance is not None else entry.module_cls(**entry.config)
+                local_instances[entry.name] = inst
 
-        local_out = {n: m.ports_out for n, m in local_instances.items()}
-        local_in  = {n: m.ports_in  for n, m in local_instances.items()}
-        wired_in: set[tuple[str, str]] = set()
-        connections: list[tuple[str, str, str, str]] = []
+            local_out = {n: m.ports_out for n, m in local_instances.items()}
+            local_in  = {n: m.ports_in  for n, m in local_instances.items()}
+            wired_in: set[tuple[str, str]] = set()
+            connections: list[tuple[str, str, str, str]] = []
 
-        for spec in self._wires:
-            out_mod, out_port = spec.out_module, spec.out_port
-            in_mod,  in_port  = spec.in_module,  spec.in_port
-            topic = f"/{out_mod}/{out_port}"
-            out_worker = out_mod in proxies
-            in_worker  = in_mod  in proxies
+            for spec in self._wires:
+                out_mod, out_port = spec.out_module, spec.out_port
+                in_mod,  in_port  = spec.in_module,  spec.in_port
+                topic = f"/{out_mod}/{out_port}"
+                out_worker = out_mod in proxies
+                in_worker  = in_mod  in proxies
 
-            if out_worker and in_worker:
-                coord._mgr.bind_port(coord._assignments[out_mod], out_mod, out_port, "out", topic)
-                coord._mgr.bind_port(coord._assignments[in_mod],  in_mod,  in_port,  "in",  topic)
-            elif not out_worker and not in_worker:
-                _do_wire(spec, local_instances, local_out, local_in, wired_in, connections)
-                continue
-            elif out_worker:
-                coord._mgr.bind_port(coord._assignments[out_mod], out_mod, out_port, "out", topic)
-                p = local_in.get(in_mod, {}).get(in_port)
-                if p is not None and (in_mod, in_port) not in wired_in:
-                    TransportAdapter(SHMTransport()).subscribe(topic, p._deliver)
-                    wired_in.add((in_mod, in_port))
-            else:
-                p = local_out.get(out_mod, {}).get(out_port)
-                if p is not None:
-                    p._bind_transport(TransportAdapter(SHMTransport()), topic)
-                coord._mgr.bind_port(coord._assignments[in_mod], in_mod, in_port, "in", topic)
+                if out_worker and in_worker:
+                    coord._mgr.bind_port(coord._assignments[out_mod], out_mod, out_port, "out", topic)
+                    coord._mgr.bind_port(coord._assignments[in_mod],  in_mod,  in_port,  "in",  topic)
+                elif not out_worker and not in_worker:
+                    _do_wire(spec, local_instances, local_out, local_in, wired_in, connections)
+                    continue
+                elif out_worker:
+                    coord._mgr.bind_port(coord._assignments[out_mod], out_mod, out_port, "out", topic)
+                    p = local_in.get(in_mod, {}).get(in_port)
+                    if p is not None and (in_mod, in_port) not in wired_in:
+                        TransportAdapter(SHMTransport()).subscribe(topic, p._deliver)
+                        wired_in.add((in_mod, in_port))
+                else:
+                    p = local_out.get(out_mod, {}).get(out_port)
+                    if p is not None:
+                        p._bind_transport(TransportAdapter(SHMTransport()), topic)
+                    coord._mgr.bind_port(coord._assignments[in_mod], in_mod, in_port, "in", topic)
 
-            connections.append((out_mod, out_port, in_mod, in_port))
+                connections.append((out_mod, out_port, in_mod, in_port))
 
-        if self._auto_wired:
-            _do_auto_wire(local_instances, local_out, local_in, wired_in, connections)
+            if self._auto_wired:
+                _do_auto_wire(local_instances, local_out, local_in, wired_in, connections)
 
-        coord.setup_all()
-        coord.start_all()
-        for inst in local_instances.values():
-            inst.setup()
-        for inst in local_instances.values():
-            inst.start()
+            coord.setup_all()
+            coord.start_all()
+            failed: dict[str, str] = {}
+            for name, inst in local_instances.items():
+                try:
+                    inst.setup()
+                except Exception as e:
+                    logger.error("WorkerMode: local module %s setup() FAILED: %s", name, e, exc_info=True)
+                    failed[name] = f"setup: {e}"
+            for name, inst in local_instances.items():
+                if name in failed:
+                    continue
+                try:
+                    inst.start()
+                except Exception as e:
+                    logger.error("WorkerMode: local module %s start() FAILED: %s", name, e, exc_info=True)
+                    failed[name] = f"start: {e}"
 
-        all_modules: dict[str, Any] = {**proxies, **local_instances}
-        for inst in local_instances.values():
-            inst.on_system_modules(all_modules)
+            all_modules: dict[str, Any] = {**proxies, **local_instances}
+            for inst in local_instances.values():
+                inst.on_system_modules(all_modules)
 
-        logger.info(
-            "WorkerMode: %d worker modules (%d workers), %d local, %d connections",
-            len(proxies), n_workers, len(local_instances), len(connections),
-        )
-        return WorkerSystemHandle(coord, proxies, local_instances, connections)
+            if failed:
+                logger.warning(
+                    "WorkerMode started with %d/%d local modules failed: %s",
+                    len(failed), len(local_instances), list(failed.keys()),
+                )
+            logger.info(
+                "WorkerMode: %d worker modules (%d workers), %d local, %d connections",
+                len(proxies), n_workers, len(local_instances), len(connections),
+            )
+            return WorkerSystemHandle(coord, proxies, local_instances, connections)
+        except Exception:
+            logger.exception("WorkerMode build failed; shutting down workers")
+            coord.shutdown()
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +474,14 @@ def _resolve_transport(spec: Any) -> Transport | None:
     return spec  # already a Transport instance
 
 
+def _type_name(msg_type: Any) -> str:
+    return getattr(msg_type, "__name__", str(msg_type))
+
+
+def _msg_types_compatible(out_type: Any, in_type: Any) -> bool:
+    return out_type is Any or in_type is Any or out_type == in_type
+
+
 def _do_wire(
     spec: _WireSpec,
     instances: dict[str, Any],
@@ -476,11 +504,11 @@ def _do_wire(
     if inp is None:
         raise ValueError(f"wire(): '{spec.in_module}' has no In port '{spec.in_port}'")
 
-    if out.msg_type != inp.msg_type:
+    if not _msg_types_compatible(out.msg_type, inp.msg_type):
         raise TypeError(
             f"wire(): type mismatch "
-            f"{spec.out_module}.{spec.out_port} ({out.msg_type.__name__}) → "
-            f"{spec.in_module}.{spec.in_port} ({inp.msg_type.__name__})"
+            f"{spec.out_module}.{spec.out_port} ({_type_name(out.msg_type)}) → "
+            f"{spec.in_module}.{spec.in_port} ({_type_name(inp.msg_type)})"
         )
 
     transport = _resolve_transport(spec.transport)
@@ -499,7 +527,7 @@ def _do_wire(
         "Wired %s.%s → %s.%s [%s, %s]",
         spec.out_module, spec.out_port,
         spec.in_module, spec.in_port,
-        out.msg_type.__name__, mode,
+        _type_name(out.msg_type), mode,
     )
 
 
@@ -529,11 +557,11 @@ def _do_auto_wire(
     stacks (e.g. ``robot_0/`` and ``robot_1/``) are merged into a single
     Blueprint.
     """
-    # Index: (port_name, msg_type) → [(module_name, Out)]
-    out_index: dict[tuple[str, type], list[tuple[str, Out]]] = defaultdict(list)
+    # Index by name; typing.Any acts as a wildcard during compatibility checks.
+    out_index: dict[str, list[tuple[str, Out]]] = defaultdict(list)
     for mod_name, ports in out_ports.items():
         for port_name, port in ports.items():
-            out_index[(port_name, port.msg_type)].append((mod_name, port))
+            out_index[port_name].append((mod_name, port))
 
     for in_mod, ports in in_ports.items():
         for in_port_name, in_port in ports.items():
@@ -542,9 +570,16 @@ def _do_auto_wire(
 
             candidates = [
                 (mn, op)
-                for mn, op in out_index.get((in_port_name, in_port.msg_type), [])
+                for mn, op in out_index.get(in_port_name, [])
                 if mn != in_mod
+                and _msg_types_compatible(op.msg_type, in_port.msg_type)
             ]
+            exact_candidates = [
+                (mn, op) for mn, op in candidates
+                if op.msg_type == in_port.msg_type
+            ]
+            if exact_candidates:
+                candidates = exact_candidates
 
             # ----- namespace-aware candidate filtering -----
             in_ns = _get_ns(in_mod)
@@ -565,13 +600,13 @@ def _do_auto_wire(
                 logger.debug(
                     "Auto-wired %s.%s → %s.%s [%s]",
                     out_mod, in_port_name, in_mod, in_port_name,
-                    in_port.msg_type.__name__,
+                    _type_name(in_port.msg_type),
                 )
             elif len(candidates) > 1:
                 logger.warning(
                     "Auto-wire ambiguity for %s.%s [%s]: %d candidates — "
                     "add an explicit wire() to resolve",
-                    in_mod, in_port_name, in_port.msg_type.__name__, len(candidates),
+                    in_mod, in_port_name, _type_name(in_port.msg_type), len(candidates),
                 )
 
 
@@ -1003,6 +1038,67 @@ class WorkerSystemHandle:
             "local_modules":   list(self._local.keys()),
             "connection_count": len(self._connections),
             "modules":         modules,
+        }
+
+    def comm_health(self) -> dict[str, Any]:
+        """Aggregate communication health for local-module connections.
+
+        Worker-proxy connections are reported as-is from the proxy's
+        health() when available; cross-process port stats are limited.
+        """
+        links: list[dict] = []
+        warnings: list[str] = []
+        total_drops = 0
+        total_errors = 0
+
+        for src_mod, src_port, dst_mod, dst_port in self._connections:
+            src_m = self._local.get(src_mod) or self._proxies.get(src_mod)
+            dst_m = self._local.get(dst_mod) or self._proxies.get(dst_mod)
+            if not src_m or not dst_m:
+                continue
+            # Only local instances expose ports_out / ports_in directly
+            src_ports = getattr(src_m, 'ports_out', None)
+            dst_ports = getattr(dst_m, 'ports_in', None)
+            if not src_ports or not dst_ports:
+                continue
+            out_p = src_ports.get(src_port)
+            in_p = dst_ports.get(dst_port)
+            if not out_p or not in_p:
+                continue
+
+            drops = in_p.drop_count
+            errors = in_p.callback_errors + out_p.publish_errors
+            total_drops += drops
+            total_errors += errors
+
+            link = {
+                "src": f"{src_mod}.{src_port}",
+                "dst": f"{dst_mod}.{dst_port}",
+                "out_rate_hz": round(out_p.rate_hz, 1),
+                "in_rate_hz": round(in_p.rate_hz, 1),
+                "out_count": out_p.msg_count,
+                "in_count": in_p.msg_count,
+                "drops": drops,
+                "errors": errors,
+                "avg_cb_ms": round(in_p.avg_callback_ms, 2),
+                "max_cb_ms": round(in_p.max_callback_ms, 2),
+                "stale_ms": round(in_p.stale_ms, 1),
+            }
+            links.append(link)
+
+            if in_p.stale_ms > 5000 and in_p.msg_count > 0:
+                warnings.append(f"{link['src']}\u2192{link['dst']}: stale {in_p.stale_ms:.0f}ms")
+            if errors > 0:
+                warnings.append(f"{link['src']}\u2192{link['dst']}: {errors} errors")
+            if in_p.max_callback_ms > 500:
+                warnings.append(f"{link['src']}\u2192{link['dst']}: slow callback {in_p.max_callback_ms:.0f}ms")
+
+        return {
+            "link_count": len(links),
+            "total_drops": total_drops,
+            "total_errors": total_errors,
+            "warnings": warnings,
+            "links": links,
         }
 
     def __repr__(self) -> str:

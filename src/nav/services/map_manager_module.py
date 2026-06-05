@@ -300,7 +300,7 @@ class MapManagerModule(Module, layer=6):
                     "call",
                     "/pgo/save_maps",
                     "interface/srv/SaveMaps",
-                    f"{{file_path: '{pcd_path}', save_patches: true}}",
+                    json.dumps({"file_path": str(pcd_path), "save_patches": True}),
                 ],
                 capture_output=True,
                 text=True,

@@ -1,4 +1,4 @@
-"""Unit tests for src/nav/services/nav_services/dynamic_filter.py.
+"""Unit tests for src/nav/services/dynamic_filter.py.
 
 These are pure Python tests — they don't need the actual DUFOMap binary or
 Fast-LIO2. Subprocess calls are monkey-patched so the tests run offline.

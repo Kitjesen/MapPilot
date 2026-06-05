@@ -246,25 +246,36 @@ terrain:
 # ── 局部规划高级 (localPlanner) ──
 local_planner:
   two_way_drive: true
+  adjacent_range: 3.5          # m
   check_obstacle: true
   check_rot_obstacle: false
   cost_height_thre_1: 0.15    # m
   cost_height_thre_2: 0.1     # m
   use_cost: false
+  slope_weight: 0.0
   slow_path_num_thre: 5
   slow_group_num_thre: 1
   point_per_path_thre: 2
   dir_weight: 0.02
   dir_thre: 90.0              # °
   dir_to_vehicle: false
+  path_scale: 1.0
+  min_path_scale: 0.75
+  path_scale_step: 0.25
   min_path_range: 1.0         # m
   path_range_step: 0.5        # m
   path_range_by_speed: true
   path_crop_by_goal: true
+  omni_dir_goal_thre: 1.0
   freeze_ang: 90.0            # °
   freeze_time: 2.0            # s
   goal_clear_range: 0.5       # m
   goal_behind_range: 0.8      # m
+  near_field_stop_dis: 0.5    # m
+  recovery_blocked_thre: 2.0  # s
+  recovery_rotate_time: 2.5   # s
+  recovery_backup_time: 1.5   # s
+  recovery_max_cycles: 3
   laser_voxel_size: 0.05      # m
 
 # ── 围栏扩展 ──

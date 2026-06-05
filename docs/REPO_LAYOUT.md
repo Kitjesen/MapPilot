@@ -3,7 +3,6 @@
 ```
 brain/lingtu/
 ├── lingtu.py              # Primary Python entry — sets project root, runs cli.main
-├── main_nav.py            # Backwards-compatible alias (same as lingtu.py)
 ├── lingtu_cli.py          # Target of the pip console script `lingtu`
 ├── cli/                   # CLI implementation (argparse, profiles, REPL, daemon)
 │   ├── bootstrap.py       # init() — extends sys.path to src/ and semantic subpkgs
@@ -148,7 +147,7 @@ brain/lingtu/
 
 1. `python lingtu.py [profile]` — primary, CLI + REPL.
 2. `lingtu` — pip console script (`pyproject.toml` → `lingtu = lingtu_cli:main`).
-3. `python main_nav.py` — alias kept for older scripts.
+3. ~~`python main_nav.py`~~ — removed; use `python lingtu.py` instead.
 4. `make mapping` / `make navigation` — thin wrappers around `lingtu.py map` / `lingtu.py s100p`.
 
 There are **no** Module-First ROS2 launch files. The Module is the runtime

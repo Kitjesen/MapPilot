@@ -48,7 +48,7 @@ def register_auth_routes(app) -> None:
             hashlib.sha256(configured.encode()).hexdigest(),
         ):
             resp = JSONResponse({"ok": True, "message": "\u767b\u5f55\u6210\u529f"})
-            resp.set_cookie("lingtu_api_key", key, httponly=True, max_age=86400 * 30)
+            resp.set_cookie("lingtu_api_key", key, httponly=True, samesite="lax", max_age=86400 * 30)
             return resp
         return JSONResponse({"ok": False, "message": "Key \u65e0\u6548"}, status_code=403)
 

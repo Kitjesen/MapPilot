@@ -27,7 +27,7 @@
 | 3 | P1 | **死代码** — `gateway_module.py:161-195` 函数定义后立即被覆盖 | `src/gateway/gateway_module.py` |
 | 4 | P1 | **缺少 `__init__.py`** — `src/nav/services/` 是隐式命名空间包，脆弱 | `src/nav/services/` |
 | 5 | P1 | **孤儿 `.pyc` 目录** — `src/semantic/common/semantic_common/` 只有 `.pyc` 无 `.py` | `src/semantic/common/` |
-| 6 | P1 | **绕过 core.yaml_helpers** — `map_manager_module.py:967` 直接 `import yaml` 无回退 | `src/nav/services/nav_services/map_manager_module.py` |
+| 6 | P1 | **绕过 core.yaml_helpers** — `map_manager_module.py:967` 直接 `import yaml` 无回退 | `src/nav/services/map_manager_module.py` |
 
 ---
 
@@ -69,7 +69,7 @@
 - **内容**：仅含 `__pycache__/` 中的 `robustness.pyc`、`sanitize.pyc`、`validation.pyc`，对应 `.py` 源文件不存在
 
 **5. 绕过 core.yaml_helpers**
-- **文件**：`src/nav/services/nav_services/map_manager_module.py:967`
+- **文件**：`src/nav/services/map_manager_module.py:967`
 - **问题**：裸 `import yaml as _yaml` 没有 fallback，而 `core.yaml_helpers` 已提供无 yaml 时的 JSON 回退
 - **修复**：替换为 `from core.yaml_helpers import ...`
 
@@ -299,10 +299,10 @@ ruff check src/ --statistics
 | `src/gateway/gateway_module.py` | lines 161-195 死代码 |
 | `src/nav/services/` | 缺 `__init__.py` |
 | `src/semantic/common/semantic_common/` | 孤儿 `.pyc`，应删除 |
-| `src/nav/services/nav_services/map_manager_module.py:967` | 裸 `import yaml` |
-| `src/nav/services/nav_services/same_source_map_artifacts.py` | shim，Sprint 2 后删除 |
-| `src/nav/services/nav_services/dynamic_filter.py` | shim，Sprint 2 后删除 |
-| `src/nav/services/nav_services/yaml_helpers.py` | shim，Sprint 2 后删除 |
+| `src/nav/services/map_manager_module.py:967` | 裸 `import yaml` |
+| `src/nav/services/same_source_map_artifacts.py` | shim，Sprint 2 后删除 |
+| `src/nav/services/dynamic_filter.py` | shim，Sprint 2 后删除 |
+| `src/nav/services/yaml_helpers.py` | shim，Sprint 2 后删除 |
 | `pyproject.toml` | testpaths 需扩展 |
 | `.gitignore` | 缺 build_nb_win / *.egg-info / *.pt |
 | `CLAUDE.md` | 缺 3 个 factory 文档 |

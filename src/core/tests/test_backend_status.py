@@ -110,6 +110,19 @@ def test_autonomy_backend_allowlists_match_registry_catalog():
     )
 
 
+def test_nav_core_loader_prefers_fresh_build_dirs_before_src_artifacts():
+    from base_autonomy.modules import _nav_core_loader
+
+    candidates = _nav_core_loader._candidate_dirs()
+
+    build_nb_win = next(index for index, path in enumerate(candidates) if path.endswith("build_nb_win"))
+    build_nb = next(index for index, path in enumerate(candidates) if path.endswith("build_nb"))
+    src_dir = next(index for index, path in enumerate(candidates) if path.endswith("src"))
+
+    assert build_nb_win < src_dir
+    assert build_nb < src_dir
+
+
 def test_terrain_cmu_backend_uses_native_setup(monkeypatch):
     from base_autonomy.modules.terrain_module import TerrainModule
 

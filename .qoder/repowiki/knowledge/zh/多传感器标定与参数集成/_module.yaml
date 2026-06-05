@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: calibration
+title: 多传感器标定与参数集成
+scope:
+    - calibration/
+source_files: []
+depends_on: []
+related_to: []

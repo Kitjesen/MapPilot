@@ -134,10 +134,10 @@ if [ ! -f "$PACKAGE_DIR/metadata.json" ]; then
     exit 1
 fi
 
-# 读取元数据
-VERSION=$(python3 -c "import json; print(json.load(open('$PACKAGE_DIR/metadata.json'))['version'])" 2>/dev/null || echo "unknown")
-BUILD_TIME=$(python3 -c "import json; print(json.load(open('$PACKAGE_DIR/metadata.json'))['build_time'])" 2>/dev/null || echo "unknown")
-GIT_COMMIT=$(python3 -c "import json; print(json.load(open('$PACKAGE_DIR/metadata.json'))['git_commit'])" 2>/dev/null || echo "unknown")
+# Read metadata (pass path via env var to avoid shell injection through path names)
+VERSION=$(LINGTU_PKG="$PACKAGE_DIR" python3 -c "import json,os; print(json.load(open(os.path.join(os.environ['LINGTU_PKG'],'metadata.json')))['version'])" 2>/dev/null || echo "unknown")
+BUILD_TIME=$(LINGTU_PKG="$PACKAGE_DIR" python3 -c "import json,os; print(json.load(open(os.path.join(os.environ['LINGTU_PKG'],'metadata.json')))['build_time'])" 2>/dev/null || echo "unknown")
+GIT_COMMIT=$(LINGTU_PKG="$PACKAGE_DIR" python3 -c "import json,os; print(json.load(open(os.path.join(os.environ['LINGTU_PKG'],'metadata.json')))['git_commit'])" 2>/dev/null || echo "unknown")
 
 echo -e "${BLUE}============================================${NC}"
 echo -e "${BLUE}  导航功能包安装 v${VERSION}${NC}"
@@ -270,12 +270,19 @@ rm -f "$TXN_FILE"
 # 更新 installed_manifest
 MANIFEST_FILE="${OTA_DIR}/installed_manifest.json"
 TMP_MANIFEST="${MANIFEST_FILE}.tmp"
+INSTALLED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # 使用 Python 更新 manifest (原子写入)
-python3 << PYEOF
+LINGTU_MANIFEST_FILE="$MANIFEST_FILE" \
+LINGTU_TMP_MANIFEST="$TMP_MANIFEST" \
+LINGTU_VERSION="$VERSION" \
+LINGTU_INSTALLED_AT="$INSTALLED_AT" \
+LINGTU_VERSION_DIR="$VERSION_DIR" \
+LINGTU_GIT_COMMIT="$GIT_COMMIT" \
+python3 << 'PYEOF'
 import json, os
 
-manifest_path = "${MANIFEST_FILE}"
+manifest_path = os.environ["LINGTU_MANIFEST_FILE"]
 try:
     with open(manifest_path) as f:
         manifest = json.load(f)
@@ -283,13 +290,13 @@ except (FileNotFoundError, json.JSONDecodeError):
     manifest = {"artifacts": {}}
 
 manifest["artifacts"]["navigation"] = {
-    "version": "${VERSION}",
-    "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "install_path": "${VERSION_DIR}",
-    "git_commit": "${GIT_COMMIT}"
+    "version": os.environ["LINGTU_VERSION"],
+    "installed_at": os.environ["LINGTU_INSTALLED_AT"],
+    "install_path": os.environ["LINGTU_VERSION_DIR"],
+    "git_commit": os.environ["LINGTU_GIT_COMMIT"],
 }
 
-tmp_path = "${TMP_MANIFEST}"
+tmp_path = os.environ["LINGTU_TMP_MANIFEST"]
 with open(tmp_path, "w") as f:
     json.dump(manifest, f, indent=2)
 

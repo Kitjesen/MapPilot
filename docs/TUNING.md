@@ -36,13 +36,23 @@ and is called from Python via `_nav_core` (nanobind). Parameters are read once a
 
 | Key                            | Default | Effect                                                   |
 |--------------------------------|---------|----------------------------------------------------------|
+| `local_planner.adjacent_range` | 3.5 m   | Obstacle consideration radius                            |
 | `local_planner.path_scale`     | 1.0     | Candidate path length multiplier                         |
+| `local_planner.min_path_scale` | 0.75    | Shortest candidate-path scale during recovery search     |
+| `local_planner.path_scale_step` | 0.25   | Scale decrement when no full-size path is feasible       |
+| `local_planner.min_path_range` | 1.0 m   | Shortest accepted planning horizon                       |
+| `local_planner.path_range_step` | 0.5 m  | Horizon decrement when shortening the search             |
+| `local_planner.point_per_path_thre` | 2  | Hit count before a candidate path is treated as blocked  |
 | `local_planner.dir_weight`     | 0.02    | Direction-alignment cost (higher -> straighter paths)    |
 | `local_planner.slope_weight`   | 0.0     | Per-voxel slope penalty (0 disables, 3-6 outdoor)        |
-| `local_planner.adjacent_range` | 3.5 m   | Obstacle consideration radius                            |
-| `local_planner.obstacle_height_thre` | 0.2 m | Z above ground that counts as obstacle                |
+| `local_planner.near_field_stop_dis` | 0.5 m | Emergency stop distance directly in front of body    |
 | `local_planner.check_obstacle` | true    | Enable collision filtering                               |
 | `local_planner.two_way_drive`  | true    | Allow reverse motion candidates                          |
+
+`nanobind` and the managed C++ `cmu` backend now read the same CMU/FALCO-style
+keys for the fields they both support. The module health payload exposes
+`local_planner.effective_params`; use that to confirm a YAML edit reached the
+in-process C++ planner.
 
 Symptom -> change:
 - Robot oscillates around path -> raise `dir_weight` to 0.05, lower `path_scale` to 0.8.

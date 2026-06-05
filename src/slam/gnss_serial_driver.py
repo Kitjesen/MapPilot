@@ -193,6 +193,12 @@ class GnssSerialDriver:
         self._running = False
         if self._thread:
             self._thread.join(timeout=3.0)
+        if self._serial:
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+            self._serial = None
 
     def write_rtcm(self, data: bytes) -> bool:
         """Forward RTCM differential corrections to the receiver UART.
@@ -210,13 +216,6 @@ class GnssSerialDriver:
         except Exception as e:
             logger.debug("GnssSerialDriver: RTCM write failed: %s", e)
             return False
-            self._thread = None
-        if self._serial:
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-            self._serial = None
 
     def _read_loop(self) -> None:
         """Continuously read NMEA lines and dispatch GGA fixes."""

@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: sdk
+title: LingTu 机器人控制与状态 SDK
+scope:
+    - lingtu_sdk/
+source_files: []
+depends_on: []
+related_to:
+    - path: web_dashboard
+    - path: cli

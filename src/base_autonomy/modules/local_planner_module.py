@@ -402,6 +402,7 @@ class LocalPlannerModule(Module, layer=2):
         self._last_local_path_points: int = 0
         self._last_local_path_span_m: float = 0.0
         self._last_direct_track_fallback_ts: float = 0.0
+        self._effective_local_planner_params: dict[str, Any] = {}
 
         # W2-6: cmu_py grid parameters — pulled from config at setup() if the
         # `local_planner_grid` section is present, otherwise keep CMU defaults.
@@ -476,19 +477,91 @@ class LocalPlannerModule(Module, layer=2):
             return
         try:
             params = _nav_core.LocalPlannerParams()
+            summary: dict[str, Any] = {}
+            missing: list[str] = []
+
+            def set_param(name: str, value: Any) -> None:
+                if not hasattr(params, name):
+                    missing.append(name)
+                    return
+                setattr(params, name, value)
+                summary[name] = getattr(params, name)
+
+            def current(name: str, fallback: Any) -> Any:
+                return getattr(params, name, fallback)
+
             try:
                 from core.config import get_config
                 cfg = get_config()
-                params.vehicle_length = cfg.geometry.vehicle_length
-                params.vehicle_width = cfg.geometry.vehicle_width
-                params.sensor_offset_x = cfg.geometry.sensor_offset_x
-                params.sensor_offset_y = cfg.geometry.sensor_offset_y
-                params.obstacle_height_thre = cfg.safety.obstacle_height_thre
-                params.ground_height_thre = cfg.safety.ground_height_thre
-                params.max_speed = cfg.speed.max_speed
-                params.autonomy_speed = cfg.speed.autonomy_speed
-            except (ImportError, AttributeError):
-                pass
+                raw = getattr(cfg, "raw", {}) or {}
+                lp = raw.get("local_planner", {}) or {}
+                ta = raw.get("terrain", {}) or {}
+                geom = getattr(cfg, "geometry", None)
+                safety = getattr(cfg, "safety", None)
+                speed = getattr(cfg, "speed", None)
+
+                set_param("vehicle_length", getattr(geom, "vehicle_length", current("vehicle_length", 0.6)))
+                set_param("vehicle_width", getattr(geom, "vehicle_width", current("vehicle_width", 0.6)))
+                set_param("sensor_offset_x", getattr(geom, "sensor_offset_x", current("sensor_offset_x", 0.0)))
+                set_param("sensor_offset_y", getattr(geom, "sensor_offset_y", current("sensor_offset_y", 0.0)))
+                set_param(
+                    "obstacle_height_thre",
+                    getattr(safety, "obstacle_height_thre", current("obstacle_height_thre", 0.2)),
+                )
+                set_param(
+                    "ground_height_thre",
+                    getattr(safety, "ground_height_thre", current("ground_height_thre", 0.1)),
+                )
+                set_param("max_speed", getattr(speed, "max_speed", current("max_speed", 1.0)))
+                set_param("autonomy_speed", getattr(speed, "autonomy_speed", current("autonomy_speed", 1.0)))
+
+                for name, default in (
+                    ("two_way_drive", True),
+                    ("adjacent_range", 3.5),
+                    ("check_obstacle", True),
+                    ("check_rot_obstacle", False),
+                    ("use_terrain_analysis", True),
+                    ("point_per_path_thre", 2),
+                    ("dir_weight", 0.02),
+                    ("dir_thre", 90.0),
+                    ("path_scale", 1.0),
+                    ("min_path_scale", 0.75),
+                    ("path_scale_step", 0.25),
+                    ("path_scale_by_speed", True),
+                    ("min_path_range", 1.0),
+                    ("path_range_step", 0.5),
+                    ("path_range_by_speed", True),
+                    ("path_crop_by_goal", True),
+                    ("slope_weight", 0.0),
+                    ("goal_clear_range", 0.5),
+                    ("near_field_stop_dis", 0.5),
+                    ("recovery_blocked_thre", 2.0),
+                    ("recovery_rotate_time", 2.5),
+                    ("recovery_backup_time", 1.5),
+                    ("recovery_max_cycles", 3),
+                    ("cost_height_thre_1", 0.15),
+                    ("cost_height_thre_2", 0.1),
+                    ("dir_to_vehicle", False),
+                    ("goal_behind_range", 0.8),
+                    ("freeze_ang", 90.0),
+                    ("freeze_time", 2.0),
+                    ("omni_dir_goal_thre", 1.0),
+                    ("slow_path_num_thre", 5),
+                    ("slow_group_num_thre", 1),
+                ):
+                    set_param(name, lp.get(name, current(name, default)))
+
+                set_param("min_rel_z", lp.get("min_rel_z", ta.get("min_rel_z", current("min_rel_z", -0.5))))
+                set_param("max_rel_z", lp.get("max_rel_z", ta.get("max_rel_z", current("max_rel_z", 0.25))))
+            except ImportError:
+                logger.info("LocalPlannerModule [nanobind]: core config unavailable; using C++ defaults")
+
+            self._effective_local_planner_params = summary
+            if missing:
+                logger.warning(
+                    "LocalPlannerModule [nanobind]: _nav_core is missing LocalPlannerParams fields: %s",
+                    ", ".join(sorted(set(missing))),
+                )
 
             self._core = _nav_core.LocalPlannerCore(params)
 
@@ -500,6 +573,17 @@ class LocalPlannerModule(Module, layer=2):
                     f"LocalPlannerModule [nanobind]: failed to load paths from {paths_dir}. "
                     f"Cannot start without path lookup table."
                 )
+
+            logger.info(
+                "LocalPlannerModule [nanobind]: effective CMU params "
+                "(adjacent_range=%.2f, point_per_path_thre=%s, dir_weight=%.3f, "
+                "slope_weight=%.2f, near_field_stop_dis=%.2f)",
+                float(summary.get("adjacent_range", current("adjacent_range", 3.5))),
+                summary.get("point_per_path_thre", current("point_per_path_thre", 2)),
+                float(summary.get("dir_weight", current("dir_weight", 0.02))),
+                float(summary.get("slope_weight", current("slope_weight", 0.0))),
+                float(summary.get("near_field_stop_dis", current("near_field_stop_dis", 0.5))),
+            )
 
             logger.info("LocalPlannerModule [nanobind]: C++ LocalPlannerCore loaded (343 paths × 36 dirs)")
         except RuntimeError:
@@ -1136,5 +1220,6 @@ class LocalPlannerModule(Module, layer=2):
             "last_control_hint": dict(self._last_control_hint),
             "last_local_path_points": self._last_local_path_points,
             "last_local_path_span_m": round(self._last_local_path_span_m, 3),
+            "effective_params": dict(self._effective_local_planner_params),
         }
         return info

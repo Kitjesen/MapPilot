@@ -1,1 +1,0 @@
-"""Legacy Thunder ROS2 bridge files -- kept for reference only."""

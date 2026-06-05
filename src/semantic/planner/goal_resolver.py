@@ -36,7 +36,7 @@ from .adacot import AdaCoTRouter
 from .fast_path import FastPathMixin
 from .llm_client import LLMConfig, create_llm_client
 from .slow_path import SlowPathMixin
-from .tagged_locations import TaggedLocationStore
+from memory.spatial.tagged_locations import TaggedLocationStore
 
 try:
     from memory.spatial.topology_graph import TopologySemGraph
