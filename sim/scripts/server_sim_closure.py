@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
@@ -348,6 +349,22 @@ def _resolve_report_relative_path(report: dict[str, Any], path_value: Any) -> Pa
     return (ROOT / path).resolve()
 
 
+@lru_cache(maxsize=16)
+def _module_import_is_safe(module_name: str) -> bool:
+    if importlib.util.find_spec(module_name) is None:
+        return False
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-c", f"import {module_name}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except Exception:
+        return False
+    return probe.returncode == 0
+
+
 def _verify_video_artifact(
     report: dict[str, Any],
     video: dict[str, Any],
@@ -377,10 +394,16 @@ def _verify_video_artifact(
         blockers.append(f"{prefix} video file is empty")
         return evidence
 
+    if not _module_import_is_safe("cv2"):
+        evidence["decode_error"] = "cv2 import unavailable or unsafe"
+        blockers.append(f"{prefix} video decoder unavailable")
+        return evidence
+
     try:
         import cv2  # type: ignore
     except Exception as exc:
         evidence["decode_error"] = f"{type(exc).__name__}: {exc}"
+        blockers.append(f"{prefix} video decoder unavailable")
         return evidence
 
     capture = cv2.VideoCapture(str(path))
@@ -392,6 +415,10 @@ def _verify_video_artifact(
             return evidence
         evidence["decode_ok"] = True
         evidence["first_frame_shape"] = list(frame.shape)
+        if not _module_import_is_safe("numpy"):
+            evidence["nonblack_error"] = "numpy import unavailable or unsafe"
+            blockers.append(f"{prefix} video nonblack validation unavailable")
+            return evidence
         try:
             import numpy as np
 
@@ -404,6 +431,7 @@ def _verify_video_artifact(
                 evidence["nonblack_ok"] = True
         except Exception as exc:
             evidence["nonblack_error"] = f"{type(exc).__name__}: {exc}"
+            blockers.append(f"{prefix} video nonblack validation unavailable")
     finally:
         capture.release()
     return evidence

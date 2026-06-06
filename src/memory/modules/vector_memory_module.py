@@ -23,12 +23,11 @@ import os
 import time
 from typing import Any
 
-import numpy as np
-
 from core.backend_status import BackendStatus
 from core.encoder_protocol import EncoderProtocol
 from core.module import Module, skill
 from core.msgs.nav import Odometry
+from core.msgs.numpy_compat import np
 from core.msgs.semantic import SceneGraph
 from core.registry import register
 from core.stream import In, Out
@@ -50,7 +49,7 @@ class VectorMemoryModule(Module, layer=3):
 
     scene_graph: In[SceneGraph]
     odometry:    In[Odometry]
-    image:       In[np.ndarray]
+    image:       In[Any]
 
     query_result: Out[dict]
 

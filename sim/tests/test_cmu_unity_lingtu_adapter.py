@@ -4,10 +4,12 @@ import os
 import sys
 import types
 
-import numpy as np
 import pytest
+from core.tests.numpy_guard import import_numpy_or_skip
 
 pytestmark = [pytest.mark.sim]
+
+np = import_numpy_or_skip()
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 

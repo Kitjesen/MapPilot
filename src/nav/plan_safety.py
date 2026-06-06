@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
-import numpy as np
+from core.msgs.numpy_compat import np
 
 GridIndexOrder = Literal["yx", "xy"]
 

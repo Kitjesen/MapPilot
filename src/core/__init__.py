@@ -18,7 +18,7 @@ from .native_module import NativeModule, NativeModuleConfig
 from .remote_ports import RemoteIn, RemoteOut
 from .rpc_client import RPCClient
 from .stream import In, Out
-from .transport import LocalTransport, Transport
+from .transport.local import LocalTransport, Transport
 
 __all__ = [
     # blueprint

@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,111 @@ class _FakePlanPreviewNav:
             "error": None,
             "ts": ts,
         }
+
+
+class _FakePort:
+    def __init__(self) -> None:
+        self._callbacks = []
+
+    def _add_callback(self, callback) -> None:
+        self._callbacks.append(callback)
+
+    def publish(self, value: Any) -> None:
+        for callback in list(self._callbacks):
+            callback(value)
+
+
+class _FakeCmdVelMux:
+    def health(self) -> dict[str, Any]:
+        return {"active_source": "none", "sources": {}}
+
+
+class _FakeLease:
+    def to_dict(self) -> dict[str, Any]:
+        return {"holder": None, "ttl_s": 0.0, "active": False}
+
+
+class _FakeGateway:
+    def __init__(self, nav: _FakePlanPreviewNav) -> None:
+        from gateway.services.commands import CommandJournal
+
+        self._state_lock = threading.RLock()
+        self._session_mode = "navigating"
+        self._session_map = "dry_run_map"
+        self._session_pending = False
+        self._mode = "autonomous"
+        self._safety = {"level": "ok"}
+        self._odom = {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "yaw": 0.0,
+            "ts": time.time(),
+            "frame_id": "map",
+        }
+        self._mission = {
+            "state": "IDLE",
+            "frame_id": "map",
+            "planning_frame_id": "map",
+            "odom_frame_id": "map",
+            "goal_frame_id": "map",
+            "ts": time.time(),
+        }
+        self._last_path = []
+        self._icp_quality = 0.03
+        self._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "degeneracy": "NONE",
+            "odom_age_ms": 100.0,
+            "localizer_health": "RECOVERED",
+        }
+        self._command_journal = CommandJournal()
+        self._lease = _FakeLease()
+        self._cmd_vel_mux = _FakeCmdVelMux()
+        self._navigation_module = nav
+        self._all_modules = {
+            "NavigationModule": nav,
+            "CmdVelMux": self._cmd_vel_mux,
+        }
+        self.goal_pose = _FakePort()
+        self.cmd_vel = _FakePort()
+        self.stop_cmd = _FakePort()
+        self.instruction = _FakePort()
+        self.cancel = _FakePort()
+        self.mode_cmd = _FakePort()
+        self._command_acks: list[dict[str, Any]] = []
+
+    def _session_snapshot(self) -> dict[str, Any]:
+        return {
+            "mode": self._session_mode,
+            "active_map": self._session_map,
+            "pending": self._session_pending,
+            "localizer_ready": True,
+            "slam_profile": "bridge",
+            "can_start_mapping": False,
+            "can_start_navigating": False,
+            "can_start_exploring": False,
+            "can_end": True,
+        }
+
+    def _publish_command_ack(
+        self,
+        payload: dict[str, Any],
+        *,
+        status_code: int = 200,
+    ) -> None:
+        self._command_acks.append({"status_code": status_code, "payload": payload})
+
+    def _run_control_command(self, command: str, body: Any, action) -> dict[str, Any]:
+        response = self._command_journal.accept(
+            command,
+            getattr(body, "request_id", None),
+            getattr(body, "client_id", None),
+            action(),
+        )
+        self._publish_command_ack(response, status_code=200)
+        return response
 
 
 def _endpoint(gateway: Any, path: str):
@@ -83,7 +189,8 @@ def _mark_navigation_ready(gateway: Any) -> None:
 
 def run_gate(*, x: float, y: float, z: float, client_id: str) -> dict[str, Any]:
     try:
-        from gateway.gateway_module import GatewayModule
+        from fastapi import FastAPI
+        from gateway.routes.commands import register_command_routes
     except Exception as exc:
         return {
             "schema_version": "lingtu.gateway_goal_dry_run_gate.v1",
@@ -99,11 +206,11 @@ def run_gate(*, x: float, y: float, z: float, client_id: str) -> dict[str, Any]:
         GoalRequest = None
         PlanPreviewRequest = None
 
-    gateway = GatewayModule()
-    gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
-    _mark_navigation_ready(gateway)
+    gateway = _FakeGateway(nav)
+    app = FastAPI()
+    register_command_routes(app, gateway)
+    gateway._app = app
 
     sent_goals = []
     sent_cmd_vel = []

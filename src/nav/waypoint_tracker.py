@@ -10,7 +10,7 @@ import math
 import time
 from dataclasses import dataclass, field
 
-import numpy as np
+from core.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class WaypointTracker:
         self._path: list[np.ndarray] = []
         self._wp_index: int = 0
         self._last_progress_time: float = 0.0
-        self._last_progress_pos: np.ndarray = np.zeros(3)
+        self._last_progress_pos = [0.0, 0.0, 0.0]
         self._last_progress_yaw: float | None = None  # None until first yaw-aware update
         self._stuck_warn_sent: bool = False
         self._stuck_sent: bool = False

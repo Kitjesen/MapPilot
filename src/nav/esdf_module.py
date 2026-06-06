@@ -21,10 +21,9 @@ import logging
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
 from core.msgs.nav import OccupancyGrid
+from core.msgs.numpy_compat import np
 from core.registry import register
 from core.stream import In, Out
 
@@ -63,13 +62,6 @@ class ESDFModule(Module, layer=2):
         self._interval = 1.0 / publish_hz
 
     def setup(self) -> None:
-        try:
-            import scipy.ndimage  # noqa: F401
-        except ImportError as e:
-            raise RuntimeError(
-                "ESDFModule requires scipy for distance_transform_edt. "
-                "Install with: pip install scipy"
-            ) from e
         self.occupancy_grid.subscribe(self._on_grid)
         self.occupancy_grid.set_policy("throttle", interval=self._interval)
 

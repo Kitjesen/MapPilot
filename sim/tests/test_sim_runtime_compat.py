@@ -10,10 +10,12 @@ import types
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import numpy as np
 import pytest
+from core.tests.numpy_guard import import_numpy_or_skip
 
 pytestmark = [pytest.mark.sim]
+
+np = import_numpy_or_skip()
 
 try:
     import rclpy  # noqa: F401

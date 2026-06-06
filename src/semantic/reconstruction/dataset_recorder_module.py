@@ -38,10 +38,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from core import In, Module, Out
 from core.msgs.nav import Odometry
+from core.msgs.numpy_compat import np
 from core.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from core.registry import register
 

@@ -24,8 +24,7 @@ import heapq
 import logging
 import os
 
-import numpy as np
-
+from core.msgs.numpy_compat import np
 from core.registry import register
 from global_planning.pct_planner_runnable.runtime import load_tomogram_planner
 
@@ -67,14 +66,14 @@ class _PCTBackend:
         self._elev_3d: np.ndarray | None = None
         self._grid_is_projection: bool = False
         self._resolution: float = 0.2
-        self._origin: np.ndarray = np.zeros(2)
+        self._origin = [0.0, 0.0]
         self._slice_h0: float = 0.0
         self._slice_dh: float = 0.5
 
         # Live costmap overlay for dynamic obstacle avoidance
         self._costmap: np.ndarray | None = None
         self._costmap_resolution: float = 0.2
-        self._costmap_origin: np.ndarray = np.zeros(2)
+        self._costmap_origin = [0.0, 0.0]
 
         self._try_load(tomogram_path)
 
@@ -512,9 +511,9 @@ class _AStarBackend:
         self._static_grid: np.ndarray | None = None
         self._costmap: np.ndarray | None = None
         self._costmap_resolution = 0.2
-        self._costmap_origin = np.zeros(2)
+        self._costmap_origin = [0.0, 0.0]
         self._resolution = 0.2
-        self._origin = np.zeros(2)
+        self._origin = [0.0, 0.0]
         self._obstacle_thr = obstacle_thr
         self._last_plan_reached_goal = True
         if tomogram_path and os.path.exists(tomogram_path):

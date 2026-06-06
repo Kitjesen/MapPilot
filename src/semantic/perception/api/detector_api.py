@@ -5,8 +5,10 @@ Semantic Perception API - 检测器接口
 """
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 from .types import Detection2D
 
@@ -26,7 +28,7 @@ class DetectorAPI(ABC):
     """
 
     @abstractmethod
-    def detect(self, image: np.ndarray) -> list[Detection2D]:
+    def detect(self, image: "np.ndarray") -> list[Detection2D]:
         """
         检测图像中的物体
 

@@ -21,6 +21,7 @@ Usage:
 """
 
 import argparse
+import importlib
 import json
 import logging
 import os
@@ -29,7 +30,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import yaml
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -39,6 +39,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ROBOT_CONFIG = REPO_ROOT / "config" / "robot_config.yaml"
 FASTLIO2_CONFIG = REPO_ROOT / "src" / "slam" / "fastlio2" / "config" / "lio.yaml"
 POINTLIO_CONFIG = REPO_ROOT / "config" / "pointlio.yaml"
+
+
+class _LazyNumpy:
+    def __getattr__(self, name: str):
+        module = importlib.import_module("numpy")
+        return getattr(module, name)
+
+
+np = _LazyNumpy()
 
 
 def backup_file(path: Path) -> None:

@@ -19,10 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-try:
-    import numpy as np
-except ImportError:
-    np = None  # type: ignore[assignment]
+from core.msgs.numpy_compat import np
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS entity_observations (
@@ -125,8 +122,7 @@ class TemporalStore:
         emb_blob: bytes | None = None
         if embedding is not None:
             try:
-                import numpy as _np
-                emb_blob = _np.asarray(embedding, dtype=_np.float32).tobytes()
+                emb_blob = np.asarray(embedding, dtype=np.float32).tobytes()
             except Exception:
                 pass
         conn = self._get_conn()

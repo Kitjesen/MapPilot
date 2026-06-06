@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 拓扑语义图 (Topological Semantic Graph, TSG) — 房间级空间拓扑 + 语义联想 + 信息增益探索。
 
@@ -23,7 +25,7 @@ import logging
 import time
 from collections import defaultdict
 
-import numpy as np
+from core.msgs.numpy_compat import np
 
 from memory.spatial.topology_types import (
     _FRONTIER_BASE_PRIOR,

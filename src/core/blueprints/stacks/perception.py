@@ -10,7 +10,11 @@ from __future__ import annotations
 import logging
 
 from core.blueprint import Blueprint
-from core.blueprints.stacks._registry import optional_stack_module, stack_module
+from core.blueprints.stacks._registry import (
+    optional_fallback_module,
+    optional_stack_module,
+    stack_module,
+)
 
 logger = logging.getLogger(__name__)
 _NATIVE_CAMERA_DRIVERS = {"MujocoDriverModule"}  # Only MuJoCo has built-in camera
@@ -33,15 +37,14 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
         and not bool(config.get("use_driver_camera", False))
     )
 
-    try:
-        CameraBridgeModule = stack_module(
-            "camera_bridge",
-            "default",
-            seed_group="camera",
-            fallback="drivers.real.thunder.camera_bridge_module.CameraBridgeModule",
-        )
-
-        if needs_camera_bridge:
+    if needs_camera_bridge:
+        try:
+            CameraBridgeModule = stack_module(
+                "camera_bridge",
+                "default",
+                seed_group="camera",
+                fallback="drivers.real.thunder.camera_bridge_module.CameraBridgeModule",
+            )
             # Read camera rotation from robot_config.yaml
             cam_rotate = config.get("camera_rotate", 0)
             if cam_rotate == 0:
@@ -51,8 +54,8 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
                 except Exception:
                     pass
             bp.add(CameraBridgeModule, alias="CameraBridgeModule", rotate=int(cam_rotate))
-    except ImportError:
-        pass
+        except ImportError:
+            pass
 
     try:
         PerceptionModule = stack_module(
@@ -110,10 +113,9 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
         else:
             logger.warning("Standalone encoder module not available")
 
-    ReconstructionModule = optional_stack_module(
+    ReconstructionModule = optional_fallback_module(
         "reconstruction",
         "default",
-        seed_group="reconstruction",
         fallback="semantic.reconstruction.reconstruction_module.ReconstructionModule",
     )
     if ReconstructionModule is not None:

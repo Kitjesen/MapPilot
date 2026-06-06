@@ -159,7 +159,7 @@ unit; SLAM and other C++ subsystems are managed via `NativeModule` (see
 | You want… | Read |
 |-----------|------|
 | The eight architectural rules | `docs/archive/MODULE_FIRST_GUIDELINE.md` |
-| Which modules a profile pulls in | `cli/profiles_data.py` + `src/core/blueprints/full_stack.py` |
+| Which modules a profile pulls in | `src/core/runtime_profiles.py` + `src/core/blueprints/full_stack.py` |
 | All cross-stack wires | `src/core/blueprints/full_stack.py` |
 | Which backends are registered for a category | `src/core/registry.py` plus the `@register(...)` calls in each Module file |
 | Simulation folder boundaries | `sim/README.md` (worlds, assets, robots, scripts, validation/evaluation — full details in engine/core bridge/sensors/datasets scenarios, mujoco/gazebo scenes, following/) |

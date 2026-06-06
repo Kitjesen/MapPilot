@@ -19,15 +19,15 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.msgs.geometry import Pose, Quaternion, Twist, Vector3
 from core.msgs.nav import Odometry
 from core.msgs.sensor import CameraIntrinsics, Image, ImageFormat, PointCloud2
@@ -61,6 +61,7 @@ MUJOCO_MODULE_BODY_FRAME_ID = topic_default_frame_id(TOPICS.registered_cloud)
 # In-process MuJoCo does not own a map->odom localizer; its live map cloud is odom-frame.
 MUJOCO_MODULE_MAP_CLOUD_FRAME_ID = MUJOCO_MODULE_ODOM_FRAME_ID
 MUJOCO_MODULE_CAMERA_FRAME_ID = FRAMES.camera
+_NUMPY_RUNTIME_AVAILABLE: bool | None = None
 
 
 def _first_existing_path(paths: tuple[Path, ...]) -> str:
@@ -95,6 +96,27 @@ def _resolve_sim_path(path: str) -> str:
         if resolved.exists():
             return str(resolved)
     return str(candidate_paths[0].resolve())
+
+
+def _numpy_runtime_available() -> bool:
+    """Return whether NumPy can be imported without crashing this interpreter."""
+
+    global _NUMPY_RUNTIME_AVAILABLE
+    if _NUMPY_RUNTIME_AVAILABLE is not None:
+        return _NUMPY_RUNTIME_AVAILABLE
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import numpy"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        _NUMPY_RUNTIME_AVAILABLE = False
+    else:
+        _NUMPY_RUNTIME_AVAILABLE = result.returncode == 0
+    return _NUMPY_RUNTIME_AVAILABLE
 
 
 def _is_default_start_pos(start_pos: tuple) -> bool:
@@ -246,10 +268,18 @@ class MujocoDriverModule(Module, layer=1):
         self.stop_signal.subscribe(self._on_stop)
 
         try:
-            # Add sim/ to path so imports work
-            sim_root = str(_SIM_ROOT)
-            if sim_root not in sys.path:
-                sys.path.insert(0, str(_SIM_ROOT.parent))
+            if not _numpy_runtime_available():
+                logger.error(
+                    "MujocoDriverModule: NumPy runtime unavailable; "
+                    "simulation engine not loaded"
+                )
+                self._engine = None
+                return
+
+            # Add the repo root to path so `sim.engine` imports work.
+            repo_root = str(_SIM_ROOT.parent)
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
 
             from sim.engine.core.robot import RobotConfig
             from sim.engine.core.sensor import CameraConfig, LidarConfig

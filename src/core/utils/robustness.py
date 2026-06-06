@@ -130,6 +130,12 @@ def gpu_safe(
 def _try_empty_cuda_cache():
     """安全地清理 CUDA 缓存。"""
     try:
+        from core.msgs.numpy_compat import numpy_import_is_safe
+
+        if not numpy_import_is_safe():
+            logger.debug("Skipping torch CUDA cache cleanup: NumPy import is unsafe")
+            return
+
         import torch
 
         if torch.cuda.is_available():

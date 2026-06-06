@@ -11,7 +11,7 @@ SRC = ROOT / "src"
 
 BOUNDARY_RULES = {
     # Existing: each package must NOT import from its forbidden set
-    "gateway": {"nav", "semantic", "drivers"},
+    "gateway": {"nav", "semantic", "drivers", "slam"},
     "nav": {"semantic", "drivers", "gateway"},
     "semantic": {"nav", "drivers", "gateway"},
     "drivers": {"nav", "semantic"},
@@ -209,5 +209,27 @@ def test_package_does_not_import_forbidden_layers_directly(
         for module in _imported_modules(tree):
             if _top_level(module) in forbidden:
                 violations.append(f"{rel}: imports {module}")
+
+    assert violations == [], "\n".join(violations)
+
+
+def test_core_blueprints_do_not_import_cli_profile_surfaces() -> None:
+    violations: list[str] = []
+
+    for path in (SRC / "core" / "blueprints").rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            else:
+                continue
+            for module in modules:
+                if _top_level(module) == "cli":
+                    violations.append(f"{rel}: imports {module}")
 
     assert violations == [], "\n".join(violations)

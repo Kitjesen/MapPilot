@@ -11,13 +11,13 @@ Module In/Out 端口接口，供 Blueprint autoconnect 使用。
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
-
-import numpy as np
 
 from core import In, Module, Out
 from core.msgs import Odometry, PoseStamped, SceneGraph
 from core.msgs.geometry import Pose, Quaternion, Vector3
+from core.msgs.numpy_compat import np
 from core.runtime_interface import map_frame_id
 
 from .exploration_strategy import extract_frontier_scene_data
@@ -74,7 +74,7 @@ class FrontierModule(Module, layer=4):
         self.scene_graph.subscribe(self._on_scene_graph)
 
     def _on_odom(self, odom: Odometry) -> None:
-        if not (np.isfinite(odom.x) and np.isfinite(odom.y)):
+        if not (math.isfinite(odom.x) and math.isfinite(odom.y)):
             return
         self._last_odom = odom
 

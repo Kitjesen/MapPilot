@@ -38,8 +38,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
-
+from core.msgs.numpy_compat import np
 from core.runtime_interface import TOPICS
 
 from ._dds import HAS_LIVOX_IDL, DDS_Imu, LivoxCustomMsg, dds_imu_to_imu, livox_msg_to_numpy

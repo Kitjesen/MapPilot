@@ -12,8 +12,7 @@ import math
 import time
 from typing import Any
 
-import numpy as np
-
+from core.msgs.numpy_compat import is_numpy_array, np
 from core.msgs.semantic import SceneGraph
 from core.module import skill
 from core.registry import register
@@ -340,7 +339,7 @@ def _sample_payload_grid(
 
 def _payload_origin_xy(payload: dict) -> tuple[float, float]:
     origin = payload.get("origin")
-    if isinstance(origin, np.ndarray):
+    if is_numpy_array(origin):
         origin = origin.tolist()
     if isinstance(origin, (list, tuple)) and len(origin) >= 2:
         return float(origin[0]), float(origin[1])

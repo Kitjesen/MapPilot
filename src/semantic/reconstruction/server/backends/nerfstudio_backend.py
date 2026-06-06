@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+from core.msgs.numpy_compat import np
 
 from .base import Keyframe, ReconBackendBase, ReconResult
 from .registry import register_backend

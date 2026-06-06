@@ -17,14 +17,18 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.msgs.nav import Odometry
 from core.msgs.sensor import PointCloud2
 from core.registry import register
 from core.runtime_interface import TOPICS, topic_default_frame_id
 from core.stream import In, Out
+from drivers.sim.mujoco_scene_metadata import (
+    mujoco_geom_name_chain,
+    mujoco_geom_world_pose,
+    mujoco_parent_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,7 @@ class SimPointCloudProvider(Module, layer=1):
     def _parse_scene(self, xml_path: Path) -> np.ndarray:
         tree = ET.parse(xml_path)
         root = tree.getroot()
+        parent_map = mujoco_parent_map(root)
         all_points: list[np.ndarray] = []
         self._geom_count = 0
 
@@ -108,8 +113,13 @@ class SimPointCloudProvider(Module, layer=1):
             gtype = geom.get("type", "sphere")
             if gtype != "box":
                 continue
-            name = geom.get("name", "")
-            if any(exc in name.lower() for exc in self._exclude):
+            names = mujoco_geom_name_chain(geom, parent_map)
+            lowered_names = [name.lower() for name in names]
+            if any(
+                exc in name
+                for name in lowered_names
+                for exc in self._exclude
+            ):
                 continue
             size_str = geom.get("size")
             if not size_str:
@@ -119,18 +129,19 @@ class SimPointCloudProvider(Module, layer=1):
             if len(size) != 3:
                 continue
 
-            # position: geom pos or parent body pos + geom pos
-            pos = self._resolve_pos(geom)
+            pos_raw, rotation_raw = mujoco_geom_world_pose(geom, parent_map)
+            pos = np.array(pos_raw, dtype=np.float64)
+            rotation = np.array(rotation_raw, dtype=np.float64)
 
-            # box extent: [pos-size, pos+size]
-            z_lo = pos[2] - size[2]
-            z_hi = pos[2] + size[2]
+            corners = self._box_corners(pos, size, rotation)
+            z_lo = float(corners[:, 2].min())
+            z_hi = float(corners[:, 2].max())
 
             # skip if entirely outside the height band
             if z_hi < self._z_min or z_lo > self._z_max:
                 continue
 
-            pts = self._sample_box_perimeter(pos, size)
+            pts = self._sample_box_perimeter(pos, size, rotation)
             if len(pts) > 0:
                 all_points.append(pts)
                 self._geom_count += 1
@@ -139,58 +150,71 @@ class SimPointCloudProvider(Module, layer=1):
             return np.zeros((0, 3), dtype=np.float32)
         return np.vstack(all_points).astype(np.float32)
 
-    def _resolve_pos(self, geom_elem) -> np.ndarray:
-        """Get world position of a geom, accounting for parent body pos."""
-        gpos = np.zeros(3, dtype=np.float64)
-        pos_str = geom_elem.get("pos")
-        if pos_str:
-            gpos = np.array([float(x) for x in pos_str.split()], dtype=np.float64)
+    def _box_corners(
+        self,
+        center: np.ndarray,
+        half: np.ndarray,
+        rotation: np.ndarray,
+    ) -> np.ndarray:
+        local = np.array(
+            [
+                [sx * half[0], sy * half[1], sz * half[2]]
+                for sx in (-1.0, 1.0)
+                for sy in (-1.0, 1.0)
+                for sz in (-1.0, 1.0)
+            ],
+            dtype=np.float64,
+        )
+        return center + local @ rotation.T
 
-        parent = geom_elem
-        while True:
-            parent = self._find_parent(geom_elem, parent)
-            if parent is None:
-                break
-            ppos_str = parent.get("pos")
-            if ppos_str:
-                gpos += np.array([float(x) for x in ppos_str.split()], dtype=np.float64)
-            geom_elem = parent
-        return gpos
-
-    def _find_parent(self, child_elem, current_search) -> ET.Element | None:
-        """Walk up from a geom's parent body. Simple: use parent map."""
-        # ET doesn't have parent pointers, so we parse pos from geom directly.
-        # For MuJoCo scenes, geoms in worldbody have no parent offset.
-        # Geoms inside <body pos="..."> need that added.
-        # We handle this by checking the direct parent tag.
-        return None  # handled in _parse_scene via iter()
-
-    def _sample_box_perimeter(self, center: np.ndarray, half: np.ndarray) -> np.ndarray:
+    def _sample_box_perimeter(
+        self,
+        center: np.ndarray,
+        half: np.ndarray,
+        rotation: np.ndarray,
+    ) -> np.ndarray:
         """Sample 3-D points on the 4 vertical faces of a box."""
-        cx, cy, cz = center
         hx, hy, hz = half
         spacing = self._spacing
 
-        # z value: clamp to height band, use midpoint
-        z_lo = max(cz - hz, self._z_min)
-        z_hi = min(cz + hz, self._z_max)
+        z_bounds = self._box_corners(center, half, rotation)[:, 2]
+        z_lo = max(float(z_bounds.min()), self._z_min)
+        z_hi = min(float(z_bounds.max()), self._z_max)
         z_val = (z_lo + z_hi) / 2.0
 
         # sample along the 4 edges of the XY rectangle
         points = []
 
         # bottom/top edges (along X)
-        xs = np.arange(cx - hx, cx + hx + spacing * 0.5, spacing)
-        for y_edge in [cy - hy, cy + hy]:
-            pts = np.column_stack([xs, np.full(len(xs), y_edge), np.full(len(xs), z_val)])
+        xs = np.arange(-hx, hx + spacing * 0.5, spacing)
+        for y_edge in [-hy, hy]:
+            local = np.column_stack(
+                [
+                    xs,
+                    np.full(len(xs), y_edge),
+                    np.full(len(xs), z_val - center[2]),
+                ]
+            )
+            pts = center + local @ rotation.T
             points.append(pts)
 
         # left/right edges (along Y)
-        ys = np.arange(cy - hy, cy + hy + spacing * 0.5, spacing)
-        for x_edge in [cx - hx, cx + hx]:
-            pts = np.column_stack([np.full(len(ys), x_edge), ys, np.full(len(ys), z_val)])
+        ys = np.arange(-hy, hy + spacing * 0.5, spacing)
+        for x_edge in [-hx, hx]:
+            local = np.column_stack(
+                [
+                    np.full(len(ys), x_edge),
+                    ys,
+                    np.full(len(ys), z_val - center[2]),
+                ]
+            )
+            pts = center + local @ rotation.T
             points.append(pts)
 
         if not points:
             return np.zeros((0, 3), dtype=np.float32)
-        return np.vstack(points)
+        sampled = np.vstack(points)
+        return sampled[
+            (sampled[:, 2] >= self._z_min)
+            & (sampled[:, 2] <= self._z_max)
+        ]

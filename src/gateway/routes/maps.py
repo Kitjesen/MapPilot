@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import pathlib
 import shlex
 import shutil
+import struct
 import subprocess
 import time
 from datetime import datetime
 from typing import Any
 
-import numpy as np
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.responses import HTMLResponse
 
+from core.msgs.numpy_compat import is_numpy_array, np
 from core.runtime_interface import TOPICS, topic_default_frame_id
 from gateway.schemas import (
     MapLifecycleResponse,
@@ -27,7 +29,6 @@ from gateway.schemas import (
     MapSaveRequest,
 )
 from gateway.services.map_paths import active_map_name, nav_map_root_str
-from core.dynamic_filter import apply_dynamic_filter_step1half
 from gateway.services.map_safety import (
     safe_map_name,
 )
@@ -37,6 +38,15 @@ from core.same_source_map_artifacts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_dynamic_filter_step1half(*args: Any, **kwargs: Any) -> Any:
+    from core.dynamic_filter import apply_dynamic_filter_step1half
+
+    return apply_dynamic_filter_step1half(*args, **kwargs)
+
+
+apply_dynamic_filter_step1half = _apply_dynamic_filter_step1half
 
 
 def _map_dir() -> str:
@@ -97,14 +107,26 @@ def _safe_map_file(name: str, filename: str) -> pathlib.Path:
     return path
 
 
-def _write_binary_xyz_pcd(path: pathlib.Path, points: np.ndarray) -> int:
-    pts = np.asarray(points, dtype=np.float32)
-    if pts.ndim != 2 or pts.shape[1] < 3:
-        raise ValueError(f"points must be shaped (N, >=3), got {pts.shape}")
-    pts = pts[:, :3]
-    valid = np.isfinite(pts).all(axis=1) & (np.abs(pts) < 500.0).all(axis=1)
-    pts = pts[valid]
-    if len(pts) == 0:
+def _write_binary_xyz_pcd(path: pathlib.Path, points: Any) -> int:
+    if is_numpy_array(points):
+        return _write_binary_xyz_pcd_array(path, points)
+
+    rows = points.tolist() if hasattr(points, "tolist") else points
+    pts: list[tuple[float, float, float]] = []
+    for row in rows or []:
+        try:
+            x, y, z = float(row[0]), float(row[1]), float(row[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if (
+            math.isfinite(x)
+            and math.isfinite(y)
+            and math.isfinite(z)
+            and max(abs(x), abs(y), abs(z)) < 500.0
+        ):
+            pts.append((x, y, z))
+
+    if not pts:
         raise ValueError("no valid points to save")
     header = (
         "# .PCD v0.7 - Point Cloud Data file format\n"
@@ -122,8 +144,94 @@ def _write_binary_xyz_pcd(path: pathlib.Path, points: np.ndarray) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         f.write(header.encode("ascii"))
-        f.write(pts.astype("<f4", copy=False).tobytes())
-    return int(len(pts))
+        for point in pts:
+            f.write(struct.pack("<fff", *point))
+    return len(pts)
+
+
+def _write_binary_xyz_pcd_array(path: pathlib.Path, points: Any) -> int:
+    arr = np.asarray(points, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] < 3:
+        raise ValueError("point cloud must have shape Nx3")
+    xyz = arr[:, :3]
+    finite = np.isfinite(xyz).all(axis=1)
+    bounded = np.max(np.abs(xyz), axis=1) < 500.0
+    valid = np.ascontiguousarray(xyz[finite & bounded], dtype=np.float32)
+    if valid.size == 0:
+        raise ValueError("no valid points to save")
+    count = int(valid.shape[0])
+    header = (
+        "# .PCD v0.7 - Point Cloud Data file format\n"
+        "VERSION 0.7\n"
+        "FIELDS x y z\n"
+        "SIZE 4 4 4\n"
+        "TYPE F F F\n"
+        "COUNT 1 1 1\n"
+        f"WIDTH {count}\n"
+        "HEIGHT 1\n"
+        "VIEWPOINT 0 0 0 1 0 0 0\n"
+        f"POINTS {count}\n"
+        "DATA binary\n"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as f:
+        f.write(header.encode("ascii"))
+        f.write(valid.astype("<f4", copy=False).tobytes())
+    return count
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) * 0.5
+
+
+def _sample_xyz_points(
+    points: list[tuple[float, float, float]],
+    max_points: int,
+) -> list[tuple[float, float, float]]:
+    if max_points <= 0:
+        return []
+    if len(points) <= max_points:
+        return points
+    step = len(points) / float(max_points)
+    return [points[min(int(index * step), len(points) - 1)] for index in range(max_points)]
+
+
+def _binary_pcd_xyz_payload(
+    data: bytes,
+    *,
+    n_points: int,
+    point_step: int,
+    max_points: int,
+) -> tuple[int, list[float]]:
+    if n_points <= 0 or point_step < 12:
+        return 0, []
+
+    points: list[tuple[float, float, float]] = []
+    available = min(n_points, len(data) // point_step)
+    for index in range(available):
+        x, y, z = struct.unpack_from("<fff", data, index * point_step)
+        if all(math.isfinite(value) for value in (x, y, z)):
+            points.append((float(x), float(y), float(z)))
+
+    if points:
+        med = (
+            _median([point[0] for point in points]),
+            _median([point[1] for point in points]),
+            _median([point[2] for point in points]),
+        )
+        points = [
+            point
+            for point in points
+            if max(abs(point[axis] - med[axis]) for axis in range(3)) < 100.0
+        ]
+
+    points = _sample_xyz_points(points, int(max_points))
+    flat = [coord for point in points for coord in point]
+    return len(points), flat
 
 
 def register_map_routes(app, gw) -> None:
@@ -216,22 +324,15 @@ def register_map_routes(app, gw) -> None:
                 if line.startswith("DATA"):
                     break
             data = f.read(n_points * point_step)
-        pts = np.frombuffer(
+        count, flat = _binary_pcd_xyz_payload(
             data[: n_points * point_step],
-            dtype=np.float32,
-        ).reshape(n_points, point_step // 4)[:, :3]
-        valid = np.isfinite(pts).all(axis=1)
-        pts = pts[valid]
-        if len(pts) > 0:
-            med = np.median(pts, axis=0)
-            pts = pts[np.abs(pts - med).max(axis=1) < 100]
-        if len(pts) > max_points:
-            idx = np.random.choice(len(pts), max_points, replace=False)
-            pts = pts[idx]
-        flat = pts[:, :3].astype(np.float32).flatten().tolist()
+            n_points=n_points,
+            point_step=point_step,
+            max_points=max_points,
+        )
         return {
             "schema_version": 1,
-            "count": len(pts),
+            "count": count,
             "layout": "flat_xyz",
             "frame_id": "map",
             "source": "saved_map_pcd",

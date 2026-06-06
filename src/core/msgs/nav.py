@@ -12,11 +12,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-
 from core.runtime_interface import body_frame_id, map_frame_id, odom_frame_id
 
 from .geometry import Pose, PoseStamped, Twist
+from .numpy_compat import is_numpy_array, np, numpy_import_is_safe
 
 NAV_MAP_FRAME_ID = map_frame_id()
 NAV_ODOM_FRAME_ID = odom_frame_id()
@@ -247,7 +246,7 @@ class OccupancyGrid:
     OCCUPIED: int = 100
     UNKNOWN: int = -1
 
-    grid: np.ndarray = field(default_factory=lambda: np.zeros((0, 0), dtype=np.int8))
+    grid: Any = field(default_factory=list)
     resolution: float = 0.05
     origin: Pose = field(default_factory=Pose)
     ts: float = 0.0
@@ -256,18 +255,33 @@ class OccupancyGrid:
     def __post_init__(self) -> None:
         if self.ts == 0.0:
             self.ts = time.time()
-        if self.grid.dtype != np.int8:
+        if not is_numpy_array(self.grid):
+            if not self.grid and not numpy_import_is_safe():
+                return
+            self.grid = (
+                np.array(self.grid, dtype=np.int8)
+                if self.grid
+                else np.zeros((0, 0), dtype=np.int8)
+            )
+        elif self.grid.dtype != np.int8:
             self.grid = self.grid.astype(np.int8)
 
     # -- dimension properties ------------------------------------------------
 
     @property
     def height(self) -> int:
-        return int(self.grid.shape[0]) if self.grid.ndim == 2 else 0
+        if is_numpy_array(self.grid):
+            return int(self.grid.shape[0]) if self.grid.ndim == 2 else 0
+        return len(self.grid) if isinstance(self.grid, list) else 0
 
     @property
     def width(self) -> int:
-        return int(self.grid.shape[1]) if self.grid.ndim == 2 else 0
+        if is_numpy_array(self.grid):
+            return int(self.grid.shape[1]) if self.grid.ndim == 2 else 0
+        if isinstance(self.grid, list) and self.grid:
+            first = self.grid[0]
+            return len(first) if isinstance(first, list) else 0
+        return 0
 
     # -- coordinate transforms -----------------------------------------------
 
@@ -287,14 +301,16 @@ class OccupancyGrid:
         """Cell value at world (x, y); out of bounds returns UNKNOWN (-1)."""
         row, col = self.world_to_grid(x, y)
         if 0 <= row < self.height and 0 <= col < self.width:
-            return int(self.grid[row, col])
+            if is_numpy_array(self.grid):
+                return int(self.grid[row, col])
+            return int(self.grid[row][col])
         return self.UNKNOWN
 
     # -- serialisation -------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "grid": self.grid.tolist(),
+            "grid": self.grid.tolist() if hasattr(self.grid, "tolist") else self.grid,
             "resolution": self.resolution,
             "origin": self.origin.to_dict(),
             "ts": self.ts,
@@ -306,7 +322,7 @@ class OccupancyGrid:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> OccupancyGrid:
         grid_data = d.get("grid", [])
-        grid = np.array(grid_data, dtype=np.int8) if grid_data else np.zeros((0, 0), dtype=np.int8)
+        grid = np.array(grid_data, dtype=np.int8) if grid_data else []
         return cls(
             grid=grid,
             resolution=float(d.get("resolution", 0.05)),
@@ -322,7 +338,12 @@ class OccupancyGrid:
                              0.0,  # reserved
                              self.height, self.width, len(fb)) + fb
         origin_bytes = self.origin.encode()
-        grid_bytes = self.grid.tobytes()
+        if is_numpy_array(self.grid):
+            grid_bytes = self.grid.tobytes()
+        elif not self.grid:
+            grid_bytes = b""
+        else:
+            grid_bytes = np.array(self.grid, dtype=np.int8).tobytes()
         return header + origin_bytes + grid_bytes
 
     @classmethod
@@ -334,6 +355,8 @@ class OccupancyGrid:
         origin = Pose.decode(data[off: off + 56])
         off += 56
         nbytes = h * w
+        if nbytes == 0:
+            return cls(grid=[], resolution=res, origin=origin, ts=ts, frame_id=frame_id)
         grid = np.frombuffer(data[off: off + nbytes], dtype=np.int8).reshape((h, w)).copy()
         return cls(grid=grid, resolution=res, origin=origin, ts=ts, frame_id=frame_id)
 

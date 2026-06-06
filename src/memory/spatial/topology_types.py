@@ -4,6 +4,8 @@
 从 topology_graph.py 中提取, 保持向后兼容。
 """
 
+from __future__ import annotations
+
 import heapq
 import logging
 import math
@@ -12,8 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-
+from core.msgs.numpy_compat import np
 logger = logging.getLogger(__name__)
 
 

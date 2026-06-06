@@ -69,8 +69,6 @@ def _navigation_state(nav: Any) -> str:
     nested = health.get("navigation")
     if state is None and isinstance(nested, dict):
         state = nested.get("state")
-    if state is None:
-        state = getattr(nav, "_state", "")
     if hasattr(state, "value"):
         state = state.value
     return str(state or "").upper()
@@ -151,6 +149,8 @@ class MCPServerModule(Module, layer=6):
         self._tagged_locations_mod = None
         self._vector_memory_mod    = None
         self._episodic_mod         = None
+        self._navigation_module = None
+        self._backend_reconfigure_modules: dict[str, Any] = {}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -167,6 +167,13 @@ class MCPServerModule(Module, layer=6):
         self._tool_registry = {}
         self._tool_list = []
         self._all_modules = modules
+        self._navigation_module = modules.get("NavigationModule")
+        self._backend_reconfigure_modules = {
+            module_name: modules.get(module_name)
+            for module_names in _BACKEND_RECONFIGURE_TARGETS.values()
+            for module_name in module_names
+            if modules.get(module_name) is not None
+        }
 
         # Grab module references for built-in tools
         self._tagged_locations_mod = modules.get("TaggedLocationsModule")
@@ -462,8 +469,7 @@ class MCPServerModule(Module, layer=6):
         **config: Any,
     ) -> dict[str, Any]:
         if category in _MOTION_BACKEND_CATEGORIES:
-            nav = self._all_modules.get("NavigationModule")
-            state = _navigation_state(nav)
+            state = _navigation_state(self._navigation_module)
             if state != "IDLE":
                 return {
                     "ok": False,
@@ -474,7 +480,7 @@ class MCPServerModule(Module, layer=6):
                 }
 
         for module_name in _BACKEND_RECONFIGURE_TARGETS.get(category, ()):
-            module = self._all_modules.get(module_name)
+            module = self._backend_reconfigure_modules.get(module_name)
             reconfigure = getattr(module, "reconfigure_backend", None)
             if callable(reconfigure):
                 return reconfigure(category, backend, **config)

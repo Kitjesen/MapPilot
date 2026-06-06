@@ -3,27 +3,31 @@
 Spatial memory (where), knowledge (what), storage (how to persist),
 scheduling (when to look), logging (what happened).
 
-Usage::
-
-    from memory.spatial.topological import TopologicalMemory
-    from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
-    from memory.storage.sqlite_store import SQLiteSceneStore
-    from memory.modules import TopologicalMemoryModule
+Heavy memory implementations are imported lazily so importing the package does
+not load numerical runtimes during blueprint/plugin discovery.
 """
 
-# Re-export core classes for convenience
-from .modules.episodic_module import EpisodicMemoryModule
-from .modules.tagged_locations_module import TaggedLocationsModule
-from .modules.topological_module import TopologicalMemoryModule
-from .spatial.episodic import EpisodicMemory
-from .spatial.tagged_locations import TaggedLocationStore
-from .spatial.topological import TopologicalMemory
+from __future__ import annotations
 
-__all__ = [
-    "EpisodicMemory",
-    "EpisodicMemoryModule",
-    "TaggedLocationStore",
-    "TaggedLocationsModule",
-    "TopologicalMemory",
-    "TopologicalMemoryModule",
-]
+from importlib import import_module
+from typing import Any
+
+_EXPORTS = {
+    "EpisodicMemory": "memory.spatial.episodic",
+    "EpisodicMemoryModule": "memory.modules.episodic_module",
+    "TaggedLocationStore": "memory.spatial.tagged_locations",
+    "TaggedLocationsModule": "memory.modules.tagged_locations_module",
+    "TopologicalMemory": "memory.spatial.topological",
+    "TopologicalMemoryModule": "memory.modules.topological_module",
+}
+
+__all__ = sorted(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value

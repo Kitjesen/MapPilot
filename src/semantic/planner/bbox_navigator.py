@@ -12,6 +12,8 @@ Pipeline:
 No DimOS framework dependency. Pure Python + numpy. Output TwistStamped-compatible dict.
 """
 
+from __future__ import annotations
+
 # Original: dimos/navigation/visual_servoing/detection_navigation.py
 # Original: dimos/navigation/bbox_navigation.py
 # Copyright 2025-2026 Dimensional Inc.
@@ -36,8 +38,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
+from core.msgs.numpy_compat import np
 from core.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -189,10 +190,15 @@ class BBoxNavigator:
         self.depth_confidence: float = 0.0
         # Camera→body transform from factory calibration
         cam_cfg = get_config().camera
-        self._R_body_camera = cam_cfg.T_camera_body[:3, :3]
+        T_camera_body = cam_cfg.T_camera_body
+        if isinstance(T_camera_body, list):
+            self._R_body_camera = [row[:3] for row in T_camera_body[:3]]
+            self._t_camera_body = [row[3] for row in T_camera_body[:3]]
+        else:
+            self._R_body_camera = T_camera_body[:3, :3]
+            self._t_camera_body = T_camera_body[:3, 3]
         # Camera translation in body frame (mounting offset).
         # Defaults: position_x=0.15, position_y=0.0, position_z=0.45
-        self._t_camera_body = cam_cfg.T_camera_body[:3, 3]
         # Auto-tuner (W3-4) — instantiated on demand via tune_bbox_gains skill
         self._gain_tuner = GainAutoTuner()
         # Load persisted gains (overrides config defaults if file exists)

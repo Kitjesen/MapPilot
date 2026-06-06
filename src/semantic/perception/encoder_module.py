@@ -15,9 +15,8 @@ import logging
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.registry import get, list_plugins, register
 from core.stream import In, Out
 
@@ -102,7 +101,7 @@ class EncoderModule(Module, layer=3):
     Also supports text encoding via encode_text() method call.
     """
 
-    image: In[np.ndarray]
+    image: In[Any]
     feature: Out[FeatureResult]
 
     def __init__(

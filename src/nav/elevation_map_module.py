@@ -19,10 +19,9 @@ import logging
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
 from core.msgs.nav import Odometry
+from core.msgs.numpy_compat import np
 from core.msgs.sensor import PointCloud2
 from core.registry import register
 from core.runtime_interface import TOPICS, normalize_frame_id, topic_default_frame_id
@@ -56,7 +55,7 @@ class ElevationMapModule(Module, layer=2):
         self._z_floor = z_floor
         self._z_ceil = z_ceil
         self._interval = 1.0 / publish_hz
-        self._robot_xy = np.zeros(2, dtype=np.float64)
+        self._robot_xy = [0.0, 0.0]
         self._gs = int(2 * map_radius / resolution)
         self._default_frame_id = (
             normalize_frame_id(frame_id) or topic_default_frame_id(TOPICS.map_cloud)
@@ -85,7 +84,7 @@ class ElevationMapModule(Module, layer=2):
             or self._default_frame_id
         )
 
-        origin_xy = self._robot_xy - self._radius
+        origin_xy = np.asarray(self._robot_xy, dtype=np.float64) - self._radius
         gs = self._gs
 
         ix = np.floor((pts[:, 0] - origin_xy[0]) / self._res).astype(np.int32)

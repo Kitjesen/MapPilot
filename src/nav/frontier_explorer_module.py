@@ -30,11 +30,10 @@ import time
 from collections import deque
 from typing import Any
 
-import numpy as np
-
 from core.module import Module, skill
 from core.msgs.geometry import Pose, PoseStamped
 from core.msgs.nav import Odometry
+from core.msgs.numpy_compat import is_numpy_array, np
 from core.registry import register
 from core.runtime_interface import map_frame_id
 from core.stream import In, Out
@@ -652,7 +651,7 @@ class WavefrontFrontierExplorer(Module, layer=2):
         """
         try:
             grid = data["grid"]
-            if not isinstance(grid, np.ndarray):
+            if not is_numpy_array(grid):
                 grid = np.array(grid, dtype=np.int16)
             else:
                 grid = grid.astype(np.int16)

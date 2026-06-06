@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 动作执行器 — 将子目标动作映射为具体的机器人行为。
 
@@ -27,7 +29,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-import numpy as np
+from core.msgs.numpy_compat import np
 
 from core.runtime_interface import map_frame_id
 from core.utils.sanitize import safe_json_loads

@@ -4,12 +4,18 @@
 将 Frontier 相关的纯算法逻辑从 ROS2 节点中剥离出来，便于单测。
 """
 
-import json
+from __future__ import annotations
 
-import numpy as np
+import json
+import math
+from typing import TYPE_CHECKING
+
+from core.msgs.numpy_compat import np
 
 from .frontier_scorer import FrontierScorer
-from .goal_resolver import GoalResult
+
+if TYPE_CHECKING:
+    from .goal_resolver import GoalResult
 
 
 def extract_frontier_scene_data(
@@ -52,7 +58,7 @@ def extract_frontier_scene_data(
             else:
                 continue
 
-            if not np.isfinite(x) or not np.isfinite(y):
+            if not math.isfinite(x) or not math.isfinite(y):
                 continue
 
             objects.append({
@@ -85,7 +91,7 @@ def generate_frontier_goal(
         ry = float(robot_position.get("y", 0.0))
     except (TypeError, ValueError):
         return None
-    if not (np.isfinite(rx) and np.isfinite(ry)):
+    if not (math.isfinite(rx) and math.isfinite(ry)):
         return None
     robot_xy = np.array([rx, ry], dtype=np.float64)
 
@@ -111,6 +117,8 @@ def generate_frontier_goal(
         f"Frontier score={best.score:.2f}, dir={best.direction_label}, "
         f"size={best.size}, nearby={nearby_text}"
     )
+    from .goal_resolver import GoalResult
+
     return GoalResult(
         action="explore",
         target_x=float(best.center_world[0]),

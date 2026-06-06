@@ -35,10 +35,9 @@ import time
 from pathlib import Path as FsPath
 from typing import Any
 
-import numpy as np
-
 from base_autonomy.modules._nav_core_loader import nav_core_build_hint, try_import_nav_core
 from core.backend_status import BackendStatus, require_backend
+from core.msgs.numpy_compat import np
 from core.module import Module
 from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from core.msgs.nav import Odometry, Path
@@ -51,8 +50,8 @@ logger = logging.getLogger(__name__)
 
 # Pre-computed sin/cos lookup table for 36 rotation directions (10° steps, -180..+170°)
 # Matches RotLUT in local_planner_core.hpp
-_ROT_SIN = np.array([math.sin((10.0 * i - 180.0) * math.pi / 180.0) for i in range(36)])
-_ROT_COS = np.array([math.cos((10.0 * i - 180.0) * math.pi / 180.0) for i in range(36)])
+_ROT_SIN = tuple(math.sin((10.0 * i - 180.0) * math.pi / 180.0) for i in range(36))
+_ROT_COS = tuple(math.cos((10.0 * i - 180.0) * math.pi / 180.0) for i in range(36))
 
 # Default planner parameters (mirrors localPlanner.cpp defaults)
 _PATH_NUM  = 343
@@ -364,7 +363,7 @@ class LocalPlannerModule(Module, layer=2):
         self._backend_status = BackendStatus.configured_as(backend)
         self._backend = backend
         self._node = None
-        self._robot_pos = np.zeros(3)
+        self._robot_pos = [0.0, 0.0, 0.0]
         self._robot_yaw = 0.0
         self._latest_waypoint: PoseStamped | None = None
         self._global_path_points: np.ndarray | None = None
@@ -662,7 +661,7 @@ class LocalPlannerModule(Module, layer=2):
     # ------------------------------------------------------------------ #
 
     def _on_odom(self, odom: Odometry):
-        self._robot_pos = np.array([odom.x, odom.y, getattr(odom, "z", 0.0)])
+        self._robot_pos = [odom.x, odom.y, getattr(odom, "z", 0.0)]
         self._robot_yaw = getattr(odom, "yaw", 0.0)
 
         if self._backend == "nanobind" and self._latest_waypoint is not None:

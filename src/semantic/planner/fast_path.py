@@ -30,7 +30,7 @@ from core.runtime_interface import map_frame_id
 if TYPE_CHECKING:
     from .goal_resolver import GoalResult
 
-import numpy as np
+from core.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 FAST_PATH_MAP_FRAME_ID = map_frame_id()

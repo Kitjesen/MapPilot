@@ -1,19 +1,9 @@
-"""Semantic 3D reconstruction — RGB-D voxel coloring + semantic labeling + PLY export.
+"""Semantic 3D reconstruction package with lazy public exports."""
 
-On-robot modules:
-    ReconstructionModule         — streaming TSDF voxel map (lightweight, on-robot)
-    ReconKeyframeExporterModule  — keyframe collector + HTTP uploader to recon server
+from __future__ import annotations
 
-Server-side (run separately on a GPU workstation / cloud VM):
-    semantic.reconstruction.server.recon_server  — FastAPI server + backend registry
-    Backends: tsdf, open3d, nerfstudio, gsfusion
-"""
-
-from .color_projector import ColorProjector
-from .dataset_recorder_module import DatasetRecorderModule
-from .keyframe_exporter_module import ReconKeyframeExporterModule
-from .reconstruction_module import ReconstructionModule
-from .semantic_labeler import SemanticLabeler
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "ColorProjector",
@@ -22,3 +12,21 @@ __all__ = [
     "ReconKeyframeExporterModule",
     "SemanticLabeler",
 ]
+
+_EXPORTS = {
+    "ColorProjector": ".color_projector",
+    "DatasetRecorderModule": ".dataset_recorder_module",
+    "ReconstructionModule": ".reconstruction_module",
+    "ReconKeyframeExporterModule": ".keyframe_exporter_module",
+    "SemanticLabeler": ".semantic_labeler",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value

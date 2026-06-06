@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.sim]
@@ -26,9 +25,28 @@ def _write_json(path: Path, payload: dict) -> Path:
     return path
 
 
+def _module_import_is_safe(module_name: str) -> bool:
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-c", f"import {module_name}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except Exception:
+        return False
+    return probe.returncode == 0
+
+
 def _write_test_video(path: Path) -> Path:
-    cv2 = pytest.importorskip("cv2")
     path.parent.mkdir(parents=True, exist_ok=True)
+    if not (_module_import_is_safe("numpy") and _module_import_is_safe("cv2")):
+        path.write_bytes(b"LingTu server-sim placeholder video artifact\n")
+        return path
+
+    import cv2  # type: ignore
+    import numpy as np
+
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8.0, (64, 48))
     assert writer.isOpened()
     for index in range(3):
@@ -3670,6 +3688,10 @@ def test_server_sim_closure_accepts_fastlio2_inspection_with_moving_obstacle_vid
     assert evidence["video"]["frame_count"] == 14
 
 
+@pytest.mark.skipif(
+    not (_module_import_is_safe("numpy") and _module_import_is_safe("cv2")),
+    reason="Needs safe NumPy and OpenCV imports to generate a decodable video",
+)
 def test_server_sim_closure_accepts_fastlio2_dynamic_inspection_core_gate(
     tmp_path: Path,
 ):
@@ -3737,6 +3759,35 @@ def test_server_sim_closure_rejects_missing_fastlio2_dynamic_inspection_video_fi
     assert summary["ok"] is False
     gaps = "\n".join(summary["remaining_gaps"])
     assert "fastlio2_dynamic_inspection video file missing" in gaps
+
+
+def test_server_sim_closure_rejects_undecodable_fastlio2_dynamic_inspection_video_file(
+    tmp_path: Path,
+):
+    report_payload = _complete_fastlio2_dynamic_inspection_report(tmp_path)
+    fake_video = tmp_path / "not_a_video.mp4"
+    fake_video.write_bytes(b"LingTu placeholder video artifact\n")
+    report_payload["video_path"] = str(fake_video)
+    report_payload["video_frame_count"] = 181
+    report_payload["video_sample_count"] = 181
+    report = _write_json(tmp_path / "fastlio2_dynamic_inspection_fake_video.json", report_payload)
+
+    summary = server_sim_closure.summarize(
+        report_overrides={"fastlio2_dynamic_inspection": report},
+        required={"fastlio2_dynamic_inspection"},
+        include_optional=False,
+    )
+
+    assert summary["ok"] is False
+    gaps = "\n".join(summary["remaining_gaps"])
+    assert any(
+        expected in gaps
+        for expected in (
+            "fastlio2_dynamic_inspection video decoder unavailable",
+            "fastlio2_dynamic_inspection video first frame is not decodable",
+            "fastlio2_dynamic_inspection video nonblack validation unavailable",
+        )
+    )
 
 
 def test_server_sim_closure_core_algorithm_preset_selects_strict_gate_set():

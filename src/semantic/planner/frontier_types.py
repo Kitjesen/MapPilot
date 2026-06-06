@@ -4,14 +4,15 @@ Frontier 数据类型 + 常量 + 纯函数辅助 — 供 frontier_scorer.py 和�
 从 frontier_scorer.py 中提取, 保持向后兼容。
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-
+from core.msgs.numpy_compat import np
 from core.utils.sanitize import sanitize_float
 
 logger = logging.getLogger(__name__)

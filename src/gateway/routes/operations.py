@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shlex
 import time
 from typing import Any
 
@@ -180,6 +179,17 @@ def _unsupported_saved_map_relocalization_response(gw) -> Any | None:
             f"{backend_name}{recovery_hint}"
         ),
         status_code=409,
+    )
+
+
+def _relocalization_service_unavailable_response(gw) -> Any | None:
+    service = getattr(gw, "_relocalization_service", None)
+    if service is not None:
+        return None
+    return _slam_operation_response(
+        False,
+        message="relocalization service unavailable",
+        status_code=503,
     )
 
 
@@ -361,8 +371,6 @@ def register_operation_routes(app, gw) -> None:
         },
     )
     async def post_temporal_semantic(body: TemporalSemanticRequest):
-        import numpy as np
-
         payload = _body_mapping(body)
         raw_emb = payload.get("embedding")
         if not raw_emb:
@@ -371,7 +379,7 @@ def register_operation_routes(app, gw) -> None:
                 content={"error": "embedding required"},
             )
         try:
-            query_vec = np.asarray(raw_emb, dtype=np.float32)
+            query_vec = [float(value) for value in raw_emb]
         except Exception as exc:
             return JSONResponse(
                 status_code=422,
@@ -560,45 +568,27 @@ def register_operation_routes(app, gw) -> None:
         responses={
             409: {"model": SlamOperationResponse},
             500: {"model": SlamOperationResponse},
+            503: {"model": SlamOperationResponse},
             504: {"model": SlamOperationResponse},
         },
     )
     async def slam_auto_relocalize():
-        import subprocess
-
         unsupported_response = _unsupported_saved_map_relocalization_response(gw)
         if unsupported_response is not None:
             return unsupported_response
+        unavailable_response = _relocalization_service_unavailable_response(gw)
+        if unavailable_response is not None:
+            return unavailable_response
 
-        ros_env = (
-            "source /opt/ros/humble/setup.bash && "
-            "source ~/data/SLAM/navigation/install/setup.bash 2>/dev/null; "
-            "unset RMW_IMPLEMENTATION; "
-        )
         try:
-            r = subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    ros_env
-                    + "ros2 service call /nav/global_relocalize "
-                    "std_srvs/srv/Trigger '{}'",
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            )
-            ok = "success=True" in r.stdout
-            msg = r.stdout[-300:] if r.stdout else (r.stderr[-300:] or "no output")
-            return slam_operation_payload(ok, message=msg)
-        except subprocess.TimeoutExpired:
-            return _slam_operation_response(
-                False,
-                message="call timeout > 10s",
-                status_code=504,
-            )
+            result = gw._relocalization_service.trigger_global_relocalize(timeout_s=10.0)
+            if result.timed_out:
+                return _slam_operation_response(
+                    False,
+                    message=result.message,
+                    status_code=504,
+                )
+            return slam_operation_payload(result.success, message=result.message)
         except Exception as e:
             return _slam_operation_response(False, message=str(e), status_code=500)
 
@@ -611,11 +601,11 @@ def register_operation_routes(app, gw) -> None:
             404: {"model": SlamOperationResponse},
             409: {"model": SlamOperationResponse},
             500: {"model": SlamOperationResponse},
+            503: {"model": SlamOperationResponse},
+            504: {"model": SlamOperationResponse},
         },
     )
     async def slam_relocalize(body: SlamRelocalizeRequest):
-        import subprocess
-
         unsupported_response = _unsupported_saved_map_relocalization_response(gw)
         if unsupported_response is not None:
             return unsupported_response
@@ -645,44 +635,30 @@ def register_operation_routes(app, gw) -> None:
                 message=f"Map not found: {pcd_path}",
                 status_code=404,
             )
-        ros_env = (
-            "source /opt/ros/humble/setup.bash && "
-            "source ~/data/SLAM/navigation/install/setup.bash 2>/dev/null; "
-            "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && "
-        )
+        unavailable_response = _relocalization_service_unavailable_response(gw)
+        if unavailable_response is not None:
+            return unavailable_response
         try:
-            # NOTE: user-supplied map_name flows into pcd_path; shlex.quote prevents shell injection
-            safe_pcd = shlex.quote(str(pcd_path))
-            r = subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    ros_env
-                    + "ros2 service call /nav/relocalize interface/srv/Relocalize "
-                    f"\"{{pcd_path: {safe_pcd}, x: {x}, y: {y}, z: 0.0, "
-                    f"yaw: {yaw}, pitch: 0.0, roll: 0.0}}\"",
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
+            result = gw._relocalization_service.relocalize_saved_map(
+                pcd_path,
+                x,
+                y,
+                yaw,
+                timeout_s=30.0,
             )
-            ok = "success=True" in r.stdout
-            quality = None
-            for line in r.stdout.splitlines():
-                ll = line.lower().strip()
-                if any(k in ll for k in ("quality:", "score:", "fitness:")):
-                    try:
-                        quality = float(ll.split(":", 1)[-1].strip())
-                        break
-                    except ValueError:
-                        pass
+            if result.timed_out:
+                return _slam_operation_response(
+                    False,
+                    message=result.message,
+                    status_code=504,
+                )
+            ok = result.success
+            quality = result.quality
             if quality is None and ok:
                 quality = float(getattr(gw, "_icp_quality", 0.0))
             if ok:
                 gw._persist_last_nav_pose(map_name, x, y, yaw, quality)
-            msg = r.stdout[-300:] if not ok else f"Relocalized to {map_name}"
+            msg = result.message if not ok else f"Relocalized to {map_name}"
             return slam_operation_payload(ok, message=msg, quality=quality)
         except Exception as e:
             return _slam_operation_response(False, message=str(e), status_code=500)

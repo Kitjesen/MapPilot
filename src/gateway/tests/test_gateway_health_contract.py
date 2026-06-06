@@ -32,6 +32,23 @@ def test_liveness_and_devices_routes_validate_response_contracts():
     assert devices_model.devices == []
 
 
+def test_health_and_devices_routes_tolerate_missing_module_inventory():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    del gateway._all_modules
+
+    devices = asyncio.run(_endpoint(gateway, "/api/v1/devices")())
+    health = asyncio.run(_endpoint(gateway, "/api/v1/health")())
+
+    assert devices["manager"] == "not_loaded"
+    assert devices["devices"] == []
+    assert health["modules"] == {}
+    assert health["modules_ok"] == 0
+    assert health["modules_fail"] == 0
+
+
 def test_health_schema_keeps_top_level_app_contract_flexible():
     from gateway.schemas import HealthResponse
 

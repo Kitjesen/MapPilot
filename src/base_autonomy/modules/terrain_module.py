@@ -20,10 +20,9 @@ import logging
 import time
 from typing import Any
 
-import numpy as np
-
 from base_autonomy.modules._nav_core_loader import nav_core_build_hint, try_import_nav_core
 from core.backend_status import BackendStatus, require_backend
+from core.msgs.numpy_compat import np
 from core.module import Module
 from core.msgs.nav import Odometry
 from core.msgs.sensor import PointCloud2
@@ -58,7 +57,7 @@ class TerrainModule(Module, layer=2):
     # -- Outputs --
     terrain_map: Out[PointCloud2]
     traversability: Out[dict]
-    elevation_map: Out[np.ndarray]
+    elevation_map: Out[Any]
     alive: Out[bool]
 
     def __init__(self, backend: str = "nanobind", **kw):

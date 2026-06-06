@@ -23,8 +23,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Sequence
 
-import numpy as np
-
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -32,6 +30,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from core.msgs.numpy_compat import is_numpy_array, np
 from core.runtime_evidence import validate_runtime_evidence
 from core.runtime_interface import (
     FRAME_LINKS,
@@ -55,19 +54,6 @@ from drivers.sim.mujoco_lingtu_stack import (
     build_fastlio2_frontier_stack,
     build_fastlio2_inspection_stack,
     build_fastlio2_tare_stack,
-)
-from drivers.sim.mujoco_sensor_bridge import (
-    angle_delta_rad as _angle_delta_rad,
-    make_imu_msg as _make_imu_msg,
-    make_livox_custom_msg as _make_livox_custom_msg,
-    make_odom_body_tf as _make_odom_body_tf,
-    make_pointcloud2 as _make_pointcloud2,
-    make_sim_odometry_msg as _make_sim_odometry_msg,
-    make_transform_msg as _make_transform_msg,
-    sensor_xyzi_to_body_xyzi as _sensor_xyzi_to_body_xyzi,
-    specific_force_body as _specific_force_body,
-    world_xyzi_to_sensor_xyzi as _world_xyzi_to_sensor_xyzi,
-    yaw_from_quat_xyzw as _yaw_from_quat_xyzw,
 )
 from core.same_source_map_artifacts import (
     add_points_to_voxel_store as _add_points_to_voxel_store,
@@ -96,6 +82,60 @@ FASTLIO_REGISTERED_CLOUD_TOPIC = adapter_source_for_target(
 )
 FASTLIO_MAP_CLOUD_TOPIC = adapter_source_for_target("fastlio2", TOPICS.map_cloud)
 FASTLIO_ODOMETRY_TOPIC = adapter_source_for_target("fastlio2", TOPICS.odometry)
+_MUJOCO_SENSOR_BRIDGE: Any | None = None
+
+
+def _mujoco_sensor_bridge() -> Any:
+    global _MUJOCO_SENSOR_BRIDGE
+    if _MUJOCO_SENSOR_BRIDGE is None:
+        from drivers.sim import mujoco_sensor_bridge
+
+        _MUJOCO_SENSOR_BRIDGE = mujoco_sensor_bridge
+    return _MUJOCO_SENSOR_BRIDGE
+
+
+def _angle_delta_rad(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().angle_delta_rad(*args, **kwargs)
+
+
+def _make_imu_msg(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().make_imu_msg(*args, **kwargs)
+
+
+def _make_livox_custom_msg(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().make_livox_custom_msg(*args, **kwargs)
+
+
+def _make_odom_body_tf(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().make_odom_body_tf(*args, **kwargs)
+
+
+def _make_pointcloud2(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().make_pointcloud2(*args, **kwargs)
+
+
+def _make_sim_odometry_msg(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().make_sim_odometry_msg(*args, **kwargs)
+
+
+def _make_transform_msg(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().make_transform_msg(*args, **kwargs)
+
+
+def _sensor_xyzi_to_body_xyzi(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().sensor_xyzi_to_body_xyzi(*args, **kwargs)
+
+
+def _specific_force_body(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().specific_force_body(*args, **kwargs)
+
+
+def _world_xyzi_to_sensor_xyzi(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().world_xyzi_to_sensor_xyzi(*args, **kwargs)
+
+
+def _yaw_from_quat_xyzw(*args: Any, **kwargs: Any) -> Any:
+    return _mujoco_sensor_bridge().yaw_from_quat_xyzw(*args, **kwargs)
 
 
 def _sha256_file(path: Path) -> str:
@@ -1391,7 +1431,7 @@ def _write_stage_video(
         chunks: list[np.ndarray] = []
         for sample in samples:
             pts = sample.get(key)
-            if isinstance(pts, np.ndarray) and pts.size:
+            if is_numpy_array(pts) and pts.size:
                 if key == "raw_points":
                     chunks.append(transform_sim_points(pts)[:, :2])
                 else:
@@ -1424,7 +1464,7 @@ def _write_stage_video(
         chunks: list[np.ndarray] = []
         for sample in samples:
             raw = sample.get("raw_points")
-            if isinstance(raw, np.ndarray) and raw.size and raw.shape[1] >= 2:
+            if is_numpy_array(raw) and raw.size and raw.shape[1] >= 2:
                 chunks.append(raw[:, :2])
         if sim_series.size:
             chunks.append(sim_series)
@@ -1537,7 +1577,7 @@ def _write_stage_video(
         if kind == "map":
             for sample in samples:
                 map_pts = sample.get("map_points")
-                if isinstance(map_pts, np.ndarray) and map_pts.size:
+                if is_numpy_array(map_pts) and map_pts.size:
                     chunks.append(np.asarray(map_pts[:, :3], dtype=np.float32))
                 raw_pts = sample.get("raw_points")
                 raw_aligned = transform_sim_points(raw_pts)
@@ -1722,7 +1762,7 @@ def _write_stage_video(
 
         draw_panel(frame, scene_rect, "MuJoCo environment render")
         overview = sample.get("overview_rgb")
-        if isinstance(overview, np.ndarray) and overview.size:
+        if is_numpy_array(overview) and overview.size:
             x0, y0, x1, y1 = scene_rect
             rgb = np.asarray(overview, dtype=np.uint8)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR) if rgb.ndim == 3 else rgb
@@ -3716,7 +3756,7 @@ def run_gate(
 
                         live_cv2 = _cv2
                     overview = _render_mujoco_overview(engine, video_render_state)
-                    if isinstance(overview, np.ndarray) and overview.size:
+                    if is_numpy_array(overview) and overview.size:
                         if not live_window_created:
                             live_cv2.namedWindow(live_window_name, live_cv2.WINDOW_NORMAL)
                             live_cv2.resizeWindow(live_window_name, 640, 360)

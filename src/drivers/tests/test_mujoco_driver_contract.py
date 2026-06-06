@@ -8,6 +8,11 @@ declarations and contract compliance are checked.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from core.msgs.geometry import Twist
 from core.msgs.nav import Odometry
 from core.msgs.sensor import CameraIntrinsics, Image, PointCloud2
@@ -106,6 +111,58 @@ class TestMujocoDriverContract:
         # Idempotent
         mod.stop()
         assert not mod._running
+
+    def test_setup_soft_fails_when_numpy_runtime_probe_fails(self, monkeypatch):
+        """setup() must not import the MuJoCo engine when NumPy is unsafe."""
+        import drivers.sim.mujoco_driver_module as module
+
+        cls = _get_mujoco()
+        monkeypatch.setattr(module, "_NUMPY_RUNTIME_AVAILABLE", False)
+
+        mod = cls()
+        mod.setup()
+
+        assert mod._engine is None
+
+    def test_setup_does_not_duplicate_repo_root_in_sys_path(self, monkeypatch):
+        """setup() must not insert duplicate import roots when already configured."""
+        import drivers.sim.mujoco_driver_module as module
+
+        cls = _get_mujoco()
+        repo_root = str(module._SIM_ROOT.parent)
+        path_without_repo_root = [path for path in sys.path if path != repo_root]
+        monkeypatch.setattr(sys, "path", [repo_root, *path_without_repo_root])
+
+        mod = cls()
+        mod.setup()
+
+        assert sys.path.count(repo_root) == 1
+
+    def test_import_does_not_load_numpy(self):
+        """Control-plane import must stay available without numerical runtime."""
+        src_root = Path(__file__).resolve().parents[2]
+        env = dict(os.environ)
+        env["PYTHONPATH"] = (
+            str(src_root)
+            if not env.get("PYTHONPATH")
+            else f"{src_root}{os.pathsep}{env['PYTHONPATH']}"
+        )
+        code = (
+            "import sys; "
+            "import drivers.sim.mujoco_driver_module; "
+            "raise SystemExit(1 if 'numpy' in sys.modules else 0)"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=str(src_root.parent),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr or result.stdout
 
     def test_driver_contract_issues_empty(self):
         """driver_contract_issues() must return an empty list."""

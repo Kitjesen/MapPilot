@@ -27,7 +27,6 @@ import logging
 from typing import Any
 
 from core.blueprint import Blueprint, autoconnect
-from core.utils.calibration_check import run_calibration_check
 
 from .full_stack_wiring import apply_full_stack_wires
 from .stacks import (
@@ -79,6 +78,8 @@ def _run_startup_preflight(
     enable_semantic: bool,
     slam_profile: str,
 ) -> None:
+    from core.utils.calibration_check import run_calibration_check
+
     needs_camera = enable_semantic or slam_profile not in ("", "none")
     needs_slam = slam_profile not in ("", "none")
     calib = run_calibration_check(

@@ -19,8 +19,6 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -31,6 +29,48 @@ POINTLIO_CONFIG = REPO_ROOT / "config" / "pointlio.yaml"
 # typically calibrate to <10 ms; values beyond this likely indicate a parsing bug
 # or hardware sync failure.
 TIME_OFFSET_MAX_ABS_S = 0.1
+
+
+def _allclose(a, b, *, atol: float) -> bool:
+    try:
+        av = [float(v) for v in a]
+        bv = [float(v) for v in b]
+    except (TypeError, ValueError):
+        return False
+    return len(av) == len(bv) and all(abs(x - y) <= atol for x, y in zip(av, bv))
+
+
+def _matrix3(values) -> list[list[float]] | None:
+    flat: list[float] = []
+    try:
+        for value in values:
+            if isinstance(value, (list, tuple)):
+                flat.extend(float(v) for v in value)
+            else:
+                flat.append(float(value))
+    except (TypeError, ValueError):
+        return None
+    if len(flat) != 9:
+        return None
+    return [flat[0:3], flat[3:6], flat[6:9]]
+
+
+def _det3(m: list[list[float]]) -> float:
+    return (
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    )
+
+
+def _orthogonality_error3(m: list[list[float]]) -> float:
+    max_err = 0.0
+    for row in range(3):
+        for col in range(3):
+            value = sum(m[k][row] * m[k][col] for k in range(3))
+            expected = 1.0 if row == col else 0.0
+            max_err = max(max_err, abs(value - expected))
+    return max_err
 
 
 @dataclass
@@ -261,7 +301,7 @@ def _check_lidar_imu_consistency(
         return
     t_cfg = [lidar.offset_x, lidar.offset_y, lidar.offset_z]
 
-    if np.allclose(t_il, t_cfg, atol=0.002):
+    if _allclose(t_il, t_cfg, atol=0.002):
         report.info.append("LiDAR offsets match robot_config.yaml and lio.yaml")
     else:
         msg = (
@@ -378,8 +418,11 @@ def _check_rotation_validity(report: CalibrationReport) -> None:
     if not r_il:
         return
 
-    R = np.array(r_il, dtype=np.float64).reshape(3, 3)
-    det = np.linalg.det(R)
+    R = _matrix3(r_il)
+    if R is None:
+        report.errors.append("r_il is not a 3x3 rotation matrix")
+        return
+    det = _det3(R)
 
     if abs(det - 1.0) > 0.01:
         report.errors.append(
@@ -391,8 +434,7 @@ def _check_rotation_validity(report: CalibrationReport) -> None:
         )
 
     # Check orthogonality: R^T @ R should be close to I
-    RtR = R.T @ R
-    ortho_err = np.max(np.abs(RtR - np.eye(3)))
+    ortho_err = _orthogonality_error3(R)
     if ortho_err > 0.01:
         report.errors.append(
             f"r_il not orthogonal: max |R^T R - I| = {ortho_err:.6f}"

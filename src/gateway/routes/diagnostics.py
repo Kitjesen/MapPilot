@@ -1378,7 +1378,7 @@ def register_diagnostic_routes(app, gw) -> None:
 
         with tarfile.open(tmp_path, "w:gz") as tar:
             modules_info: dict[str, Any] = {}
-            for name, module in gw._all_modules.items():
+            for name, module in (getattr(gw, "_all_modules", None) or {}).items():
                 try:
                     if hasattr(module, "health"):
                         modules_info[name] = module.health()

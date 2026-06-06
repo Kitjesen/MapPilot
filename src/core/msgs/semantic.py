@@ -13,11 +13,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-
 from core.runtime_interface import map_frame_id
 
 from .geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from .numpy_compat import np
 
 SEMANTIC_MSG_MAP_FRAME_ID = map_frame_id()
 

@@ -13,6 +13,8 @@
   4. LLM 查询时: "回到有红色沙发的房间" → CLIP 匹配拓扑节点
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import threading
@@ -20,8 +22,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-import numpy as np
-
+from core.msgs.numpy_compat import np
 from core.utils.sanitize import safe_json_dumps
 
 logger = logging.getLogger(__name__)

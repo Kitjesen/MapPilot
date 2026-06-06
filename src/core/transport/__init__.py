@@ -32,21 +32,29 @@ from .adapter import TransportAdapter
 from .factory import create_publisher, create_subscriber, create_transport
 from .local import LocalTransport, Transport
 
-# --- conditional backend imports ---
-try:
-    from .shm import SHMPublisher, SHMSubscriber, SHMTransport
-except ImportError:
-    pass
+_OPTIONAL_BACKENDS = {
+    "SHMPublisher": ("shm", "SHMPublisher"),
+    "SHMSubscriber": ("shm", "SHMSubscriber"),
+    "SHMTransport": ("shm", "SHMTransport"),
+    "DDSPublisher": ("dds", "DDSPublisher"),
+    "DDSSubscriber": ("dds", "DDSSubscriber"),
+    "DDSTransport": ("dds", "DDSTransport"),
+    "DualPublisher": ("dual", "DualPublisher"),
+    "DualSubscriber": ("dual", "DualSubscriber"),
+    "DualTransport": ("dual", "DualTransport"),
+}
 
-try:
-    from .dds import DDSPublisher, DDSSubscriber, DDSTransport
-except ImportError:
-    pass
 
-try:
-    from .dual import DualPublisher, DualSubscriber, DualTransport
-except ImportError:
-    pass
+def __getattr__(name: str):
+    if name not in _OPTIONAL_BACKENDS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = _OPTIONAL_BACKENDS[name]
+    import importlib
+
+    module = importlib.import_module(f".{module_name}", package=__name__)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "LocalTransport",

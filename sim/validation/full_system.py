@@ -13,18 +13,30 @@ import argparse
 import importlib.util
 import json
 import math
+import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-import numpy as np
-
 
 PASS = "pass"
 FAIL = "fail"
 BLOCKED = "blocked"
+
+ENVIRONMENT_DEPENDENCY_MODULES = frozenset(
+    {
+        "cv2",
+        "mujoco",
+        "numpy",
+        "onnxruntime",
+        "scipy",
+        "yaml",
+    }
+)
+_NUMPY_IMPORT_SAFE: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -68,10 +80,40 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _missing_module_root(exc: ModuleNotFoundError) -> str:
+    return str(getattr(exc, "name", "") or "").split(".", 1)[0]
+
+
+def _module_not_found_check(
+    name: str,
+    category: str,
+    exc: ModuleNotFoundError,
+) -> ValidationCheck:
+    missing = _missing_module_root(exc)
+    status = BLOCKED if missing in ENVIRONMENT_DEPENDENCY_MODULES else FAIL
+    summary = (
+        f"missing Python dependency: {missing}"
+        if status == BLOCKED and missing
+        else f"{type(exc).__name__}: {exc}"
+    )
+    return ValidationCheck(
+        name=name,
+        category=category,
+        status=status,
+        summary=summary,
+        evidence={
+            "missing_module": missing,
+            "exception": f"{type(exc).__name__}: {exc}",
+        },
+    )
+
+
 def _timed(name: str, category: str, fn) -> ValidationCheck:
     started = time.perf_counter()
     try:
         check = fn()
+    except ModuleNotFoundError as exc:
+        check = _module_not_found_check(name, category, exc)
     except Exception as exc:
         check = ValidationCheck(
             name=name,
@@ -103,6 +145,34 @@ def _pos_z(geom: ET.Element) -> float:
 
 def _geom_names(root: ET.Element) -> set[str]:
     return {geom.attrib.get("name", "") for geom in root.findall(".//geom")}
+
+
+def _numpy():
+    if not _numpy_import_is_safe():
+        raise ModuleNotFoundError(
+            "No module named 'numpy'",
+            name="numpy",
+        )
+    import numpy as np
+
+    return np
+
+
+def _numpy_import_is_safe() -> bool:
+    global _NUMPY_IMPORT_SAFE
+    if _NUMPY_IMPORT_SAFE is None:
+        try:
+            probe = subprocess.run(
+                [sys.executable, "-c", "import numpy"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            _NUMPY_IMPORT_SAFE = False
+        else:
+            _NUMPY_IMPORT_SAFE = probe.returncode == 0
+    return _NUMPY_IMPORT_SAFE
 
 
 def validate_scene_catalog(repo_root: Path) -> list[ValidationCheck]:
@@ -209,24 +279,29 @@ def validate_slam_localization_contract(repo_root: Path) -> ValidationCheck:
 
 
 def validate_navigation_blueprint(repo_root: Path) -> ValidationCheck:
-    from core.blueprints.full_stack import full_stack_blueprint
+    from core.blueprints.profile_graph import graph_for_profile
 
-    system = full_stack_blueprint(
-        robot="sim_mujoco",
-        world="open_field",
-        slam_profile="none",
-        detector="sim_scene",
-        llm="mock",
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=False,
-        render=False,
-        python_autonomy_backend="simple",
-        python_path_follower_backend="pid",
-        drive_mode="kinematic",
-        run_startup_checks=False,
-    ).build()
-    connections = set(system.connections)
+    graph_kwargs = {
+        "slam_profile": "none",
+        "enable_semantic": False,
+        "enable_gateway": False,
+        "python_autonomy_backend": "simple",
+        "python_path_follower_backend": "pid",
+        "run_startup_checks": False,
+    }
+    graph = graph_for_profile(
+        "sim",
+        **graph_kwargs,
+    )
+    connections = {
+        (
+            wire.out_module,
+            wire.out_port,
+            wire.in_module,
+            wire.in_port,
+        )
+        for wire in graph.explicit_wires
+    }
     required = {
         ("MujocoDriverModule", "odometry", "NavigationModule", "odometry"),
         ("MujocoDriverModule", "map_cloud", "OccupancyGridModule", "map_cloud"),
@@ -238,25 +313,105 @@ def validate_navigation_blueprint(repo_root: Path) -> ValidationCheck:
         ("CmdVelMux", "driver_cmd_vel", "MujocoDriverModule", "cmd_vel"),
     }
     missing = sorted(required - connections)
+    blockers = list(missing)
+    runtime_parity: dict[str, Any] = {
+        "checked": False,
+        "status": BLOCKED,
+        "reason": "numpy import unavailable or unsafe",
+    }
+    if _numpy_import_is_safe():
+        try:
+            runtime_graph = graph_for_profile("sim", mode="runtime", **graph_kwargs)
+            static_snapshot = graph.as_snapshot()
+            runtime_snapshot = runtime_graph.as_snapshot()
+            missing_runtime_modules = sorted(
+                set(static_snapshot["modules"]) - set(runtime_snapshot["modules"])
+            )
+            extra_runtime_modules = sorted(
+                set(runtime_snapshot["modules"]) - set(static_snapshot["modules"])
+            )
+            missing_runtime_wires = sorted(
+                set(static_snapshot["explicit_wires"])
+                - set(runtime_snapshot["explicit_wires"])
+            )
+            extra_runtime_wires = sorted(
+                set(runtime_snapshot["explicit_wires"])
+                - set(static_snapshot["explicit_wires"])
+            )
+            runtime_parity = {
+                "checked": True,
+                "status": PASS,
+                "missing_runtime_modules": missing_runtime_modules,
+                "extra_runtime_modules": extra_runtime_modules,
+                "missing_runtime_wires": missing_runtime_wires,
+                "extra_runtime_wires": extra_runtime_wires,
+            }
+            if (
+                missing_runtime_modules
+                or extra_runtime_modules
+                or missing_runtime_wires
+                or extra_runtime_wires
+            ):
+                runtime_parity["status"] = FAIL
+                blockers.append("runtime profile graph differs from static profile graph")
+        except ModuleNotFoundError as exc:
+            missing_module = _missing_module_root(exc)
+            parity_status = (
+                BLOCKED if missing_module in ENVIRONMENT_DEPENDENCY_MODULES else FAIL
+            )
+            runtime_parity = {
+                "checked": False,
+                "status": parity_status,
+                "reason": (
+                    f"missing Python dependency: {missing_module}"
+                    if parity_status == BLOCKED
+                    else "runtime profile graph construction failed"
+                ),
+                "missing_module": missing_module,
+                "exception": f"{type(exc).__name__}: {exc}",
+            }
+            if parity_status == FAIL:
+                blockers.append("runtime profile graph construction failed")
+        except Exception as exc:
+            runtime_parity = {
+                "checked": False,
+                "status": FAIL,
+                "reason": "runtime profile graph construction failed",
+                "exception": f"{type(exc).__name__}: {exc}",
+            }
+            blockers.append("runtime profile graph construction failed")
+    status = (
+        FAIL
+        if blockers
+        else PASS
+        if runtime_parity.get("checked") and runtime_parity.get("status") == PASS
+        else BLOCKED
+    )
+    if blockers:
+        summary = "simulation navigation wiring is incomplete"
+    elif status == PASS:
+        summary = "global planning, local planning, tracking, mux, and simulated driver are wired"
+    else:
+        summary = "simulation navigation static wiring is valid; runtime parity is blocked"
     return ValidationCheck(
         name="sim_nav_planning_wiring",
         category="navigation",
-        status=PASS if not missing else FAIL,
-        summary=(
-            "global planning, local planning, tracking, mux, and simulated driver are wired"
-            if not missing
-            else "simulation navigation wiring is incomplete"
-        ),
+        status=status,
+        summary=summary,
         evidence={
             "missing_connections": missing,
-            "module_count": len(system.modules),
-            "connection_count": len(system.connections),
+            "module_count": len(graph.modules),
+            "connection_count": len(graph.explicit_wires),
             "repo_root": str(repo_root),
+            "profile_graph_mode": "static",
+            "runtime_parity": runtime_parity,
         },
     )
 
 
 def validate_frontier_exploration_runtime() -> ValidationCheck:
+    np = _numpy()
+
     from core.blueprints.full_stack import full_stack_blueprint
     from core.msgs.geometry import Pose
     from core.msgs.nav import Odometry
@@ -332,6 +487,8 @@ def validate_frontier_exploration_runtime() -> ValidationCheck:
 
 
 def validate_person_tracking_runtime() -> ValidationCheck:
+    np = _numpy()
+
     from sim.following.behavior import BehaviorConfig, BehaviorState, FollowingBehavior
     from sim.following.controller.pure_pursuit import PurePursuitFollower
     from sim.following.interfaces import PerceivedTarget
@@ -759,7 +916,16 @@ def run_validation(
 
     fail_count = sum(1 for check in checks if check.status == FAIL)
     blocked_count = sum(1 for check in checks if check.status == BLOCKED)
-    passed = fail_count == 0 and (blocked_count == 0 if require_all else True)
+    required_blocked_count = sum(
+        1
+        for check in checks
+        if check.name == "sim_nav_planning_wiring" and check.status == BLOCKED
+    )
+    passed = (
+        fail_count == 0
+        and required_blocked_count == 0
+        and (blocked_count == 0 if require_all else True)
+    )
     return ValidationReport(
         generated_at=time.time(),
         repo_root=str(root),

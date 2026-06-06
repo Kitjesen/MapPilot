@@ -336,6 +336,39 @@ def test_diagnostic_routes_export_tarball(monkeypatch):
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
+def test_diagnostic_pack_tolerates_missing_module_inventory(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import diagnostics
+    from gateway.routes.diagnostics import register_diagnostic_routes
+
+    temp_root = Path.cwd() / ".tmp" / "test_gateway_route_split" / uuid.uuid4().hex
+    temp_root.mkdir(parents=True, exist_ok=False)
+    monkeypatch.setattr(diagnostics.tempfile, "gettempdir", lambda: str(temp_root))
+
+    try:
+        gateway = GatewayModule()
+        gateway.setup()
+        del gateway._all_modules
+        app = FastAPI()
+        register_diagnostic_routes(app, gateway)
+
+        response = TestClient(app).get("/api/v1/diagnostic_pack")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/gzip")
+
+        with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as tar:
+            modules_file = tar.extractfile("diag/modules.json")
+            assert modules_file is not None
+            modules = json.loads(modules_file.read().decode("utf-8"))
+            assert modules == {}
+        assert list(temp_root.glob("diag_*.tar.gz")) == []
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     from gateway.gateway_module import GatewayModule
     from gateway.routes.diagnostics import _build_app_web_snapshots

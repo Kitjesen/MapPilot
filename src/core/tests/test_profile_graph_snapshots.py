@@ -1,3 +1,4 @@
+import builtins
 import sys
 
 import pytest
@@ -12,16 +13,25 @@ from core.blueprints.profile_graph import (
     graph_for_profile,
     resolve_profile_config,
 )
-from core.blueprints.runtime_endpoint import RuntimeEndpointError, runtime_endpoint
+from core.blueprints.runtime_endpoint import (
+    RuntimeEndpointError,
+    runtime_endpoint,
+    runtime_endpoint_names,
+    resolve_runtime_run_spec,
+)
 from core.blueprints.simulation_contract import (
     CANONICAL_NAV_TOPICS,
     SIMULATION_RUNTIME_CONTRACTS,
     runtime_contracts_for_profile,
     simulation_runtime_contract,
 )
-from core.blueprints.stacks.navigation import navigation
+from core.blueprints.stacks.navigation import (
+    autonomy_stack_config,
+    frontier_module_config,
+    navigation_module_config,
+)
 from core.runtime_interface import DATA_SOURCE_CONTRACTS, TOPICS, profile_data_source
-from cli.profiles_data import PROFILES
+from core.runtime_profiles import PROFILES, ROBOT_PRESETS
 
 
 REAL_LOCALIZATION_PROFILES = (
@@ -31,6 +41,57 @@ REAL_LOCALIZATION_PROFILES = (
     "super_lio",
     "super_lio_relocation",
 )
+
+SIMULATION_PROFILE_RUNTIME_MATRIX = {
+    "stub": {
+        "data_source": "in_process_stub",
+        "profile_contracts": (),
+        "external_launcher": None,
+        "runtime_contract": None,
+    },
+    "dev": {
+        "data_source": "in_process_stub",
+        "profile_contracts": (),
+        "external_launcher": None,
+        "runtime_contract": None,
+    },
+    "sim_nav": {
+        "data_source": "in_process_stub",
+        "profile_contracts": (),
+        "external_launcher": None,
+        "runtime_contract": None,
+    },
+    "sim": {
+        "data_source": "mujoco_module_graph",
+        "profile_contracts": (),
+        "external_launcher": None,
+        "runtime_contract": None,
+    },
+    "sim_mujoco_live": {
+        "data_source": "mujoco_fastlio2_live",
+        "profile_contracts": ("mujoco_fastlio2_live",),
+        "external_launcher": "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "runtime_contract": "mujoco_fastlio2_live",
+    },
+    "sim_gazebo": {
+        "data_source": "gazebo_industrial",
+        "profile_contracts": (),
+        "external_launcher": None,
+        "runtime_contract": None,
+    },
+    "sim_industrial": {
+        "data_source": "gazebo_industrial",
+        "profile_contracts": ("gazebo_industrial",),
+        "external_launcher": None,
+        "runtime_contract": None,
+    },
+    "sim_cmu_tare": {
+        "data_source": "cmu_unity_external",
+        "profile_contracts": ("cmu_unity_external",),
+        "external_launcher": "sim/scripts/launch_cmu_unity_lingtu_runtime.sh",
+        "runtime_contract": "cmu_unity_external",
+    },
+}
 
 
 def test_top_level_blueprint_api_exposes_all_stack_factories():
@@ -58,6 +119,22 @@ def _wire_set(graph):
     return {wire.as_snapshot() for wire in graph.explicit_wires}
 
 
+def test_static_profile_graph_does_not_import_runtime_message_stack(monkeypatch):
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "numpy" or name.startswith("core.msgs"):
+            raise AssertionError(f"static graph imported runtime message stack: {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    graph = graph_for_profile("explore")
+
+    assert "NavigationModule" in graph.modules
+    assert "ThunderDriver" in graph.modules
+
+
 def test_profile_graphs_compile_for_primary_profiles():
     for profile in PROFILE_SNAPSHOT_TARGETS:
         graph = graph_for_profile(profile)
@@ -67,6 +144,62 @@ def test_profile_graphs_compile_for_primary_profiles():
         assert "GatewayModule" in graph.modules
         assert "MCPServerModule" in graph.modules
         assert not graph.dangling_wires(), profile
+
+
+def test_simulation_profiles_match_runtime_data_source_matrix():
+    assert set(SIMULATION_PROFILE_RUNTIME_MATRIX) == set(SIMULATION_PROFILES)
+
+    for profile, expected in SIMULATION_PROFILE_RUNTIME_MATRIX.items():
+        config = resolve_profile_config(profile)
+        binding = profile_data_source(profile)
+        source = DATA_SOURCE_CONTRACTS[binding.data_source]
+        contracts = runtime_contracts_for_profile(profile)
+
+        assert binding.data_source == expected["data_source"], profile
+        assert source.provider != "hardware", profile
+        assert tuple(contract.name for contract in contracts) == expected[
+            "profile_contracts"
+        ], profile
+        assert PROFILES[profile].get("_external_launcher") == expected[
+            "external_launcher"
+        ], profile
+        assert PROFILES[profile].get("_runtime_contract") == expected[
+            "runtime_contract"
+        ], profile
+        assert "_external_launcher" not in config, profile
+        assert "_runtime_contract" not in config, profile
+        for contract in contracts:
+            assert contract.data_source_contract == binding.data_source, profile
+            assert contract.simulation_only is True, profile
+
+
+def test_simulation_endpoints_generate_coherent_runtime_run_specs():
+    for endpoint_name in ("mujoco_live", "replay", "gazebo", "cmu_unity"):
+        endpoint = runtime_endpoint(endpoint_name)
+        source = DATA_SOURCE_CONTRACTS[endpoint.data_source]
+
+        assert endpoint.simulation_only is True
+        assert source.provider != "hardware"
+        assert endpoint.external_launcher
+        assert endpoint.runtime_contract
+
+        for profile in endpoint.supported_profiles:
+            config = resolve_profile_config(profile, runtime_endpoint=endpoint_name)
+            spec = resolve_runtime_run_spec(profile, config)
+
+            assert spec.endpoint == endpoint_name, profile
+            assert spec.data_source == endpoint.data_source, profile
+            assert spec.runtime_contract == endpoint.runtime_contract, profile
+            assert spec.simulation_only is True, profile
+            assert spec.command_sink == source.command_sink, profile
+            assert spec.launcher == endpoint.external_launcher, profile
+            assert spec.launcher_args == endpoint.default_actions[profile], profile
+            assert spec.env["LINGTU_PROFILE"] == profile
+            assert spec.env["LINGTU_ENDPOINT"] == endpoint_name
+            assert spec.env["LINGTU_DATA_SOURCE"] == endpoint.data_source
+            assert spec.env["LINGTU_RUNTIME_CONTRACT"] == endpoint.runtime_contract
+            assert spec.env["LINGTU_COMMAND_SINK"] == source.command_sink
+            assert spec.env["LINGTU_SIMULATION_ONLY"] == "1"
 
 
 def test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges():
@@ -516,28 +649,23 @@ def test_sim_profiles_keep_autonomy_inside_module_graph():
     for profile in ("sim", "sim_gazebo", "sim_industrial", "sim_cmu_tare"):
         config = resolve_profile_config(profile)
         nav_config = dict(config)
-        planner = nav_config.pop("planner", "astar")
-        tomogram = nav_config.pop("tomogram", "")
         enable_native = nav_config.pop("enable_native", False)
+        nav_config.pop("planner", "astar")
+        nav_config.pop("tomogram", "")
 
-        bp = navigation(planner, tomogram, enable_native, **nav_config)
-        entries = {entry.name: entry for entry in bp._entries}
+        autonomy_config = autonomy_stack_config(enable_native, **nav_config)
 
         assert enable_native is False
-        assert entries["TerrainModule"].config["backend"] == "nanobind"
-        assert entries["LocalPlannerModule"].config["backend"] == "nanobind"
-        assert entries["PathFollowerModule"].config["backend"] == "nav_core"
+        assert (autonomy_config["terrain_backend"] or autonomy_config["backend"]) == "nanobind"
+        assert autonomy_config["backend"] == "nanobind"
+        assert autonomy_config["path_follower_backend"] == "nav_core"
         if profile == "sim_cmu_tare":
-            assert (
-                entries["LocalPlannerModule"]
-                .config["allow_direct_track_fallback"]
-                is True
-            )
-            assert (
-                entries["LocalPlannerModule"]
-                .config["ignore_near_field_stop"]
-                is True
-            )
+            assert autonomy_config["local_planner_config"][
+                "allow_direct_track_fallback"
+            ] is True
+            assert autonomy_config["local_planner_config"][
+                "ignore_near_field_stop"
+            ] is True
 
 
 def test_real_robot_profiles_do_not_auto_actuate_on_startup():
@@ -608,6 +736,23 @@ def test_only_sanctioned_external_simulator_profiles_are_first_class():
     }
 
     assert external_profiles == {"sim_cmu_tare", "sim_mujoco_live"}
+
+
+def test_profile_robot_presets_resolve_through_driver_stack():
+    from core.blueprints.stacks.driver import RobotProfile
+
+    profile_presets = {
+        config.get("_default_robot", "stub")
+        for config in PROFILES.values()
+    }
+    endpoint_presets = {
+        runtime_endpoint(endpoint_name).robot_preset
+        for endpoint_name in runtime_endpoint_names()
+    }
+    used_presets = profile_presets | endpoint_presets
+
+    assert used_presets <= set(ROBOT_PRESETS)
+    assert set(ROBOT_PRESETS) == set(RobotProfile.known_presets())
 
 
 def test_product_profiles_do_not_enable_simulation_bypass_flags():
@@ -818,16 +963,14 @@ def test_real_robot_profiles_plan_in_client_map_frame():
         nav_config = dict(config)
         planner = nav_config.pop("planner", "astar")
         tomogram = nav_config.pop("tomogram", "")
-        enable_native = nav_config.pop("enable_native", False)
-        bp = navigation(
+        nav_config.pop("enable_native", False)
+        nav_entry_config = navigation_module_config(
             planner,
             tomogram,
-            enable_native,
             **nav_config,
         )
-        nav_entry = next(entry for entry in bp._entries if entry.name == "NavigationModule")
 
-        assert nav_entry.config["planning_frame_id"] == "map"
+        assert nav_entry_config["planning_frame_id"] == "map"
 
 
 def test_navigation_plan_safety_policy_is_profile_visible():
@@ -835,79 +978,58 @@ def test_navigation_plan_safety_policy_is_profile_visible():
     sim_nav_config = dict(sim_config)
     sim_planner = sim_nav_config.pop("planner", "astar")
     sim_tomogram = sim_nav_config.pop("tomogram", "")
-    sim_enable_native = sim_nav_config.pop("enable_native", False)
-    sim_bp = navigation(sim_planner, sim_tomogram, sim_enable_native, **sim_nav_config)
-    sim_entry = next(entry for entry in sim_bp._entries if entry.name == "NavigationModule")
+    sim_nav_config.pop("enable_native", False)
+    sim_entry_config = navigation_module_config(
+        sim_planner,
+        sim_tomogram,
+        **sim_nav_config,
+    )
 
-    assert sim_entry.config["plan_safety_policy"] == "fallback_astar"
-    assert sim_entry.config["fallback_planner_name"] == "astar"
+    assert sim_entry_config["plan_safety_policy"] == "fallback_astar"
+    assert sim_entry_config["fallback_planner_name"] == "astar"
 
     for profile in ("nav", "explore", "tare_explore", "super_lio", "super_lio_relocation"):
         config = resolve_profile_config(profile)
         nav_config = dict(config)
         planner = nav_config.pop("planner", "astar")
         tomogram = nav_config.pop("tomogram", "")
-        enable_native = nav_config.pop("enable_native", False)
-        bp = navigation(planner, tomogram, enable_native, **nav_config)
-        nav_entry = next(entry for entry in bp._entries if entry.name == "NavigationModule")
+        nav_config.pop("enable_native", False)
+        nav_entry_config = navigation_module_config(planner, tomogram, **nav_config)
 
-        assert nav_entry.config["plan_safety_policy"] == "fallback_astar"
-        assert nav_entry.config["fallback_planner_name"] == "astar"
+        assert nav_entry_config["plan_safety_policy"] == "fallback_astar"
+        assert nav_entry_config["fallback_planner_name"] == "astar"
 
 
 def test_navigation_forwards_frontier_reachability_tuning():
-    bp = navigation(
-        "astar",
-        "",
-        False,
+    frontier_config = frontier_module_config(
         enable_frontier=True,
         frontier_approach_max_target_distance_m=2.4,
         frontier_approach_goal_max_distance_m=6.0,
         frontier_reachable_goal_radius=1.6,
     )
 
-    frontier_entry = next(
-        entry for entry in bp._entries if entry.name == "WavefrontFrontierExplorer"
-    )
-
-    assert frontier_entry.config["approach_max_target_distance_m"] == 2.4
-    assert frontier_entry.config["approach_goal_max_distance_m"] == 6.0
-    assert frontier_entry.config["reachable_goal_radius"] == 1.6
+    assert frontier_config["approach_max_target_distance_m"] == 2.4
+    assert frontier_config["approach_goal_max_distance_m"] == 6.0
+    assert frontier_config["reachable_goal_radius"] == 1.6
 
 
 def test_navigation_forwards_path_follower_drive_mode():
-    bp = navigation(
-        "astar",
-        "",
+    config = autonomy_stack_config(
         False,
         path_follower_two_way_drive=False,
     )
 
-    follower_entry = next(
-        entry for entry in bp._entries if entry.name == "PathFollowerModule"
-    )
-
-    assert follower_entry.config["two_way_drive"] is False
+    assert config["path_follower_config"]["two_way_drive"] is False
 
 
 def test_navigation_forwards_independent_autonomy_backends():
-    bp = navigation(
-        "astar",
-        "",
+    config = autonomy_stack_config(
         False,
         terrain_backend="simple",
         local_planner_backend="cmu_py",
         path_follower_backend="pid",
     )
 
-    terrain_entry = next(entry for entry in bp._entries if entry.name == "TerrainModule")
-    local_planner_entry = next(
-        entry for entry in bp._entries if entry.name == "LocalPlannerModule"
-    )
-    follower_entry = next(
-        entry for entry in bp._entries if entry.name == "PathFollowerModule"
-    )
-
-    assert terrain_entry.config["backend"] == "simple"
-    assert local_planner_entry.config["backend"] == "cmu_py"
-    assert follower_entry.config["backend"] == "pid"
+    assert config["terrain_backend"] == "simple"
+    assert config["backend"] == "cmu_py"
+    assert config["path_follower_backend"] == "pid"

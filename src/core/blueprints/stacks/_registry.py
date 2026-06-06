@@ -53,3 +53,22 @@ def optional_stack_module(
     except (ImportError, AttributeError, KeyError):
         return None
 
+
+def optional_fallback_module(
+    category: str,
+    name: str,
+    *,
+    fallback: str,
+) -> type[Any] | None:
+    """Resolve an optional module without seeding the whole plugin group."""
+    try:
+        return get(category, name)
+    except KeyError:
+        pass
+
+    try:
+        module_name, attr = fallback.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        return getattr(module, attr)
+    except (ImportError, AttributeError, KeyError):
+        return None

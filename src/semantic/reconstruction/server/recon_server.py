@@ -53,9 +53,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from core.backend_status import BackendStatus
+from core.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 

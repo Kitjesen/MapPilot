@@ -10,7 +10,9 @@ import pickle
 import sys
 from pathlib import Path
 
-import numpy as np
+from core.tests.numpy_guard import import_numpy_or_skip
+
+np = import_numpy_or_skip()
 
 from exploration.native_factories import TARE_REMAPS
 from sim.engine.bridge.cmu_unity_lingtu_adapter import required_relay_contract

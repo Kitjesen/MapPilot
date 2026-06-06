@@ -28,11 +28,10 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module, skill
 from core.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from core.msgs.nav import Odometry
+from core.msgs.numpy_compat import np
 from core.msgs.semantic import SceneGraph
 from core.msgs.sensor import CameraIntrinsics, Image
 from core.registry import register

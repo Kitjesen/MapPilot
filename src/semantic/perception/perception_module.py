@@ -18,11 +18,10 @@ import logging
 import threading
 from typing import Any
 
-import numpy as np
-
 from core import In, Module, Out
 from core.backend_status import BackendStatus, require_backend
 from core.config import get_config
+from core.msgs.numpy_compat import np
 from core.msgs.geometry import Vector3
 from core.msgs.nav import Odometry
 from core.msgs.semantic import (
@@ -242,9 +241,10 @@ class PerceptionModule(Module, layer=3):
         self._detector_device = detector_device
         self._detector_model_path = detector_model_path
 
-        # Camera extrinsics from factory calibration
-        cam_cfg = get_config().camera
-        self._T_camera_body = cam_cfg.T_camera_body
+        # Camera extrinsics from factory calibration. Matrix construction uses
+        # NumPy, so defer it until a frame is actually processed.
+        self._camera_config = get_config().camera
+        self._T_camera_body = None
 
         # runtime state (populated during setup)
         self._tracker = None
@@ -259,6 +259,11 @@ class PerceptionModule(Module, layer=3):
         self._latest_odom_matrix: np.ndarray | None = None
         self._latest_core_detections: list[CoreDetection3D] = []
         self._backend_lock = threading.RLock()
+
+    def _camera_body_transform(self):
+        if self._T_camera_body is None:
+            self._T_camera_body = self._camera_config.T_camera_body
+        return self._T_camera_body
 
     # == Lifecycle =============================================================
 
@@ -461,10 +466,10 @@ class PerceptionModule(Module, layer=3):
         tf_body_world = self._latest_odom_matrix
         if tf_body_world is None:
             # Static fallback when no SLAM/TF — use camera extrinsics as world pose
-            tf_camera_world = self._T_camera_body.copy()
+            tf_camera_world = self._camera_body_transform().copy()
         else:
             # Correct transform chain: T_camera_world = T_body_world @ T_camera_body
-            tf_camera_world = tf_body_world @ self._T_camera_body
+            tf_camera_world = tf_body_world @ self._camera_body_transform()
 
         with self._backend_lock:
             try:

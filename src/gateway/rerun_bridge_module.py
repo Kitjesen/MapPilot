@@ -19,10 +19,9 @@ import math
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module, skill
 from core.msgs.nav import Odometry, PoseStamped
+from core.msgs.numpy_compat import np
 from core.msgs.sensor import PointCloud2
 from core.registry import register
 from core.runtime_interface import TOPICS

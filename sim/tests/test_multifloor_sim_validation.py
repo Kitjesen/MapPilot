@@ -2,10 +2,12 @@
 
 import pickle
 
-import numpy as np
 import pytest
 
 pytest.importorskip("rclpy", reason="Needs ROS2 runtime")
+from core.tests.numpy_guard import import_numpy_or_skip
+
+np = import_numpy_or_skip()
 
 pytestmark = [pytest.mark.sim]
 

@@ -16,10 +16,9 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module, skill
 from core.msgs.nav import Odometry
+from core.msgs.numpy_compat import np
 from core.msgs.sensor import PointCloud2
 from core.registry import register
 from core.runtime_interface import TOPICS, normalize_frame_id, topic_default_frame_id
@@ -78,7 +77,7 @@ class VoxelGridModule(Module, layer=2):
         self._voxels: dict[_VoxelKey, float] = {}
         self._lock = threading.Lock()
 
-        self._robot_xyz = np.zeros(3, dtype=np.float32)
+        self._robot_xyz = [0.0, 0.0, 0.0]
         self._last_publish: float = 0.0
 
     def setup(self) -> None:

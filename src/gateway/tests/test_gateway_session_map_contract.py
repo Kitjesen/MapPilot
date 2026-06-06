@@ -24,6 +24,37 @@ def _payload(response_or_payload):
     return response_or_payload
 
 
+class _FakeRelocalizationService:
+    def __init__(self, *, global_result=None, saved_result=None, env_result=None):
+        self.global_result = global_result
+        self.saved_result = saved_result
+        self.env_result = env_result
+        self.global_calls = []
+        self.saved_calls = []
+        self.env_calls = []
+
+    def trigger_global_relocalize(self, *, timeout_s: float = 10.0):
+        self.global_calls.append(timeout_s)
+        return self.global_result
+
+    def relocalize_saved_map(self, pcd_path, x, y, yaw, *, timeout_s: float = 30.0):
+        self.saved_calls.append((pcd_path, x, y, yaw, timeout_s))
+        return self.saved_result
+
+    def relocalize_saved_map_with_env(
+        self,
+        pcd_path,
+        x,
+        y,
+        yaw,
+        *,
+        timeout_s: float = 20.0,
+        base_env=None,
+    ):
+        self.env_calls.append((pcd_path, x, y, yaw, timeout_s, base_env))
+        return self.env_result
+
+
 def _seed_map_artifacts(map_dir: Path) -> None:
     """Create minimal valid map artifacts (map.pcd, tomogram.pickle, metadata.json)."""
     pcd_content = (
@@ -647,7 +678,6 @@ def test_map_lifecycle_error_responses_use_stable_envelope(monkeypatch, tmp_path
 
 
 def test_map_save_falls_back_to_super_lio_live_cloud_snapshot(monkeypatch, tmp_path):
-    import numpy as np
     import gateway.routes.maps as map_routes
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapLifecycleResponse
@@ -668,10 +698,7 @@ def test_map_save_falls_back_to_super_lio_live_cloud_snapshot(monkeypatch, tmp_p
     gateway.setup()
     monkeypatch.setattr(gateway, "_get_slam_profile", lambda: "super_lio")
     with gateway._map_cloud_lock:
-        gateway._map_points = np.array(
-            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-            dtype=np.float32,
-        )
+        gateway._map_points = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
     payload = asyncio.run(
         _endpoint(gateway, "/api/v1/map/save")({"name": "super_lio_demo"})
@@ -700,6 +727,50 @@ def test_map_save_falls_back_to_super_lio_live_cloud_snapshot(monkeypatch, tmp_p
     assert len(body) == 2 * 3 * 4
     assert struct.unpack("<ffffff", body) == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
     assert not active_link.exists()
+
+
+def test_binary_xyz_pcd_writer_keeps_numpy_fast_path(monkeypatch, tmp_path):
+    import subprocess
+    import sys
+
+    probe = subprocess.run(
+        [sys.executable, "-c", "import numpy"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+    )
+    if probe.returncode != 0:
+        pytest.skip("NumPy import is unsafe in this host Python")
+
+    import numpy as np
+    from gateway.routes import maps as map_routes
+
+    called = {"array": False}
+    real_array_writer = map_routes._write_binary_xyz_pcd_array
+
+    def wrapped_array_writer(path, points):
+        called["array"] = True
+        return real_array_writer(path, points)
+
+    monkeypatch.setattr(map_routes, "_write_binary_xyz_pcd_array", wrapped_array_writer)
+
+    pcd_path = tmp_path / "map.pcd"
+    count = map_routes._write_binary_xyz_pcd(
+        pcd_path,
+        np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [float("nan"), 4.0, 5.0],
+                [4.0, 5.0, 6.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+    assert called["array"] is True
+    assert count == 2
+    body = pcd_path.read_bytes().split(b"DATA binary\n", 1)[1]
+    assert struct.unpack("<ffffff", body) == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
 
 
 def test_map_save_rejects_super_lio_relocation_profile(monkeypatch, tmp_path):
@@ -1695,32 +1766,36 @@ def test_super_lio_relocation_relocalize_endpoints_fail_fast_without_ros_call(
     assert "unsupported" in relocalize_payload["message"]
 
 
-def test_localizer_relocalize_keeps_ros_service_path(monkeypatch, tmp_path):
+def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_path):
     import subprocess
 
+    from core.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
 
-    calls = []
     map_dir = tmp_path / "maps"
     (map_dir / "demo").mkdir(parents=True)
     (map_dir / "demo" / "map.pcd").write_text("pcd", encoding="utf-8")
     monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
 
-    def fake_run(args, **kwargs):
-        calls.append((args, kwargs))
-        return subprocess.CompletedProcess(args, 0, stdout="success=True\n", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
     gateway = GatewayModule()
     gateway.setup()
-    calls.clear()
     gateway._localization_status = {
         "backend": "localizer",
         "saved_map_relocalization_supported": True,
     }
     gateway._persist_last_nav_pose = lambda *_args, **_kwargs: None
+    service = _FakeRelocalizationService(
+        saved_result=RelocalizationResult(True, "success=True\n")
+    )
+    gateway._relocalization_service = service
 
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Gateway relocalize route must use injected service")
+        ),
+    )
     payload = asyncio.run(
         _endpoint(gateway, "/api/v1/slam/relocalize")(
             {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
@@ -1732,11 +1807,179 @@ def test_localizer_relocalize_keeps_ros_service_path(monkeypatch, tmp_path):
     assert payload["success"] is True
     assert payload["ts"] > 0
     assert payload["message"] == "Relocalized to demo"
-    assert calls
-    commands = [" ".join(args) for args, _kwargs in calls]
-    relocalize_command = next(cmd for cmd in commands if "/nav/relocalize" in cmd)
-    assert str(map_dir / "demo" / "map.pcd") in relocalize_command
-    assert "data/inovxio/data/maps" not in relocalize_command
+    assert service.saved_calls == [
+        (map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 30.0)
+    ]
+
+
+def test_auto_relocalize_delegates_to_service_and_preserves_success_payload(
+    monkeypatch,
+):
+    import subprocess
+
+    from core.relocalization import RelocalizationResult
+    from gateway.gateway_module import GatewayModule
+
+    subprocess_calls = []
+
+    def fail_run(*args, **kwargs):
+        subprocess_calls.append((args, kwargs))
+        raise AssertionError("Gateway relocalize route must delegate subprocess")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "backend": "localizer",
+        "saved_map_relocalization_supported": True,
+    }
+    gateway._get_slam_profile = lambda: "localizer"
+    service = _FakeRelocalizationService(
+        global_result=RelocalizationResult(True, "success=True\n")
+    )
+    gateway._relocalization_service = service
+
+    monkeypatch.setattr(subprocess, "run", fail_run)
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/auto_relocalize")())
+
+    assert service.global_calls == [10.0]
+    assert subprocess_calls == []
+    assert payload["schema_version"] == 1
+    assert payload["ok"] is True
+    assert payload["success"] is True
+    assert payload["ts"] > 0
+    assert payload["message"] == "success=True\n"
+
+
+def test_relocalize_delegates_validated_request_and_persists_on_success(
+    monkeypatch,
+    tmp_path,
+):
+    import subprocess
+
+    from core.relocalization import RelocalizationResult
+    from gateway.gateway_module import GatewayModule
+
+    persisted = []
+    subprocess_calls = []
+    map_dir = tmp_path / "maps"
+    (map_dir / "demo").mkdir(parents=True)
+    (map_dir / "demo" / "map.pcd").write_text("pcd", encoding="utf-8")
+    monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
+
+    def fail_run(*args, **kwargs):
+        subprocess_calls.append((args, kwargs))
+        raise AssertionError("Gateway relocalize route must delegate subprocess")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "backend": "localizer",
+        "saved_map_relocalization_supported": True,
+    }
+    gateway._get_slam_profile = lambda: "localizer"
+    gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
+    service = _FakeRelocalizationService(
+        saved_result=RelocalizationResult(True, "service ok", quality=0.123)
+    )
+    gateway._relocalization_service = service
+
+    monkeypatch.setattr(subprocess, "run", fail_run)
+    payload = asyncio.run(
+        _endpoint(gateway, "/api/v1/slam/relocalize")(
+            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
+        )
+    )
+
+    assert service.saved_calls == [
+        (map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 30.0)
+    ]
+    assert persisted == [("demo", 1.0, 2.0, 0.3, 0.123)]
+    assert subprocess_calls == []
+    assert payload["schema_version"] == 1
+    assert payload["ok"] is True
+    assert payload["success"] is True
+    assert payload["ts"] > 0
+    assert payload["message"] == "Relocalized to demo"
+    assert payload["quality"] == 0.123
+
+
+def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
+    monkeypatch,
+    tmp_path,
+):
+    from core.relocalization import RelocalizationResult
+    from gateway.gateway_module import GatewayModule
+
+    persisted = []
+    map_dir = tmp_path / "maps"
+    (map_dir / "demo").mkdir(parents=True)
+    (map_dir / "demo" / "map.pcd").write_text("pcd", encoding="utf-8")
+    monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "backend": "localizer",
+        "saved_map_relocalization_supported": True,
+    }
+    gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
+    gateway._relocalization_service = _FakeRelocalizationService(
+        saved_result=RelocalizationResult(False, "service failed")
+    )
+
+    payload = asyncio.run(
+        _endpoint(gateway, "/api/v1/slam/relocalize")(
+            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
+        )
+    )
+
+    assert persisted == []
+    assert payload["schema_version"] == 1
+    assert payload["ok"] is False
+    assert payload["success"] is False
+    assert payload["message"] == "service failed"
+
+
+def test_relocalize_service_timeout_maps_to_504_payload(monkeypatch, tmp_path):
+    from core.relocalization import RelocalizationResult
+    from gateway.gateway_module import GatewayModule
+
+    persisted = []
+    map_dir = tmp_path / "maps"
+    (map_dir / "demo").mkdir(parents=True)
+    (map_dir / "demo" / "map.pcd").write_text("pcd", encoding="utf-8")
+    monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
+
+    timeout_result = RelocalizationResult(
+        False,
+        "call timeout > 30s",
+        timed_out=True,
+    )
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "backend": "localizer",
+        "saved_map_relocalization_supported": True,
+    }
+    gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
+    gateway._relocalization_service = _FakeRelocalizationService(
+        saved_result=timeout_result
+    )
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/slam/relocalize")(
+            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
+        )
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 504
+    assert persisted == []
+    assert payload["schema_version"] == 1
+    assert payload["ok"] is False
+    assert payload["success"] is False
+    assert payload["message"] == "call timeout > 30s"
 
 
 def test_localizer_relocalize_rejects_unsafe_map_name(monkeypatch, tmp_path):

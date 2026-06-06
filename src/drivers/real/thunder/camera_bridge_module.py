@@ -30,9 +30,8 @@ import threading
 import time
 from typing import Any, Dict
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from core.registry import register
 from core.stream import Out

@@ -37,9 +37,8 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module, skill
+from core.msgs.numpy_compat import np
 from core.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from core.msgs.nav import Odometry
 from core.registry import register
@@ -221,7 +220,7 @@ class NavigationModule(Module, layer=5):
         # Mission FSM state (protected by _nav_lock for cross-thread access)
         self._nav_lock = threading.Lock()
         self._state = MissionState.IDLE
-        self._robot_pos = np.zeros(3)
+        self._robot_pos = [0.0, 0.0, 0.0]
         self._robot_yaw = 0.0
         self._planning_frame_id = str(kw.get("planning_frame_id", PLANNING_FRAME_ID))
         self._frame_contract = FrameContract(
@@ -1139,11 +1138,11 @@ class NavigationModule(Module, layer=5):
             ):
                 self._block_for_frame_mismatch("odometry", self._odom_frame_id)
             return
-        self._robot_pos = np.array([
+        self._robot_pos = [
             odom.pose.position.x,
             odom.pose.position.y,
             odom.pose.position.z,
-        ])
+        ]
         try:
             yaw = float(odom.yaw)
             if math.isfinite(yaw):

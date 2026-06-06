@@ -10,6 +10,9 @@ pytestmark = [pytest.mark.sim]
 
 
 pytest.importorskip("fastapi")
+from core.tests.numpy_guard import NUMPY_UNSAFE_REASON, numpy_import_is_safe
+
+_NUMPY_IMPORT_SAFE = numpy_import_is_safe()
 
 
 def _endpoint(gateway, path: str):
@@ -238,6 +241,53 @@ def test_gateway_runtime_backend_switch_rejects_motion_backend_when_navigation_b
     assert result["reason"] == "motion_backend_switch_requires_idle"
 
 
+def test_gateway_on_system_modules_preserves_read_only_status_inventory():
+    from gateway.gateway_module import GatewayModule
+
+    class Navigation:
+        def health(self):
+            return {"state": "IDLE"}
+
+    class Mux:
+        def health(self):
+            return {"active_source": "path_follower", "sources": {"path_follower": {}}}
+
+    class Relocalization:
+        def trigger_global_relocalize(self, *, timeout_s: float = 10.0):
+            return None
+
+        def relocalize_saved_map(self, pcd_path, x, y, yaw, *, timeout_s: float = 30.0):
+            return None
+
+        def relocalize_saved_map_with_env(
+            self,
+            pcd_path,
+            x,
+            y,
+            yaw,
+            *,
+            timeout_s: float = 20.0,
+            base_env=None,
+        ):
+            return None
+
+    modules = {
+        "NavigationModule": Navigation(),
+        "CmdVelMux": Mux(),
+        "SlamBridgeModule": Relocalization(),
+    }
+    gateway = GatewayModule()
+    gateway.on_system_modules(modules)
+
+    assert gateway._all_modules == modules
+    assert gateway._all_modules is not modules
+    assert gateway._navigation_module is modules["NavigationModule"]
+    assert gateway._backend_reconfigure_modules["NavigationModule"] is (
+        modules["NavigationModule"]
+    )
+    assert gateway._relocalization_service is modules["SlamBridgeModule"]
+
+
 def test_gateway_runtime_backend_switch_dispatches_when_navigation_idle():
     from gateway.gateway_module import GatewayModule
 
@@ -284,6 +334,25 @@ def test_gateway_motion_backend_switch_reads_nested_navigation_state():
 
     assert result["ok"] is False
     assert result["reason"] == "backend_reconfigure_unsupported"
+
+
+def test_gateway_motion_backend_switch_requires_public_navigation_state():
+    from gateway.gateway_module import GatewayModule
+
+    class NavigationWithoutPublicState:
+        _state = "IDLE"
+
+        def health(self):
+            return {}
+
+    gateway = GatewayModule()
+    gateway.on_system_modules({"NavigationModule": NavigationWithoutPublicState()})
+
+    result = gateway.reconfigure_backend("local_planner", "nav_core")
+
+    assert result["ok"] is False
+    assert result["reason"] == "motion_backend_switch_requires_idle"
+    assert result["navigation_state"] == "UNKNOWN"
 
 
 def test_gateway_and_mcp_backend_route_tables_stay_in_parity():
@@ -349,6 +418,27 @@ def test_mcp_backend_switch_reads_nested_navigation_state_without_gateway_module
 
     assert payload["ok"] is False
     assert payload["reason"] == "backend_reconfigure_unsupported"
+
+
+def test_mcp_backend_switch_requires_public_navigation_state_without_gateway_module():
+    from gateway.mcp_server import MCPServerModule
+
+    class NavigationWithoutPublicState:
+        _state = "IDLE"
+
+        def health(self):
+            return {}
+
+    mcp = MCPServerModule()
+    mcp.on_system_modules(
+        {"MCPServerModule": mcp, "NavigationModule": NavigationWithoutPublicState()}
+    )
+
+    payload = json.loads(mcp.switch_backend("slam", "fastlio2"))
+
+    assert payload["ok"] is False
+    assert payload["reason"] == "motion_backend_switch_requires_idle"
+    assert payload["navigation_state"] == "UNKNOWN"
 
 
 def test_localization_status_covers_product_states():
@@ -1558,6 +1648,48 @@ def test_navigation_status_reads_idle_costmap_frame_from_navigation_module():
     assert payload["can_accept_goal"] is False
 
 
+def test_navigation_status_prefers_injected_runtime_refs_without_module_inventory():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import NavigationStatusResponse
+    from gateway.services.runtime_status import build_navigation_status
+
+    class FakeMux:
+        def health(self):
+            return {
+                "active_source": "path_follower",
+                "sources": {"path_follower": {"active": True, "priority": 40}},
+            }
+
+    class FakeNavigation:
+        def get_navigation_status(self):
+            return {
+                "state": "IDLE",
+                "planning_frame_id": "map",
+                "odom_frame_id": "map",
+                "costmap_frame_id": "odom",
+            }
+
+    gateway = GatewayModule()
+    gateway._session_mode = "navigating"
+    gateway._icp_quality = 0.03
+    gateway._navigation_module = FakeNavigation()
+    gateway._cmd_vel_mux = FakeMux()
+    gateway._all_modules = {}
+    with gateway._state_lock:
+        gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "map"}
+        gateway._mode = "autonomous"
+        gateway._mission = {"state": "IDLE", "planning_frame_id": "map"}
+        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
+
+    payload = build_navigation_status(gateway)
+    NavigationStatusResponse.model_validate(payload)
+
+    assert payload["frames"]["costmap_frame_id"] == "odom"
+    assert payload["control"]["cmd_vel_mux"]["available"] is True
+    assert payload["control"]["active_cmd_source"] == "path_follower"
+    assert payload["control"]["source_category"] == "autonomy"
+
+
 def test_navigation_status_blocks_goal_when_session_is_not_navigating():
     from gateway.gateway_module import GatewayModule
     from gateway.services.runtime_status import build_navigation_status
@@ -2643,6 +2775,7 @@ def test_runtime_dataflow_subscribe_route_returns_read_only_sse_plan(monkeypatch
     assert payload["blockers"] == []
 
 
+@pytest.mark.skipif(not _NUMPY_IMPORT_SAFE, reason=NUMPY_UNSAFE_REASON)
 def test_runtime_dataflow_exposes_traversable_frontier_candidates_read_only(
     monkeypatch,
 ):
@@ -3030,6 +3163,7 @@ def test_runtime_dataflow_topic_route_reports_unknown_selector(monkeypatch):
     assert "/nav/odometry" in payload["available_topics"]
 
 
+@pytest.mark.skipif(not _NUMPY_IMPORT_SAFE, reason=NUMPY_UNSAFE_REASON)
 def test_runtime_dataflow_reports_live_samples_for_field_topics(monkeypatch):
     import numpy as np
 

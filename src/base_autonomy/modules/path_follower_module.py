@@ -20,10 +20,9 @@ import math
 import time
 from typing import Any
 
-import numpy as np
-
 from base_autonomy.modules._nav_core_loader import nav_core_build_hint, try_import_nav_core
 from core.backend_status import BackendStatus, require_backend
+from core.msgs.numpy_compat import np
 from core.module import Module
 from core.msgs.geometry import Twist, Vector3
 from core.msgs.nav import Odometry, Path

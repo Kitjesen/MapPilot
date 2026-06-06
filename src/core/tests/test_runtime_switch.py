@@ -4,7 +4,7 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from cli.profiles_data import PROFILES
+from core.runtime_profiles import PROFILES
 from core.blueprints.profile_graph import resolve_profile_config
 from core.blueprints.runtime_endpoint import (
     RUNTIME_ENDPOINTS,
@@ -197,14 +197,134 @@ def test_runtime_summary_reports_tare_endpoint_frame_and_scenario_overrides():
     )
 
 
-def test_compatibility_external_profile_uses_endpoint_action_contract():
-    config = dict(PROFILES["sim_mujoco_live"])
-    gate_spec = resolve_runtime_run_spec("sim_mujoco_live", config)
-    record_spec = resolve_runtime_run_spec("sim_mujoco_live", config, record=True)
+@pytest.mark.parametrize(
+    (
+        "profile",
+        "endpoint",
+        "data_source",
+        "runtime_contract",
+        "launcher",
+        "default_args",
+        "record_args",
+    ),
+    (
+        (
+            "sim_mujoco_live",
+            "mujoco_live",
+            "mujoco_fastlio2_live",
+            "mujoco_fastlio2_live",
+            "sim/scripts/launch_mujoco_fastlio2_live.sh",
+            ("gate",),
+            ("video",),
+        ),
+        (
+            "sim_cmu_tare",
+            "cmu_unity",
+            "cmu_unity_external",
+            "cmu_unity_external",
+            "sim/scripts/launch_cmu_unity_lingtu_runtime.sh",
+            ("gate",),
+            ("start", "--gate", "--rviz"),
+        ),
+    ),
+)
+def test_compatibility_external_profile_uses_endpoint_action_contract(
+    profile,
+    endpoint,
+    data_source,
+    runtime_contract,
+    launcher,
+    default_args,
+    record_args,
+):
+    config = dict(PROFILES[profile])
+    gate_spec = resolve_runtime_run_spec(profile, config)
+    record_spec = resolve_runtime_run_spec(profile, config, record=True)
 
-    assert gate_spec.endpoint == "mujoco_live"
-    assert gate_spec.launcher_args == ("gate",)
-    assert record_spec.launcher_args == ("video",)
+    assert gate_spec.endpoint == endpoint
+    assert gate_spec.data_source == data_source
+    assert gate_spec.runtime_contract == runtime_contract
+    assert gate_spec.launcher == launcher
+    assert gate_spec.launcher_args == default_args
+    assert gate_spec.env["LINGTU_PROFILE"] == profile
+    assert gate_spec.env["LINGTU_ENDPOINT"] == endpoint
+    assert gate_spec.env["LINGTU_DATA_SOURCE"] == data_source
+    assert gate_spec.env["LINGTU_RUNTIME_CONTRACT"] == runtime_contract
+    assert gate_spec.env["LINGTU_SIMULATION_ONLY"] == "1"
+    assert validate_runtime_switch(gate_spec).ok is True
+    assert record_spec.launcher_args == record_args
+
+
+@pytest.mark.parametrize(
+    ("profile", "data_source"),
+    (
+        ("sim", "mujoco_module_graph"),
+        ("sim_nav", "in_process_stub"),
+    ),
+)
+def test_in_process_sim_profiles_resolve_without_runtime_endpoint(
+    profile,
+    data_source,
+):
+    config = resolve_profile_config(profile)
+    spec = resolve_runtime_run_spec(profile, config)
+    source = DATA_SOURCE_CONTRACTS[data_source]
+
+    assert spec.endpoint is None
+    assert spec.data_source == data_source
+    assert spec.runtime_contract is None
+    assert spec.simulation_only is True
+    assert spec.command_sink == source.command_sink
+    assert spec.launcher is None
+    assert spec.launcher_args == ()
+    assert spec.env == {
+        "LINGTU_PROFILE": profile,
+        "LINGTU_DATA_SOURCE": data_source,
+        "LINGTU_SIMULATION_ONLY": "1",
+        "LINGTU_COMMAND_SINK": source.command_sink,
+    }
+    assert validate_runtime_switch(spec).ok is True
+
+
+@pytest.mark.parametrize(
+    (
+        "profile",
+        "endpoint",
+        "data_source",
+        "runtime_contract",
+    ),
+    (
+        ("sim_mujoco_live", "mujoco_live", "mujoco_fastlio2_live", "mujoco_fastlio2_live"),
+        ("sim_gazebo", "gazebo", "gazebo_industrial", "gazebo_industrial"),
+        ("sim_industrial", "gazebo", "gazebo_industrial", "gazebo_industrial"),
+        ("sim_cmu_tare", "cmu_unity", "cmu_unity_external", "cmu_unity_external"),
+    ),
+)
+def test_first_class_sim_profiles_resolve_endpoint_contract_without_launcher(
+    profile,
+    endpoint,
+    data_source,
+    runtime_contract,
+):
+    config = resolve_profile_config(profile)
+    spec = resolve_runtime_run_spec(profile, config)
+    source = DATA_SOURCE_CONTRACTS[data_source]
+
+    assert "_external_launcher" not in config
+    assert "_runtime_contract" not in config
+    assert spec.endpoint == endpoint
+    assert spec.data_source == data_source
+    assert spec.runtime_contract == runtime_contract
+    assert spec.simulation_only is True
+    assert spec.command_sink == source.command_sink
+    assert spec.launcher is None
+    assert spec.launcher_args == ()
+    assert spec.env["LINGTU_PROFILE"] == profile
+    assert spec.env["LINGTU_ENDPOINT"] == endpoint
+    assert spec.env["LINGTU_DATA_SOURCE"] == data_source
+    assert spec.env["LINGTU_RUNTIME_CONTRACT"] == runtime_contract
+    assert spec.env["LINGTU_SIMULATION_ONLY"] == "1"
+    assert validate_runtime_switch(spec).ok is True
 
 
 def test_external_launcher_without_action_contract_is_rejected():

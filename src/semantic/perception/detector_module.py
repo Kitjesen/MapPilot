@@ -24,9 +24,8 @@ import logging
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.registry import get, list_plugins, register
 from core.stream import In, Out
 
@@ -181,7 +180,7 @@ class DetectorModule(Module, layer=3):
       "yolo_world", "yoloe", "grounding_dino", "bpu"
     """
 
-    image: In[np.ndarray]
+    image: In[Any]
     detections: Out[DetectionResult]
 
     def __init__(

@@ -19,11 +19,10 @@ import logging
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
 from core.msgs.geometry import Pose, Quaternion, Vector3
 from core.msgs.nav import OccupancyGrid, Odometry
+from core.msgs.numpy_compat import np
 from core.msgs.sensor import PointCloud2
 from core.registry import register
 from core.runtime_interface import TOPICS, topic_default_frame_id
@@ -80,7 +79,7 @@ class OccupancyGridModule(Module, layer=2):
             0.0,
             float(raycast_free_inflation_radius),
         )
-        self._robot_xy = np.zeros(2, dtype=np.float64)
+        self._robot_xy = [0.0, 0.0]
         self._gs = int(2 * self._radius / self._res)
         self._kernel: np.ndarray | None = None
         self._free_kernel: np.ndarray | None = None
@@ -89,22 +88,21 @@ class OccupancyGridModule(Module, layer=2):
         self._clear_mask_cache: np.ndarray | None = None
 
     def setup(self) -> None:
-        try:
-            import scipy.ndimage  # noqa: F401
-        except ImportError as exc:
-            raise RuntimeError(
-                "OccupancyGridModule requires scipy for binary_dilation. "
-                "Install with: pip install scipy"
-            ) from exc
-        self._kernel = self._make_circle_kernel(self._inf_radius, self._res)
-        if self._raycast_free_inflation_radius > 0.0:
+        self.map_cloud.subscribe(self._on_cloud)
+        self.odometry.subscribe(self._on_odom)
+        self.map_cloud.set_policy("throttle", interval=self._interval)
+
+    def _ensure_kernels(self) -> None:
+        if self._kernel is None:
+            self._kernel = self._make_circle_kernel(self._inf_radius, self._res)
+        if (
+            self._raycast_free_inflation_radius > 0.0
+            and self._free_kernel is None
+        ):
             self._free_kernel = self._make_circle_kernel(
                 self._raycast_free_inflation_radius,
                 self._res,
             )
-        self.map_cloud.subscribe(self._on_cloud)
-        self.odometry.subscribe(self._on_odom)
-        self.map_cloud.set_policy("throttle", interval=self._interval)
 
     def _on_odom(self, odom: Odometry) -> None:
         self._robot_xy[0] = odom.x
@@ -187,6 +185,7 @@ class OccupancyGridModule(Module, layer=2):
                 if 0 <= r < gs and 0 <= c < gs:
                     grid[r, c] = FREE
 
+        self._ensure_kernels()
         if self._free_kernel is not None:
             widened_free = self._dilate(grid == FREE, self._free_kernel).astype(bool)
             grid[(grid == UNKNOWN) & widened_free] = FREE
@@ -306,6 +305,7 @@ class OccupancyGridModule(Module, layer=2):
 
     def _inflate(self, binary: np.ndarray) -> np.ndarray:
         """Binary dilation with a pre-built circular kernel."""
+        self._ensure_kernels()
         return self._dilate(binary, self._kernel)
 
     @staticmethod

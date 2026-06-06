@@ -117,7 +117,7 @@ Server-side simulation closure is tracked by:
 
 ```bash
 python sim/scripts/server_sim_closure.py --required-only --strict
-python -m pytest src/core/tests/test_server_sim_closure.py -q
+python -m pytest sim/tests/test_server_sim_closure.py -q
 ```
 
 Simulation closure is useful algorithm evidence. It is not a substitute for

@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 # Registry of known robot presets → (protocol, default params).
-# Kept in sync with ROBOT_PRESETS in cli/profiles_data.py.
+# Kept in sync with ROBOT_PRESETS in core.runtime_profiles.
 _ROBOT_PROFILE_REGISTRY: dict[str, tuple[str, dict[str, Any]]] = {
     "s100p": ("grpc_brainstem", {
         "dog_host": "127.0.0.1",

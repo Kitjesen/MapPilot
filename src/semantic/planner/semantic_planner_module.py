@@ -33,11 +33,10 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module, skill
 from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from core.msgs.nav import Odometry
+from core.msgs.numpy_compat import np
 from core.msgs.semantic import SceneGraph
 from core.registry import register
 from core.runtime_interface import map_frame_id
@@ -129,7 +128,7 @@ class SemanticPlannerModule(Module, layer=4):
         self._action_executor = None
 
         # Odometry / position
-        self._robot_pos = np.zeros(3)
+        self._robot_pos = [0.0, 0.0, 0.0]
 
         # Scene graph — keep both JSON string (for GoalResolver) and
         # the original object (for LERa label extraction).

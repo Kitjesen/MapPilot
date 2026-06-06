@@ -9,6 +9,7 @@ import pytest
 
 
 pytest.importorskip("fastapi")
+from core.tests.numpy_guard import numpy_safe_skip_mark
 
 
 def test_sse_slow_client_keeps_latest_events_and_drops_oldest():
@@ -37,6 +38,7 @@ def test_sse_slow_client_keeps_latest_events_and_drops_oldest():
     assert stats["sse"]["drop_policy"] == DROP_OLDEST_POLICY
 
 
+@numpy_safe_skip_mark()
 def test_sse_raster_events_are_client_bound_and_throttled():
     import numpy as np
 
@@ -69,6 +71,7 @@ def test_sse_raster_events_are_client_bound_and_throttled():
     assert stats["sse"]["raster_min_interval_s"] == 60.0
 
 
+@numpy_safe_skip_mark()
 def test_slope_grid_defaults_to_metadata_and_can_enable_inline_payload():
     import numpy as np
 

@@ -1,7 +1,7 @@
 """lingtu.core.msgs.geometry — core geometry message types.
 
 Vector3 / Quaternion / Pose / PoseStamped / Twist / TwistStamped / Transform
-shared by all navigation modules. No external deps beyond numpy, math, and struct.
+shared by all navigation modules. NumPy is loaded lazily for array conversions.
 
 Encoding: little-endian double ('<d').
 """
@@ -12,12 +12,17 @@ import struct
 import time
 from typing import Any
 
-import numpy as np
-
 from core.runtime_interface import body_frame_id, map_frame_id
+from .numpy_compat import is_numpy_array, np
 
 GEOMETRY_MAP_FRAME_ID = map_frame_id()
 GEOMETRY_BODY_FRAME_ID = body_frame_id()
+_FLOAT_RTOL = 1e-5
+_FLOAT_ATOL = 1e-8
+
+
+def _float_close(left: float, right: float) -> bool:
+    return math.isclose(left, right, rel_tol=_FLOAT_RTOL, abs_tol=_FLOAT_ATOL)
 
 # ---------------------------------------------------------------------------
 # Vector3
@@ -53,7 +58,7 @@ class Vector3:
             a = args[0]
             if isinstance(a, Vector3):
                 self.x, self.y, self.z = a.x, a.y, a.z
-            elif isinstance(a, np.ndarray):
+            elif is_numpy_array(a):
                 d = a.ravel().astype(float)
                 self.x = float(d[0]) if len(d) > 0 else 0.0
                 self.y = float(d[1]) if len(d) > 1 else 0.0
@@ -104,8 +109,11 @@ class Vector3:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Vector3):
             return NotImplemented
-        return bool(np.allclose([self.x, self.y, self.z],
-                                [other.x, other.y, other.z]))
+        return (
+            _float_close(self.x, other.x)
+            and _float_close(self.y, other.y)
+            and _float_close(self.z, other.z)
+        )
 
     def __repr__(self) -> str:
         return f"Vector3({self.x:.4f}, {self.y:.4f}, {self.z:.4f})"
@@ -159,7 +167,11 @@ class Vector3:
 
     def is_zero(self) -> bool:
         """True if all components are approximately zero."""
-        return bool(np.allclose([self.x, self.y, self.z], 0.0))
+        return (
+            _float_close(self.x, 0.0)
+            and _float_close(self.y, 0.0)
+            and _float_close(self.z, 0.0)
+        )
 
     # -- conversions ---------------------------------------------------------
 
@@ -247,7 +259,7 @@ class Quaternion:
             a = args[0]
             if isinstance(a, Quaternion):
                 self.x, self.y, self.z, self.w = a.x, a.y, a.z, a.w
-            elif isinstance(a, (list, tuple, np.ndarray)):
+            elif isinstance(a, (list, tuple)) or is_numpy_array(a):
                 seq = list(a)
                 if len(seq) != 4:
                     raise ValueError(
@@ -358,10 +370,12 @@ class Quaternion:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Quaternion):
             return NotImplemented
-        return bool(np.allclose(
-            [self.x, self.y, self.z, self.w],
-            [other.x, other.y, other.z, other.w],
-        ))
+        return (
+            _float_close(self.x, other.x)
+            and _float_close(self.y, other.y)
+            and _float_close(self.z, other.z)
+            and _float_close(self.w, other.w)
+        )
 
     def __repr__(self) -> str:
         return f"Quaternion({self.x:.6f}, {self.y:.6f}, {self.z:.6f}, {self.w:.6f})"

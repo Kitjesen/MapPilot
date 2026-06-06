@@ -5,8 +5,10 @@ Semantic Perception API - 感知系统接口
 """
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 from .types import CameraInfo, Detection3D, PerceptionConfig, SceneGraph
 
@@ -38,10 +40,10 @@ class PerceptionAPI(ABC):
     @abstractmethod
     def process_frame(
         self,
-        rgb_image: np.ndarray,
-        depth_image: np.ndarray,
+        rgb_image: "np.ndarray",
+        depth_image: "np.ndarray",
         camera_info: CameraInfo,
-        transform: np.ndarray | None = None
+        transform: "np.ndarray | None" = None
     ) -> list[Detection3D]:
         """
         处理单帧RGB-D图像
@@ -182,7 +184,7 @@ class PerceptionAPI(ABC):
         """
         pass
 
-    def get_visualization(self) -> np.ndarray | None:
+    def get_visualization(self) -> "np.ndarray | None":
         """
         获取可视化图像（可选实现）
 

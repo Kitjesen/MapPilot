@@ -19,6 +19,8 @@ Frontier 评分探索 — 统一目标 Grounding 与 Frontier 选择。
 数据类、常量、纯函数辅助见 frontier_types.py。
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import time as _time_mod
@@ -26,9 +28,9 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import yaml
 
+from core.msgs.numpy_compat import np
 from core.utils.sanitize import safe_json_dumps
 
 logger = logging.getLogger(__name__)

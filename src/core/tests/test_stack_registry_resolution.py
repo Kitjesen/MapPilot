@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import sys
+
+import pytest
 
 from core.module import Module
 from core.registry import clear, register, restore, snapshot
@@ -280,6 +283,101 @@ def test_perception_stack_prefers_registered_scene_and_camera_bridge_modules():
         assert bp._entries[0].config == {"rotate": 90}
         assert bp._entries[1].config["detector_type"] == "bpu"
         assert bp._entries[1].config["encoder_type"] == "mobileclip"
+    finally:
+        restore(saved)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"_driver_cls_name": "MujocoDriverModule"},
+        {"_driver_cls_name": "ROS2SimDriverModule", "use_driver_camera": True},
+    ],
+)
+def test_perception_stack_skips_camera_bridge_resolution_for_driver_camera(
+    monkeypatch,
+    config,
+):
+    perception_stack = importlib.import_module("core.blueprints.stacks.perception")
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("perception", "scene")
+        class FakePerception(Module, layer=3):
+            pass
+
+        original_stack_module = perception_stack.stack_module
+        calls: list[tuple[str, str]] = []
+
+        def recording_stack_module(group, name, *args, **kwargs):
+            calls.append((group, name))
+            return original_stack_module(group, name, *args, **kwargs)
+
+        monkeypatch.setattr(perception_stack, "stack_module", recording_stack_module)
+        monkeypatch.setattr(perception_stack, "optional_stack_module", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            perception_stack,
+            "optional_fallback_module",
+            lambda *a, **kw: None,
+        )
+
+        bp = perception_stack.perception(
+            detector="bpu",
+            encoder="mobileclip",
+            manage_services=False,
+            **config,
+        )
+
+        assert ("camera_bridge", "default") not in calls
+        assert _entry_classes(bp) == [FakePerception]
+        assert _entry_names(bp) == ["PerceptionModule"]
+    finally:
+        restore(saved)
+
+
+def test_perception_stack_resolves_camera_bridge_for_external_camera(monkeypatch):
+    perception_stack = importlib.import_module("core.blueprints.stacks.perception")
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("camera_bridge", "default")
+        class FakeCameraBridge(Module, layer=1):
+            pass
+
+        @register("perception", "scene")
+        class FakePerception(Module, layer=3):
+            pass
+
+        original_stack_module = perception_stack.stack_module
+        calls: list[tuple[str, str]] = []
+
+        def recording_stack_module(group, name, *args, **kwargs):
+            calls.append((group, name))
+            return original_stack_module(group, name, *args, **kwargs)
+
+        monkeypatch.setattr(perception_stack, "stack_module", recording_stack_module)
+        monkeypatch.setattr(perception_stack, "optional_stack_module", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            perception_stack,
+            "optional_fallback_module",
+            lambda *a, **kw: None,
+        )
+
+        bp = perception_stack.perception(
+            detector="bpu",
+            encoder="mobileclip",
+            manage_services=False,
+            _driver_cls_name="ROS2SimDriverModule",
+            use_driver_camera=False,
+        )
+
+        assert ("camera_bridge", "default") in calls
+        assert _entry_classes(bp) == [FakeCameraBridge, FakePerception]
+        assert _entry_names(bp) == ["CameraBridgeModule", "PerceptionModule"]
     finally:
         restore(saved)
 

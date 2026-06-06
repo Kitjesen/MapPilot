@@ -203,6 +203,220 @@ def _apply_semantic_camera_wires(
         )
 
 
+def full_stack_wire_specs(
+    module_names: set[str] | frozenset[str],
+    *,
+    robot: str,
+    driver_module: str,
+    slam_profile: str,
+    scene_xml: str = "",
+    enable_semantic: bool = True,
+    safety_stop_wiring: bool = True,
+) -> tuple[WireSpec, ...]:
+    """Return module-name-filtered full-stack wire specs.
+
+    This is intentionally free of runtime module class inspection so profile
+    graph tooling can compile architecture snapshots without importing driver,
+    perception, or message implementations. ``robot`` is accepted for parity
+    with ``apply_full_stack_wires``; dynamic driver-specific ports remain a
+    runtime-only concern.
+    """
+
+    del robot
+    names = set(module_names)
+    drv = driver_module
+    slam_module = slam_module_name(slam_profile)
+    camera_src, color_out = _camera_source(names, driver_module=drv)
+    nav_odom_src = slam_module if (slam_module and slam_module in names) else drv
+
+    specs: list[WireSpec] = []
+
+    if slam_module:
+        specs.extend(
+            WireSpec(slam_module, "map_cloud", consumer, "map_cloud")
+            for consumer in _MAP_CLOUD_CONSUMERS
+            if consumer in names
+        )
+    elif scene_xml and "SimPointCloudProvider" in names:
+        specs.extend(
+            WireSpec("SimPointCloudProvider", "map_cloud", consumer, "map_cloud")
+            for consumer in _MAP_CLOUD_CONSUMERS
+            if consumer in names
+        )
+        specs.append(WireSpec(drv, "odometry", "SimPointCloudProvider", "odometry"))
+    else:
+        driver_map_port = ""
+        if drv in {"ROS2SimDriverModule", "MujocoDriverModule"}:
+            driver_map_port = "map_cloud"
+        if driver_map_port:
+            specs.extend(
+                WireSpec(drv, driver_map_port, consumer, "map_cloud")
+                for consumer in _MAP_CLOUD_CONSUMERS
+                if consumer in names
+            )
+
+    if enable_semantic:
+        for consumer in _SEMANTIC_CAMERA_CONSUMERS:
+            specs.extend([
+                WireSpec(camera_src, color_out, consumer, "color_image"),
+                WireSpec(camera_src, "depth_image", consumer, "depth_image"),
+                WireSpec(camera_src, "camera_info", consumer, "camera_info"),
+            ])
+
+    if safety_stop_wiring:
+        specs.extend([
+            WireSpec("SafetyRingModule", "stop_cmd", drv, "stop_signal"),
+            WireSpec("SafetyRingModule", "stop_cmd", "NavigationModule", "stop_signal"),
+        ])
+        if "GeofenceManagerModule" in names:
+            specs.extend([
+                WireSpec("GeofenceManagerModule", "stop_cmd", drv, "stop_signal"),
+                WireSpec("GeofenceManagerModule", "stop_cmd", "NavigationModule", "stop_signal"),
+            ])
+
+    specs.extend([
+        WireSpec("GatewayModule", "stop_cmd", drv, "stop_signal"),
+        WireSpec("GatewayModule", "stop_cmd", "NavigationModule", "stop_signal"),
+        WireSpec("GatewayModule", "cmd_vel", "CmdVelMux", "teleop_cmd_vel"),
+        WireSpec("MCPServerModule", "stop_cmd", drv, "stop_signal"),
+        WireSpec("MCPServerModule", "stop_cmd", "NavigationModule", "stop_signal"),
+        WireSpec("MCPServerModule", "cmd_vel", "CmdVelMux", "teleop_cmd_vel"),
+        WireSpec("SlamBridgeModule", "localization_status", "SafetyRingModule", "localization_status"),
+        WireSpec("SlamBridgeModule", "localization_status", "NavigationModule", "localization_status"),
+        WireSpec("SlamBridgeModule", "localization_status", "DepthVisualOdomModule", "localization_status"),
+        WireSpec("SlamBridgeModule", "localization_status", "GatewayModule", "localization_status"),
+        WireSpec("SlamBridgeModule", "map_frame_jump_event", "NavigationModule", "map_frame_jump_event"),
+        WireSpec("SlamBridgeModule", "map_frame_jump_event", "LocalPlannerModule", "map_frame_jump_event"),
+        WireSpec("SlamBridgeModule", "map_frame_jump_event", "PathFollowerModule", "map_frame_jump_event"),
+        WireSpec("DepthVisualOdomModule", "visual_odometry", "SlamBridgeModule", "visual_odom"),
+        WireSpec(camera_src, color_out, "DepthVisualOdomModule", "color_image"),
+        WireSpec(camera_src, "depth_image", "DepthVisualOdomModule", "depth_image"),
+        WireSpec(camera_src, "camera_info", "DepthVisualOdomModule", "camera_info"),
+        WireSpec("GatewayModule", "instruction", "SemanticPlannerModule", "instruction"),
+        WireSpec("MCPServerModule", "instruction", "SemanticPlannerModule", "instruction"),
+        WireSpec("GatewayModule", "instruction", "NavigationModule", "instruction"),
+        WireSpec("MCPServerModule", "instruction", "NavigationModule", "instruction"),
+        WireSpec("GatewayModule", "goal_pose", "NavigationModule", "goal_pose"),
+        WireSpec("GatewayModule", "cancel", "NavigationModule", "cancel"),
+        WireSpec("MCPServerModule", "goal_pose", "NavigationModule", "goal_pose"),
+        WireSpec("SemanticPlannerModule", "goal_pose", "NavigationModule", "goal_pose"),
+        WireSpec("TAREExplorerModule", "exploration_goal", "NavigationModule", "goal_pose"),
+        WireSpec("TAREExplorerModule", "exploration_path", "NavigationModule", "patrol_goals"),
+        WireSpec(nav_odom_src, "odometry", "TAREExplorerModule", "odometry"),
+        WireSpec("NavigationModule", "mission_status", "TAREExplorerModule", "navigation_status"),
+        WireSpec("PerceptionModule", "detections_3d", "SemanticPlannerModule", "detections"),
+        WireSpec(nav_odom_src, "odometry", "NavigationModule", "odometry"),
+        WireSpec(nav_odom_src, "odometry", "PerceptionModule", "odometry"),
+    ])
+
+    for consumer in [
+        "OccupancyGridModule",
+        "ElevationMapModule",
+        "TerrainModule",
+        "VoxelGridModule",
+        "WavefrontFrontierExplorer",
+        "TraversableFrontierModule",
+        "RerunBridgeModule",
+        "LocalPlannerModule",
+        "PathFollowerModule",
+        "SemanticMapperModule",
+        "EpisodicMemoryModule",
+        "TaggedLocationsModule",
+        "VectorMemoryModule",
+        "TemporalMemoryModule",
+        "MissionLoggerModule",
+        "SemanticPlannerModule",
+        "VisualServoModule",
+        "ReconstructionModule",
+        "SafetyRingModule",
+        "GeofenceManagerModule",
+        "MCPServerModule",
+    ]:
+        specs.append(WireSpec(nav_odom_src, "odometry", consumer, "odometry"))
+    specs.append(WireSpec(nav_odom_src, "odometry", "GatewayModule", "odometry"))
+
+    specs.extend([
+        WireSpec("OccupancyGridModule", "costmap", "TraversabilityCostModule", "costmap"),
+        WireSpec("OccupancyGridModule", "exploration_grid", "WavefrontFrontierExplorer", "exploration_grid"),
+        WireSpec("OccupancyGridModule", "exploration_grid", "TraversableFrontierModule", "exploration_grid"),
+        WireSpec("OccupancyGridModule", "exploration_grid", "ROS2GridBridgeModule", "exploration_grid"),
+        WireSpec("ElevationMapModule", "elevation_map", "TraversabilityCostModule", "elevation_map"),
+        WireSpec("ElevationMapModule", "elevation_map", "TraversableFrontierModule", "elevation_map"),
+        WireSpec("ESDFModule", "esdf", "TraversabilityCostModule", "esdf"),
+        WireSpec("TerrainModule", "traversability", "TraversabilityCostModule", "traversability"),
+        WireSpec("TraversabilityCostModule", "fused_cost", "NavigationModule", "costmap"),
+        WireSpec("TraversabilityCostModule", "esdf_field", "LocalPlannerModule", "esdf"),
+        WireSpec("TraversabilityCostModule", "fused_cost", "TraversableFrontierModule", "costmap"),
+        WireSpec("TraversabilityCostModule", "fused_cost", "TraversableFrontierModule", "fused_cost"),
+        WireSpec("TraversabilityCostModule", "slope_grid", "TraversableFrontierModule", "slope_grid"),
+        WireSpec("TraversabilityCostModule", "esdf_field", "TraversableFrontierModule", "esdf_field"),
+        WireSpec("TraversableFrontierModule", "traversable_frontiers", "GatewayModule", "traversable_frontiers"),
+        WireSpec("TraversableFrontierModule", "frontier_candidate", "GatewayModule", "frontier_candidate"),
+        WireSpec("TraversabilityCostModule", "fused_cost", "GatewayModule", "costmap"),
+        WireSpec("TraversabilityCostModule", "slope_grid", "GatewayModule", "slope_grid"),
+        WireSpec("NavigationModule", "mission_status", "TraversableFrontierModule", "navigation_status"),
+        WireSpec("NavigationModule", "mission_status", "MissionLoggerModule", "mission_status"),
+        WireSpec("PerceptionModule", "scene_graph", "GatewayModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "MCPServerModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "ReconstructionModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "TraversableFrontierModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "SemanticMapperModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "EpisodicMemoryModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "VectorMemoryModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "TemporalMemoryModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "SemanticPlannerModule", "scene_graph"),
+        WireSpec("PerceptionModule", "scene_graph", "VisualServoModule", "scene_graph"),
+    ])
+
+    for recorder in ["DatasetRecorderModule", "ReconKeyframeExporterModule"]:
+        specs.extend([
+            WireSpec(camera_src, color_out, recorder, "color_image"),
+            WireSpec(camera_src, "depth_image", recorder, "depth_image"),
+            WireSpec(camera_src, "camera_info", recorder, "camera_info"),
+            WireSpec(nav_odom_src, "odometry", recorder, "odometry"),
+        ])
+
+    specs.extend([
+        WireSpec("SafetyRingModule", "safety_state", "GatewayModule", "safety_state"),
+        WireSpec("SafetyRingModule", "safety_state", "MCPServerModule", "safety_state"),
+        WireSpec("NavigationModule", "mission_status", "GatewayModule", "mission_status"),
+        WireSpec("NavigationModule", "mission_status", "MCPServerModule", "mission_status"),
+        WireSpec("SafetyRingModule", "execution_eval", "GatewayModule", "execution_eval"),
+        WireSpec("SafetyRingModule", "dialogue_state", "GatewayModule", "dialogue_state"),
+        WireSpec("NavigationModule", "global_path", "GatewayModule", "global_path"),
+        WireSpec("NavigationModule", "global_path", "LocalPlannerModule", "global_path"),
+        WireSpec("NavigationModule", "global_path", "ROS2PathBridgeModule", "global_path"),
+        WireSpec("LocalPlannerModule", "local_path", "GatewayModule", "local_path"),
+        WireSpec("LocalPlannerModule", "local_path", "ROS2PathBridgeModule", "local_path"),
+        WireSpec("SemanticPlannerModule", "agent_message", "GatewayModule", "agent_message"),
+        WireSpec("NavigationModule", "waypoint", "LocalPlannerModule", "waypoint"),
+        WireSpec("NavigationModule", "clear_path", "LocalPlannerModule", "clear_path"),
+        WireSpec("TerrainModule", "terrain_map", "LocalPlannerModule", "terrain_map"),
+        WireSpec("LocalPlannerModule", "local_path", "PathFollowerModule", "local_path"),
+        WireSpec("LocalPlannerModule", "local_path", "SafetyRingModule", "path"),
+        WireSpec("LocalPlannerModule", "control_hint", "PathFollowerModule", "control_hint"),
+        WireSpec("SemanticPlannerModule", "servo_target", "VisualServoModule", "servo_target"),
+        WireSpec("VisualServoModule", "goal_pose", "NavigationModule", "goal_pose"),
+        WireSpec("VisualServoModule", "nav_stop", "NavigationModule", "stop_signal"),
+        WireSpec(camera_src, color_out, "TeleopModule", "color_image"),
+        WireSpec("PerceptionModule", "scene_graph", "TeleopModule", "scene_graph"),
+        WireSpec("TeleopModule", "teleop_active", "NavigationModule", "teleop_active"),
+        WireSpec(camera_src, color_out, "WebRTCStreamModule", "color_image"),
+        WireSpec("TeleopModule", "cmd_vel", "CmdVelMux", "teleop_cmd_vel"),
+        WireSpec("VisualServoModule", "cmd_vel", "CmdVelMux", "visual_servo_cmd_vel"),
+        WireSpec("NavigationModule", "recovery_cmd_vel", "CmdVelMux", "recovery_cmd_vel"),
+        WireSpec("PathFollowerModule", "cmd_vel", "CmdVelMux", "path_follower_cmd_vel"),
+        WireSpec("CmdVelMux", "driver_cmd_vel", drv, "cmd_vel"),
+        WireSpec("CmdVelMux", "driver_cmd_vel", "SafetyRingModule", "cmd_vel"),
+    ])
+
+    return tuple(
+        spec
+        for spec in specs
+        if spec.out_module in names and spec.in_module in names
+    )
+
+
 def apply_full_stack_wires(
     bp: Blueprint,
     *,

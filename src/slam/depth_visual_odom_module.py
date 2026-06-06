@@ -24,9 +24,8 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.msgs.geometry import Pose, Quaternion, Vector3
 from core.msgs.nav import Odometry
 from core.msgs.sensor import CameraIntrinsics, Image
@@ -195,7 +194,7 @@ class DepthVisualOdomModule(Module, layer=1):
         self.active.publish(False)
         logger.info("DepthVisualOdom: deactivated (SLAM recovered)")
 
-    _latest_depth: np.ndarray | None = None
+    _latest_depth: Any | None = None
 
     def _on_depth(self, img: Image) -> None:
         """Cache latest depth frame."""

@@ -7,6 +7,7 @@ Environment variable LINGTU_CONFIG_PATH overrides the default config path.
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 import yaml
 
+from .msgs.numpy_compat import np, numpy_import_is_safe
 from .runtime_interface import LIDAR_EXTRINSICS
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -104,23 +106,30 @@ class CameraConfig:
     dist_k3: float = 0.0
 
     @property
-    def T_camera_body(self) -> np.ndarray:
+    def T_camera_body(self) -> np.ndarray | list[list[float]]:
         """4x4 camera→body static transform from factory calibration.
 
         Builds rotation from ZYX Euler angles (yaw, pitch, roll in radians).
         Translation is the camera position in body frame.
         Pure numpy — no cv2 dependency.
         """
-        import numpy as np
-        cr, sr = np.cos(self.roll), np.sin(self.roll)
-        cp, sp = np.cos(self.pitch), np.sin(self.pitch)
-        cy, sy = np.cos(self.yaw),   np.sin(self.yaw)
+        cr, sr = math.cos(self.roll), math.sin(self.roll)
+        cp, sp = math.cos(self.pitch), math.sin(self.pitch)
+        cy, sy = math.cos(self.yaw), math.sin(self.yaw)
         # ZYX extrinsic convention: R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
-        R = np.array([
+        rows = [
             [cy * cp,  cy * sp * sr - sy * cr,  cy * sp * cr + sy * sr],
             [sy * cp,  sy * sp * sr + cy * cr,  sy * sp * cr - cy * sr],
             [-sp,      cp * sr,                  cp * cr],
-        ], dtype=np.float64)
+        ]
+        if not numpy_import_is_safe():
+            return [
+                [rows[0][0], rows[0][1], rows[0][2], self.position_x],
+                [rows[1][0], rows[1][1], rows[1][2], self.position_y],
+                [rows[2][0], rows[2][1], rows[2][2], self.position_z],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        R = np.array(rows, dtype=np.float64)
         T = np.eye(4)
         T[:3, :3] = R
         T[:3, 3] = [self.position_x, self.position_y, self.position_z]

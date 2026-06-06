@@ -12,8 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
+from core.msgs.numpy_compat import np
 from core.runtime_interface import TOPICS, topic_default_frame_id
 from nav.plan_safety import evaluate_backend_path_safety
 from core.same_source_map_artifacts import (

@@ -31,10 +31,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from core import In, Module, Out, skill
 from core.dynamic_filter import apply_dynamic_filter_step1half
+from core.msgs.numpy_compat import np
 from core.msgs.sensor import PointCloud2
 from core.registry import register
 from core.runtime_interface import TOPICS, topic_default_frame_id
@@ -88,7 +87,7 @@ class MapManagerModule(Module, layer=6):
             os.environ.get(
                 "NAV_MAP_DIR",
                 # Canonical map dir on sunrise: REPL `map list`, Gateway,
-                # and cli/profiles_data.py:_resolve_tomogram all read from
+                # and core.runtime_profiles._resolve_tomogram all read from
                 # here. Stay consistent or saved maps won't be visible to
                 # the nav profile.
                 os.path.expanduser("~/data/nova/maps"),

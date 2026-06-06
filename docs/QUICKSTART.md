@@ -24,7 +24,8 @@ extra `setup.bash` or env script.
 ## Profiles
 
 The full table is in [`archive/AGENTS.md`](./archive/AGENTS.md) (section 3 "Profiles").
-The canonical source is `cli/profiles_data.py`.
+The canonical source is `src/core/runtime_profiles.py`; `cli/profiles_data.py`
+keeps compatibility exports for CLI callers.
 
 | Command | Purpose | Hardware |
 |---------|---------|----------|

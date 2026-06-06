@@ -16,8 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-import numpy as np
-
 from core.runtime_interface import (
     ARTIFACT_FORMATS,
     TOPICS,
@@ -25,6 +23,7 @@ from core.runtime_interface import (
     runtime_topic_allowed_frame_ids,
     topic_default_frame_id,
 )
+from core.msgs.numpy_compat import np
 
 _SAVED_MAP_ARTIFACT_FRAMES = runtime_topic_allowed_frame_ids(None)[
     TOPICS.saved_map_cloud

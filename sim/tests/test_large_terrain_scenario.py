@@ -7,7 +7,9 @@ pytestmark = [pytest.mark.sim]
 import json
 import pickle
 
-import numpy as np
+from core.tests.numpy_guard import import_numpy_or_skip
+
+np = import_numpy_or_skip()
 
 from nav.global_planner_service import GlobalPlannerService
 from sim.engine.scenarios.large_terrain_assets import DEFAULT_START, build_large_terrain_assets

@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.registry import register
 from core.runtime_interface import TOPICS, topic_default_frame_id
 from core.stream import In

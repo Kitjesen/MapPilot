@@ -23,11 +23,10 @@ import time
 from enum import Enum
 from typing import Any
 
-import numpy as np
-
 from core.module import Module, skill
 from core.msgs.geometry import Twist
 from core.msgs.nav import Odometry, Path
+from core.msgs.numpy_compat import np
 from core.msgs.semantic import ExecutionEval, SafetyState
 from core.registry import register
 from core.stream import In, Out
@@ -103,7 +102,7 @@ class SafetyRingModule(Module, layer=0):
         self._safety_level = SafetyLevel.SAFE
 
         # Ring 2 state
-        self._robot_xy = np.zeros(2)
+        self._robot_xy = [0.0, 0.0]
         self._robot_yaw = 0.0
         self._path_points: np.ndarray | None = None
         self._goal_xy: np.ndarray | None = None
@@ -317,7 +316,7 @@ class SafetyRingModule(Module, layer=0):
             for v in (odom.x, odom.y, odom.yaw, odom.vx, odom.vy)
         )
         if math.isfinite(x) and math.isfinite(y):
-            self._robot_xy = np.array([x, y])
+            self._robot_xy = [x, y]
         if math.isfinite(odom.yaw):
             self._robot_yaw = odom.yaw
         self._actual_speed = (

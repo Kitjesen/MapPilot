@@ -14,10 +14,9 @@ import json
 import logging
 from typing import Any
 
-import numpy as np
-
 from core import In, Module, Out, skill
 from core.msgs import Odometry, SceneGraph
+from core.msgs.numpy_compat import np
 from core.registry import register
 from memory.modules._odom_mixin import OdomTrackingMixin
 from memory.spatial.episodic import EpisodicMemory

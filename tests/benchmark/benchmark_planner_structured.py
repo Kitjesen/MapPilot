@@ -18,18 +18,12 @@ import json
 import math
 import os
 import pickle
+import subprocess
 import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Any
-
-IMPORT_ERROR: str | None = None
-try:
-    import numpy as np
-except Exception as exc:  # pragma: no cover - exercised by shell environments.
-    np = None  # type: ignore[assignment]
-    IMPORT_ERROR = f"missing dependency: numpy ({exc})"
 
 # ---- sys.path setup (mirrors src/core/tests/conftest.py) ----
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -41,16 +35,12 @@ for _p in [str(_REPO_ROOT), str(_SRC)]:
 # ---- imports after path setup ----
 from core.efficiency_status import benchmark_claim_metadata
 from core.efficiency_status import classify_benchmark_error
-if IMPORT_ERROR is None:
-    try:
-        from nav.global_planner_service import GlobalPlannerService
-        from nav.plan_safety import evaluate_backend_path_safety
-        from sim.engine.scenarios.large_terrain_assets import (
-            build_large_terrain_assets,
-            LargeTerrainAssets,
-        )
-    except Exception as exc:  # pragma: no cover - environment dependent.
-        IMPORT_ERROR = f"missing benchmark dependency: {exc}"
+
+IMPORT_ERROR: str | None = None
+GlobalPlannerService: Any | None = None
+evaluate_backend_path_safety: Any | None = None
+build_large_terrain_assets: Any | None = None
+LargeTerrainAssets: Any | None = None
 
 PLATFORM_ASSUMPTION = (
     "synthetic planner regression benchmark; not S100P real-robot performance"
@@ -60,6 +50,61 @@ SCHEMA_VERSION = 1
 # Default benchmark routes (subset of large_terrain_routes() names)
 DEFAULT_ROUTES = ("terrain_short", "terrain_long", "terrain_narrow_gap")
 DEFAULT_PLANNERS = ("astar", "pct")
+
+
+def _module_import_probe(module_name: str) -> str | None:
+    """Return an import error string without risking this process."""
+    proc = subprocess.run(
+        [sys.executable, "-c", f"import {module_name}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode == 0:
+        return None
+    detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+    tail = detail[-1] if detail else f"exit code {proc.returncode}"
+    return f"missing dependency: {module_name} ({tail})"
+
+
+def _ensure_benchmark_dependencies() -> str | None:
+    """Load heavy planner dependencies only when a real benchmark will run."""
+    global IMPORT_ERROR
+    global GlobalPlannerService
+    global evaluate_backend_path_safety
+    global build_large_terrain_assets
+    global LargeTerrainAssets
+
+    if IMPORT_ERROR is not None:
+        return IMPORT_ERROR
+    if (
+        GlobalPlannerService is not None
+        and evaluate_backend_path_safety is not None
+        and build_large_terrain_assets is not None
+    ):
+        return None
+
+    numpy_error = _module_import_probe("numpy")
+    if numpy_error is not None:
+        IMPORT_ERROR = numpy_error
+        return IMPORT_ERROR
+
+    try:
+        from nav.global_planner_service import GlobalPlannerService as _PlannerService
+        from nav.plan_safety import evaluate_backend_path_safety as _evaluate_safety
+        from sim.engine.scenarios.large_terrain_assets import (
+            LargeTerrainAssets as _LargeTerrainAssets,
+            build_large_terrain_assets as _build_assets,
+        )
+    except Exception as exc:  # pragma: no cover - environment dependent.
+        IMPORT_ERROR = f"missing benchmark dependency: {exc}"
+        return IMPORT_ERROR
+
+    GlobalPlannerService = _PlannerService
+    evaluate_backend_path_safety = _evaluate_safety
+    build_large_terrain_assets = _build_assets
+    LargeTerrainAssets = _LargeTerrainAssets
+    return None
 
 
 # ------------------------------------------------------------------ #
@@ -162,6 +207,11 @@ def _write_gate_metadata(fixture_dir: Path) -> dict[str, Any]:
 
 def _build_fixture(output_dir: Path) -> LargeTerrainAssets:
     """Generate synthetic map artifacts and return asset descriptor."""
+    import_error = _ensure_benchmark_dependencies()
+    if import_error is not None:
+        raise RuntimeError(import_error)
+    assert build_large_terrain_assets is not None
+
     fixture_dir = output_dir / "fixture"
     assets = build_large_terrain_assets(
         fixture_dir,
@@ -177,13 +227,15 @@ def _build_fixture(output_dir: Path) -> LargeTerrainAssets:
 #  Benchmark runner                                                   #
 # ------------------------------------------------------------------ #
 
-def _path_distance(path: list[np.ndarray]) -> float:
+def _path_distance(path: list[Any]) -> float:
     """Total Euclidean distance along a list of (x,y,z) waypoints."""
     if not path or len(path) < 2:
         return 0.0
     total = 0.0
     for i in range(1, len(path)):
-        total += float(np.linalg.norm(path[i][:2] - path[i - 1][:2]))
+        x1, y1 = float(path[i][0]), float(path[i][1])
+        x0, y0 = float(path[i - 1][0]), float(path[i - 1][1])
+        total += math.hypot(x1 - x0, y1 - y0)
     return total
 
 
@@ -222,6 +274,15 @@ def benchmark_planner(
     planner_name = planner_name.lower().strip()
     tomogram_path = fixture_dir / "tomogram.pickle"
     result = _result_base(planner_name)
+    if GlobalPlannerService is None:
+        import_error = _ensure_benchmark_dependencies()
+        if import_error is not None:
+            result["ok"] = False
+            result["status"] = "skip"
+            result["error"] = import_error
+            result["map_artifact_gate_ok"] = False
+            return result
+    assert GlobalPlannerService is not None
 
     svc = GlobalPlannerService(
         planner_name=planner_name,
@@ -255,8 +316,8 @@ def benchmark_planner(
     start_time = time.perf_counter()
     try:
         path, plan_ms = svc.plan(
-            np.asarray(start, dtype=float),
-            np.asarray(goal, dtype=float),
+            tuple(float(value) for value in start),
+            tuple(float(value) for value in goal),
             safe_goal_tolerance=0.0,
         )
         elapsed_ms = (
@@ -291,6 +352,7 @@ def benchmark_planner(
     # Safety score (1.0 = fully safe, 0.0 = fully blocked)
     if path:
         try:
+            assert evaluate_backend_path_safety is not None
             path_list = [
                 [float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0]
                 for p in path
@@ -421,12 +483,13 @@ def main() -> int:
     ]
     route_names = [r.strip() for r in args.routes.split(",") if r.strip()]
 
-    if IMPORT_ERROR is not None:
+    import_error = _ensure_benchmark_dependencies()
+    if import_error is not None:
         return write_import_skip_report(
             json_out=json_out,
             planners=planner_names,
             routes=route_names,
-            error=IMPORT_ERROR,
+            error=import_error,
         )
 
     # ---- Build synthetic map fixture ----

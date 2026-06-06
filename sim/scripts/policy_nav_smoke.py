@@ -16,8 +16,6 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -25,6 +23,8 @@ if str(ROOT) not in sys.path:
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+from core.msgs.numpy_compat import np
 
 
 def _rpy_from_xyzw(q: Any) -> tuple[float, float, float]:

@@ -5,9 +5,10 @@ Semantic Perception API - 公共类型定义
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 
 @dataclass
@@ -75,7 +76,7 @@ class Detection3D:
     confidence: float
     bbox_2d: BBox2D
     position_3d: Position3D
-    clip_feature: np.ndarray | None = None
+    clip_feature: "np.ndarray | None" = None
     detection_count: int = 1
     last_seen: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)

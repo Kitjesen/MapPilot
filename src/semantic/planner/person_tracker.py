@@ -16,6 +16,8 @@ Re-ID strategy (W3-5):
 No Kalman filter library dependency — linear motion model only.
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import threading
@@ -23,8 +25,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-import numpy as np
-
+from core.msgs.numpy_compat import is_numpy_array, np
 logger = logging.getLogger(__name__)
 
 # OSNet Re-ID feature dimension
@@ -482,7 +483,7 @@ class PersonTracker:
             bbox = p.get("bbox")
             if not bbox or len(bbox) < 4:
                 continue
-            if isinstance(bbox, np.ndarray):
+            if is_numpy_array(bbox):
                 bbox = bbox.tolist()
             x1, y1 = float(bbox[0]), float(bbox[1])
             x2, y2 = float(bbox[2]), float(bbox[3])
@@ -603,7 +604,7 @@ class PersonTracker:
             best_p, best_d = None, float("inf")
             for p in persons:
                 pb = p.get("bbox", [0, 0, 0, 0])
-                if isinstance(pb, np.ndarray):
+                if is_numpy_array(pb):
                     pb = pb.tolist()
                 if len(pb) < 4:
                     continue
@@ -851,7 +852,7 @@ class PersonTracker:
         bbox = obj.get("bbox")
         if bbox is None:
             return None
-        if isinstance(bbox, np.ndarray):
+        if is_numpy_array(bbox):
             bbox = bbox.astype(int).tolist()
         elif isinstance(bbox, dict):
             bbox = [int(bbox.get("x1", 0)), int(bbox.get("y1", 0)),

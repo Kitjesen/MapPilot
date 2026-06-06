@@ -551,8 +551,10 @@ def build_localization_status(gw: Any) -> dict[str, Any]:
 
 
 def _cmd_vel_health(gw: Any) -> dict[str, Any]:
+    mux = getattr(gw, "_cmd_vel_mux", None)
     modules = getattr(gw, "_all_modules", None) or {}
-    mux = modules.get("CmdVelMux")
+    if mux is None:
+        mux = modules.get("CmdVelMux")
     if mux is None:
         for name, module in modules.items():
             token = str(name).lower()
@@ -588,11 +590,14 @@ def _cmd_vel_health(gw: Any) -> dict[str, Any]:
 def _navigation_module_status(gw: Any) -> dict[str, Any]:
     modules = getattr(gw, "_all_modules", None) or {}
     candidates = []
+    injected = getattr(gw, "_navigation_module", None)
+    if injected is not None:
+        candidates.append(injected)
     direct = modules.get("NavigationModule")
-    if direct is not None:
+    if direct is not None and not any(direct is candidate for candidate in candidates):
         candidates.append(direct)
     for name, module in modules.items():
-        if module is direct:
+        if module is direct or any(module is candidate for candidate in candidates):
             continue
         token = str(name).lower()
         class_token = module.__class__.__name__.lower()

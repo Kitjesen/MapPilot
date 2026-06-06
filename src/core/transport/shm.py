@@ -17,8 +17,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-import numpy as np
-
+from core.msgs.numpy_compat import is_numpy_array
 from .abc import Publisher, Subscriber, TopicConfig, TransportABC
 
 logger = logging.getLogger(__name__)
@@ -73,7 +72,7 @@ class SHMPublisher(Publisher):
 
     def publish(self, msg: Any) -> None:
         """Publish message (bytes or numpy array)."""
-        if isinstance(msg, np.ndarray):
+        if is_numpy_array(msg):
             data = msg.tobytes()
         elif isinstance(msg, bytes):
             data = msg

@@ -10,7 +10,7 @@ migration.
 | --- | --- | --- |
 | `runtime` | `src/core/module.py`, `src/core/stream.py`, lifecycle helpers | Module lifecycle, ports, scheduling, backpressure |
 | `contracts` | `src/core/contracts/` | Runtime-checkable schemas for high-risk dict messages |
-| `composition` | `src/core/blueprints/`, `cli/profiles_data.py` | Profile compilation, stack factories, explicit wires |
+| `composition` | `src/core/runtime_profiles.py`, `src/core/blueprints/` | Profile compilation, stack factories, explicit wires |
 | `platform` | `src/drivers/`, `src/slam/`, `config/devices.yaml`, `config/robot_config.yaml` | Robot hardware, ROS 2 bridges, SLAM/localization adapters |
 | `mapping` | `src/nav/services/*map*`, `src/nav/services/dynamic_filter.py` | Occupancy, ESDF, elevation, traversability, map lifecycle |
 | `navigation` | `src/nav/`, `src/global_planning/`, `src/base_autonomy/` | Mission FSM, global planning, local planning, cmd_vel arbitration |

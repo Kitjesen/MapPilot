@@ -9,8 +9,9 @@ requires real type objects at class-definition time.
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
-import numpy as np
+from core.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ except ImportError:
 # ── Conversion helpers ──────────────────────────────────────────────────
 
 
-def livox_msg_to_numpy(msg) -> np.ndarray | None:
+def livox_msg_to_numpy(msg) -> Any | None:
     """Convert a LivoxCustomMsg to numpy (N, 4): x, y, z, intensity.
 
     Uses list-comprehension + single np.array() call — measured ~1.5ms

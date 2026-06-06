@@ -34,16 +34,12 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
-
 from core import In, Module, Out
+from core.msgs.numpy_compat import np
 from core.msgs.nav import Odometry
 from core.msgs.semantic import SceneGraph
 from core.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from core.registry import register
-
-from .color_projector import ColorProjector
-from .semantic_labeler import SemanticLabeler
 
 # ── Default dynamic-class labels that should not be written to the static map ──
 _DYNAMIC_LABELS = frozenset({
@@ -53,7 +49,12 @@ _DYNAMIC_LABELS = frozenset({
 })
 
 # Camera-body extrinsic defaults (identity — corrected from robot_config at init)
-_DEFAULT_CAM_BODY = np.eye(4, dtype=np.float64)
+_DEFAULT_CAM_BODY = (
+    (1.0, 0.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, 0.0),
+    (0.0, 0.0, 0.0, 1.0),
+)
 
 
 def _pose_to_matrix(odom: Odometry) -> np.ndarray:
@@ -100,7 +101,7 @@ def _load_cam_body_extrinsic() -> np.ndarray:
         T[2, 3] = float(getattr(cam, "position_z", 0.0))
         return T
     except Exception:
-        return _DEFAULT_CAM_BODY.copy()
+        return np.array(_DEFAULT_CAM_BODY, dtype=np.float64)
 
 
 def _load_depth_scale() -> float:
@@ -184,6 +185,15 @@ class TSDFColorVolume:
         return self._volume.extract_triangle_mesh()
 
 
+class _LazyProjectorConfig:
+    """Configuration placeholder until the numeric projector is first used."""
+
+    def __init__(self, voxel_size: float, voxel_ttl: float) -> None:
+        self._voxel_size = float(voxel_size)
+        self._voxel_ttl = float(voxel_ttl)
+        self.voxel_count = 0
+
+
 @register("reconstruction", "default", description="RGB-D reconstruction module")
 class ReconstructionModule(Module, layer=3):
     """Streaming RGB-D voxel reconstruction with dynamic-scene support.
@@ -212,10 +222,10 @@ class ReconstructionModule(Module, layer=3):
     def __init__(self, **config: Any) -> None:
         super().__init__(**config)
 
-        voxel_size = float(config.get("voxel_size", 0.05))
-        voxel_ttl  = float(config.get("voxel_ttl", 30.0))
-        self._projector = ColorProjector(voxel_size=voxel_size, voxel_ttl=voxel_ttl)
-        self._labeler   = SemanticLabeler()
+        self._voxel_size = float(config.get("voxel_size", 0.05))
+        self._voxel_ttl  = float(config.get("voxel_ttl", 30.0))
+        self._projector = _LazyProjectorConfig(self._voxel_size, self._voxel_ttl)
+        self._labeler = None
 
         self._process_hz    = float(config.get("process_hz", 5.0))
         self._min_points    = int(config.get("min_points_to_publish", 1000))
@@ -228,7 +238,7 @@ class ReconstructionModule(Module, layer=3):
         )
 
         # Extrinsic: camera pose in body frame (loaded from robot_config)
-        self._camera_pose_in_body: np.ndarray = _load_cam_body_extrinsic()
+        self._camera_pose_in_body = None
         self._depth_scale: float      = _load_depth_scale()
 
         # Buffered inputs (latest-wins)
@@ -244,9 +254,25 @@ class ReconstructionModule(Module, layer=3):
         self._bg_thread: threading.Thread | None = None
         self._recon_active = threading.Event()
 
+    def _ensure_components(self) -> None:
+        if isinstance(self._projector, _LazyProjectorConfig):
+            from .color_projector import ColorProjector
+
+            self._projector = ColorProjector(
+                voxel_size=self._voxel_size,
+                voxel_ttl=self._voxel_ttl,
+            )
+        if self._labeler is None:
+            from .semantic_labeler import SemanticLabeler
+
+            self._labeler = SemanticLabeler()
+        if self._camera_pose_in_body is None:
+            self._camera_pose_in_body = _load_cam_body_extrinsic()
+
     # ── Module lifecycle ────────────────────────────────────────────────────
 
     def setup(self) -> None:
+        self._ensure_components()
         # Reconstruction is heavy (CLIP + 3D TSDF). Drop stale frames so the
         # camera publisher never blocks waiting for us — that would starve
         # the uvicorn event loop of the GIL.
@@ -288,6 +314,7 @@ class ReconstructionModule(Module, layer=3):
                 self._depth_scale = float(info.depth_scale)
 
     def _on_scene_graph(self, sg: SceneGraph) -> None:
+        self._ensure_components()
         with self._buf_lock:
             self._latest_sg = sg
         self._labeler.update_from_scene_graph(sg.to_json())
@@ -312,6 +339,7 @@ class ReconstructionModule(Module, layer=3):
                 time.sleep(sleep_time)
 
     def _process_one_frame(self) -> None:
+        self._ensure_components()
         with self._buf_lock:
             color = self._latest_color
             depth = self._latest_depth
@@ -415,6 +443,7 @@ class ReconstructionModule(Module, layer=3):
         int
             Number of voxels updated.
         """
+        self._ensure_components()
         return self._projector.update_from_frame(
             color_bgr=color_bgr,
             depth_mm=depth_mm,
@@ -430,6 +459,7 @@ class ReconstructionModule(Module, layer=3):
 
         Returns the stats dict, or None if below threshold.
         """
+        self._ensure_components()
         xyzrgb = self._projector.get_colored_cloud()
         if len(xyzrgb) < self._min_points:
             return None
@@ -464,6 +494,7 @@ class ReconstructionModule(Module, layer=3):
         """
         from .ply_writer import save_ply_with_labels
 
+        self._ensure_components()
         xyzrgb = self._projector.get_colored_cloud()
         if len(xyzrgb) == 0:
             return {"success": False, "message": "no point cloud data"}
@@ -483,17 +514,17 @@ class ReconstructionModule(Module, layer=3):
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
-        info["mesh_vertices"]     = self._projector.voxel_count
+        info["mesh_vertices"]     = 0 if self._projector is None else self._projector.voxel_count
         info["frames_processed"]  = self._total_frames
         info["last_update_time"]  = self._last_update_time
-        info["voxel_ttl_s"]       = self._projector._voxel_ttl
+        info["voxel_ttl_s"]       = self._voxel_ttl
         info["mask_dynamic"]      = self._mask_dynamic
         return info
 
     @property
     def voxel_count(self) -> int:
-        return self._projector.voxel_count
+        return 0 if self._projector is None else self._projector.voxel_count
 
     @property
     def object_count(self) -> int:
-        return self._labeler.object_count
+        return 0 if self._labeler is None else self._labeler.object_count

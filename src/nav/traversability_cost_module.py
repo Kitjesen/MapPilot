@@ -41,23 +41,13 @@ import logging
 import time
 from typing import Any
 
-import numpy as np
-
 from core.module import Module
+from core.msgs.numpy_compat import np
 from core.registry import register
 from core.runtime_interface import TOPICS, normalize_frame_id, topic_default_frame_id
 from core.stream import In, Out
 
 logger = logging.getLogger(__name__)
-
-
-# scipy is required for bilinear resampling. setup() raises loudly if missing.
-try:
-    import scipy.ndimage  # noqa: F401
-
-    _SCIPY_AVAILABLE = True
-except ImportError:
-    _SCIPY_AVAILABLE = False
 
 
 def _resample_to_grid(
@@ -71,11 +61,6 @@ def _resample_to_grid(
 ) -> np.ndarray:
     """Bilinear resample src grid onto dst grid coordinates via scipy."""
 
-    if not _SCIPY_AVAILABLE:
-        raise RuntimeError(
-            "_resample_to_grid requires scipy; call "
-            "TraversabilityCostModule.setup() first to see the preflight error."
-        )
     from scipy.ndimage import map_coordinates
 
     dst_h, dst_w = dst_shape
@@ -158,12 +143,6 @@ class TraversabilityCostModule(Module, layer=2):
         self._last_publish: float = 0.0
 
     def setup(self) -> None:
-        if not _SCIPY_AVAILABLE:
-            raise RuntimeError(
-                "TraversabilityCostModule requires scipy for bilinear "
-                "resampling between elevation/ESDF and costmap grids. "
-                "Install with: pip install scipy"
-            )
         self.costmap.subscribe(self._on_costmap)
         self.elevation_map.subscribe(self._on_elevation)
         self.elevation_map.set_policy("latest")

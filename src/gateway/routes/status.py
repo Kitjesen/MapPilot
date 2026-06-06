@@ -677,7 +677,8 @@ def register_status_routes(app, gw) -> None:
         response_model=DevicesResponse,
     )
     async def get_devices():
-        mgr = gw._all_modules.get("DeviceManager") if gw._all_modules else None
+        modules = getattr(gw, "_all_modules", None) or {}
+        mgr = modules.get("DeviceManager")
         if mgr is None:
             return {"devices": [], "manager": "not_loaded"}
         try:
@@ -712,8 +713,9 @@ def register_status_routes(app, gw) -> None:
         modules_fail = 0
         module_summary: dict[str, str] = {}
 
-        if gw._all_modules:
-            for name, mod in gw._all_modules.items():
+        modules = getattr(gw, "_all_modules", None) or {}
+        if modules:
+            for name, mod in modules.items():
                 probe_module = details or _health_module_needs_detail(str(name))
                 if not probe_module:
                     module_summary[name] = "ok"

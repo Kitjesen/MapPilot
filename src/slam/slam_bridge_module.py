@@ -22,14 +22,13 @@ import os
 import subprocess
 import threading
 import time as _time
-from typing import Any, Callable
-
-import numpy as np
+from typing import Any, Callable, Mapping
 
 from core.service_manager import get_service_manager
 
 from core.backend_status import BackendStatus
 from core.module import Module, skill
+from core.msgs.numpy_compat import np
 from core.msgs.geometry import Pose, Quaternion, Twist, Vector3
 from core.msgs.gnss import GnssFixType, GnssOdom
 from core.msgs.nav import Odometry
@@ -43,6 +42,12 @@ from core.runtime_interface import (
 from core.runtime_policy import slam_backend_contract
 from core.stream import In, Out
 from core.utils.scene_mode_detector import SceneModeConfig, SceneModeDetector
+from slam.relocalization_service import (
+    RelocalizationResult,
+    relocalize_saved_map,
+    relocalize_saved_map_with_env,
+    trigger_global_relocalize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -321,10 +326,13 @@ class SlamBridgeModule(Module, layer=1):
         # frame (via SLAM orientation) and subtracting — giving the body
         # origin position that can be fused with SLAM odometry.
         _ant = kw.get("gnss_antenna_offset", (0.0, 0.0, 0.0))
-        self._gnss_antenna_offset: np.ndarray = np.asarray(_ant, dtype=float)
-        if self._gnss_antenna_offset.shape != (3,):
+        try:
+            self._gnss_antenna_offset = tuple(float(v) for v in _ant)
+        except TypeError as exc:
+            raise ValueError("gnss_antenna_offset must be an iterable of 3 numbers") from exc
+        if len(self._gnss_antenna_offset) != 3:
             raise ValueError(
-                f"gnss_antenna_offset must be length-3, got {self._gnss_antenna_offset.shape}"
+                f"gnss_antenna_offset must be length-3, got {len(self._gnss_antenna_offset)}"
             )
         self._last_gnss_odom: GnssOdom | None = None
         self._last_gnss_rx_ts: float = 0.0
@@ -1094,15 +1102,13 @@ class SlamBridgeModule(Module, layer=1):
 
         map_dir = os.environ.get("NAV_MAP_DIR", os.path.expanduser("~/data/inovxio/data/maps"))
         pcd_path = os.path.join(map_dir, "active", "map.pcd")
-        if (not contract["relocalization_supported"]) or not os.path.isfile(pcd_path):
+        if not contract["relocalization_supported"]:
             self._relocalization_state = "unsupported"
             self._last_recovery_action = str(contract["recovery_action"])
             self._last_recovery_ts = _time.time()
             logger.error(
-                "Drift guard: %s cannot use relocalize (pcd=%s, supported=%s); "
-                "running %s",
+                "Drift guard: %s cannot use relocalize (supported=%s); running %s",
                 profile,
-                pcd_path,
                 contract["relocalization_supported"],
                 contract["recovery_action"],
             )
@@ -1148,25 +1154,24 @@ class SlamBridgeModule(Module, layer=1):
             "Drift guard: auto-relocalize to (%.2f, %.2f, yaw=%.2f) using %s",
             pos[0], pos[1], yaw, pcd_path)
         try:
-            ros_env = (
-                "source /opt/ros/humble/setup.bash && "
-                "source ~/data/SLAM/navigation/install/setup.bash 2>/dev/null; "
-                "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && "
+            result = relocalize_saved_map(
+                pcd_path,
+                float(pos[0]),
+                float(pos[1]),
+                float(yaw),
+                timeout_s=30.0,
             )
-            reloc_result = subprocess.run(
-                ["bash", "-c",
-                 ros_env +
-                 f"ros2 service call {TOPICS.relocalize_service} interface/srv/Relocalize "
-                 f"\"{{pcd_path: '{pcd_path}', x: {pos[0]}, y: {pos[1]}, z: 0.0, "
-                 f"yaw: {yaw}, pitch: 0.0, roll: 0.0}}\""],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=30)
-            if reloc_result.returncode != 0:
+            if result.timed_out:
+                raise TimeoutError(result.message)
+            if result.returncode != 0 or not result.success:
                 logger.warning(
-                    "Drift guard: relocalize returned %d: %s",
-                    reloc_result.returncode,
-                    (reloc_result.stderr or reloc_result.stdout or "").strip()[:200],
+                    "Drift guard: relocalize failed result rc=%s success=%s: %s",
+                    result.returncode,
+                    result.success,
+                    (result.message or result.stderr or result.stdout or "").strip()[:200],
                 )
+                self._relocalization_state = "failed"
+                return
             else:
                 logger.info("Drift guard: relocalize call completed")
             self._drift_bad_count = 0
@@ -1174,6 +1179,43 @@ class SlamBridgeModule(Module, layer=1):
         except Exception as e:
             logger.warning("Drift guard: relocalize failed: %s", e)
             self._relocalization_state = "failed"
+
+    def trigger_global_relocalize(
+        self,
+        *,
+        timeout_s: float = 10.0,
+    ) -> RelocalizationResult:
+        return trigger_global_relocalize(timeout_s=timeout_s)
+
+    def relocalize_saved_map(
+        self,
+        pcd_path: str | os.PathLike[str],
+        x: float,
+        y: float,
+        yaw: float,
+        *,
+        timeout_s: float = 30.0,
+    ) -> RelocalizationResult:
+        return relocalize_saved_map(pcd_path, x, y, yaw, timeout_s=timeout_s)
+
+    def relocalize_saved_map_with_env(
+        self,
+        pcd_path: str | os.PathLike[str],
+        x: float,
+        y: float,
+        yaw: float,
+        *,
+        timeout_s: float = 20.0,
+        base_env: Mapping[str, str] | None = None,
+    ) -> RelocalizationResult:
+        return relocalize_saved_map_with_env(
+            pcd_path,
+            x,
+            y,
+            yaw,
+            timeout_s=timeout_s,
+            base_env=base_env,
+        )
 
     def _mark_odom_received(
         self,
@@ -2224,9 +2266,9 @@ class SlamBridgeModule(Module, layer=1):
         # body. Rotate the antenna offset from body to map frame using current
         # SLAM orientation, then subtract its XY from the GNSS ENU position
         # so both operands refer to the body origin.
-        if self._gnss_antenna_offset.any():
+        if any(self._gnss_antenna_offset):
             R_body2map = odom.pose.orientation.to_rotation_matrix()
-            a_map = R_body2map @ self._gnss_antenna_offset
+            a_map = R_body2map @ np.asarray(self._gnss_antenna_offset, dtype=float)
             gnss_xy = np.array([g.east - a_map[0], g.north - a_map[1]])
         else:
             gnss_xy = np.array([g.east, g.north])
@@ -2776,7 +2818,7 @@ class SlamBridgeModule(Module, layer=1):
                 else [float(self._gnss_map_offset[0]),
                       float(self._gnss_map_offset[1])]
             ),
-            "antenna_offset_body": self._gnss_antenna_offset.tolist(),
+            "antenna_offset_body": list(self._gnss_antenna_offset),
             "last_residual_m": float(self._gnss_last_residual_m),
             "fused_count": int(self._gnss_fused_count),
             "relock_count": int(self._gnss_relock_count),

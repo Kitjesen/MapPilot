@@ -59,14 +59,13 @@ import time
 from pathlib import Path as FilePath
 from typing import Any, Callable
 
-import numpy as np
-
 from core.module import Module
 from core.msgs.geometry import PoseStamped, Twist, Vector3
 from core.msgs.nav import Odometry, Path
 from core.msgs.semantic import ExecutionEval, SafetyState, SceneGraph
 from core.msgs.sensor import PointCloud2
 from core.registry import register
+from core.relocalization import RelocalizationService
 from core.stream import In, Out
 from gateway.schemas import (
     DriverSwapRequest,
@@ -80,9 +79,7 @@ from gateway.services.map_paths import (
     active_map_name,
     map_dir_for,
 )
-from core.dynamic_filter import (
-    apply_dynamic_filter_step1half as _map_apply_dynamic_filter_step1half,
-)
+from core.msgs.numpy_compat import np
 from gateway.services.map_safety import (
     safe_map_name as _map_safe_map_name,
 )
@@ -145,11 +142,20 @@ def _navigation_state(nav: Any) -> str:
     nested = health.get("navigation")
     if state is None and isinstance(nested, dict):
         state = nested.get("state")
-    if state is None:
-        state = getattr(nav, "_state", "")
     if hasattr(state, "value"):
         state = state.value
     return str(state or "").upper()
+
+
+def _has_relocalization_capability(module: Any) -> bool:
+    return all(
+        callable(getattr(module, method, None))
+        for method in (
+            "trigger_global_relocalize",
+            "relocalize_saved_map",
+            "relocalize_saved_map_with_env",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +178,10 @@ def _env_bool(name: str, default: bool) -> bool:
 
 # Convenience aliases — canonical implementations in gateway.services.map_safety
 _safe_map_name = _map_safe_map_name
-_apply_dynamic_filter_step1half = _map_apply_dynamic_filter_step1half
+def _apply_dynamic_filter_step1half(*args: Any, **kwargs: Any) -> Any:
+    from core.dynamic_filter import apply_dynamic_filter_step1half
+
+    return apply_dynamic_filter_step1half(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -324,8 +333,14 @@ class GatewayModule(Module, layer=6):
 
         # Reference to MapManagerModule (set by on_system_modules)
         self._map_mgr = None
-        # All modules dict (set by on_system_modules)
+        # Read-only module inventory for status, readiness, diagnostics, and
+        # runtime dataflow views. Backend mutation paths must use the explicit
+        # adapter caches below instead of reaching through this full graph.
         self._all_modules: dict[str, Any] = {}
+        self._navigation_module = None
+        self._cmd_vel_mux = None
+        self._backend_reconfigure_modules: dict[str, Any] = {}
+        self._relocalization_service: RelocalizationService | None = None
 
         # rosbag recording state
         self._bag_proc: Any = None       # subprocess.Popen
@@ -352,7 +367,7 @@ class GatewayModule(Module, layer=6):
         # map→odom TF (from localizer via SlamBridge). Applied to odom-frame
         # map_cloud before SSE so the frontend sees it overlaid with saved_map
         # (which is already in map frame). Identity until localizer converges.
-        self._T_map_odom: np.ndarray = np.eye(4, dtype=np.float64)
+        self._T_map_odom: np.ndarray | None = None
         self._has_map_odom_tf: bool = False
 
         # WebRTCStreamModule reference (set by on_system_modules).  Kept as
@@ -997,7 +1012,44 @@ class GatewayModule(Module, layer=6):
 
     def on_system_modules(self, modules: dict[str, Any]) -> None:
         self._map_mgr = modules.get("MapManagerModule")
-        self._all_modules = modules
+        self._all_modules = dict(modules)
+        self._navigation_module = modules.get("NavigationModule")
+        self._cmd_vel_mux = (
+            modules.get("CmdVelMux")
+            or modules.get("CmdVelMuxModule")
+            or next(
+                (
+                    module
+                    for name, module in modules.items()
+                    if (
+                        "cmdvelmux" in str(name).lower()
+                        or "cmd_vel_mux" in str(name).lower()
+                        or "cmdvelmux" in module.__class__.__name__.lower()
+                        or "cmd_vel_mux" in module.__class__.__name__.lower()
+                    )
+                ),
+                None,
+            )
+        )
+        self._backend_reconfigure_modules = {
+            module_name: modules.get(module_name)
+            for module_names in _BACKEND_RECONFIGURE_TARGETS.values()
+            for module_name in module_names
+            if modules.get(module_name) is not None
+        }
+        self._relocalization_service = next(
+            (
+                module
+                for name in (
+                    "SlamBridgeModule",
+                    "SLAMModule",
+                    "SlamModule",
+                )
+                for module in (modules.get(name),)
+                if module is not None and _has_relocalization_capability(module)
+            ),
+            None,
+        )
         # WebRTCStreamModule handles its own ICE/SDP dance; we just forward
         # POST /api/v1/webrtc/offer to it.  See the route below.
         self._webrtc = modules.get("WebRTCStreamModule")
@@ -1064,8 +1116,7 @@ class GatewayModule(Module, layer=6):
         **config: Any,
     ) -> dict[str, Any]:
         if category in _MOTION_BACKEND_CATEGORIES:
-            nav = self._all_modules.get("NavigationModule")
-            state = _navigation_state(nav)
+            state = _navigation_state(self._navigation_module)
             if state != "IDLE":
                 return {
                     "ok": False,
@@ -1076,7 +1127,7 @@ class GatewayModule(Module, layer=6):
                 }
 
         for module_name in _BACKEND_RECONFIGURE_TARGETS.get(category, ()):
-            module = self._all_modules.get(module_name)
+            module = self._backend_reconfigure_modules.get(module_name)
             reconfigure = getattr(module, "reconfigure_backend", None)
             if callable(reconfigure):
                 return reconfigure(category, backend, **config)
@@ -1465,36 +1516,23 @@ class GatewayModule(Module, layer=6):
         def _worker() -> None:
             time.sleep(2.5)  # give localizer time to finish loading static map
             try:
-                pcd_path = str(map_dir_for(map_name) / "map.pcd")
+                pcd_path = map_dir_for(map_name) / "map.pcd"
                 if not os.path.isfile(pcd_path):
                     logger.warning("auto-relocalize: map pcd missing: %s", pcd_path)
                     return
-                reloc_env = os.environ.copy()
-                reloc_env["RMW_IMPLEMENTATION"] = "rmw_cyclonedds_cpp"
-                reloc_env["LINGTU_PCD_PATH"] = pcd_path
-                reloc_env["LINGTU_RELOC_X"] = str(x)
-                reloc_env["LINGTU_RELOC_Y"] = str(y)
-                reloc_env["LINGTU_RELOC_YAW"] = str(yaw)
-                cmd = (
-                    "source /opt/ros/humble/setup.bash && "
-                    "source ~/data/SLAM/navigation/install/setup.bash 2>/dev/null; "
-                    'ros2 service call /nav/relocalize interface/srv/Relocalize '
-                    '"{pcd_path: \'$LINGTU_PCD_PATH\', x: $LINGTU_RELOC_X, '
-                    'y: $LINGTU_RELOC_Y, z: 0.0, '
-                    'yaw: $LINGTU_RELOC_YAW, pitch: 0.0, roll: 0.0}"'
+                service = self._relocalization_service
+                if service is None:
+                    logger.warning("auto-relocalize: relocalization service unavailable")
+                    return
+                result = service.relocalize_saved_map_with_env(
+                    pcd_path,
+                    x,
+                    y,
+                    yaw,
+                    timeout_s=20.0,
                 )
-                r = subprocess.run(
-                    ["bash", "-c", cmd],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=20,
-                    env=reloc_env,
-                )
-                ok = "success=True" in r.stdout
                 logger.info("auto-relocalize: map=%s pose=(%.2f,%.2f,yaw=%.2f) ok=%s",
-                            map_name, x, y, yaw, ok)
+                            map_name, x, y, yaw, result.success)
             except Exception as e:
                 logger.warning("auto-relocalize worker failed: %s", e)
 

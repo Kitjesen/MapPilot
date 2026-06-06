@@ -20,11 +20,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar
 
-import numpy as np
-
 from core.runtime_interface import camera_frame_id, map_frame_id
 
 from .geometry import Quaternion, Vector3
+from .numpy_compat import is_numpy_array, np, numpy_import_is_safe
 
 SENSOR_CAMERA_FRAME_ID = camera_frame_id()
 SENSOR_MAP_FRAME_ID = map_frame_id()
@@ -69,13 +68,15 @@ class Image:
         TF frame this image was captured in.
     """
 
-    data: np.ndarray = field(default_factory=lambda: np.zeros((1, 1, 3), dtype=np.uint8))
+    data: Any = field(default_factory=lambda: [[[0, 0, 0]]])
     format: ImageFormat = field(default=ImageFormat.BGR)
     ts: float = field(default_factory=time.time)
     frame_id: str = field(default=SENSOR_CAMERA_FRAME_ID)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.data, np.ndarray):
+        if not is_numpy_array(self.data):
+            if not numpy_import_is_safe():
+                return
             self.data = np.asarray(self.data)
 
     # -- factory methods -----------------------------------------------------
@@ -112,15 +113,29 @@ class Image:
 
     @property
     def height(self) -> int:
-        return int(self.data.shape[0])
+        if is_numpy_array(self.data):
+            return int(self.data.shape[0])
+        return len(self.data) if isinstance(self.data, list) else 0
 
     @property
     def width(self) -> int:
-        return int(self.data.shape[1])
+        if is_numpy_array(self.data):
+            return int(self.data.shape[1])
+        if isinstance(self.data, list) and self.data:
+            row = self.data[0]
+            return len(row) if isinstance(row, list) else 0
+        return 0
 
     @property
     def channels(self) -> int:
-        return 1 if self.data.ndim == 2 else int(self.data.shape[2])
+        if is_numpy_array(self.data):
+            return 1 if self.data.ndim == 2 else int(self.data.shape[2])
+        if isinstance(self.data, list) and self.data and isinstance(self.data[0], list):
+            row = self.data[0]
+            if row and isinstance(row[0], list):
+                return len(row[0])
+            return 1
+        return 0
 
     # -- format conversion ---------------------------------------------------
 
@@ -445,7 +460,7 @@ class PointCloud2:
     ROS2 ``sensor_msgs/PointCloud2`` fields used by bridge code.
     """
 
-    points: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    points: Any = field(default_factory=list)
     ts: float = field(default_factory=time.time)
     frame_id: str = field(default=SENSOR_MAP_FRAME_ID)
     height: int = 1
@@ -457,15 +472,24 @@ class PointCloud2:
     row_step: int = 0
 
     def __post_init__(self) -> None:
-        self.points = np.asarray(self.points, dtype=np.float32)
-        if self.points.ndim == 1 and self.points.size == 0:
-            self.points = self.points.reshape(0, 3)
-        if self.points.ndim != 2 or self.points.shape[1] not in (3, 4):
-            raise ValueError(f"points must be (N,3) or (N,4), got {self.points.shape}")
+        if not is_numpy_array(self.points):
+            if self.points or numpy_import_is_safe():
+                self.points = np.asarray(self.points, dtype=np.float32)
+        if is_numpy_array(self.points):
+            if self.points.ndim == 1 and self.points.size == 0:
+                self.points = self.points.reshape(0, 3)
+            if self.points.ndim != 2 or self.points.shape[1] not in (3, 4):
+                raise ValueError(f"points must be (N,3) or (N,4), got {self.points.shape}")
+            num_points = int(self.points.shape[0])
+            cols = int(self.points.shape[1])
+        else:
+            if self.points:
+                raise ImportError("NumPy import is unsafe in this host interpreter")
+            num_points = 0
+            cols = 3
         if self.height <= 0:
             raise ValueError(f"height must be positive, got {self.height}")
 
-        num_points = int(self.points.shape[0])
         if self.width <= 0:
             if self.height == 1:
                 self.width = num_points
@@ -500,13 +524,18 @@ class PointCloud2:
                     )
             self.fields = norm_fields
         else:
-            self.fields = _default_point_fields(int(self.points.shape[1]))
+            self.fields = _default_point_fields(cols)
 
         if self.point_step <= 0:
-            self.point_step = int(self.points.shape[1] * np.dtype(np.float32).itemsize)
+            self.point_step = int(cols * 4)
         if self.row_step <= 0:
             self.row_step = int(self.point_step * self.width)
-        if self.is_dense and not os.environ.get("LINGTU_SKIP_DENSE_CHECK") and not np.isfinite(self.points).all():
+        if (
+            is_numpy_array(self.points)
+            and self.is_dense
+            and not os.environ.get("LINGTU_SKIP_DENSE_CHECK")
+            and not np.isfinite(self.points).all()
+        ):
             self.is_dense = False
 
     # -- factory methods -----------------------------------------------------
@@ -550,7 +579,9 @@ class PointCloud2:
 
     @property
     def num_points(self) -> int:
-        return int(self.points.shape[0])
+        if is_numpy_array(self.points):
+            return int(self.points.shape[0])
+        return len(self.points) if isinstance(self.points, list) else 0
 
     @property
     def is_empty(self) -> bool:
@@ -559,7 +590,7 @@ class PointCloud2:
     @property
     def data(self) -> bytes:
         """Raw point bytes laid out like a dense PointCloud2 payload."""
-        return self.points.tobytes()
+        return self.points.tobytes() if is_numpy_array(self.points) else b""
 
     # -- transforms ----------------------------------------------------------
 
@@ -595,7 +626,7 @@ class PointCloud2:
         """Grid-based voxel down-sampling (pure NumPy)."""
         if self.is_empty or voxel_size <= 0:
             return PointCloud2(
-                self.points.copy(),
+                self.points.copy() if hasattr(self.points, "copy") else list(self.points),
                 self.ts,
                 self.frame_id,
                 height=self.height,
@@ -626,11 +657,20 @@ class PointCloud2:
     def encode(self) -> bytes:
         """Serialise: fixed header + frame string + raw float32 blob."""
         frame_bytes = self.frame_id.encode()
-        n, cols = self.points.shape
+        if is_numpy_array(self.points):
+            n, cols = self.points.shape
+            points_bytes = self.points.tobytes()
+        elif not self.points:
+            n, cols = 0, 3
+            points_bytes = b""
+        else:
+            points = np.asarray(self.points, dtype=np.float32)
+            n, cols = points.shape
+            points_bytes = points.tobytes()
         buf = bytearray()
         buf += _PC_HDR.pack(n, cols, self.ts)
         buf += struct.pack("<I", len(frame_bytes)) + frame_bytes
-        buf += self.points.tobytes()
+        buf += points_bytes
         return bytes(buf)
 
     @classmethod
@@ -649,10 +689,10 @@ class PointCloud2:
 
     def to_dict(self) -> dict[str, Any]:
         """Metadata dict (no point data)."""
-        xyz = self.points[:, :3]
         if self.is_empty:
             bounds = {"min": [0, 0, 0], "max": [0, 0, 0]}
         else:
+            xyz = self.points[:, :3]
             bounds = {
                 "min": xyz.min(axis=0).tolist(),
                 "max": xyz.max(axis=0).tolist(),
@@ -661,7 +701,7 @@ class PointCloud2:
             "num_points": self.num_points,
             "height": self.height,
             "width": self.width,
-            "cols": int(self.points.shape[1]),
+            "cols": int(self.points.shape[1]) if is_numpy_array(self.points) else 3,
             "frame_id": self.frame_id,
             "ts": self.ts,
             "fields": [

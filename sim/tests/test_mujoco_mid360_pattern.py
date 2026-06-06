@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
+from core.tests.numpy_guard import import_numpy_or_skip
+
+np = import_numpy_or_skip()
 
 from sim.engine.mujoco.lidar import MuJoCoLidar
 

@@ -17,9 +17,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
-
-import numpy as np
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -33,7 +31,7 @@ class EncoderProtocol(Protocol):
     this protocol at runtime (method existence checked via runtime_checkable).
     """
 
-    def encode_image(self, image: np.ndarray) -> np.ndarray:
+    def encode_image(self, image: Any) -> Any:
         """Encode an image into a feature vector.
 
         Args:
@@ -44,7 +42,7 @@ class EncoderProtocol(Protocol):
         """
         ...
 
-    def encode_text(self, text: str) -> np.ndarray:
+    def encode_text(self, text: str) -> Any:
         """Encode a text string into a feature vector.
 
         Args:
