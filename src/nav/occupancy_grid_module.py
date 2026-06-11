@@ -108,6 +108,9 @@ class OccupancyGridModule(Module, layer=2):
         self._robot_xy[0] = odom.x
         self._robot_xy[1] = odom.y
 
+    def _robot_xy_array(self) -> np.ndarray:
+        return np.asarray(self._robot_xy, dtype=np.float64)
+
     def _on_cloud(self, cloud: PointCloud2) -> None:
         if cloud.is_empty:
             return
@@ -128,7 +131,7 @@ class OccupancyGridModule(Module, layer=2):
         if pts2d.shape[0] == 0:
             return
 
-        origin_xy = self._robot_xy - self._radius
+        origin_xy = self._robot_xy_array() - self._radius
         gs = self._gs
         pts2d = self._filter_robot_footprint(pts2d)
         if pts2d.shape[0] == 0:
@@ -164,7 +167,7 @@ class OccupancyGridModule(Module, layer=2):
         )
 
     def _publish_raycast_grid(self, pts: np.ndarray) -> None:
-        origin_xy = self._robot_xy - self._radius
+        origin_xy = self._robot_xy_array() - self._radius
         gs = self._gs
         robot_col = int(np.floor((self._robot_xy[0] - origin_xy[0]) / self._res))
         robot_row = int(np.floor((self._robot_xy[1] - origin_xy[1]) / self._res))
