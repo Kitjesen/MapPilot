@@ -126,6 +126,7 @@ class AlgorithmBenchmarkLatestResponse(GatewayResponseModel):
     validation_flow: list[dict[str, Any]] = Field(default_factory=list)
     claim_boundary: dict[str, Any] = Field(default_factory=dict)
     product_profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    dimos_gap: dict[str, Any] = Field(default_factory=dict)
     blocking_categories: dict[str, list[str]] = Field(default_factory=dict)
     blockers: list[str] = Field(default_factory=list)
     reason: str | None = None

@@ -16,6 +16,8 @@ from typing import Any
 
 from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 from core.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
+from core.dimos_gap import build_dimos_gap_report
+from core.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
 from gateway.schemas import AlgorithmBenchmarkLatestResponse
 from gateway.schemas import InspectionAcceptanceRequest
 from gateway.schemas import InspectionAcceptanceResponse
@@ -493,6 +495,32 @@ def _algorithm_profile_unavailable(reason: str) -> dict[str, dict[str, Any]]:
     return profiles
 
 
+def _missing_algorithm_benchmark_summary(reason: str) -> dict[str, Any]:
+    return {
+        "schema_version": "lingtu.server_sim_closure.summary.v1",
+        "ok": False,
+        "missing_or_failed": list(DIMOS_BENCHMARK_REQUIRED_GATES),
+        "gates": {},
+        "algorithm_validation": {
+            "claim_allowed": False,
+            "flow_ok": False,
+            "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
+            "validation_flow": [],
+            "gate_categories": {
+                gate: ["artifact_contract"]
+                for gate in DIMOS_BENCHMARK_REQUIRED_GATES
+            },
+            "claim_boundary": {
+                "global_planning_source": "static_saved_map_tomogram",
+                "live_costmap_role": "local_planning_and_safety_only",
+                "simulation_only": True,
+                "field_readiness": False,
+            },
+            "stop_condition": reason,
+        },
+    }
+
+
 def _algorithm_gate_failing(gate: Mapping[str, Any]) -> bool:
     status = str(gate.get("status") or "").lower()
     return gate.get("ok") is False or status in {
@@ -594,6 +622,13 @@ def build_algorithm_benchmark_latest_summary(
         "product_profiles": _algorithm_profile_unavailable(
             "algorithm benchmark summary not found"
         ),
+        "dimos_gap": build_dimos_gap_report(
+            _missing_algorithm_benchmark_summary(
+                "algorithm benchmark summary not found"
+            ),
+            source="algorithm_benchmark_report_not_found",
+            include_summary=False,
+        ),
         "blocking_categories": {},
         "blockers": [],
         "reason": None,
@@ -650,6 +685,26 @@ def build_algorithm_benchmark_latest_summary(
         == "local_planning_and_safety_only"
         and claim_boundary.get("global_planning_source") != "live_costmap"
     )
+    runtime_dataflow = build_runtime_dataflow_from_summary(
+        latest,
+        root=PROJECT_ROOT,
+    )
+    dimos_gap = build_dimos_gap_report(
+        latest,
+        source=str(summary_path),
+        summary_freshness={
+            "fresh": report_age_s <= freshness,
+            "report_age_s": report_age_s,
+            "max_age_s": freshness,
+            "blocker": (
+                "algorithm benchmark summary is stale"
+                if report_age_s > freshness
+                else ""
+            ),
+        },
+        runtime_dataflow=runtime_dataflow,
+        include_summary=False,
+    )
     product_profiles = {
         name: _algorithm_product_profile_status(
             name,
@@ -684,6 +739,7 @@ def build_algorithm_benchmark_latest_summary(
         "validation_flow": list(validation.get("validation_flow") or []),
         "claim_boundary": claim_boundary,
         "product_profiles": product_profiles,
+        "dimos_gap": dimos_gap,
         "blocking_categories": _mapping(validation.get("blocking_categories")),
         "blockers": blockers,
         "reason": reason,

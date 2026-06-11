@@ -1054,6 +1054,16 @@ def test_algorithm_benchmark_latest_diagnostic_reports_missing_artifact(tmp_path
     assert payload["read_only"] is True
     assert payload["ros2_topic_required"] is False
     assert payload["publishes"] == []
+    assert payload["dimos_gap"]["schema_version"] == "lingtu.dimos_gap_report.v1"
+    assert payload["dimos_gap"]["gap_counts"]["failed"] == len(
+        payload["required_gate_sequence"]
+    )
+    assert payload["dimos_gap"]["lingtu_readiness"]["highest_priority_blocker"] == (
+        "moving_obstacle_sweep"
+    )
+    assert payload["dimos_gap"]["next_steps"][0]["gate"] == (
+        "gateway_runtime_acceptance"
+    )
 
 
 def test_algorithm_benchmark_latest_diagnostic_blocks_failed_or_stale_artifact(
@@ -1082,6 +1092,347 @@ def test_algorithm_benchmark_latest_diagnostic_blocks_failed_or_stale_artifact(
         "large_loop_closure",
         "moving_obstacle_sweep",
     ]
+    assert payload["dimos_gap"]["gap_counts"]["p0"] == 2
+    assert payload["dimos_gap"]["lingtu_readiness"]["highest_priority_blocker"] == (
+        "moving_obstacle_sweep"
+    )
+    assert payload["dimos_gap"]["next_steps"][0]["gate"] == (
+        "gateway_runtime_acceptance"
+    )
+
+
+def test_algorithm_benchmark_latest_diagnostic_marks_stale_green_gap_not_ready(
+    tmp_path,
+    monkeypatch,
+):
+    from gateway.routes.diagnostics import (
+        DIMOS_BENCHMARK_REQUIRED_GATES,
+        build_algorithm_benchmark_latest_summary,
+    )
+
+    gates = {
+        gate: {
+            "name": gate,
+            "ok": True,
+            "status": "passed",
+            "path": f"artifacts/server_sim_closure/{gate}/report.json",
+            "blockers": [],
+        }
+        for gate in DIMOS_BENCHMARK_REQUIRED_GATES
+    }
+    summary_path = _write_algorithm_benchmark_summary(
+        tmp_path,
+        ok=True,
+        claim_allowed=True,
+        missing_or_failed=[],
+        gates=gates,
+    )
+    os.utime(summary_path, (100, 100))
+    monkeypatch.setattr("gateway.routes.diagnostics.time.time", lambda: 200.0)
+
+    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=50.0)
+
+    dimos_gap = payload["dimos_gap"]
+    assert payload["ok"] is False
+    assert payload["reason"] == "algorithm_benchmark_report_stale"
+    assert dimos_gap["lingtu_readiness"]["ok"] is False
+    assert dimos_gap["lingtu_readiness"]["summary_fresh"] is False
+    assert dimos_gap["summary_freshness"] == {
+        "checked": True,
+        "fresh": False,
+        "report_age_s": 100.0,
+        "max_age_s": 50.0,
+        "blocker": "algorithm benchmark summary is stale",
+    }
+    assert dimos_gap["gap_counts"]["failed"] == len(DIMOS_BENCHMARK_REQUIRED_GATES)
+    assert all(row["status"] == "stale" for row in dimos_gap["gap_matrix"])
+    assert dimos_gap["next_steps"][0]["recommended_action"] == (
+        "regenerate a fresh DimOS benchmark summary before claiming readiness"
+    )
+
+
+def test_algorithm_benchmark_latest_diagnostic_includes_runtime_dataflow(
+    tmp_path,
+):
+    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
+
+    native_report = tmp_path / "native_pct_mujoco" / "report.json"
+    native_report.parent.mkdir(parents=True, exist_ok=True)
+    native_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.native_pct_mujoco_gate.v1",
+                "ok": False,
+                "pct_runtime_ok": True,
+                "pct_path_count": 8,
+                "selected_planner": "pct",
+                "fallback_used": False,
+                "path_count": 2,
+                "max_path_poses": 5,
+                "local_path_samples": [{"points": [[0, 0, 0], [1, 0, 0]]}],
+                "cmd_count_nonzero": 0,
+                "cmd_samples": [],
+                "moved_m": 0.0,
+                "reached_goal": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_algorithm_benchmark_summary(
+        tmp_path,
+        ok=False,
+        claim_allowed=False,
+        missing_or_failed=["native_pct_mujoco"],
+        gates={
+            "native_pct_mujoco": {
+                "ok": False,
+                "status": "failed",
+                "path": str(native_report),
+                "blockers": ["cmd_vel evidence missing"],
+            },
+        },
+    )
+
+    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
+
+    rows = {row["gate"]: row for row in payload["dimos_gap"]["gap_matrix"]}
+    flow = rows["native_pct_mujoco"]["runtime_dataflow"]
+    assert flow["checked"] is True
+    assert flow["edge_status"]["pct_backend"] is True
+    assert flow["edge_status"]["global_path_to_local_planner"] is True
+    assert flow["edge_status"]["path_follower_to_cmd_vel"] is False
+    assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
+    assert payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"][
+        "native_pct_mujoco"
+    ] == "path_follower_to_cmd_vel"
+
+
+def test_algorithm_benchmark_latest_diagnostic_includes_aggregate_child_dataflow(
+    tmp_path,
+):
+    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
+    from sim.scripts import dimos_gap_report
+
+    child_report = tmp_path / "moving_obstacle_sweep" / "children" / "report.json"
+    child_report.parent.mkdir(parents=True, exist_ok=True)
+    child_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
+                "ok": False,
+                "outputs": {
+                    "fastlio2_cloud_registered": 2,
+                    "fastlio2_odometry": 2,
+                    "nav_odometry": 2,
+                    "nav_registered_cloud": 2,
+                    "nav_cmd_vel": 4,
+                    "nav_cmd_vel_nonzero": 0,
+                },
+                "lingtu_inspection": {
+                    "global_path_count": 1,
+                    "local_path_count": 1,
+                    "successful_navigation_goal_count": 0,
+                    "min_required_checkpoints": 1,
+                },
+                "fastlio2_motion_consistency": {"ok": True},
+                "fastlio2_z_consistency": {"ok": True},
+                "fastlio2_yaw_consistency": {"ok": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    aggregate_report = tmp_path / "moving_obstacle_sweep" / "report.json"
+    aggregate_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.moving_obstacle_sweep_gate.v1",
+                "ok": False,
+                "minimal_red_defect": {"path": str(child_report)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary_path = _write_algorithm_benchmark_summary(
+        tmp_path,
+        ok=False,
+        claim_allowed=False,
+        missing_or_failed=["moving_obstacle_sweep"],
+        gates={
+            "moving_obstacle_sweep": {
+                "ok": False,
+                "status": "failed",
+                "path": str(aggregate_report),
+                "blockers": ["child cmd_vel evidence missing"],
+            },
+        },
+    )
+
+    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
+    cli_payload = dimos_gap_report.build_gap_report(
+        summary_path=summary_path,
+        include_dataflow=True,
+    )
+
+    rows = {row["gate"]: row for row in payload["dimos_gap"]["gap_matrix"]}
+    cli_rows = {row["gate"]: row for row in cli_payload["gap_matrix"]}
+    flow = rows["moving_obstacle_sweep"]["runtime_dataflow"]
+    cli_flow = cli_rows["moving_obstacle_sweep"]["runtime_dataflow"]
+    assert flow["checked"] is True
+    assert flow["source_gate_report"] == str(aggregate_report)
+    assert flow["source_report"] == str(child_report)
+    assert flow["edge_status"]["global_planner_to_local_planner"] is True
+    assert flow["edge_status"]["path_follower_to_cmd_vel"] is False
+    assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
+    assert payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"][
+        "moving_obstacle_sweep"
+    ] == "path_follower_to_cmd_vel"
+    assert flow == cli_flow
+    assert (
+        payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"]
+        == cli_payload["runtime_dataflow"]["failing_primary_blockers"]
+    )
+
+
+def test_algorithm_benchmark_latest_diagnostic_includes_embedded_case_dataflow(
+    tmp_path,
+):
+    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
+
+    aggregate_report = tmp_path / "large_loop_closure" / "report.json"
+    aggregate_report.parent.mkdir(parents=True, exist_ok=True)
+    aggregate_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.large_loop_closure_gate.v1",
+                "ok": False,
+                "minimal_red_defect": {
+                    "path": str(tmp_path / "large_loop_closure" / "missing_child.json"),
+                    "fastlio2_path_length_m": 12.0,
+                    "global_path_points_max": 8,
+                    "local_path_count": 1,
+                    "local_path_points_max": 4,
+                    "nav_cmd_vel_nonzero": 0,
+                    "successful_navigation_goal_count": 0,
+                    "min_required_checkpoints": 2,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_algorithm_benchmark_summary(
+        tmp_path,
+        ok=False,
+        claim_allowed=False,
+        missing_or_failed=["large_loop_closure"],
+        gates={
+            "large_loop_closure": {
+                "ok": False,
+                "status": "failed",
+                "path": str(aggregate_report),
+                "blockers": ["embedded case cmd_vel evidence missing"],
+            },
+        },
+    )
+
+    payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
+
+    rows = {row["gate"]: row for row in payload["dimos_gap"]["gap_matrix"]}
+    flow = rows["large_loop_closure"]["runtime_dataflow"]
+    assert flow["checked"] is True
+    assert flow["schema_detected"] == "aggregate_case"
+    assert flow["edge_status"]["fastlio_feedback"] is True
+    assert flow["edge_status"]["global_path"] is True
+    assert flow["edge_status"]["local_path"] is True
+    assert flow["edge_status"]["cmd_vel"] is False
+    assert flow["primary_blocker"] == "cmd_vel"
+    assert payload["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"][
+        "large_loop_closure"
+    ] == "cmd_vel"
+
+
+def test_algorithm_benchmark_latest_endpoint_preserves_runtime_dataflow(
+    tmp_path,
+    monkeypatch,
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.routes.diagnostics import register_diagnostic_routes
+
+    child_report = tmp_path / "moving_obstacle_sweep" / "children" / "report.json"
+    child_report.parent.mkdir(parents=True, exist_ok=True)
+    child_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
+                "ok": False,
+                "outputs": {
+                    "fastlio2_cloud_registered": 2,
+                    "fastlio2_odometry": 2,
+                    "nav_odometry": 2,
+                    "nav_registered_cloud": 2,
+                    "nav_cmd_vel": 3,
+                    "nav_cmd_vel_nonzero": 0,
+                },
+                "lingtu_inspection": {
+                    "global_path_count": 1,
+                    "local_path_count": 1,
+                    "successful_navigation_goal_count": 0,
+                    "min_required_checkpoints": 1,
+                },
+                "fastlio2_motion_consistency": {"ok": True},
+                "fastlio2_z_consistency": {"ok": True},
+                "fastlio2_yaw_consistency": {"ok": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    aggregate_report = tmp_path / "moving_obstacle_sweep" / "report.json"
+    aggregate_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.moving_obstacle_sweep_gate.v1",
+                "ok": False,
+                "minimal_red_defect": {"path": str(child_report)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_algorithm_benchmark_summary(
+        tmp_path,
+        ok=False,
+        claim_allowed=False,
+        missing_or_failed=["moving_obstacle_sweep"],
+        gates={
+            "moving_obstacle_sweep": {
+                "ok": False,
+                "status": "failed",
+                "path": str(aggregate_report),
+                "blockers": ["child cmd_vel evidence missing"],
+            },
+        },
+    )
+
+    monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_ROOT", str(tmp_path))
+    monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_MAX_AGE_SEC", "1000")
+    app = FastAPI()
+    register_diagnostic_routes(app, SimpleNamespace(_all_modules={}))
+
+    response = TestClient(app).get(
+        "/api/v1/diagnostics/algorithm-benchmark/latest"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    rows = {row["gate"]: row for row in body["dimos_gap"]["gap_matrix"]}
+    flow = rows["moving_obstacle_sweep"]["runtime_dataflow"]
+    assert body["dimos_gap"]["runtime_dataflow"]["checked"] is True
+    assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
+    assert flow["source_gate_report"] == str(aggregate_report)
+    assert flow["source_report"] == str(child_report)
+    assert body["dimos_gap"]["runtime_dataflow"]["failing_primary_blockers"][
+        "moving_obstacle_sweep"
+    ] == "path_follower_to_cmd_vel"
 
 
 def test_algorithm_benchmark_latest_splits_product_profile_from_strict_benchmark(
@@ -1588,6 +1939,7 @@ def test_openapi_exposes_client_response_models():
         "claim_allowed",
         "missing_or_failed",
         "required_gate_sequence",
+        "dimos_gap",
     } <= set(algorithm_schema)
     assert schemas["RuntimeDataflowTopicSummary"]["properties"]["observability"][
         "$ref"
