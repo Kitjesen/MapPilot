@@ -17,18 +17,15 @@
 ### 快速开始
 
 ```bash
-# 安装
-cd <lingtu_root>/scripts
-bash deploy/install_feishu_bot.sh
+# 安装依赖
+pip3 install -r monitor/requirements_feishu.txt
 
 # 配置：编辑 monitor/feishu_monitor_bot.py
 # 填入 APP_ID / APP_SECRET / RECEIVE_ID
 
-# 测试
-python3 test/test_feishu.py
-
-# 运行
-bash deploy/start_thunder.sh
+# 运行（需先 source ROS2 环境）
+source /opt/ros/humble/setup.bash
+python3 monitor/feishu_monitor_bot.py
 ```
 
 ### 飞书应用配置
@@ -48,15 +45,6 @@ bash deploy/start_thunder.sh
 📏 距离: 2.35m
 ⏱️ 时间: 15.2s
 ✅ 成功率: 87.5%
-```
-
-### 系统服务（开机自启）
-
-```bash
-sudo bash deploy/thunder_service.sh install
-sudo bash deploy/thunder_service.sh start
-sudo bash deploy/thunder_service.sh status
-sudo bash deploy/thunder_service.sh logs
 ```
 
 ### 常见错误

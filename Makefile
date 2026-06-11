@@ -96,7 +96,7 @@ navigation:
 	@bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && python3 lingtu.py s100p"
 
 sync-version:
-	@bash scripts/sync_versions.sh
+	@bash scripts/deploy/sync_versions.sh
 
 docker-build:
 	@docker build -f docker/Dockerfile -t mappilot-nav:latest .
