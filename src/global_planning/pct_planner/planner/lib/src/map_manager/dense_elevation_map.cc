@@ -10,6 +10,34 @@ void DenseElevationMap::Init(const double resolution, const int num_layers,
                              const Eigen::MatrixXd& ceiling,
                              const Eigen::MatrixXd& grad_x,
                              const Eigen::MatrixXd& grad_y) {
+  valid_ = false;
+  const bool invalid_dimensions =
+      !std::isfinite(resolution) || resolution <= 0.0 || num_layers <= 0 ||
+      cost_map.rows() <= 0 || cost_map.cols() <= 0 ||
+      cost_map.rows() % num_layers != 0 ||
+      ele_mask.rows() != cost_map.rows() || ele_mask.cols() != cost_map.cols() ||
+      height.rows() != cost_map.rows() || height.cols() != cost_map.cols() ||
+      ceiling.rows() != cost_map.rows() ||
+      ceiling.cols() != cost_map.cols() || grad_x.rows() != cost_map.rows() ||
+      grad_x.cols() != cost_map.cols() || grad_y.rows() != cost_map.rows() ||
+      grad_y.cols() != cost_map.cols();
+  if (invalid_dimensions) {
+    resolution_ = 0.0;
+    resolution_inv_ = 0.0;
+    max_layers_ = 0;
+    max_x_ = 0;
+    max_y_ = 0;
+    xy_size_ = 0;
+    cost_.resize(0, 0);
+    ele_mask_.resize(0, 0);
+    height_.resize(0, 0);
+    ceiling_.resize(0, 0);
+    grad_x_.resize(0, 0);
+    grad_y_.resize(0, 0);
+    std::cerr << "invalid DenseElevationMap dimensions" << std::endl;
+    return;
+  }
+
   resolution_ = resolution;
   resolution_inv_ = 1.0 / resolution;
   max_layers_ = num_layers;
@@ -22,14 +50,26 @@ void DenseElevationMap::Init(const double resolution, const int num_layers,
   ceiling_ = ceiling;
   grad_x_ = grad_x;
   grad_y_ = grad_y;
+  valid_ = true;
 
   printf("max layers: %d, max_x: %d, max_y: %d\n", max_layers_, max_x_, max_y_);
 }
 
 double DenseElevationMap::GetRealCost(int layer, double x, double y,
                                       Eigen::Vector2d* grad, int* new_layer) {
-  const int col = index(x);
-  int row = index(y) + layer * max_y_;
+  if (!valid_) {
+    if (grad != nullptr) {
+      *grad = Eigen::Vector2d::Zero();
+    }
+    if (new_layer != nullptr) {
+      *new_layer = 0;
+    }
+    return safe_cost_threshold_;
+  }
+
+  layer = layer_safe(layer);
+  const int col = index_x_safe(x);
+  int row = index_y_safe(y) + layer * max_y_;
   double cost = cost_(row, col);
 
   // * grid that is unlikely to be the border between different layers
@@ -83,16 +123,25 @@ double DenseElevationMap::GetRealCost(int layer, double x, double y,
 
 double DenseElevationMap::GetRealCostSafe(int layer, double x, double y,
                                           const double height_hint) {
+  if (!valid_) {
+    return safe_cost_threshold_;
+  }
+
   int real_layer = UpdateLayerSafe(layer, x, y, height_hint);
   return cost_(index_y_safe(y) + real_layer * max_y_, index_x_safe(x));
 }
 
 int DenseElevationMap::UpdateLayer(const int layer, const double x,
                                    const double y) {
-  const int col = index(x);
-  int row = index(y) + layer * max_y_;
+  if (!valid_) {
+    return 0;
+  }
+
+  const int safe_layer = layer_safe(layer);
+  const int col = index_x_safe(x);
+  int row = index_y_safe(y) + safe_layer * max_y_;
   double cost = cost_(row, col);
-  int real_layer = layer;
+  int real_layer = safe_layer;
   double lower_cost = 99;
   double upper_cost = 99;
   double lower_height = -99;
@@ -103,31 +152,31 @@ int DenseElevationMap::UpdateLayer(const int layer, const double x,
     if (debug_) {
       printf("cost < safe_cost_threshold_!, cost: %f\n", cost);
     }
-    return layer;
+    return safe_layer;
   }
 
   double ele_value = ele_mask_(row, col);
   double this_height = height_(row, col);
 
-  if (layer > 0) {
+  if (safe_layer > 0) {
     int lower_row = row - max_y_;
     lower_height = height_(lower_row, col);
     if (abs(this_height - lower_height) < resolution_ || this_height < -50) {
       lower_cost = cost_(row - max_y_, col);
       if (lower_cost + offset_ < cost) {
-        real_layer = layer - 1;
+        real_layer = safe_layer - 1;
         cost = lower_cost;
       }
     }
   }
 
-  if (layer < max_layers_ - 1) {
+  if (safe_layer < max_layers_ - 1) {
     int upper_row = row + max_y_;
     upper_height = height_(upper_row, col);
     if (abs(this_height - upper_height) < resolution_ || this_height < -50) {
       upper_cost = cost_(row + max_y_, col);
       if (upper_cost + offset_ < cost) {
-        real_layer = layer + 1;
+        real_layer = safe_layer + 1;
       }
     }
   }
@@ -240,11 +289,16 @@ int DenseElevationMap::UpdateLayer(const int layer, const double x,
 int DenseElevationMap::UpdateLayerSafe(const int layer, const double x,
                                        const double y,
                                        const double height_hint) {
+  if (!valid_) {
+    return 0;
+  }
+
+  const int safe_layer = layer_safe(layer);
   const int col = index_x_safe(x);
-  int row = index_y_safe(y) + layer * max_y_;
+  int row = index_y_safe(y) + safe_layer * max_y_;
   double cost = cost_(row, col);
-  int real_layer = layer;
-  double this_height = GetHeight(layer, x, y);
+  int real_layer = safe_layer;
+  double this_height = GetHeight(safe_layer, x, y);
   bool unsafe_grid =
       (this_height < -50) || (abs(this_height - height_hint) > 5 * resolution_);
 
@@ -254,7 +308,7 @@ int DenseElevationMap::UpdateLayerSafe(const int layer, const double x,
       printf("cost < safe_cost_threshold_!, cost: %f, height: %f\n", cost,
              height_(row, col));
     }
-    return layer;
+    return safe_layer;
   }
 
   // * for unsafe grid, both cost and height are not reliable
@@ -266,7 +320,7 @@ int DenseElevationMap::UpdateLayerSafe(const int layer, const double x,
 
   double min_cost = unsafe_grid ? 1000 : cost;
 
-  if (layer > 0) {
+  if (safe_layer > 0) {
     lower_height = height_(row - max_y_, col);
     lower_cost = cost_(row - max_y_, col);
     // * filter out jump down scenario
@@ -274,13 +328,13 @@ int DenseElevationMap::UpdateLayerSafe(const int layer, const double x,
       if ((abs(this_height - lower_height) < 1.5 * resolution_ &&
            lower_cost < cost) ||
           (unsafe_grid && lower_cost < 2 * safe_cost_threshold_)) {
-        real_layer = layer - 1;
+        real_layer = safe_layer - 1;
         min_cost = lower_cost;
       }
     }
   }
 
-  if (layer < max_layers_ - 1) {
+  if (safe_layer < max_layers_ - 1) {
     upper_height = height_(row + max_y_, col);
     upper_cost = cost_(row + max_y_, col);
     if (abs(height_hint - upper_height) < 5 * resolution_) {
@@ -288,7 +342,7 @@ int DenseElevationMap::UpdateLayerSafe(const int layer, const double x,
            upper_cost < cost) ||
           (unsafe_grid && upper_cost < 2 * safe_cost_threshold_)) {
         if (upper_cost < min_cost) {
-          real_layer = layer + 1;
+          real_layer = safe_layer + 1;
           min_cost = upper_cost;
         }
       }
@@ -311,14 +365,22 @@ int DenseElevationMap::UpdateLayerSafe(const int layer, const double x,
 
 double DenseElevationMap::GetHeight(const int layer, const double x,
                                     const double y) {
-  return height_(index_y_safe(y) + layer * max_y_, index_x_safe(x));
+  if (!valid_) {
+    return 0.0;
+  }
+
+  return height_(index_y_safe(y) + layer_safe(layer) * max_y_, index_x_safe(x));
 }
 
 double DenseElevationMap::GetHeightSafe(const int layer, const double x,
                                         const double y,
                                         const double height_hint) {
+  if (!valid_) {
+    return height_hint;
+  }
+
   double new_height =
-      height_(index_y_safe(y) + layer * max_y_, index_x_safe(x));
+      height_(index_y_safe(y) + layer_safe(layer) * max_y_, index_x_safe(x));
 
   if (abs(new_height - height_hint) > 6 * resolution_) {
     return height_hint;
@@ -329,14 +391,27 @@ double DenseElevationMap::GetHeightSafe(const int layer, const double x,
 
 double DenseElevationMap::GetCeiling(const int layer, const double x,
                                      const double y) {
-  return ceiling_(index_y_safe(y) + layer * max_y_, index_x_safe(x));
+  if (!valid_) {
+    return 0.0;
+  }
+
+  return ceiling_(index_y_safe(y) + layer_safe(layer) * max_y_, index_x_safe(x));
 }
 
 double DenseElevationMap::GetValueBilinear(const int layer, const double x,
                                            const double y,
                                            Eigen::Vector2d* grad) {
-  double x_lb = std::max(std::floor(x - 0.5), 0.0);
-  double y_lb = std::max(std::floor(y - 0.5), 0.0);
+  if (!valid_) {
+    if (grad != nullptr) {
+      *grad = Eigen::Vector2d::Zero();
+    }
+    return safe_cost_threshold_;
+  }
+
+  const double x_safe = std::isfinite(x) ? x : 0.0;
+  const double y_safe = std::isfinite(y) ? y : 0.0;
+  double x_lb = std::max(std::floor(x_safe - 0.5), 0.0);
+  double y_lb = std::max(std::floor(y_safe - 0.5), 0.0);
 
   double value[2][2];
   for (int x = 0; x < 2; ++x) {
@@ -345,7 +420,7 @@ double DenseElevationMap::GetValueBilinear(const int layer, const double x,
     }
   }
 
-  Eigen::Vector2d diff(x - x_lb, y - y_lb);
+  Eigen::Vector2d diff(x_safe - x_lb, y_safe - y_lb);
 
   double y0 = (1 - diff(0)) * value[0][0] + diff(0) * value[1][0];
   double y1 = (1 - diff(0)) * value[0][1] + diff(0) * value[1][1];
@@ -364,8 +439,17 @@ double DenseElevationMap::GetValueBilinearSafe(const int layer, const double x,
                                                const double y,
                                                const double height_hint,
                                                Eigen::Vector2d* grad) {
-  double x_lb = std::max(std::floor(x - 0.5), 0.0);
-  double y_lb = std::max(std::floor(y - 0.5), 0.0);
+  if (!valid_) {
+    if (grad != nullptr) {
+      *grad = Eigen::Vector2d::Zero();
+    }
+    return safe_cost_threshold_;
+  }
+
+  const double x_safe = std::isfinite(x) ? x : 0.0;
+  const double y_safe = std::isfinite(y) ? y : 0.0;
+  double x_lb = std::max(std::floor(x_safe - 0.5), 0.0);
+  double y_lb = std::max(std::floor(y_safe - 0.5), 0.0);
 
   double value[2][2];
   for (int x = 0; x < 2; ++x) {
@@ -374,7 +458,7 @@ double DenseElevationMap::GetValueBilinearSafe(const int layer, const double x,
     }
   }
 
-  Eigen::Vector2d diff(x - x_lb, y - y_lb);
+  Eigen::Vector2d diff(x_safe - x_lb, y_safe - y_lb);
 
   double y0 = (1 - diff(0)) * value[0][0] + diff(0) * value[1][0];
   double y1 = (1 - diff(0)) * value[0][1] + diff(0) * value[1][1];

@@ -44,6 +44,7 @@ gtsam::Vector GPInterpolateObstacleFactorWnoa::evaluateError(
   //       tau_, height_hint_);
   // }
   double error = 0.0;
+  const bool need_jacobians = static_cast<bool>(H1) || static_cast<bool>(H2);
 
   if (cost > cost_threshold_) {
     error = (cost - cost_threshold_) * (cost - cost_threshold_);
@@ -51,9 +52,13 @@ gtsam::Vector GPInterpolateObstacleFactorWnoa::evaluateError(
     H(0, 2) = 2 * (cost - cost_threshold_) * grad(1);
   }
 
-  if (H1 || H2) {
+  if (H1) {
     *H1 = H * J_x1;
+  }
+  if (H2) {
     *H2 = H * J_x2;
+  }
+  if (need_jacobians) {
     count_++;
   }
   // if (verbose_) {

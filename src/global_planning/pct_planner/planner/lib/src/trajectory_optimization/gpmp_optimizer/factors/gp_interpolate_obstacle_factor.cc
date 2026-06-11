@@ -34,8 +34,10 @@ gtsam::Vector GPInterpolateObstacleFactor::evaluateError(
     H(0, 3) = 2 * (cost - cost_threshold_) * grad(1);
   }
 
-  if (H1 || H2) {
+  if (H1) {
     *H1 = H * J_x1;
+  }
+  if (H2) {
     *H2 = H * J_x2;
   }
 

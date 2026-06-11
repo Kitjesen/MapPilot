@@ -23,6 +23,7 @@ from __future__ import annotations
 import heapq
 import logging
 import os
+import traceback
 
 from core.msgs.numpy_compat import np
 from core.registry import register
@@ -31,6 +32,8 @@ from global_planning.pct_planner_runnable.runtime import load_tomogram_planner
 logger = logging.getLogger(__name__)
 
 _PCT_HEIGHT_SNAP_TOLERANCE_M = 0.25
+_PCT_START_XY_SNAP_TOLERANCE_M = 0.5
+_PCT_GOAL_XY_TOLERANCE_M = 0.35
 
 # ---------------------------------------------------------------------------
 # PCT backend: native terrain-aware planner
@@ -59,6 +62,9 @@ class _PCTBackend:
         self._available = False
         self._load_error: str = ""
         self._last_plan_error: str = ""
+        self._last_plan_diagnostics: dict[str, object] = {}
+        self._last_plan_reached_goal: bool = False
+        self._last_plan_path_mode: str = ""
 
         # 2D ground-floor grid for _find_safe_goal BFS (extracted from tomogram)
         self._grid: np.ndarray | None = None
@@ -116,6 +122,16 @@ class _PCTBackend:
     @property
     def available(self) -> bool:
         return self._available
+
+    @staticmethod
+    def _env_truthy(name: str, default: bool) -> bool:
+        value = os.environ.get(name)
+        if value is None:
+            return bool(default)
+        text = value.strip().lower()
+        if text == "":
+            return bool(default)
+        return text not in {"0", "false", "no", "off"}
 
     def _extract_grid(self, tomogram_path: str) -> None:
         """Extract 2D ground-floor traversability grid from the tomogram pickle.
@@ -250,6 +266,16 @@ class _PCTBackend:
             Caller (GlobalPlannerService) raises RuntimeError on empty return.
         """
         self._last_plan_error = ""
+        self._last_plan_reached_goal = False
+        self._last_plan_path_mode = ""
+        self._last_plan_diagnostics = {
+            "planner": "pct",
+            "tomogram": self._tomogram_path,
+            "reload_on_native_exception": self._env_truthy(
+                "LINGTU_PCT_RELOAD_ON_EXCEPTION",
+                True,
+            ),
+        }
         if self._planner is None:
             logger.error(
                 "PCT planner unavailable (%s); cannot plan. "
@@ -257,10 +283,43 @@ class _PCTBackend:
                 self._load_error,
             )
             self._last_plan_error = "pct planner unavailable"
+            self._last_plan_diagnostics["available"] = False
+            self._last_plan_diagnostics["load_error"] = self._load_error
             return []
 
         start_pos = np.asarray(start[:2], dtype=np.float64)
+        raw_start_pos = start_pos.copy()
         goal_pos  = np.asarray(goal[:2],  dtype=np.float64)
+        start_pos, start_projection = self._project_start_to_traversable_xy(
+            start_pos,
+            max_snap_m=_PCT_START_XY_SNAP_TOLERANCE_M,
+        )
+        start_projection_fields = self._start_projection_plan_fields(start_projection)
+        if start_projection.get("status") == "failed":
+            self._last_plan_error = str(
+                start_projection.get("reason", "start_xy_projection_failed")
+            )
+            self._last_plan_diagnostics.update(
+                {
+                    "available": True,
+                    "start_xyz": np.asarray(start[:3], dtype=float).tolist(),
+                    "goal_xyz": np.asarray(goal[:3], dtype=float).tolist(),
+                    "start_xy_raw": raw_start_pos.tolist(),
+                    "start_xy": start_pos.tolist(),
+                    "start_projection": start_projection,
+                    "goal_xy": goal_pos.tolist(),
+                    "stage": "start_xy_projection",
+                    "error_message": self._last_plan_error,
+                    **start_projection_fields,
+                }
+            )
+            logger.warning(
+                "PCT rejected start before planning: start=%s goal=%s reason=%s",
+                start,
+                goal,
+                self._last_plan_error,
+            )
+            return []
         # Choose heights that land on traversable tomogram slices at each XY.
         # A raw 2-D goal often arrives with z=0, while get_surface_height()
         # can snap to an upper slice whose traversability is a hard barrier.
@@ -271,14 +330,50 @@ class _PCTBackend:
                 max_snap_m=_PCT_HEIGHT_SNAP_TOLERANCE_M,
                 reject_out_of_bounds=True,
             )
+            raw_goal_z = float(goal[2]) if len(goal) > 2 else float("nan")
+            planar_goal_height = (
+                not np.isfinite(raw_goal_z)
+                or (
+                    abs(raw_goal_z) <= 1e-6
+                    and np.isfinite(start_h)
+                    and abs(float(start_h)) > 1e-6
+                )
+            )
+            goal_height_fallback = float(start_h) if planar_goal_height else raw_goal_z
             goal_h = self._select_traversable_height(
                 goal_pos,
-                float(goal[2]) if len(goal) > 2 else 0.0,
+                goal_height_fallback,
                 max_snap_m=_PCT_HEIGHT_SNAP_TOLERANCE_M,
                 reject_out_of_bounds=True,
             )
         except ValueError as exc:
             self._last_plan_error = str(exc)
+            self._last_plan_diagnostics.update(
+                {
+                    "available": True,
+                    "start_xyz": np.asarray(start[:3], dtype=float).tolist(),
+                    "goal_xyz": np.asarray(goal[:3], dtype=float).tolist(),
+                    "start_xy_raw": raw_start_pos.tolist(),
+                    "start_xy": start_pos.tolist(),
+                    "start_projection": start_projection,
+                    **start_projection_fields,
+                    "goal_requested_height": (
+                        float(goal[2]) if len(goal) > 2 else None
+                    ),
+                    "goal_height_reference": locals().get(
+                        "goal_height_fallback",
+                        None,
+                    ),
+                    "goal_height_source": (
+                        "start_height_for_planar_goal"
+                        if locals().get("planar_goal_height", False)
+                        else "goal_z"
+                    ),
+                    "error_type": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    "stage": "height_selection",
+                }
+            )
             logger.warning(
                 "PCT rejected start/goal before planning: start=%s goal=%s reason=%s",
                 start,
@@ -287,6 +382,32 @@ class _PCTBackend:
             )
             return []
         if self._is_near_zero_route(start_pos, goal_pos):
+            self._last_plan_reached_goal = True
+            self._last_plan_diagnostics.update(
+                {
+                    "available": True,
+                    "start_xy_raw": raw_start_pos.tolist(),
+                    "start_xy": start_pos.tolist(),
+                    "start_projection": start_projection,
+                    **start_projection_fields,
+                    "goal_xy": goal_pos.tolist(),
+                    "goal_requested_height": (
+                        float(goal[2]) if len(goal) > 2 else None
+                    ),
+                    "goal_height_reference": locals().get(
+                        "goal_height_fallback",
+                        None,
+                    ),
+                    "goal_height_source": (
+                        "start_height_for_planar_goal"
+                        if locals().get("planar_goal_height", False)
+                        else "goal_z"
+                    ),
+                    "start_height": float(start_h),
+                    "goal_height": float(goal_h),
+                    "near_zero_route": True,
+                }
+            )
             logger.info(
                 "PCT native plan bypassed for near-zero route: start=%s goal=%s",
                 start,
@@ -297,17 +418,50 @@ class _PCTBackend:
                 (float(goal_pos[0]), float(goal_pos[1]), float(goal_h)),
             ]
 
-        try:
-            result = self._planner.plan(start_pos, goal_pos, start_h, goal_h)
-        except Exception:
-            self._last_plan_error = "pct native plan raised exception"
-            logger.exception(
-                "PCT plan() raised exception for start=%s goal=%s", start, goal
-            )
+        self._last_plan_diagnostics.update(
+            {
+                "available": True,
+                "start_xyz": np.asarray(start[:3], dtype=float).tolist(),
+                "goal_xyz": np.asarray(goal[:3], dtype=float).tolist(),
+                "start_xy_raw": raw_start_pos.tolist(),
+                "start_xy": start_pos.tolist(),
+                "start_projection": start_projection,
+                **start_projection_fields,
+                "goal_xy": goal_pos.tolist(),
+                "goal_requested_height": (
+                    float(goal[2]) if len(goal) > 2 else None
+                ),
+                "goal_height_reference": float(goal_height_fallback),
+                "goal_height_source": (
+                    "start_height_for_planar_goal"
+                    if planar_goal_height
+                    else "goal_z"
+                ),
+                "start_height": float(start_h),
+                "goal_height": float(goal_h),
+                "stage": "native_plan",
+                "native_retry_count": 0,
+            }
+        )
+        result = self._plan_native_with_reload_retry(
+            start_pos,
+            goal_pos,
+            start_h,
+            goal_h,
+            start,
+            goal,
+        )
+        if result is None and self._last_plan_error:
             return []
 
         if result is None or len(result) == 0:
             self._last_plan_error = "pct native plan returned no path"
+            self._last_plan_diagnostics.update(
+                {
+                    "stage": "native_plan_empty",
+                    "error_message": self._last_plan_error,
+                }
+            )
             logger.warning(
                 "PCT plan() returned no path: start=%s goal=%s", start, goal
             )
@@ -317,17 +471,459 @@ class _PCTBackend:
         try:
             arr = np.asarray(result, dtype=np.float64)
             if arr.ndim == 2 and arr.shape[1] >= 3:
-                return [(float(p[0]), float(p[1]), float(p[2])) for p in arr]
+                path = [(float(p[0]), float(p[1]), float(p[2])) for p in arr]
+                self._record_terminal_goal_status(path, goal_pos)
+                self._last_plan_diagnostics.update(
+                    {
+                        "stage": "native_plan_success",
+                        "result_shape": list(arr.shape),
+                        "path_points": int(arr.shape[0]),
+                    }
+                )
+                return path
             elif arr.ndim == 2 and arr.shape[1] == 2:
-                return [(float(p[0]), float(p[1]), goal_h) for p in arr]
+                path = [(float(p[0]), float(p[1]), goal_h) for p in arr]
+                self._record_terminal_goal_status(path, goal_pos)
+                self._last_plan_diagnostics.update(
+                    {
+                        "stage": "native_plan_success",
+                        "result_shape": list(arr.shape),
+                        "path_points": int(arr.shape[0]),
+                    }
+                )
+                return path
             else:
                 self._last_plan_error = f"unexpected pct result shape: {arr.shape}"
+                self._last_plan_diagnostics.update(
+                    {
+                        "stage": "result_conversion",
+                        "error_message": self._last_plan_error,
+                        "result_shape": list(arr.shape),
+                    }
+                )
                 logger.error("Unexpected PCT result shape: %s", arr.shape)
                 return []
         except Exception:
             self._last_plan_error = "pct result conversion failed"
+            self._last_plan_diagnostics.update(
+                {
+                    "stage": "result_conversion",
+                    "error_message": self._last_plan_error,
+                }
+            )
             logger.exception("PCT result conversion failed")
             return []
+
+    def _record_terminal_goal_status(
+        self,
+        path: list[tuple[float, float, float]],
+        goal_pos: np.ndarray,
+    ) -> None:
+        tolerance = max(
+            _PCT_GOAL_XY_TOLERANCE_M,
+            float(getattr(self, "_resolution", 0.2) or 0.2) * 1.5,
+        )
+        if not path:
+            self._last_plan_reached_goal = False
+            self._last_plan_diagnostics.update(
+                {
+                    "goal_reached": False,
+                    "goal_terminal_xy": [],
+                    "goal_terminal_error_m": None,
+                    "goal_terminal_tolerance_m": float(tolerance),
+                }
+            )
+            return
+
+        terminal_xy = np.asarray(path[-1][:2], dtype=float)
+        goal_xy = np.asarray(goal_pos[:2], dtype=float)
+        distance = float(np.linalg.norm(terminal_xy - goal_xy))
+        reached = bool(distance <= tolerance)
+        self._last_plan_reached_goal = reached
+        self._last_plan_diagnostics.update(
+            {
+                "goal_reached": reached,
+                "goal_terminal_xy": terminal_xy.tolist(),
+                "goal_terminal_error_m": round(distance, 4),
+                "goal_terminal_tolerance_m": float(tolerance),
+            }
+        )
+
+    def _record_wrapper_path_diagnostics(self) -> None:
+        planner = self._planner
+        if planner is None:
+            return
+
+        path_mode = str(getattr(planner, "last_path_mode", "") or "")
+        if path_mode:
+            self._last_plan_path_mode = path_mode
+            self._last_plan_diagnostics["pct_planner_path_mode"] = path_mode
+
+        if hasattr(planner, "last_optimizer_enabled") or hasattr(planner, "optimize_trajectory"):
+            self._last_plan_diagnostics["pct_optimizer_enabled"] = bool(
+                getattr(
+                    planner,
+                    "last_optimizer_enabled",
+                    getattr(planner, "optimize_trajectory", False),
+                )
+            )
+        if hasattr(planner, "last_optimizer_attempted"):
+            self._last_plan_diagnostics["pct_optimizer_attempted"] = bool(
+                getattr(planner, "last_optimizer_attempted")
+            )
+        if hasattr(planner, "last_optimizer_accepted"):
+            accepted = getattr(planner, "last_optimizer_accepted")
+            self._last_plan_diagnostics["pct_optimizer_accepted"] = (
+                bool(accepted) if accepted in (True, False) else None
+            )
+        if hasattr(planner, "last_optimizer_reject_reason"):
+            self._last_plan_diagnostics["pct_optimizer_reject_reason"] = str(
+                getattr(planner, "last_optimizer_reject_reason") or ""
+            )
+        if hasattr(planner, "last_optimizer_blocked_sample_count"):
+            try:
+                blocked = int(getattr(planner, "last_optimizer_blocked_sample_count") or 0)
+            except (TypeError, ValueError):
+                blocked = 0
+            self._last_plan_diagnostics["pct_optimizer_blocked_sample_count"] = blocked
+        if hasattr(planner, "last_raw_path_blocked_sample_count"):
+            try:
+                blocked = int(getattr(planner, "last_raw_path_blocked_sample_count") or 0)
+            except (TypeError, ValueError):
+                blocked = 0
+            self._last_plan_diagnostics["pct_optimizer_raw_blocked_sample_count"] = blocked
+
+    def _plan_native_with_reload_retry(
+        self,
+        start_pos: np.ndarray,
+        goal_pos: np.ndarray,
+        start_h: float,
+        goal_h: float,
+        raw_start: np.ndarray,
+        raw_goal: np.ndarray,
+    ) -> object | None:
+        attempts = 2 if self._last_plan_diagnostics.get("reload_on_native_exception") else 1
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                if self._planner is None:
+                    raise RuntimeError("pct planner unavailable after reload")
+                result = self._planner.plan(start_pos, goal_pos, start_h, goal_h)
+                self._record_wrapper_path_diagnostics()
+                if attempt > 0:
+                    self._last_plan_diagnostics["native_retry_count"] = attempt
+                    self._last_plan_diagnostics["recovered_by_reload"] = True
+                    logger.warning(
+                        "PCT plan() recovered after reloading native backend for start=%s goal=%s",
+                        raw_start,
+                        raw_goal,
+                    )
+                return result
+            except Exception as exc:  # pragma: no cover - exact native failures are host-specific
+                last_exc = exc
+                error_record = {
+                    "type": exc.__class__.__name__,
+                    "message": str(exc),
+                    "traceback_tail": traceback.format_exc(limit=6).splitlines()[-12:],
+                }
+                self._last_plan_diagnostics.setdefault("native_exceptions", [])
+                exceptions = self._last_plan_diagnostics["native_exceptions"]
+                if isinstance(exceptions, list):
+                    exceptions.append(error_record)
+                self._last_plan_diagnostics["native_retry_count"] = attempt
+                logger.exception(
+                    "PCT plan() raised exception for start=%s goal=%s attempt=%d/%d",
+                    raw_start,
+                    raw_goal,
+                    attempt + 1,
+                    attempts,
+                )
+                if attempt + 1 >= attempts:
+                    break
+                if not self._reload_native_planner_after_exception():
+                    break
+
+        self._last_plan_error = "pct native plan raised exception"
+        if last_exc is not None:
+            self._last_plan_diagnostics.update(
+                {
+                    "stage": "native_plan_exception",
+                    "error_type": last_exc.__class__.__name__,
+                    "error_message": str(last_exc),
+                    "recovered_by_reload": False,
+                }
+            )
+        return None
+
+    def _reload_native_planner_after_exception(self) -> bool:
+        tomogram_path = self._tomogram_path
+        self._planner = None
+        self._available = False
+        self._load_error = ""
+        try:
+            self._try_load(tomogram_path)
+        except Exception as exc:  # defensive; _try_load normally catches internally.
+            self._load_error = f"PCT runtime reload failed: {exc}"
+            logger.exception("PCT backend reload failed after native plan exception")
+        ok = self._planner is not None and self._available
+        self._last_plan_diagnostics["reload_attempted"] = True
+        self._last_plan_diagnostics["reload_ok"] = bool(ok)
+        if not ok:
+            self._last_plan_diagnostics["reload_error"] = self._load_error
+        return bool(ok)
+
+    def _project_start_to_traversable_xy(
+        self,
+        pos: np.ndarray,
+        *,
+        max_snap_m: float,
+    ) -> tuple[np.ndarray, dict[str, object]]:
+        """Move a blocked start cell to the nearest traversable tomogram cell."""
+        try:
+            pos_xy = np.asarray(pos[:2], dtype=np.float64)
+        except (TypeError, ValueError) as exc:
+            return np.asarray([float("nan"), float("nan")], dtype=np.float64), {
+                "projected": False,
+                "attempted": False,
+                "status": "invalid",
+                "reason": "start_xy_not_numeric",
+                "error": str(exc),
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": None,
+                "searched_cells_count": 0,
+                "traversable_candidate_count": 0,
+            }
+        if pos_xy.shape[0] < 2 or not np.all(np.isfinite(pos_xy[:2])):
+            return pos_xy, {
+                "projected": False,
+                "attempted": False,
+                "status": "invalid",
+                "reason": "start_xy_not_finite",
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": None,
+                "searched_cells_count": 0,
+                "traversable_candidate_count": 0,
+            }
+
+        planner = self._planner
+        trav = getattr(planner, "layers_t", None)
+        if trav is None:
+            trav = getattr(self, "_trav_3d", None)
+        if planner is None or trav is None:
+            return pos_xy, {
+                "projected": False,
+                "attempted": False,
+                "status": "unavailable",
+                "reason": "no_traversability_grid",
+                "raw_xy": pos_xy.tolist(),
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": None,
+                "searched_cells_count": 0,
+                "traversable_candidate_count": 0,
+            }
+
+        trav = np.asarray(trav, dtype=np.float32)
+        if trav.ndim != 3 or trav.shape[0] == 0:
+            return pos_xy, {
+                "projected": False,
+                "attempted": False,
+                "status": "invalid",
+                "reason": "invalid_traversability_grid",
+                "raw_xy": pos_xy.tolist(),
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": None,
+                "searched_cells_count": 0,
+                "traversable_candidate_count": 0,
+            }
+        rows = int(trav.shape[1])
+        cols = int(trav.shape[2])
+        if rows <= 0 or cols <= 0:
+            return pos_xy, {
+                "projected": False,
+                "attempted": False,
+                "status": "invalid",
+                "reason": "empty_traversability_grid",
+                "raw_xy": pos_xy.tolist(),
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": None,
+                "searched_cells_count": 0,
+                "traversable_candidate_count": 0,
+            }
+
+        raw_col, raw_row = self._xy_to_tomogram_cell(pos_xy)
+        if not (0 <= raw_col < cols and 0 <= raw_row < rows):
+            return pos_xy, {
+                "projected": False,
+                "attempted": False,
+                "status": "out_of_bounds",
+                "reason": "start_xy_outside_tomogram_bounds",
+                "raw_xy": pos_xy.tolist(),
+                "raw_col": int(raw_col),
+                "raw_row": int(raw_row),
+                "grid_cols": cols,
+                "grid_rows": rows,
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": None,
+                "searched_cells_count": 0,
+                "traversable_candidate_count": 0,
+            }
+
+        raw_cost = self._min_traversability_cost(trav, raw_row, raw_col)
+        if raw_cost is not None and raw_cost < self._obstacle_thr:
+            return pos_xy, {
+                "projected": False,
+                "attempted": False,
+                "status": "not_needed",
+                "reason": "start_cell_traversable",
+                "raw_xy": pos_xy.tolist(),
+                "raw_col": int(raw_col),
+                "raw_row": int(raw_row),
+                "raw_min_cost": float(raw_cost),
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": 0,
+                "searched_cells_count": 1,
+                "traversable_candidate_count": 1,
+            }
+
+        resolution = float(self._resolution or 0.0)
+        if not np.isfinite(resolution) or resolution <= 0.0:
+            return pos_xy, {
+                "projected": False,
+                "attempted": False,
+                "status": "invalid",
+                "reason": "invalid_tomogram_resolution",
+                "raw_xy": pos_xy.tolist(),
+                "raw_col": int(raw_col),
+                "raw_row": int(raw_row),
+                "raw_min_cost": None if raw_cost is None else float(raw_cost),
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": None,
+                "searched_cells_count": 0,
+                "traversable_candidate_count": 0,
+            }
+
+        max_cells = int(np.ceil(float(max_snap_m) / resolution))
+        best: tuple[float, int, int, float, np.ndarray] | None = None
+        searched_cells_count = 0
+        traversable_candidate_count = 0
+        for row in range(max(0, raw_row - max_cells), min(rows, raw_row + max_cells + 1)):
+            for col in range(max(0, raw_col - max_cells), min(cols, raw_col + max_cells + 1)):
+                searched_cells_count += 1
+                cost = self._min_traversability_cost(trav, row, col)
+                if cost is None or cost >= self._obstacle_thr:
+                    continue
+                candidate_xy = self._tomogram_cell_to_xy(col, row)
+                distance_m = float(np.linalg.norm(candidate_xy[:2] - pos_xy[:2]))
+                if distance_m > float(max_snap_m) + 1e-9:
+                    continue
+                traversable_candidate_count += 1
+                rank = (distance_m, row, col, float(cost), candidate_xy)
+                if best is None or rank[:4] < best[:4]:
+                    best = rank
+
+        if best is None:
+            return pos_xy, {
+                "projected": False,
+                "attempted": True,
+                "status": "failed",
+                "reason": "no_traversable_start_cell_within_tolerance",
+                "raw_xy": pos_xy.tolist(),
+                "raw_col": int(raw_col),
+                "raw_row": int(raw_row),
+                "raw_min_cost": None if raw_cost is None else float(raw_cost),
+                "max_snap_m": float(max_snap_m),
+                "radius_cells": int(max_cells),
+                "searched_cells_count": int(searched_cells_count),
+                "traversable_candidate_count": int(traversable_candidate_count),
+            }
+
+        distance_m, projected_row, projected_col, projected_cost, projected_xy = best
+        return projected_xy, {
+            "projected": True,
+            "attempted": True,
+            "status": "used",
+            "raw_xy": pos_xy.tolist(),
+            "projected_xy": projected_xy.tolist(),
+            "distance_m": float(distance_m),
+            "raw_col": int(raw_col),
+            "raw_row": int(raw_row),
+            "raw_min_cost": None if raw_cost is None else float(raw_cost),
+            "projected_col": int(projected_col),
+            "projected_row": int(projected_row),
+            "projected_min_cost": float(projected_cost),
+            "max_snap_m": float(max_snap_m),
+            "radius_cells": int(max_cells),
+            "searched_cells_count": int(searched_cells_count),
+            "traversable_candidate_count": int(traversable_candidate_count),
+        }
+
+    @staticmethod
+    def _start_projection_plan_fields(
+        start_projection: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "start_xy_projection_requested": True,
+            "start_xy_projection_attempted": bool(
+                start_projection.get("attempted", False)
+            ),
+            "start_xy_projection_radius_m": start_projection.get("max_snap_m"),
+            "start_xy_projection_radius_cells": start_projection.get("radius_cells"),
+            "start_xy_projection_status": start_projection.get("status"),
+            "start_xy_projection_from": start_projection.get("raw_xy"),
+            "start_xy_projection_to": start_projection.get(
+                "projected_xy",
+                start_projection.get("raw_xy"),
+            ),
+            "start_xy_projection_delta_m": start_projection.get("distance_m", 0.0),
+            "start_xy_projection_searched_cells_count": start_projection.get(
+                "searched_cells_count",
+                0,
+            ),
+            "start_xy_projection_traversable_candidate_count": (
+                start_projection.get("traversable_candidate_count", 0)
+            ),
+        }
+
+    def _xy_to_tomogram_cell(self, pos_xy: np.ndarray) -> tuple[int, int]:
+        planner = self._planner
+        try:
+            if planner is None:
+                raise RuntimeError("missing planner")
+            idx = planner.pos2idx(pos_xy)
+            return int(round(float(idx[0]))), int(round(float(idx[1])))
+        except Exception:
+            resolution = float(self._resolution or 0.0)
+            if not np.isfinite(resolution) or resolution <= 0.0:
+                return 0, 0
+            return (
+                int(round((float(pos_xy[0]) - self._origin[0]) / resolution)),
+                int(round((float(pos_xy[1]) - self._origin[1]) / resolution)),
+            )
+
+    def _tomogram_cell_to_xy(self, col: int, row: int) -> np.ndarray:
+        resolution = float(self._resolution or 0.0)
+        return np.asarray(
+            [
+                float(self._origin[0]) + float(col) * resolution,
+                float(self._origin[1]) + float(row) * resolution,
+            ],
+            dtype=np.float64,
+        )
+
+    @staticmethod
+    def _min_traversability_cost(
+        trav: np.ndarray,
+        row: int,
+        col: int,
+    ) -> float | None:
+        try:
+            costs = np.asarray(trav[:, row, col], dtype=np.float32)
+        except Exception:
+            return None
+        finite = costs[np.isfinite(costs)]
+        if finite.size == 0:
+            return None
+        return float(np.min(finite))
 
     def _select_traversable_height(
         self,

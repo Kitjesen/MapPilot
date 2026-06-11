@@ -40,6 +40,10 @@ from global_planning.pct_planner_runnable.runtime import (  # noqa: E402
     inspect_pct_runtime,
 )
 
+PCT_OPTIMIZE_TRAJECTORY_ENV = "LINGTU_PCT_OPTIMIZE_TRAJECTORY"
+_FALSE_ENV_VALUES = {"0", "false", "no", "off"}
+MAX_ELEVATION_NOMINAL_DELTA_M = 10.0
+
 
 @dataclass(frozen=True)
 class LastPose:
@@ -70,6 +74,10 @@ class TomogramInfo:
         resolution: float,
         origin: np.ndarray,
         obstacle_thr: float,
+        traversability_3d: np.ndarray | None = None,
+        elevation_3d: np.ndarray | None = None,
+        slice_h0: float | None = None,
+        slice_dh: float | None = None,
     ) -> None:
         self.path = path
         self.raw = raw
@@ -77,12 +85,33 @@ class TomogramInfo:
         self.resolution = float(resolution)
         self.origin = np.asarray(origin[:2], dtype=np.float64)
         self.obstacle_thr = float(obstacle_thr)
+        self.traversability_3d = (
+            np.asarray(traversability_3d, dtype=np.float32)
+            if traversability_3d is not None
+            else None
+        )
+        self.elevation_3d = (
+            np.asarray(elevation_3d, dtype=np.float32)
+            if elevation_3d is not None
+            else None
+        )
+        self.slice_h0 = float(slice_h0) if slice_h0 is not None else None
+        self.slice_dh = float(slice_dh) if slice_dh is not None else None
         self.shape = tuple(int(v) for v in self.grid.shape)
         if self.grid.ndim != 2:
             raise ValueError(f"ground traversability grid must be 2D, got {self.grid.shape}")
         h, w = self.shape
         self.max_xy = self.origin + np.array([(w - 1) * self.resolution, (h - 1) * self.resolution])
         self.free_mask = np.isfinite(self.grid) & (self.grid < self.obstacle_thr)
+
+    def row_col_for_world(self, x: float, y: float) -> tuple[int, int] | None:
+        if self.resolution <= 0:
+            return None
+        col = int(round((float(x) - self.origin[0]) / self.resolution))
+        row = int(round((float(y) - self.origin[1]) / self.resolution))
+        if not (0 <= row < self.shape[0] and 0 <= col < self.shape[1]):
+            return None
+        return row, col
 
     def in_bounds(self, point: list[float] | tuple[float, ...] | np.ndarray) -> bool:
         arr = np.asarray(point, dtype=float).reshape(-1)
@@ -93,14 +122,67 @@ class TomogramInfo:
             and self.origin[1] <= arr[1] <= self.max_xy[1]
         )
 
-    def world_for_cell(self, row: int, col: int, z: float = 0.0) -> list[float]:
+    def traversable_z_for_xy(self, x: float, y: float, preferred_z: float | None = None) -> float:
+        fallback = 0.0
+        if preferred_z is not None:
+            try:
+                value = float(preferred_z)
+            except (TypeError, ValueError):
+                value = float("nan")
+            if math.isfinite(value):
+                fallback = value
+        trav = self.traversability_3d
+        if (
+            trav is None
+            or trav.ndim != 3
+            or trav.shape[0] == 0
+            or self.slice_h0 is None
+            or self.slice_dh is None
+        ):
+            return fallback
+        row_col = self.row_col_for_world(x, y)
+        if row_col is None:
+            return fallback
+        row, col = row_col
+        if not (0 <= row < trav.shape[1] and 0 <= col < trav.shape[2]):
+            return fallback
+        nominal = np.asarray(
+            [self.slice_h0 + idx * self.slice_dh for idx in range(trav.shape[0])],
+            dtype=float,
+        )
+        order = list(range(trav.shape[0]))
+        if preferred_z is not None and math.isfinite(fallback):
+            order.sort(key=lambda idx: abs(float(nominal[idx]) - fallback))
+        for idx in order:
+            cost = float(trav[idx, row, col])
+            if np.isfinite(cost) and cost < self.obstacle_thr:
+                elevation = self.elevation_3d
+                if (
+                    elevation is not None
+                    and elevation.shape == trav.shape
+                    and np.isfinite(float(elevation[idx, row, col]))
+                    and abs(float(elevation[idx, row, col]) - float(nominal[idx]))
+                    <= MAX_ELEVATION_NOMINAL_DELTA_M
+                ):
+                    return float(elevation[idx, row, col])
+                return float(nominal[idx])
+        return fallback
+
+    def world_for_cell(self, row: int, col: int, z: float | None = None) -> list[float]:
+        x = float(self.origin[0] + col * self.resolution)
+        y = float(self.origin[1] + row * self.resolution)
+        resolved_z = (
+            self.traversable_z_for_xy(x, y, z)
+            if z is None
+            else float(z)
+        )
         return [
-            float(self.origin[0] + col * self.resolution),
-            float(self.origin[1] + row * self.resolution),
-            float(z),
+            x,
+            y,
+            resolved_z,
         ]
 
-    def nearest_free(self, x: float, y: float, z: float = 0.0) -> list[float] | None:
+    def nearest_free(self, x: float, y: float, z: float | None = None) -> list[float] | None:
         rows, cols = np.where(self.free_mask)
         if rows.size == 0:
             return None
@@ -110,7 +192,7 @@ class TomogramInfo:
         idx = int(np.argmin(dist2))
         return self.world_for_cell(int(rows[idx]), int(cols[idx]), z)
 
-    def far_free_from(self, point: list[float], z: float = 0.0) -> list[float] | None:
+    def far_free_from(self, point: list[float], z: float | None = None) -> list[float] | None:
         rows, cols = np.where(self.free_mask)
         if rows.size == 0:
             return None
@@ -208,6 +290,10 @@ def load_tomogram_info(path: Path, obstacle_thr: float = 49.9) -> TomogramInfo:
     resolution = float(raw.get("resolution", 0.2))
     tomo_data = raw.get("data")
     origin: np.ndarray
+    traversability_3d: np.ndarray | None = None
+    elevation_3d: np.ndarray | None = None
+    slice_h0: float | None = None
+    slice_dh: float | None = None
     if tomo_data is not None:
         arr = np.asarray(tomo_data)
         if arr.ndim != 4 or arr.shape[0] < 1 or arr.shape[1] < 1:
@@ -215,6 +301,15 @@ def load_tomogram_info(path: Path, obstacle_thr: float = 49.9) -> TomogramInfo:
         grid = np.asarray(arr[0, 0], dtype=np.float32)
         if "slice_h0" in raw and "slice_dh" in raw:
             grid = grid.T
+            traversability_3d = np.asarray(np.transpose(arr[0], (0, 2, 1)), dtype=np.float32)
+            if arr.shape[0] > 3:
+                elevation_3d = np.asarray(np.transpose(arr[3], (0, 2, 1)), dtype=np.float32)
+            slice_h0 = float(np.asarray(raw.get("slice_h0")).reshape(()))
+            slice_dh = float(raw.get("slice_dh"))
+        else:
+            traversability_3d = np.asarray(arr[0], dtype=np.float32)
+            if arr.shape[0] > 3:
+                elevation_3d = np.asarray(arr[3], dtype=np.float32)
         center = np.asarray(raw.get("center", [0, 0])[:2], dtype=np.float64)
         h, w = grid.shape
         origin = center - np.array([w * resolution / 2.0, h * resolution / 2.0])
@@ -232,6 +327,10 @@ def load_tomogram_info(path: Path, obstacle_thr: float = 49.9) -> TomogramInfo:
         resolution=resolution,
         origin=origin,
         obstacle_thr=obstacle_thr,
+        traversability_3d=traversability_3d,
+        elevation_3d=elevation_3d,
+        slice_h0=slice_h0,
+        slice_dh=slice_dh,
     )
 
 
@@ -264,9 +363,22 @@ def parse_xyz(values: list[str] | None, label: str) -> list[float] | None:
         raise SystemExit(f"--{label} expects numeric values") from exc
     if not all(math.isfinite(v) for v in nums):
         raise SystemExit(f"--{label} values must be finite")
-    if len(nums) == 2:
-        nums.append(0.0)
     return nums
+
+
+def point_with_tomogram_height(
+    info: TomogramInfo,
+    point: list[float],
+    *,
+    explicit_z: bool,
+) -> list[float]:
+    if explicit_z:
+        return point3(point)
+    arr = np.asarray(point, dtype=float).reshape(-1)
+    if arr.size < 2:
+        return point3(point)
+    z = info.traversable_z_for_xy(float(arr[0]), float(arr[1]), None)
+    return [float(arr[0]), float(arr[1]), float(z)]
 
 
 def choose_internal_route(info: TomogramInfo) -> PreviewCase | None:
@@ -314,13 +426,30 @@ def build_preview_cases(
     if explicit_goal is not None:
         if explicit_start is not None:
             start = explicit_start
+            start_explicit_z = len(explicit_start) > 2
             source = "explicit_start_goal"
         elif use_last_pose and last_pose is not None:
             start = last_pose.start
+            start_explicit_z = False
             source = "last_pose_to_explicit_goal"
         else:
             raise SystemExit("--goal requires --start, or --use-last-pose with active last_pose.txt")
-        return [PreviewCase("requested", point3(start), point3(explicit_goal), source)]
+        return [
+            PreviewCase(
+                "requested",
+                point_with_tomogram_height(
+                    info,
+                    start,
+                    explicit_z=start_explicit_z,
+                ),
+                point_with_tomogram_height(
+                    info,
+                    explicit_goal,
+                    explicit_z=len(explicit_goal) > 2,
+                ),
+                source,
+            )
+        ]
 
     if explicit_start is not None:
         goal = choose_near_free_goal(info, explicit_start)
@@ -472,6 +601,55 @@ def pct_runtime_lib_report(repo_root: Path = REPO_ROOT, machine: str | None = No
     return inspect_pct_runtime(repo_root, machine=machine)
 
 
+def pct_optimizer_enabled_from_env(
+    env: dict[str, str] | os._Environ[str] | None = None,
+    *,
+    default: bool = True,
+) -> bool:
+    values = os.environ if env is None else env
+    raw = values.get(PCT_OPTIMIZE_TRAJECTORY_ENV)
+    if raw is None:
+        return bool(default)
+    text = str(raw).strip().lower()
+    if not text:
+        return bool(default)
+    return text not in _FALSE_ENV_VALUES
+
+
+def pct_child_env(planner: str) -> dict[str, str]:
+    env = os.environ.copy()
+    if str(planner).lower() == "pct":
+        env.setdefault(PCT_OPTIMIZE_TRAJECTORY_ENV, "0")
+    return env
+
+
+def pct_planner_mode_fields(
+    planner: str,
+    env: dict[str, str] | os._Environ[str] | None = None,
+) -> dict[str, Any]:
+    if str(planner).lower() != "pct":
+        return {}
+    optimizer_enabled = pct_optimizer_enabled_from_env(env)
+    return {
+        "pct_optimizer_enabled": optimizer_enabled,
+        "pct_planner_path_mode": (
+            "optimized_trajectory"
+            if optimizer_enabled
+            else "native_astar_raw_path"
+        ),
+    }
+
+
+def annotate_pct_planner_mode(
+    result: dict[str, Any],
+    *,
+    planner: str,
+    env: dict[str, str] | os._Environ[str] | None = None,
+) -> dict[str, Any]:
+    result.update(pct_planner_mode_fields(planner, env))
+    return result
+
+
 def make_odom(start: list[float], planning_frame: str) -> Any:
     from core.msgs.geometry import Pose
     from core.msgs.nav import Odometry
@@ -615,6 +793,7 @@ def run_navigation_preview(
         json.dumps(payload, allow_nan=False, separators=(",", ":")).encode("utf-8")
     ).decode("ascii")
     cmd = [sys.executable, str(SCRIPT_PATH), "--_child-preview", encoded]
+    env = pct_child_env(planner)
     wall_timeout = max(float(timeout_s) + 3.0, 5.0)
     t0 = time.time()
     try:
@@ -625,38 +804,54 @@ def run_navigation_preview(
             stderr=subprocess.PIPE,
             timeout=wall_timeout,
             check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
-        return subprocess_failure_result(
+        return annotate_pct_planner_mode(
+            subprocess_failure_result(
+                planner=planner,
+                reason="planning_timeout",
+                error=f"plan preview subprocess timed out after {wall_timeout:.1f}s",
+                wall_ms=(time.time() - t0) * 1000.0,
+                output=join_output(exc.stdout, exc.stderr),
+            ),
             planner=planner,
-            reason="planning_timeout",
-            error=f"plan preview subprocess timed out after {wall_timeout:.1f}s",
-            wall_ms=(time.time() - t0) * 1000.0,
-            output=join_output(exc.stdout, exc.stderr),
+            env=env,
         )
 
     stdout = proc.stdout or ""
     stderr = proc.stderr or ""
     if proc.returncode != 0:
-        return subprocess_failure_result(
+        return annotate_pct_planner_mode(
+            subprocess_failure_result(
+                planner=planner,
+                reason="planning_subprocess_failed",
+                error=f"plan preview subprocess exited {proc.returncode}",
+                wall_ms=(time.time() - t0) * 1000.0,
+                output=join_output(stdout, stderr),
+            ),
             planner=planner,
-            reason="planning_subprocess_failed",
-            error=f"plan preview subprocess exited {proc.returncode}",
-            wall_ms=(time.time() - t0) * 1000.0,
-            output=join_output(stdout, stderr),
+            env=env,
         )
 
     result, unparsed_stdout = extract_first_json_object(stdout)
     if result is None:
-        return subprocess_failure_result(
+        return annotate_pct_planner_mode(
+            subprocess_failure_result(
+                planner=planner,
+                reason="planning_subprocess_invalid_json",
+                error="plan preview subprocess did not emit a JSON object",
+                wall_ms=(time.time() - t0) * 1000.0,
+                output=join_output(stdout, stderr),
+            ),
             planner=planner,
-            reason="planning_subprocess_invalid_json",
-            error="plan preview subprocess did not emit a JSON object",
-            wall_ms=(time.time() - t0) * 1000.0,
-            output=join_output(stdout, stderr),
+            env=env,
         )
     result["wall_ms"] = round((time.time() - t0) * 1000.0, 3)
-    return append_native_output(result, join_output(unparsed_stdout, stderr))
+    return append_native_output(
+        annotate_pct_planner_mode(result, planner=planner, env=env),
+        join_output(unparsed_stdout, stderr),
+    )
 
 
 def child_preview(encoded_payload: str) -> int:
@@ -683,6 +878,7 @@ def child_preview(encoded_payload: str) -> int:
             timeout_s=float(payload["timeout_s"]),
             downsample_dist=float(payload["downsample_dist"]),
         )
+        result = annotate_pct_planner_mode(result, planner=planner)
         result = json_safe(result)
         print(json.dumps(result, allow_nan=False, separators=(",", ":"), sort_keys=True))
         return 0
@@ -732,6 +928,7 @@ def summarize_case(
         "reasons": [],
         "error": None,
     }
+    result.update(pct_planner_mode_fields(planner, pct_child_env(planner)))
     if not allow_out_of_bounds and (not start_in_bounds or not goal_in_bounds):
         reasons = []
         if not start_in_bounds:
@@ -900,6 +1097,7 @@ def main(argv: list[str] | None = None) -> int:
         "ok": False,
         "error": None,
     }
+    report.update(pct_planner_mode_fields(args.planner, pct_child_env(args.planner)))
 
     try:
         info = load_tomogram_info(tomogram_path, obstacle_thr=args.obstacle_thr)

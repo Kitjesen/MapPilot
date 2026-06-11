@@ -1,9 +1,24 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-pct_planner_DIR="${REPO_ROOT}/src/global_planning/pct_planner/planner"
+
+pct_planner_DIR=""
+for candidate in \
+  "${REPO_ROOT}/src/global_planning/pct_planner/planner" \
+  "${REPO_ROOT}/src/global_planning/PCT_planner/planner"; do
+  if [[ -f "${candidate}/lib/CMakeLists.txt" ]]; then
+    pct_planner_DIR="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${pct_planner_DIR}" ]]; then
+  echo "PCT planner native source directory not found under src/global_planning" >&2
+  exit 2
+fi
+
 LIB_ROOT="${pct_planner_DIR}/lib"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 PCT_CPU_ARCH_FLAGS="${PCT_CPU_ARCH_FLAGS:--march=x86-64-v2}"
@@ -34,6 +49,7 @@ if [[ "${CANONICAL_ARCH}" != "x86_64" ]]; then
 fi
 
 echo "[pct-runnable] repo=${REPO_ROOT}"
+echo "[pct-runnable] source=${pct_planner_DIR}"
 echo "[pct-runnable] python=cp${PY_ABI} arch=${CANONICAL_ARCH}"
 echo "[pct-runnable] cpu_flags=${PCT_CPU_ARCH_FLAGS}"
 

@@ -19,16 +19,16 @@ gtsam::Vector GPInterpolateHeadingRateFactor::evaluateError(
 
   double error = 0.0;
   Eigen::MatrixXd J_dot_theta = Eigen::MatrixXd::Zero(1, 6);
+  const bool need_jacobians = static_cast<bool>(H1) || static_cast<bool>(H2);
 
   if (abs(dot_theta) > max_heading_rate_) {
-    if (H1 || H2) {
+    if (need_jacobians) {
       J_dot_theta(0, 1) = (ddy * dy * dy - ddy * dx * dx + 2 * dx * dy * ddx) /
                           (sqr_dx_dy * sqr_dx_dy);
       J_dot_theta(0, 2) = -dy / sqr_dx_dy;
       J_dot_theta(0, 4) = (-ddx * dx * dx + ddx * dy * dy - 2 * dx * dy * ddy) /
                           (sqr_dx_dy * sqr_dx_dy);
       J_dot_theta(0, 5) = dx / sqr_dx_dy;
-      *H1 = 2 * (dot_theta - max_heading_rate_) * J_dot_theta;
     }
   }
 
@@ -46,12 +46,12 @@ gtsam::Vector GPInterpolateHeadingRateFactor::evaluateError(
 
   if (dot_theta > max_heading_rate_) {
     error = dot_theta - max_heading_rate_;
-    if (H1 || H2) {
+    if (need_jacobians) {
       H = J_dot_theta;
     }
   } else if (dot_theta < -max_heading_rate_) {
     error = -max_heading_rate_ - dot_theta;
-    if (H1 || H2) {
+    if (need_jacobians) {
       H = -J_dot_theta;
     }
   }
@@ -61,8 +61,10 @@ gtsam::Vector GPInterpolateHeadingRateFactor::evaluateError(
   //          error, dot_theta, max_heading_rate_, x_inter(0), x_inter(3));
   // }
 
-  if (H1 || H2) {
+  if (H1) {
     *H1 = H * J_x1;
+  }
+  if (H2) {
     *H2 = H * J_x2;
   }
 

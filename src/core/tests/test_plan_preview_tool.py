@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 def _load_tool():
@@ -28,6 +29,70 @@ def _write_tomogram(root: Path) -> Path:
     path = active / "tomogram.pickle"
     with path.open("wb") as fh:
         pickle.dump({"data": data, "resolution": 0.5, "center": [10.0, 20.0]}, fh)
+    return path
+
+
+def _write_layered_tomogram(root: Path) -> Path:
+    active = root / "active"
+    active.mkdir(parents=True)
+    data = np.full((5, 3, 4, 6), 50.0, dtype=np.float32)
+    data[0, 2, :, :] = 0.0
+    path = active / "tomogram.pickle"
+    with path.open("wb") as fh:
+        pickle.dump(
+            {
+                "data": data,
+                "resolution": 0.5,
+                "center": [10.0, 20.0],
+                "slice_h0": -0.3,
+                "slice_dh": 0.25,
+            },
+            fh,
+        )
+    return path
+
+
+def _write_elevated_layer_tomogram(root: Path) -> Path:
+    active = root / "active"
+    active.mkdir(parents=True)
+    data = np.full((5, 3, 4, 6), 50.0, dtype=np.float32)
+    data[0, 2, :, :] = 0.0
+    data[3, 2, :, :] = 2.6
+    path = active / "tomogram.pickle"
+    with path.open("wb") as fh:
+        pickle.dump(
+            {
+                "data": data,
+                "resolution": 0.5,
+                "center": [10.0, 20.0],
+                "slice_h0": -0.3,
+                "slice_dh": 0.25,
+            },
+            fh,
+        )
+    return path
+
+
+def _write_multi_elevation_tomogram(root: Path) -> Path:
+    active = root / "active"
+    active.mkdir(parents=True)
+    data = np.full((5, 3, 4, 6), 50.0, dtype=np.float32)
+    data[0, 0, :, :] = 0.0
+    data[0, 2, :, :] = 0.0
+    data[3, 0, :, :] = -0.3
+    data[3, 2, :, :] = 2.6
+    path = active / "tomogram.pickle"
+    with path.open("wb") as fh:
+        pickle.dump(
+            {
+                "data": data,
+                "resolution": 0.5,
+                "center": [10.0, 20.0],
+                "slice_h0": -0.3,
+                "slice_dh": 0.25,
+            },
+            fh,
+        )
     return path
 
 
@@ -101,6 +166,63 @@ def test_explicit_goal_uses_last_pose_when_requested(tmp_path):
     assert cases[0].source == "last_pose_to_explicit_goal"
     assert cases[0].start == [9.0, 19.5, 0.0]
     assert cases[0].goal == [10.0, 20.0, 0.0]
+
+
+def test_2d_requested_goal_uses_tomogram_traversable_height(tmp_path):
+    tool = _load_tool()
+    tomo = _write_layered_tomogram(tmp_path)
+    (tmp_path / "active" / "last_pose.txt").write_text("9.0 19.5 0.4\n", encoding="utf-8")
+
+    info = tool.load_tomogram_info(tomo)
+    last_pose = tool.read_last_pose(tmp_path)
+    cases = tool.build_preview_cases(
+        info,
+        explicit_goal=[10.0, 20.0],
+        last_pose=last_pose,
+        use_last_pose=True,
+    )
+
+    assert len(cases) == 1
+    assert cases[0].start[2] == 0.2
+    assert cases[0].goal[2] == 0.2
+
+
+def test_2d_requested_goal_uses_tomogram_elevation_height_when_available(tmp_path):
+    tool = _load_tool()
+    tomo = _write_elevated_layer_tomogram(tmp_path)
+    (tmp_path / "active" / "last_pose.txt").write_text("9.0 19.5 0.4\n", encoding="utf-8")
+
+    info = tool.load_tomogram_info(tomo)
+    last_pose = tool.read_last_pose(tmp_path)
+    cases = tool.build_preview_cases(
+        info,
+        explicit_goal=[10.0, 20.0],
+        last_pose=last_pose,
+        use_last_pose=True,
+    )
+
+    assert len(cases) == 1
+    assert cases[0].start[2] == pytest.approx(2.6)
+    assert cases[0].goal[2] == pytest.approx(2.6)
+
+
+def test_2d_last_pose_zero_placeholder_does_not_prefer_upper_layer(tmp_path):
+    tool = _load_tool()
+    tomo = _write_multi_elevation_tomogram(tmp_path)
+    (tmp_path / "active" / "last_pose.txt").write_text("9.0 19.5 0.4\n", encoding="utf-8")
+
+    info = tool.load_tomogram_info(tomo)
+    last_pose = tool.read_last_pose(tmp_path)
+    cases = tool.build_preview_cases(
+        info,
+        explicit_goal=[10.0, 20.0],
+        last_pose=last_pose,
+        use_last_pose=True,
+    )
+
+    assert len(cases) == 1
+    assert cases[0].start[2] == pytest.approx(-0.3)
+    assert cases[0].goal[2] == pytest.approx(-0.3)
 
 
 def test_out_of_bounds_case_is_skipped_before_native_planner(tmp_path):
@@ -190,6 +312,78 @@ def test_subprocess_failure_result_keeps_standard_case_shape():
     assert result["preview"]["reasons"] == ["planning_timeout"]
     assert result["segments_m"] == []
     assert result["native_output_tail"] == ["native line"]
+
+
+def test_pct_preview_child_disables_optimizer_by_default(monkeypatch, tmp_path):
+    tool = _load_tool()
+    captured_env = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_env.update(kwargs["env"])
+        return subprocess.CompletedProcess(
+            cmd,
+            returncode=0,
+            stdout='{"planner":"pct","preview":{"ok":true,"feasible":true}}\n',
+            stderr="",
+        )
+
+    monkeypatch.delenv(tool.PCT_OPTIMIZE_TRAJECTORY_ENV, raising=False)
+    monkeypatch.setattr(tool.subprocess, "run", fake_run)
+
+    result = tool.run_navigation_preview(
+        tomogram_path=tmp_path / "tomogram.pickle",
+        case=tool.PreviewCase(
+            "requested",
+            start=[0.0, 0.0, 0.0],
+            goal=[1.0, 1.0, 0.0],
+            source="test",
+        ),
+        planner="pct",
+        planning_frame="odom",
+        obstacle_thr=49.9,
+        timeout_s=1.0,
+        downsample_dist=2.0,
+    )
+
+    assert captured_env[tool.PCT_OPTIMIZE_TRAJECTORY_ENV] == "0"
+    assert result["pct_optimizer_enabled"] is False
+    assert result["pct_planner_path_mode"] == "native_astar_raw_path"
+
+
+def test_pct_preview_child_preserves_explicit_optimizer_env(monkeypatch, tmp_path):
+    tool = _load_tool()
+    captured_env = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_env.update(kwargs["env"])
+        return subprocess.CompletedProcess(
+            cmd,
+            returncode=0,
+            stdout='{"planner":"pct","preview":{"ok":true,"feasible":true}}\n',
+            stderr="",
+        )
+
+    monkeypatch.setenv(tool.PCT_OPTIMIZE_TRAJECTORY_ENV, "1")
+    monkeypatch.setattr(tool.subprocess, "run", fake_run)
+
+    result = tool.run_navigation_preview(
+        tomogram_path=tmp_path / "tomogram.pickle",
+        case=tool.PreviewCase(
+            "requested",
+            start=[0.0, 0.0, 0.0],
+            goal=[1.0, 1.0, 0.0],
+            source="test",
+        ),
+        planner="pct",
+        planning_frame="odom",
+        obstacle_thr=49.9,
+        timeout_s=1.0,
+        downsample_dist=2.0,
+    )
+
+    assert captured_env[tool.PCT_OPTIMIZE_TRAJECTORY_ENV] == "1"
+    assert result["pct_optimizer_enabled"] is True
+    assert result["pct_planner_path_mode"] == "optimized_trajectory"
 
 
 def test_child_preview_exception_keeps_standard_case_shape(capsys):

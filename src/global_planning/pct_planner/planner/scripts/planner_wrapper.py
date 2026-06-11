@@ -4,9 +4,10 @@ import os
 import sys
 import pickle
 import math
+import errno
 import numpy as np
 
-# utils not used in this file — transTrajGrid2Map and traj2ros available if needed later
+# utils not used in this file  transTrajGrid2Map and traj2ros available if needed later
 
 sys.path.append('../')
 from lib import a_star, ele_planner, traj_opt
@@ -20,12 +21,41 @@ if os.path.join(rsg_root, 'tomography') not in sys.path:
     sys.path.insert(0, os.path.join(rsg_root, 'tomography'))
 
 
+_FALSE_ENV_VALUES = {"0", "false", "no", "off"}
+
+
+def _safe_print(*args, **kwargs):
+    """Best-effort diagnostics that must not fail native planning."""
+    try:
+        print(*args, **kwargs)
+    except BrokenPipeError:
+        return
+    except OSError as exc:
+        if getattr(exc, "errno", None) == errno.EPIPE:
+            return
+        raise
+
+
+def _env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return bool(default)
+    text = str(value).strip().lower()
+    if text == "":
+        return bool(default)
+    return text not in _FALSE_ENV_VALUES
+
+
 class TomogramPlanner(object):
     def __init__(self, cfg):
         self.cfg = cfg
         _planner = getattr(cfg, "planner", None)
         _wrapper = getattr(cfg, "wrapper", None)
         self.use_quintic = getattr(_planner, "use_quintic", True)
+        self.optimize_trajectory = _env_bool(
+            "LINGTU_PCT_OPTIMIZE_TRAJECTORY",
+            getattr(_planner, "optimize_trajectory", True),
+        )
         self.max_heading_rate = getattr(_planner, "max_heading_rate", 10)
         self.obstacle_thr = getattr(_planner, "obstacle_thr", 50)
         tomo_dir = getattr(_wrapper, "tomo_dir", "/rsc/tomogram/")
@@ -42,6 +72,22 @@ class TomogramPlanner(object):
 
         self.start_idx = np.zeros(3, dtype=np.float32)
         self.end_idx = np.zeros(3, dtype=np.float32)
+        self.last_path_mode = ""
+        self.last_optimizer_enabled = bool(self.optimize_trajectory)
+        self.last_optimizer_attempted = False
+        self.last_optimizer_accepted = None
+        self.last_optimizer_reject_reason = ""
+        self.last_optimizer_blocked_sample_count = 0
+        self.last_raw_path_blocked_sample_count = 0
+
+    def _reset_last_plan_metadata(self):
+        self.last_path_mode = ""
+        self.last_optimizer_enabled = bool(self.optimize_trajectory)
+        self.last_optimizer_attempted = False
+        self.last_optimizer_accepted = None
+        self.last_optimizer_reject_reason = ""
+        self.last_optimizer_blocked_sample_count = 0
+        self.last_raw_path_blocked_sample_count = 0
 
     def _initFromDataDict(self, data_dict):
         tomogram = np.asarray(data_dict['data'], dtype=np.float32)
@@ -50,7 +96,7 @@ class TomogramPlanner(object):
         self.n_slice = tomogram.shape[1]
         self.slice_h0 = float(data_dict['slice_h0'])
         self.slice_dh = float(data_dict['slice_dh'])
-        # map_dim: [x_dim=cols=W, y_dim=rows=H] 鈥?涓?C++ ele_planner 鐨?(max_x, max_y) 瀵归綈
+        # C++ ele_planner expects map_dim as [x_dim=cols=W, y_dim=rows=H].
         # tomogram shape = (channels, n_slice, H=rows, W=cols)
         self.map_dim = [tomogram.shape[3], tomogram.shape[2]]
         self.offset = np.array([int(self.map_dim[0] / 2), int(self.map_dim[1] / 2)], dtype=np.int32)
@@ -61,7 +107,7 @@ class TomogramPlanner(object):
         trav_gx = tomogram[1]
         trav_gy = tomogram[2]
         elev_g = tomogram[3].copy()
-        # Fill NaN with per-slice nominal height (not -100) 鈥?prevents GPMP optimizer
+        # Fill NaN with per-slice nominal height (not -100) to prevent GPMP
         # from producing extreme Z values at smoothed points near NaN cells
         for s in range(self.n_slice):
             mask = np.isnan(elev_g[s])
@@ -73,14 +119,14 @@ class TomogramPlanner(object):
         self.initPlanner(trav, trav_gx, trav_gy, elev_g, elev_c)
 
     def loadTomogram(self, tomo_file, resolution=None, slice_dh=None, ground_h=None):
-        """鍔犺浇 tomogram銆傝嫢浼?resolution/slice_dh/ground_h 鍒欎粠 PCD 寤哄浘鏃朵紭鍏堜娇鐢紙濡傛潵鑷?ROS 鍙傛暟锛夈€?""
+        """Load a tomogram pickle or build one from a matching PCD."""
         if os.path.isabs(tomo_file):
             basename = os.path.basename(tomo_file)
             search_dir = os.path.dirname(tomo_file)
         else:
             basename = tomo_file
             search_dir = self.tomo_dir
-        # 鍙墺绂诲凡鐭ユ墿灞曞悕 (.pickle / .pcd)锛岄伩鍏?splitext 璇妸鏂囦欢鍚嶄腑鐨?        # 灏忔暟鐐瑰綋鎵╁睍鍚?(濡?"spiral0.3_2" 浼氳 splitext 閿欒鍒嗗壊涓?"spiral0")
+        # Strip only known map suffixes; keep names like spiral0.3_2 intact.
         for ext in ('.pickle', '.pcd'):
             if basename.endswith(ext):
                 basename = basename[:-len(ext)]
@@ -94,11 +140,11 @@ class TomogramPlanner(object):
         if os.path.isfile(pickle_path):
             with open(pickle_path, 'rb') as handle:
                 data_dict = pickle.load(handle)
-            print("tomogram.shape:", np.asarray(data_dict['data']).shape)
+            _safe_print("tomogram.shape:", np.asarray(data_dict['data']).shape)
             self._initFromDataDict(data_dict)
-            print(f"Tomogram loaded from {pickle_path}. Map: {self.map_dim}, Slices: {self.n_slice}")
+            _safe_print(f"Tomogram loaded from {pickle_path}. Map: {self.map_dim}, Slices: {self.n_slice}")
         elif os.path.isfile(pcd_path):
-            print(f"[PCT] No .pickle found; building tomogram from PCD: {pcd_path}")
+            _safe_print(f"[PCT] No .pickle found; building tomogram from PCD: {pcd_path}")
             try:
                 from build_tomogram import build_tomogram_from_pcd  # type: ignore[reportMissingImports]
             except ImportError:
@@ -114,9 +160,9 @@ class TomogramPlanner(object):
                 slice_dh=dh,
                 ground_h=gh,
             )
-            print("tomogram.shape:", np.asarray(data_dict['data']).shape)
+            _safe_print("tomogram.shape:", np.asarray(data_dict['data']).shape)
             self._initFromDataDict(data_dict)
-            print(f"[PCT] Tomogram built from PCD and cached to {pickle_path}. Map: {self.map_dim}, Slices: {self.n_slice}")
+            _safe_print(f"[PCT] Tomogram built from PCD and cached to {pickle_path}. Map: {self.map_dim}, Slices: {self.n_slice}")
         else:
             raise FileNotFoundError(
                 f"Neither tomogram nor PCD found for '{tomo_file}'. "
@@ -133,9 +179,9 @@ class TomogramPlanner(object):
         mask_t = diff_t < -15.0
         mask_g = (diff_g < 0.5) & (~np.isnan(elev_g[1:]))
         gateway_up[:-1] = np.logical_and(mask_t, mask_g)
-        print("np.sum(gateway_up)", np.sum(gateway_up))
-        print("np.sum(mask_t)", np.sum(mask_t))
-        print("np.sum(mask_g)", np.sum(mask_g))
+        _safe_print("np.sum(gateway_up)", np.sum(gateway_up))
+        _safe_print("np.sum(mask_t)", np.sum(mask_t))
+        _safe_print("np.sum(mask_g)", np.sum(mask_g))
 
         gateway_dn = np.zeros_like(trav, dtype=bool)
         mask_t = diff_t > 15.0
@@ -166,39 +212,53 @@ class TomogramPlanner(object):
         )
 
     def plan(self, start_pos, end_pos, start_height=0, end_height=0):
-        """
-        瑙勫垝璺緞鐨勬柟娉曪紝鏀寔璁剧疆璧峰鐐瑰拰缁堢偣鐨勯珮搴︺€?        """
-        # 杈撳叆 NaN 闃插尽锛氭嫆缁濋潪鏈夐檺鍧愭爣锛岄伩鍏?C++ planner segfault
+        """Plan from start to goal in world XY plus optional start/end heights."""
+        self._reset_last_plan_metadata()
+        # Reject invalid numeric inputs before calling the native C++ planner.
         if not (np.all(np.isfinite(start_pos)) and np.all(np.isfinite(end_pos))):
-            print(f"[planner_wrapper] rejecting NaN/Inf input: start={start_pos} end={end_pos}",
-                  flush=True)
+            _safe_print(f"[planner_wrapper] rejecting NaN/Inf input: start={start_pos} end={end_pos}",
+                        flush=True)
             return None
         if not (np.isfinite(start_height) and np.isfinite(end_height)):
-            print(f"[planner_wrapper] rejecting NaN/Inf height: start_h={start_height} end_h={end_height}",
-                  flush=True)
+            _safe_print(f"[planner_wrapper] rejecting NaN/Inf height: start_h={start_height} end_h={end_height}",
+                        flush=True)
             return None
 
-        # 灏嗚捣濮嬬偣鍜岀粓鐐圭殑浜岀淮浣嶇疆杞崲涓虹储寮?        self.start_idx[1:] = self.pos2idx(start_pos)
+        self.start_idx[1:] = self.pos2idx(start_pos)
         self.end_idx[1:] = self.pos2idx(end_pos)
         
-        # 浣跨敤 pos2slice 鏇夸唬鏃х殑 height2idx锛屼笌鍙傝€冮」鐩榻?        # 娉ㄦ剰锛氳繖閲屾垜浠紭鍏堜娇鐢ㄤ紶鍏ョ殑 height 鍙傛暟锛屽鏋滃畠鏄?0 涓?pos Z 淇℃伅缂哄け鎵嶇敤榛樿閫昏緫
-        # 鍦?global_planner.py 涓紝鎴戜滑浼犲叆鐨勬槸 start_h 鍜?end_h (鏉ヨ嚜 get_robot_pose 鍜?goal_pose.z)
+        # Use explicit heights supplied by the adapter. Raw 2D goals often have
+        # z=0, while surface snapping can select a different traversable slice.
         
         self.start_idx[0] = self.pos2slice(start_height)
         self.end_idx[0] = self.pos2slice(end_height)
         
-        # 璋冭瘯淇℃伅
-        print(f"[planner_wrapper] plan: start_idx={self.start_idx}, end_idx={self.end_idx}, "
-              f"obstacle_thr={self.obstacle_thr}, map_dim={self.map_dim}, center={self.center}",
-              flush=True)
+        # Debug information
+        _safe_print(f"[planner_wrapper] plan: start_idx={self.start_idx}, end_idx={self.end_idx}, "
+                    f"obstacle_thr={self.obstacle_thr}, optimize_trajectory={self.optimize_trajectory}, "
+                    f"map_dim={self.map_dim}, center={self.center}",
+                    flush=True)
 
-        self.planner.plan(self.start_idx, self.end_idx, True)
+        self.planner.plan(self.start_idx, self.end_idx, bool(self.optimize_trajectory))
         path_finder: a_star.Astar = self.planner.get_path_finder()
         path = path_finder.get_result_matrix()
         
         if len(path) == 0:
             return None
 
+        if not self.optimize_trajectory:
+            raw_world = self._raw_path_to_world(path)
+            if raw_world is None or len(raw_world) == 0:
+                return None
+            self.last_path_mode = "native_astar_raw_path"
+            _safe_print(
+                f"[planner_wrapper] optimizer disabled; returning native A* raw path "
+                f"with {len(raw_world)} points",
+                flush=True,
+            )
+            return raw_world
+
+        self.last_optimizer_attempted = True
         optimizer: traj_opt.GPMPOptimizer = (
             self.planner.get_trajectory_optimizer()
             if not self.use_quintic
@@ -207,36 +267,68 @@ class TomogramPlanner(object):
 
         opt_init = optimizer.get_opt_init_value()
         init_layer = optimizer.get_opt_init_layer()
-        traj_raw = optimizer.get_result_matrix()
-        layers = optimizer.get_layers()
-        heights = optimizer.get_heights()
+        traj_raw = np.asarray(optimizer.get_result_matrix(), dtype=np.float64)
+        layers = np.asarray(optimizer.get_layers(), dtype=np.float64).reshape(-1)
+        heights = np.asarray(optimizer.get_heights(), dtype=np.float64).reshape(-1)
+
+        if (
+            traj_raw.size == 0
+            or traj_raw.ndim != 2
+            or layers.shape[0] != traj_raw.shape[0]
+            or heights.shape[0] != traj_raw.shape[0]
+        ):
+            raw_world = self._raw_path_to_world(path)
+            if raw_world is not None and len(raw_world) > 0:
+                self.last_path_mode = "native_astar_raw_path"
+                self.last_optimizer_accepted = False
+                self.last_optimizer_reject_reason = "optimizer_empty_or_invalid"
+                _safe_print(
+                    "[planner_wrapper] optimizer returned empty trajectory; "
+                    "returning native A* raw path",
+                    flush=True,
+                )
+                return raw_world
+            self.last_optimizer_accepted = False
+            self.last_optimizer_reject_reason = "optimizer_empty_or_invalid"
+            return None
 
         opt_init = np.concatenate([opt_init.transpose(1, 0), init_layer.reshape(-1, 1)], axis=-1)
         traj = np.concatenate([traj_raw, layers.reshape(-1, 1)], axis=-1)
         y_idx = (traj.shape[-1] - 1) // 2
         traj_grid_xy = np.stack([traj[:, 0], traj[:, y_idx]], axis=1)
-        print(f"[planner_wrapper] traj_grid_xy first={traj_grid_xy[0]}, last={traj_grid_xy[-1]}, "
-              f"y_idx={y_idx}, traj_shape={traj.shape}", flush=True)
+        _safe_print(f"[planner_wrapper] traj_grid_xy first={traj_grid_xy[0]}, last={traj_grid_xy[-1]}, "
+                    f"y_idx={y_idx}, traj_shape={traj.shape}", flush=True)
         traj_3d = self._optimized_traj_to_world(traj_grid_xy, heights)
-        print(f"[planner_wrapper] traj_world first={traj_3d[0]}, last={traj_3d[-1]}", flush=True)
+        _safe_print(f"[planner_wrapper] traj_world first={traj_3d[0]}, last={traj_3d[-1]}", flush=True)
 
         blocked = self._hard_obstacle_sample_count(traj_3d)
         if blocked:
+            self.last_optimizer_blocked_sample_count = int(blocked)
             raw_world = self._raw_path_to_world(path)
             raw_blocked = self._hard_obstacle_sample_count(raw_world)
+            self.last_raw_path_blocked_sample_count = int(raw_blocked)
             if raw_world is not None and raw_blocked == 0:
-                print(
+                self.last_path_mode = "native_astar_raw_path"
+                self.last_optimizer_accepted = False
+                self.last_optimizer_reject_reason = "optimized_trajectory_hard_obstacle"
+                _safe_print(
                     f"[planner_wrapper] optimized trajectory crosses {blocked} hard-obstacle samples; "
                     "returning raw A* path",
                     flush=True,
                 )
                 return raw_world
-            print(
+            _safe_print(
                 f"[planner_wrapper] optimized trajectory crosses {blocked} hard-obstacle samples; "
                 f"raw path blocked={raw_blocked}",
                 flush=True,
             )
+            self.last_path_mode = "optimized_trajectory"
+            self.last_optimizer_accepted = False
+            self.last_optimizer_reject_reason = "optimized_trajectory_hard_obstacle"
+            return traj_3d
 
+        self.last_path_mode = "optimized_trajectory"
+        self.last_optimizer_accepted = True
         return traj_3d
 
     def _optimized_traj_to_world(self, xy_grid, heights):
@@ -321,8 +413,17 @@ class TomogramPlanner(object):
             or col >= self.layers_t.shape[2]
         ):
             return True
-        cost = float(self.layers_t[layer, row, col])
-        return (not np.isfinite(cost)) or cost >= float(self.obstacle_thr)
+        # The PCT wrapper converts world/grid coordinates around the legacy
+        # center/offset convention, while LingTu safety reports use tomogram
+        # origin indexing. Check the immediate neighborhood so half-cell
+        # origin differences cannot let an optimized curve skim through a
+        # hard obstacle undetected.
+        for sample_row in range(max(0, row - 1), min(self.layers_t.shape[1] - 1, row + 1) + 1):
+            for sample_col in range(max(0, col - 1), min(self.layers_t.shape[2] - 1, col + 1) + 1):
+                cost = float(self.layers_t[layer, sample_row, sample_col])
+                if (not np.isfinite(cost)) or cost >= float(self.obstacle_thr):
+                    return True
+        return False
     
     def pos2idx(self, pos):
         pos = pos - self.center
@@ -333,18 +434,17 @@ class TomogramPlanner(object):
             idx[0] = np.clip(idx[0], 0, self.map_dim[0] - 1)
             idx[1] = np.clip(idx[1], 0, self.map_dim[1] - 1)
 
-        # NOTE: 涓嶅仛浜ゆ崲 鈥?C++ ele_planner 鎶?start_idx[1] 瑙ｉ噴涓?x (dim0), start_idx[2] 涓?y (dim1),
-        #       鍐呴儴璁块棶 trav[slice, y, x]. 杩斿洖 [idx[0], idx[1]] = [x_idx, y_idx] 涓?C++ 鏈熸湜涓€鑷?
+        # C++ ele_planner expects start_idx[1] as x and start_idx[2] as y,
+        # while the tomogram array is indexed as trav[slice, y, x].
         return idx.astype(np.float32)
     
     def pos2slice(self, z):
-        """灏唞鍧愭爣杞崲涓哄垏鐗囩储寮?(Copied from reference project)"""
+        """Convert a world height to the nearest tomogram slice index."""
         if self.slice_dh is None or self.slice_dh == 0:
             return 0.0
             
-        # 璁＄畻鐩稿浜庤捣濮嬮珮搴︾殑鍒囩墖鏁?        slice_offset = (z - self.slice_h0) / self.slice_dh
+        slice_offset = (z - self.slice_h0) / self.slice_dh
         
-        # 杞崲涓烘暣鏁扮储寮曞苟纭繚鍦ㄦ湁鏁堣寖鍥村唴
         slice_idx = np.round(slice_offset)
         
         if self.n_slice is not None:
@@ -353,17 +453,10 @@ class TomogramPlanner(object):
         return float(slice_idx)
 
     def get_surface_height(self, pos: np.ndarray) -> float:
-        """鏌ヨ XY 浣嶇疆鐨勫湴褰㈣〃闈㈤珮搴︼紙tomogram 鏈€浣庢湁鏁堝眰锛夈€?
-        鐢ㄤ簬灏?2D 鐩爣锛坺=0锛夎嚜鍔ㄨ创鍚堝埌 tomogram 瀹為檯鍦板舰琛ㄩ潰锛?        瑙ｅ喅鍦ㄦ湁鍧″害鍦板舰涓婁娇鐢?RViz "2D Nav Goal" 鏃剁洰鏍囬珮搴﹂敊璇棶棰樸€?
-        Args:
-            pos: 涓栫晫鍧愭爣 [x, y] (np.ndarray, float32)
-        Returns:
-            鍦板舰琛ㄩ潰楂樺害 (m)锛屾煡璇㈠け璐ユ椂杩斿洖 slice_h0 鎴?0.0
-        """
+        """Return the first valid ground height at a world XY position."""
         if self.layers_g is None or self.resolution is None or self.center is None:
             return float(self.slice_h0) if self.slice_h0 is not None else 0.0
-        # 浣跨敤 pos2idx 寰楀埌涓庤鍒掑櫒涓€鑷寸殑鏍肩綉绱㈠紩 (宸?clamp)
-        # pos2idx 杩斿洖 [x_cpp, y_cpp]; 鏁扮粍甯冨眬 layers_g[:, dim0=row=y, dim1=col=x]
+        # pos2idx returns [x_cpp, y_cpp]; layers_g is [slice, row=y, col=x].
         idx = self.pos2idx(pos)
         ai = int(np.clip(idx[1], 0, self.layers_g.shape[1] - 1))  # row = y_cpp = idx[1]
         bi = int(np.clip(idx[0], 0, self.layers_g.shape[2] - 1))  # col = x_cpp = idx[0]
@@ -371,8 +464,7 @@ class TomogramPlanner(object):
         valid_mask = ~np.isnan(heights)
         if not valid_mask.any():
             return float(self.slice_h0) if self.slice_h0 is not None else 0.0
-        # 鏈€浣庢湁鏁堝眰 = 鍦板舰琛ㄩ潰
         return float(heights[valid_mask][0])
 
-    # 鍏煎鏃ф帴鍙ｏ紝灏嗗叾鎸囧悜鏂板嚱鏁?    def height2idx(self, height):
+    def height2idx(self, height):
         return self.pos2slice(height)

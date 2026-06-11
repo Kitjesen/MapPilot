@@ -1,5 +1,6 @@
 #include "trajectory_optimization/height_smoother/height_smoother.h"
 
+#include <cmath>
 #include <iostream>
 
 #include "common/smoothing/osqp_spline1d_solver.h"
@@ -8,6 +9,17 @@ Eigen::VectorXd HeightSmoother::Smooth(const Eigen::VectorXd& coarse_height,
                                        const Eigen::VectorXd& upper_bound,
                                        const double dt, const int N,
                                        const double knot_interval) {
+  if (coarse_height.size() == 0 || upper_bound.size() != coarse_height.size() ||
+      N < 3 || !std::isfinite(dt) || !std::isfinite(knot_interval) ||
+      dt <= 0.0 || knot_interval <= 0.0) {
+    return coarse_height;
+  }
+  for (int i = 0; i < coarse_height.size(); ++i) {
+    if (!std::isfinite(coarse_height(i)) || !std::isfinite(upper_bound(i))) {
+      return coarse_height;
+    }
+  }
+
   std::vector<double> lbs;
   std::vector<double> ubs;
   std::vector<double> refs;

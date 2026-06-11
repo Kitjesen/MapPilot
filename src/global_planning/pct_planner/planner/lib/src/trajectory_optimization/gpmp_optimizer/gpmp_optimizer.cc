@@ -1,6 +1,8 @@
 #include "trajectory_optimization/gpmp_optimizer/gpmp_optimizer.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 #include "gtsam/nonlinear/LevenbergMarquardtOptimizer.h"
 #include "gtsam/nonlinear/LevenbergMarquardtParams.h"
@@ -29,14 +31,31 @@ bool GPMPOptimizer::GenerateTrajectory(const std::vector<PathPoint>& input_path,
 
   static auto sigma_initial = Diagonal::Sigmas(s_init);
   static auto sigma_goal = Diagonal::Sigmas(s_target);
+  auto clear_outputs = [this]() {
+    trajectory_ = Eigen::MatrixXd();
+    opt_init_value_ = Eigen::MatrixXd();
+    opt_init_layer_ = Eigen::VectorXd();
+    opt_results_ = Eigen::MatrixXd();
+    opt_layers_ = Eigen::VectorXd();
+    opt_height_ = Eigen::VectorXd();
+    opt_ceiling_ = Eigen::VectorXd();
+  };
 
   std::vector<PathPoint> path;
   SubSamplePath(input_path, path);
+  if (map_ == nullptr || path.size() < 2) {
+    clear_outputs();
+    return false;
+  }
 
   double T_tmp = static_cast<double>(input_path.size() - 1) / 3;
   int N = path.size();
   double dt = T_tmp / (N - 1);
   double tau = dt / (interpolate_num_ + 1);
+  if (!std::isfinite(dt) || !std::isfinite(tau) || dt <= 0.0 || tau <= 0.0) {
+    clear_outputs();
+    return false;
+  }
   std::cout<<"tau: "<<tau<<std::endl;
 
   Vector6 x0, xN;
@@ -51,8 +70,9 @@ bool GPMPOptimizer::GenerateTrajectory(const std::vector<PathPoint>& input_path,
   std::vector<int> obstacle_factor_idx;
 
   gtsam::Values init_values;
-  opt_init_value_ = Eigen::MatrixXd(6, N + (N - 1) * interpolate_num_);
-  opt_init_layer_ = Eigen::VectorXd(N + (N - 1) * interpolate_num_);
+  const int expected_points = N + (N - 1) * interpolate_num_;
+  opt_init_value_ = Eigen::MatrixXd(6, expected_points);
+  opt_init_layer_ = Eigen::VectorXd(expected_points);
 
   int col_index = 0;
   for (int i = 0; i < N; ++i) {
@@ -75,16 +95,17 @@ bool GPMPOptimizer::GenerateTrajectory(const std::vector<PathPoint>& input_path,
             path[i].height + (path[i + 1].height - path[i].height) * (j + 1) /
                                  (interpolate_num_ + 1);
         opt_init_value_.col(col_index) = inter_x;
-        opt_init_layer_(col_index) = map_->UpdateLayerSafe(
+        const int inter_layer = map_->UpdateLayerSafe(
             path[i].layer, inter_x(0, 0), inter_x(3, 0), height_hint);
+        opt_init_layer_(col_index) = inter_layer;
         col_index++;
         if (debug_) {
           printf(
               "path[%d/%d], layer: %d, inter_layer: %f, height: %f, "
               "height2:%f, hint%f, (%f, %f)\n",
-              i, opt_init_layer_.size() - 1, path[i].layer,
-              opt_init_layer_(col_index), path[i].height, path[i + 1].height,
-              height_hint, inter_x(0, 0), inter_x(3, 0));
+              i, static_cast<int>(opt_init_layer_.size() - 1), path[i].layer,
+              static_cast<double>(inter_layer), path[i].height,
+              path[i + 1].height, height_hint, inter_x(0, 0), inter_x(3, 0));
         }
       }
     }
@@ -137,10 +158,10 @@ bool GPMPOptimizer::GenerateTrajectory(const std::vector<PathPoint>& input_path,
   opt_results_ = Eigen::MatrixXd(N, 6);
   auto solution = opt.optimize();
 
-  opt_layers_ = Eigen::VectorXd::Zero(N + (N - 1) * interpolate_num_);
+  opt_layers_ = Eigen::VectorXd::Zero(expected_points);
   opt_layers_(0) = path.front().layer;
   opt_layers_(opt_layers_.size() - 1) = path.back().layer;
-  for (int i = 0; i < obstacle_factor_idx.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(obstacle_factor_idx.size()); ++i) {
     // printf("%d, %d, %d, %d\n", i + 1, N, obstacle_factor_idx.size(),
     //        obstacle_factor_idx[i]);
     if (obstacle_factor_idx[i] < 1e7) {
@@ -162,26 +183,34 @@ bool GPMPOptimizer::GenerateTrajectory(const std::vector<PathPoint>& input_path,
   WnojTrajectoryInterpolator traj_interpolator =
       WnojTrajectoryInterpolator(opt_results_, dt, kQc);
   trajectory_ = traj_interpolator.GenerateTrajectory(interpolate_num_);
-  printf("shape: %d, %d\n", trajectory_.rows(), trajectory_.cols());
+  if (trajectory_.rows() != expected_points || trajectory_.cols() < 4) {
+    clear_outputs();
+    return false;
+  }
+  printf("shape: %d, %d\n", static_cast<int>(trajectory_.rows()),
+         static_cast<int>(trajectory_.cols()));
 
   printf("smooth height\n");
-  opt_height_ = Eigen::VectorXd::Zero(N + (N - 1) * interpolate_num_);
-  opt_ceiling_ = Eigen::VectorXd::Zero(N + (N - 1) * interpolate_num_);
+  opt_height_ = Eigen::VectorXd::Zero(expected_points);
+  opt_ceiling_ = Eigen::VectorXd::Zero(expected_points);
 
-  for (int i = 0; i < opt_layers_.size(); ++i) {
+  for (Eigen::Index i = 0; i < opt_layers_.size(); ++i) {
     opt_height_(i) =
         map_->GetHeight(opt_layers_(i), trajectory_(i, 0), trajectory_(i, 3)) +
         reference_height_;
     opt_ceiling_(i) =
         map_->GetCeiling(opt_layers_(i), trajectory_(i, 0), trajectory_(i, 3));
   }
-  opt_height_ = height_smoother_.Smooth(opt_height_, opt_ceiling_, tau, N, dt);
+  // Keep the sampled map heights directly. The OSQP spline height smoother
+  // corrupts native memory in the Linux Python binding, and WNOA already
+  // bypasses the same smoother.
+  // opt_height_ = height_smoother_.Smooth(opt_height_, opt_ceiling_, tau, N, dt);
 
   auto t1 = std::chrono::high_resolution_clock::now();
   printf(
       "Optimization finished for N = %d at iteration %d, time elapsed: %f ms, "
       "cost: %f\n",
-      N, opt.iterations(),
+      N, static_cast<int>(opt.iterations()),
       std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() /
           1000.0,
       opt.error());
@@ -201,14 +230,16 @@ void GPMPOptimizer::PathPointToNode(const PathPoint& path_point, Vector6& x) {
 
 void GPMPOptimizer::SubSamplePath(const std::vector<PathPoint>& path,
                                   std::vector<PathPoint>& sub_sampled_path) {
-  assert(path.size() > 1);
-
   if (!sub_sampled_path.empty()) {
     sub_sampled_path.clear();
   }
+  if (path.size() < 2) {
+    return;
+  }
 
   int size = path.size();
-  int num_segs = std::ceil((size - 1) / sample_interval_);
+  const int sample_interval = std::max(1, sample_interval_);
+  int num_segs = std::ceil(static_cast<double>(size - 1) / sample_interval);
 
   if (num_segs <= 1) {
     sub_sampled_path.emplace_back(path.front());

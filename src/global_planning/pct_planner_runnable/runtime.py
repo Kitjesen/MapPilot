@@ -34,6 +34,8 @@ PCT_SHARED_LIBS = (
 )
 PCT_NATIVE_BINARY_FORMAT = "linux_elf"
 PCT_KNOWN_GOOD_PYTHON_TAG = "py310"
+PCT_PLANNER_DIR_NAMES = ("pct_planner", "PCT_planner")
+PCT_RUNNABLE_DIR_NAMES = ("pct_planner_runnable", "PCT_planner_runnable")
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,28 @@ def _recommended_build_command(canonical_arch: str) -> str:
     return "build matching PCT native artifacts for this host architecture and Python ABI"
 
 
+def _first_existing_dir(candidates: Iterable[Path]) -> Path:
+    candidates_list = list(candidates)
+    for candidate in candidates_list:
+        if candidate.is_dir():
+            return candidate
+    return candidates_list[0]
+
+
+def _global_planning_root(repo_root: Path) -> Path:
+    return repo_root / "src" / "global_planning"
+
+
+def _planner_root(repo_root: Path) -> Path:
+    gp_root = _global_planning_root(repo_root)
+    return _first_existing_dir(gp_root / name / "planner" for name in PCT_PLANNER_DIR_NAMES)
+
+
+def _runnable_root(repo_root: Path) -> Path:
+    gp_root = _global_planning_root(repo_root)
+    return _first_existing_dir(gp_root / name for name in PCT_RUNNABLE_DIR_NAMES)
+
+
 def _available_extension_modules(path: Path) -> list[str]:
     if not path.is_dir():
         return []
@@ -217,8 +241,8 @@ def resolve_pct_runtime_paths(
             modules for the current Python ABI.
     """
     root = Path(repo_root).resolve() if repo_root is not None else _repo_root_from_here()
-    runnable_root = root / "src" / "global_planning" / "pct_planner_runnable"
-    planner_root = root / "src" / "global_planning" / "pct_planner" / "planner"
+    runnable_root = _runnable_root(root)
+    planner_root = _planner_root(root)
     scripts_dir = planner_root / "scripts"
     lib_root = planner_root / "lib"
     canonical_arch = _canonical_arch(machine)
@@ -260,8 +284,8 @@ def inspect_pct_runtime(
 ) -> dict[str, Any]:
     """Return the same native-runtime selection that ``prepare_pct_runtime`` uses."""
     root = Path(repo_root).resolve() if repo_root is not None else _repo_root_from_here()
-    runnable_root = root / "src" / "global_planning" / "pct_planner_runnable"
-    planner_root = root / "src" / "global_planning" / "pct_planner" / "planner"
+    runnable_root = _runnable_root(root)
+    planner_root = _planner_root(root)
     lib_root = planner_root / "lib"
     canonical_arch = _canonical_arch(machine)
     py_tag = _python_tag()
@@ -480,6 +504,7 @@ def load_tomogram_planner(
     class _MinimalCfg:
         class planner:
             use_quintic = True
+            optimize_trajectory = True
             max_heading_rate = 10
             obstacle_thr = 49.9
 
