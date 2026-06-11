@@ -14,9 +14,11 @@ It is simulation-only and never connects to robot hardware.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
+import platform
 import re
 import signal
 import shutil
@@ -68,10 +70,14 @@ LOCALIZER_GLOBAL_RELOCALIZE_INPUT = adapter_source_for_target(
 )
 MAP_TO_ODOM_LINK = FRAME_LINKS["map_to_odom"]
 TF_TOPIC = "/tf"
+KNOWN_SAVED_MAP_METADATA_SCHEMA_PREFIXES = (
+    "lingtu.same_source_map_artifacts",
+    "lingtu.saved_map_artifacts",
+)
 
 
 def _resolve_latest_map() -> Path | None:
-    for pattern in (
+    patterns = (
         "artifacts/server_sim_closure/cli_tare_endpoint_mujoco_live*/**/same_source_map/map.pcd",
         "artifacts/server_sim_closure/mujoco_tare_exploration*/**/same_source_map/map.pcd",
         "artifacts/server_sim_closure/cli_explore_endpoint_mujoco_live*/**/same_source_map/map.pcd",
@@ -79,11 +85,23 @@ def _resolve_latest_map() -> Path | None:
         "artifacts/server_sim_closure/mujoco_fastlio2_live*/**/same_source_map/map.pcd",
         "artifacts/server_sim_closure/mujoco_fastlio2_live*/same_source_map/map.pcd",
         "artifacts/server_sim_closure/**/same_source_map/map.pcd",
-    ):
+    )
+    first_pattern_latest: Path | None = None
+    all_candidates: dict[Path, Path] = {}
+    for pattern in patterns:
         candidates = [path for path in ROOT.glob(pattern) if path.is_file()]
-        if candidates:
-            return max(candidates, key=lambda path: path.stat().st_mtime)
-    return None
+        for candidate in candidates:
+            all_candidates[candidate.resolve()] = candidate
+        if candidates and first_pattern_latest is None:
+            first_pattern_latest = max(candidates, key=lambda path: path.stat().st_mtime)
+    tomogram_backed = [
+        path
+        for path in all_candidates.values()
+        if (path.parent / "tomogram.pickle").is_file()
+    ]
+    if tomogram_backed:
+        return max(tomogram_backed, key=lambda path: path.stat().st_mtime)
+    return first_pattern_latest
 
 
 def _resolve_map_path(value: str) -> Path | None:
@@ -110,6 +128,110 @@ def _load_map_metadata(map_pcd: Path | None) -> dict[str, Any]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _sha256_file(path: Path | None) -> str:
+    if path is None or not path.is_file():
+        return ""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _metadata_path_matches_map(raw_path: str, map_pcd: Path) -> bool:
+    if not raw_path:
+        return False
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = ROOT / candidate
+    try:
+        return candidate.resolve() == map_pcd.resolve()
+    except OSError:
+        return False
+
+
+def _map_metadata_contract(map_pcd: Path | None) -> dict[str, Any]:
+    blockers: list[str] = []
+    if map_pcd is None:
+        return {
+            "ok": False,
+            "path": "",
+            "blockers": ["map metadata cannot be validated without map_pcd"],
+            "checks": {"map_pcd_present": False},
+        }
+
+    metadata_path = _map_metadata_path(map_pcd)
+    checks: dict[str, bool] = {
+        "map_pcd_present": True,
+        "metadata_file_exists": metadata_path.is_file(),
+    }
+    payload: dict[str, Any] = {}
+    if metadata_path.is_file():
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            loaded = None
+        if isinstance(loaded, dict):
+            payload = loaded
+            checks["metadata_json_object"] = True
+        else:
+            checks["metadata_json_object"] = False
+    else:
+        checks["metadata_json_object"] = False
+
+    schema_version = str(payload.get("schema_version") or "")
+    pcd_path = str(payload.get("pcd") or "")
+    pcd_sha256 = str(payload.get("pcd_sha256") or "")
+    try:
+        point_count = int(payload.get("point_count") or 0)
+    except (TypeError, ValueError):
+        point_count = 0
+    actual_sha256 = _sha256_file(map_pcd)
+    checks.update(
+        {
+            "schema_version_known": schema_version.startswith(
+                KNOWN_SAVED_MAP_METADATA_SCHEMA_PREFIXES
+            ),
+            "world_present": bool(str(payload.get("world") or "").strip()),
+            "map_pcd_path_present": bool(pcd_path),
+            "map_pcd_path_matches": (
+                _metadata_path_matches_map(pcd_path, map_pcd) if pcd_path else False
+            ),
+            "map_pcd_sha256_present": bool(pcd_sha256),
+            "map_pcd_sha256_matches_file": bool(pcd_sha256)
+            and bool(actual_sha256)
+            and pcd_sha256 == actual_sha256,
+            "map_pcd_point_count_positive": point_count > 0,
+        }
+    )
+    scan_time_profile = str(payload.get("scan_time_profile") or "").strip().lower()
+    checks["scan_time_profile_valid_or_absent"] = (
+        not scan_time_profile
+        or scan_time_profile
+        in {"instantaneous", "synthetic_rolling", "physical_rolling"}
+    )
+    for name, ok in checks.items():
+        if ok is not True:
+            blockers.append(f"map_metadata.{name} is not true")
+    return {
+        "ok": not blockers,
+        "path": str(metadata_path),
+        "schema_version": schema_version,
+        "world": str(payload.get("world") or ""),
+        "scan_time_profile": scan_time_profile,
+        "artifacts": {
+            "map_pcd": {
+                "path": pcd_path,
+                "sha256": pcd_sha256,
+                "actual_sha256": actual_sha256,
+                "point_count": point_count,
+            }
+        },
+        "checks": checks,
+        "blockers": blockers,
+    }
 
 
 def _resolve_live_world_arg(world: str, map_metadata: dict[str, Any]) -> str:
@@ -247,6 +369,28 @@ def _load_ros_modules():
             "/opt/ros/humble/setup.bash and install/setup.bash first."
         ) from exc
     return rclpy, Relocalize, Trigger, Odometry, PointCloud2, String, TFMessage
+
+
+def _current_host_report() -> dict[str, Any]:
+    return {
+        "platform_system": platform.system(),
+        "platform_machine": platform.machine(),
+        "python_version": platform.python_version(),
+        "ros_domain_id": os.environ.get("ROS_DOMAIN_ID", ""),
+        "ros_distro": os.environ.get("ROS_DISTRO", ""),
+    }
+
+
+def _ros_module_preflight() -> dict[str, Any]:
+    try:
+        _load_ros_modules()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "blockers": [str(exc)],
+            "module_error_type": type(exc).__name__,
+        }
+    return {"ok": True, "blockers": [], "module_error_type": ""}
 
 
 class _RuntimeSampler:
@@ -459,6 +603,14 @@ def _start_live_feed(args: argparse.Namespace, run_dir: Path) -> subprocess.Pope
         args.imu_acc_mode,
         "--max-fastlio-z-drift-m",
         str(args.max_fastlio_z_drift_m),
+        "--fastlio-lidar-input",
+        args.fastlio_lidar_input,
+        "--fastlio-ieskf-max-iter",
+        str(args.fastlio_ieskf_max_iter),
+        "--runtime-fault-confirm-samples",
+        str(args.runtime_fault_confirm_samples),
+        "--runtime-motion-fault-min-sim-m",
+        str(args.runtime_motion_fault_min_sim_m),
         "--no-save-map-artifacts",
     ]
     if args.live_drive_source == "frontier":
@@ -602,6 +754,8 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     elif not map_pcd.is_file():
         blockers.append(f"map_pcd not found: {map_pcd}")
     map_metadata = _load_map_metadata(map_pcd)
+    map_metadata_contract = _map_metadata_contract(map_pcd)
+    blockers.extend(map_metadata_contract.get("blockers") or [])
     live_world = _resolve_live_world_arg(args.world, map_metadata)
     scan_time_profile = _resolve_scan_time_profile_arg(
         args.scan_time_profile,
@@ -625,6 +779,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     report_base: dict[str, Any] = {
         "schema_version": "lingtu.saved_map_relocalize_runtime.v1",
         "validation_level": "runtime_relocalization",
+        "execution_mode": "runtime_live",
         "runtime_stage": "saved_map_relocalization",
         "map_dependency": "saved_map_required",
         "requires_saved_map": True,
@@ -637,11 +792,13 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "cmd_vel_sent_to_hardware": False,
         "map_pcd": str(map_pcd) if map_pcd else "",
         "map_metadata": str(_map_metadata_path(map_pcd)) if map_pcd else "",
+        "map_metadata_contract": map_metadata_contract,
         "map_metadata_world": str(map_metadata.get("world") or ""),
         "run_dir": str(run_dir),
         "global_relocalization_requested": bool(args.check_global_relocalize),
         "world": live_world,
         "scan_time_profile": scan_time_profile,
+        "current_host": _current_host_report(),
         "localizer_config": {
             "source_path": str(localizer_config_source),
             "runtime_path": str(localizer_config_path),
@@ -653,13 +810,44 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             },
         },
     }
+    if getattr(args, "preflight_only", False):
+        ros_preflight = _ros_module_preflight()
+        preflight_blockers = list(blockers)
+        preflight_blockers.extend(ros_preflight.get("blockers") or [])
+        return {
+            **report_base,
+            "execution_mode": "host_preflight_only",
+            "validation_only": True,
+            "runtime_relocalization_executed": False,
+            "runtime_relocalization_validated": False,
+            "ok": not preflight_blockers,
+            "blockers": preflight_blockers,
+            "ros2_python": ros_preflight,
+            "claim_boundary": "preflight_only_no_live_slam_or_relocalization",
+        }
     if blockers:
         return {**report_base, "ok": False, "blockers": blockers}
 
     if args.check_global_relocalize and map_pcd is not None and map_pcd.is_file():
         map_pcd = _isolated_map_without_last_pose(map_pcd, run_dir)
 
-    rclpy, Relocalize, Trigger, Odometry, PointCloud2, String, TFMessage = _load_ros_modules()
+    try:
+        rclpy, Relocalize, Trigger, Odometry, PointCloud2, String, TFMessage = _load_ros_modules()
+    except Exception as exc:
+        return {
+            **report_base,
+            "execution_mode": "host_guard",
+            "runtime_relocalization_executed": False,
+            "runtime_relocalization_validated": False,
+            "ok": False,
+            "blockers": [str(exc)],
+            "ros2_python": {
+                "ok": False,
+                "blockers": [str(exc)],
+                "module_error_type": type(exc).__name__,
+            },
+            "claim_boundary": "environment_blocked_no_runtime_relocalization",
+        }
     sampler = _RuntimeSampler()
     live_proc: subprocess.Popen[str] | None = None
     localizer_proc: subprocess.Popen[str] | None = None
@@ -925,7 +1113,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "to industrial_park only when metadata is unavailable."
         ),
     )
-    parser.add_argument("--duration", type=float, default=45.0)
+    parser.add_argument("--duration", type=float, default=12.0)
     parser.add_argument(
         "--duration-clock",
         choices=["wall", "sim"],
@@ -935,11 +1123,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--live-drive-source",
         choices=["frontier", "fixed"],
-        default="frontier",
+        default="fixed",
         help=(
-            "frontier runs the same LingTu-driven motion used by the visible "
-            "demo; fixed is useful only for diagnostics because stationary "
-            "Fast-LIO can drift badly in this synthetic setup."
+            "fixed drives the simulator with a deterministic velocity profile "
+            "to validate live Fast-LIO/localizer relocalization. frontier is a "
+            "diagnostic mode; navigation/path following is covered by the "
+            "downstream pct_saved_map_navigation gate."
         ),
     )
     parser.add_argument("--drive-vx", type=float, default=0.25)
@@ -980,6 +1169,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--imu-acc-mode", choices=["gravity_only", "finite_difference"], default="finite_difference")
     parser.add_argument("--max-fastlio-z-drift-m", type=float, default=1.0)
+    parser.add_argument(
+        "--fastlio-lidar-input",
+        choices=["livox_custom_msg", "timed_pointcloud2"],
+        default="timed_pointcloud2",
+        help=(
+            "Raw LiDAR message shape sent to Fast-LIO2 for the live feed. "
+            "timed_pointcloud2 preserves physical rolling subscan times in the "
+            "current target-host MuJoCo pipeline."
+        ),
+    )
+    parser.add_argument("--fastlio-ieskf-max-iter", type=int, default=10)
+    parser.add_argument("--runtime-fault-confirm-samples", type=int, default=6)
+    parser.add_argument("--runtime-motion-fault-min-sim-m", type=float, default=1.0)
     parser.add_argument("--topic-timeout-s", type=float, default=25.0)
     parser.add_argument("--service-timeout-s", type=float, default=25.0)
     parser.add_argument("--monitor-after-service-s", type=float, default=18.0)
@@ -1011,6 +1213,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-map-odom-xy-m", type=float, default=5.0)
     parser.add_argument("--max-map-odom-z-abs-m", type=float, default=2.0)
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help=(
+            "Check saved-map artifacts, localizer config, and ROS 2 Python "
+            "imports without launching MuJoCo/Fast-LIO/localizer processes."
+        ),
+    )
     return parser
 
 

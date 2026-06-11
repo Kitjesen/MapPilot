@@ -234,11 +234,13 @@ def _live_nav_chain_evidence(report: dict[str, Any]) -> dict[str, Any]:
         "ok": not blockers,
         "nav_data_source": nav_data_source,
         "true_mapping_input_path": mapping_input_path,
-        "outputs": {
+        "outputs": dict(outputs),
+        "nav_outputs": {
             "nav_odometry": _safe_int(outputs.get("nav_odometry")),
             "nav_map_cloud": _safe_int(outputs.get("nav_map_cloud")),
             "nav_cmd_vel_nonzero": _safe_int(outputs.get("nav_cmd_vel_nonzero")),
         },
+        "lingtu_inspection_raw": dict(inspection),
         "lingtu_inspection": {
             "enabled": inspection.get("enabled"),
             "verified": inspection.get("verified"),
@@ -256,7 +258,27 @@ def _live_nav_chain_evidence(report: dict[str, Any]) -> dict[str, Any]:
         "navigation_chain": {
             "planner_fallback_used": navigation_chain.get("planner_fallback_used"),
             "planner_repair_used": navigation_chain.get("planner_repair_used"),
+            "last_plan_report": navigation_chain.get("last_plan_report"),
+            "fallback_reason": navigation_chain.get("fallback_reason"),
         },
+        "deliverable_contract": (
+            report.get("deliverable_contract")
+            if isinstance(report.get("deliverable_contract"), dict)
+            else {}
+        ),
+        "map_artifacts": (
+            report.get("map_artifacts")
+            if isinstance(report.get("map_artifacts"), dict)
+            else {}
+        ),
+        "assets": report.get("assets") if isinstance(report.get("assets"), dict) else {},
+        "world": report.get("world") or report.get("scene_xml") or "",
+        "inspection_tomogram": inspection.get("tomogram")
+        or report.get("inspection_tomogram")
+        or report.get("tomogram")
+        or "",
+        "world_parent": report.get("world_parent") or "",
+        "tomogram_parent": report.get("tomogram_parent") or "",
         "blockers": blockers,
     }
 
@@ -553,6 +575,8 @@ def build_case_environment(
             ),
             "LINGTU_MUJOCO_LIVE_STRICT": "1",
             "LINGTU_MUJOCO_LIVE_SAVE_MAP_ARTIFACTS": "1",
+            "LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM": "1",
+            "LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER": "10",
         }
     )
     if inspection_tomogram:
@@ -1056,6 +1080,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run inspection-moving-obstacle-video once per required speed/density bin before aggregating.",
     )
     parser.add_argument(
+        "--include-existing-reports",
+        action="store_true",
+        help=(
+            "With --run-matrix, also evaluate --report/--report-glob inputs. "
+            "By default, matrix runs evaluate only the freshly generated child reports."
+        ),
+    )
+    parser.add_argument(
         "--child-run-root",
         type=Path,
         default=ROOT / "artifacts/server_sim_closure/moving_obstacle_sweep/children",
@@ -1094,7 +1126,8 @@ def main() -> int:
     args = _build_parser().parse_args()
     required_speed_bins = _parse_csv(args.required_speed_bins)
     required_density_bins = _parse_csv(args.required_density_bins)
-    report_paths = _discover_reports(args.report, args.report_glob)
+    discovered_report_paths = _discover_reports(args.report, args.report_glob)
+    report_paths = list(discovered_report_paths)
     run_results: list[dict[str, Any]] = []
     if args.run_matrix:
         preflight = run_matrix_preflight(
@@ -1145,7 +1178,11 @@ def main() -> int:
             for result in run_results
             if str(result.get("report_path") or "")
         ]
-        report_paths = [*report_paths, *generated_reports]
+        report_paths = (
+            [*report_paths, *generated_reports]
+            if args.include_existing_reports
+            else generated_reports
+        )
 
     unique_report_paths: list[Path] = []
     seen: set[Path] = set()
@@ -1173,6 +1210,11 @@ def main() -> int:
             "child_run_root": str(args.child_run_root),
             "case_count": len(run_results),
             "cases": run_results,
+            "included_existing_report_count": (
+                len(discovered_report_paths)
+                if args.include_existing_reports
+                else 0
+            ),
             "blockers": matrix_blockers,
             "warnings": matrix_warnings,
         }

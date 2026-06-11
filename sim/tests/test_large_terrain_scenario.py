@@ -6,6 +6,7 @@ pytestmark = [pytest.mark.sim]
 
 import json
 import pickle
+import subprocess
 
 from core.tests.numpy_guard import import_numpy_or_skip
 
@@ -197,9 +198,15 @@ def test_large_terrain_validation_report_is_non_motion_and_route_safe(tmp_path):
     assert report["cmd_vel_sent_to_hardware"] is False
     assert report["algorithm_backends"]["local_planner"]["status"] == "not_exercised"
     assert report["algorithm_backends"]["path_follower"]["status"] == "not_exercised"
+    assert report["deliverable_contract"]["checks"]["same_source_map_artifact"] is True
+    assert report["map_artifacts"]["ok"] is True
+    assert report["map_artifacts"]["source_contract"]["same_source_pcd"] is True
+    assert report["map_artifacts"]["source_contract"]["same_source_tomogram"] is True
     case = report["cases"][0]
     assert case["route"] == "terrain_long"
     assert case["ok"] is True
+    assert case["deliverable_contract"]["checks"]["same_source_map_artifact"] is True
+    assert case["map_artifacts"]["ok"] is True
     assert case["planning"][0]["feasible"] is True
     assert case["planning"][0]["route_ok"] is True
     assert case["planning"][0]["path_safety"]["ok"] is True
@@ -256,6 +263,85 @@ def test_large_terrain_validation_records_blocked_pct_without_faking_success(tmp
     assert report["cases"][0]["selection"]["selected_planner"] == ""
     assert report["cases"][0]["selection"]["selected_route_ok"] is False
     assert report["cases"][0]["selection"]["rejected_planners"][0]["reason"] == "environment_blocked"
+
+
+def test_large_terrain_validation_records_pct_child_process_crash(tmp_path, monkeypatch):
+    from sim.scripts import large_terrain_nav_validation as mod
+
+    assets = build_large_terrain_assets(tmp_path)
+    route = _route(assets, "terrain_short")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=139,
+            stdout="native planner stdout",
+            stderr="Segmentation fault (core dumped)",
+        )
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    plan = mod._plan_with_backend_subprocess(
+        "pct",
+        assets,
+        route,
+        obstacle_thr=49.9,
+        native_runtime={"ok": True, "missing": []},
+    )
+
+    assert plan["feasible"] is False
+    assert plan["native_backend_used"] is False
+    assert plan["status"] == "failed"
+    assert plan["failure_category"] == "planner_process_crash"
+    assert plan["returncode"] == 139
+    assert "exited with code 139" in plan["error"]
+    assert "Segmentation fault" in plan["stderr_tail"]
+
+
+def test_large_terrain_validation_rejects_path_that_does_not_reach_goal(
+    tmp_path,
+    monkeypatch,
+):
+    from sim.scripts import large_terrain_nav_validation as mod
+
+    class FakeBackend:
+        available = True
+        _load_error = ""
+
+    class PartialPathService:
+        def __init__(self, planner_name: str, tomogram: str, obstacle_thr: float, downsample_dist: float) -> None:
+            self._planner_name = planner_name
+            self._backend = FakeBackend()
+            self._fallback_backend = None
+            self.last_plan_report = {}
+
+        def setup(self) -> None:
+            return None
+
+        def plan(self, start, goal, safe_goal_tolerance=0.0):
+            self.last_plan_report = {
+                "primary_planner": self._planner_name,
+                "selected_planner": self._planner_name,
+                "fallback_reason": "",
+                "policy": "observe",
+                "reached_goal": False,
+            }
+            return [
+                [float(start[0]), float(start[1]), 0.0],
+                [float(start[0]) + 0.6, float(start[1]), 0.0],
+            ], 1.0
+
+    monkeypatch.setattr(mod, "GlobalPlannerService", PartialPathService)
+
+    report = mod.run_validation(tmp_path, routes=("terrain_short",), planners=("astar",))
+
+    plan = report["cases"][0]["planning"][0]
+    assert plan["feasible"] is True
+    assert plan["path_safety"]["ok"] is True
+    assert plan["path_goal"]["reached_goal"] is False
+    assert plan["route_ok"] is False
+    assert report["cases"][0]["selection"]["selected_route_ok"] is False
+    assert report["cases"][0]["selection"]["rejected_planners"][0]["reason"] == "unsafe_or_invalid_route"
 
 
 def test_large_terrain_validation_records_effective_global_planner_when_service_falls_back(tmp_path, monkeypatch):

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 pytestmark = [pytest.mark.sim]
@@ -10,16 +15,82 @@ from sim.scripts import dynamic_obstacle_local_planner_gate
 from sim.scripts.dynamic_obstacle_local_planner_gate import run_gate
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_dynamic_obstacle_local_planner_gate_blocks_unsupported_windows_host(
+    monkeypatch,
+):
+    monkeypatch.setattr(dynamic_obstacle_local_planner_gate, "LocalPlannerModule", None)
+
+    def fail_load_runtime():
+        raise AssertionError("unsupported Windows guard should run before runtime import")
+
+    monkeypatch.setattr(dynamic_obstacle_local_planner_gate, "_load_runtime", fail_load_runtime)
+
+    report = run_gate(backend="nanobind", platform_system="Windows")
+
+    assert report["ok"] is False
+    assert report["simulation_only"] is True
+    assert report["real_robot_motion"] is False
+    assert report["cmd_vel_sent_to_hardware"] is False
+    assert report["execution_mode"] == "host_guard"
+    assert report["backend_actual"] == ""
+    assert report["environment"]["accepted_host"] is False
+    assert report["environment"]["blocked_reason"] == "windows_mingw_numpy_not_accepted"
+    assert report["environment"]["claim_boundary"] == (
+        "environment_blocked_no_algorithm_claim"
+    )
+    assert report["environment"]["manual_diagnosis_flag"] == (
+        "--allow-unstable-windows-numpy"
+    )
+    assert any("Windows/MINGW NumPy" in item for item in report["errors"])
+
+
+def test_dynamic_obstacle_local_planner_gate_cli_writes_red_report_on_windows(tmp_path: Path):
+    report_path = tmp_path / "report.json"
+
+    probe = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "sim/scripts/dynamic_obstacle_local_planner_gate.py"),
+            "--backend",
+            "nanobind",
+            "--json-out",
+            str(report_path),
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+
+    if sys.platform.startswith("win"):
+        assert probe.returncode == 1
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["ok"] is False
+        assert report["execution_mode"] == "host_guard"
+        assert report["environment"]["accepted_host"] is False
+        assert any("Windows/MINGW NumPy" in item for item in report["errors"])
+    else:
+        assert report_path.exists()
+
+
 def test_dynamic_obstacle_local_planner_gate_replans_without_hardware_cmd_vel():
+    if sys.platform.startswith("win"):
+        pytest.skip("Windows/MINGW NumPy local planner runtime is intentionally blocked")
     pytest.importorskip("_nav_core")
 
     report = run_gate(backend="nanobind")
 
     assert report["ok"] is True
+    assert report["execution_mode"] == "runtime_gate"
     assert report["simulation_only"] is True
     assert report["real_robot_motion"] is False
     assert report["cmd_vel_sent_to_hardware"] is False
     assert report["backend_actual"] == "nanobind"
+    assert report["environment"]["accepted_host"] is True
+    assert report["environment"]["claim_boundary"] == "dynamic_obstacle_algorithm_gate"
     assert report["dynamic_replan_verified"] is True
     assert report["obstacle_response_verified"] is True
     assert report["clear_path_recovery_verified"] is True
@@ -36,6 +107,9 @@ def test_dynamic_obstacle_local_planner_gate_replans_without_hardware_cmd_vel():
 def test_dynamic_obstacle_local_planner_gate_reports_effective_backend_after_fallback(
     monkeypatch,
 ):
+    if sys.platform.startswith("win"):
+        pytest.skip("Windows/MINGW NumPy local planner runtime is intentionally blocked")
+
     class FakeOut:
         def __init__(self):
             self._callbacks = []
@@ -107,6 +181,7 @@ def test_dynamic_obstacle_local_planner_gate_reports_effective_backend_after_fal
     report = run_gate(backend="nanobind")
 
     assert report["ok"] is True
+    assert report["execution_mode"] == "runtime_gate"
     assert report["backend_requested"] == "nanobind"
     assert report["backend_actual"] == "cmu_py"
     assert report["native_backend_used"] is False

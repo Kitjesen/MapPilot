@@ -2,6 +2,16 @@
 
 Last updated: 2026-05-12
 
+Superseded status, 2026-06-08: this audit is not a current PASS record. The
+current DimOS simulation-closure artifacts are
+`artifacts/server_sim_closure/summary_after_native_pct_goal_fix.json` and
+`artifacts/server_sim_closure/dimos_gap_after_native_pct_goal_fix.json`; they
+report `lingtu_readiness.ok=false`, `claim_allowed=false`, 7/13 required gates
+passed, and 6 failed or missing. `native_pct_mujoco` now passes, but
+Fast-LIO live inspection, moving-obstacle sweep, large-loop closure, Gazebo
+runtime, saved-map relocalization, and saved-map PCT navigation remain red or
+missing.
+
 This audit separates implementation readiness from completion evidence. It is
 not a PASS record for robot navigation. The active validation target is
 server-side full simulation only, with no real robot motion. S100P field
@@ -17,7 +27,7 @@ LingTu can be claimed as P0 field-ready only when all of these are true:
 | Field motion never uses implicit goals | `p0_all.sh` and `p0_goto.sh` require explicit goal input | PASS |
 | Route preview gates motion | Route preview passes before `RUN`, and `RUN` precedes `/api/v1/goal` | PASS |
 | E-stop script fails safe after operator starts motion | Post-prompt failure paths send `/api/v1/stop` cleanup | PASS |
-| L2.5 server simulation closure is fresh | `server_sim_closure.py --strict` returns `ok=true` on `gpu8x3090` | PASS |
+| L2.5 server simulation closure is fresh | Current DimOS 13-gate closure must return `lingtu_readiness.ok=true` and `claim_allowed=true` | RED: current 2026-06-08 result is 7/13 with `claim_allowed=false` |
 | S100P mapping run passes | `p0_mapping.sh` field log plus saved map artifacts | MISSING |
 | S100P route safety run passes | `p0_route_safety.sh` field log shows no-motion safe route | MISSING |
 | S100P goto run passes | `p0_goto.sh` field log reaches `SUCCESS` | MISSING |
@@ -46,7 +56,7 @@ The L1 pre-commit hook also passed full `python -m pytest src/core/tests/ -q`
 for the two most recent commits. The hook prints known nanobind leak diagnostics
 but exits with `[L1 pre-commit] OK`.
 
-## Server-Side L2.5 Closure Snapshot
+## Historical Server-Side L2.5 Closure Snapshot
 
 Authoritative server:
 
@@ -63,11 +73,17 @@ PYTHONPATH=src:. python3 sim/scripts/server_sim_closure.py \
   --strict
 ```
 
-Current result: `ok=true`, `simulation_only=true`,
+Historical result: `ok=true`, `simulation_only=true`,
 `real_robot_motion=false`, `cmd_vel_sent_to_hardware=false`,
-`missing_or_failed=[]`, `remaining_gaps=[]`.
+`missing_or_failed=[]`, `remaining_gaps=[]` under the older gate set.
 
-Strict PASS gates:
+Current 2026-06-08 DimOS result:
+`artifacts/server_sim_closure/summary_after_native_pct_goal_fix.json` and
+`artifacts/server_sim_closure/dimos_gap_after_native_pct_goal_fix.json` report
+`lingtu_readiness.ok=false`, `claim_allowed=false`, 7/13 required gates passed,
+and 6 failed or missing.
+
+Historical strict PASS gates:
 
 - `dynamic_obstacle_local_planner`
 - `fastlio2_live`

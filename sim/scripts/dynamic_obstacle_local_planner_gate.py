@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -19,10 +18,15 @@ if str(SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from base_autonomy.modules.local_planner_module import LocalPlannerModule  # noqa: E402
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3  # noqa: E402
-from core.msgs.nav import Odometry, Path as NavPath  # noqa: E402
-from core.msgs.sensor import PointCloud2  # noqa: E402
+np: Any = None
+LocalPlannerModule: Any = None
+Pose: Any = None
+PoseStamped: Any = None
+Quaternion: Any = None
+Vector3: Any = None
+Odometry: Any = None
+NavPath: Any = None
+PointCloud2: Any = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,96 @@ PHASES = (
     PhaseSpec("obstacle_center", 0.0, "detour"),
     PhaseSpec("clear_recovered", None, "straight"),
 )
+
+
+def _load_runtime() -> None:
+    global LocalPlannerModule
+    global NavPath
+    global Odometry
+    global PointCloud2
+    global Pose
+    global PoseStamped
+    global Quaternion
+    global Vector3
+    global np
+
+    if np is None:
+        import numpy as _np
+
+        np = _np
+    if LocalPlannerModule is None:
+        from base_autonomy.modules.local_planner_module import (
+            LocalPlannerModule as _LocalPlannerModule,
+        )
+
+        LocalPlannerModule = _LocalPlannerModule
+    if Pose is None:
+        from core.msgs.geometry import (
+            Pose as _Pose,
+            PoseStamped as _PoseStamped,
+            Quaternion as _Quaternion,
+            Vector3 as _Vector3,
+        )
+        from core.msgs.nav import Odometry as _Odometry
+        from core.msgs.nav import Path as _NavPath
+        from core.msgs.sensor import PointCloud2 as _PointCloud2
+
+        Pose = _Pose
+        PoseStamped = _PoseStamped
+        Quaternion = _Quaternion
+        Vector3 = _Vector3
+        Odometry = _Odometry
+        NavPath = _NavPath
+        PointCloud2 = _PointCloud2
+
+
+def _base_report(
+    *,
+    backend: str,
+    backend_actual: str = "",
+    native_backend_used: bool = False,
+    local_planner_evidence: dict[str, Any] | None = None,
+    execution_mode: str = "runtime_gate",
+    environment: dict[str, Any] | None = None,
+    errors: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "lingtu.dynamic_obstacle_local_planner.v1",
+        "ok": False,
+        "execution_mode": execution_mode,
+        "simulation_only": True,
+        "real_robot_motion": False,
+        "cmd_vel_sent_to_hardware": False,
+        "backend_requested": backend,
+        "backend_actual": backend_actual,
+        "native_backend_used": native_backend_used,
+        "algorithm_backends": {
+            "local_planner": local_planner_evidence
+            or {
+                "requested": backend,
+                "configured_backend": backend,
+                "backend_actual": backend_actual,
+                "degraded": False,
+                "degraded_reason": "",
+                "native_backend_used": native_backend_used,
+                "exercised_by": "dynamic_obstacle",
+            },
+            "path_follower": {
+                "status": "not_exercised",
+                "exercised_by": "not_exercised",
+            },
+        },
+        "dynamic_replan_verified": False,
+        "obstacle_response_verified": False,
+        "clear_path_recovery_verified": False,
+        "min_clearance_m": None,
+        "phases": [],
+        "frames": {
+            "cmd_vel": "not_published",
+        },
+        "environment": environment or {},
+        "errors": errors or [],
+    }
 
 
 def _make_obstacle(center_y: float, *, half_width: float, spacing_x: int, spacing_y: int) -> np.ndarray:
@@ -143,8 +237,55 @@ def run_gate(
     min_clearance_m: float = 0.25,
     min_path_points: int = 20,
     min_lateral_response_m: float = 0.08,
+    platform_system: str | None = None,
+    allow_unstable_windows_numpy: bool = False,
 ) -> dict[str, Any]:
     errors: list[str] = []
+    resolved_platform = platform_system or platform.system()
+    runtime_injected = LocalPlannerModule is not None
+    if (
+        resolved_platform.lower() == "windows"
+        and not allow_unstable_windows_numpy
+        and not runtime_injected
+    ):
+        blocker = (
+            "Windows/MINGW NumPy local-planner runtime is not accepted; run this "
+            "gate on Linux or pass --allow-unstable-windows-numpy for manual diagnosis"
+        )
+        return _base_report(
+            backend=backend,
+            execution_mode="host_guard",
+            environment={
+                "platform_system": resolved_platform,
+                "accepted_host": False,
+                "accepted_platforms": ["Linux"],
+                "blocked_reason": "windows_mingw_numpy_not_accepted",
+                "blockers": [blocker],
+                "manual_diagnosis_flag": "--allow-unstable-windows-numpy",
+                "claim_boundary": "environment_blocked_no_algorithm_claim",
+            },
+            errors=[blocker],
+        )
+
+    try:
+        _load_runtime()
+    except Exception as exc:
+        blocker = f"dynamic obstacle gate runtime unavailable: {type(exc).__name__}: {exc}"
+        return _base_report(
+            backend=backend,
+            execution_mode="runtime_unavailable",
+            environment={
+                "platform_system": resolved_platform,
+                "accepted_host": resolved_platform.lower() != "windows"
+                or allow_unstable_windows_numpy
+                or runtime_injected,
+                "blocked_reason": "runtime_import_failed",
+                "blockers": [blocker],
+                "claim_boundary": "environment_blocked_no_algorithm_claim",
+            },
+            errors=[blocker],
+        )
+
     module = LocalPlannerModule(backend=backend)
     started = False
     backend_evidence: dict[str, Any] | None = None
@@ -258,6 +399,7 @@ def run_gate(
             "backend_requested": backend,
             "backend_actual": backend_actual,
             "native_backend_used": backend_actual == "nanobind",
+            "execution_mode": "runtime_gate",
             "algorithm_backends": {
                 "local_planner": backend_evidence,
                 "path_follower": {
@@ -277,52 +419,39 @@ def run_gate(
                 "local_path": "map",
                 "cmd_vel": "not_published",
             },
+            "environment": {
+                "platform_system": resolved_platform,
+                "accepted_host": True,
+                "blocked_reason": "",
+                "blockers": [],
+                "claim_boundary": "dynamic_obstacle_algorithm_gate",
+            },
             "errors": errors,
         }
     except Exception as exc:
-        return {
-            "schema_version": "lingtu.dynamic_obstacle_local_planner.v1",
-            "ok": False,
-            "simulation_only": True,
-            "real_robot_motion": False,
-            "cmd_vel_sent_to_hardware": False,
-            "backend_requested": backend,
-            "backend_actual": (
+        return _base_report(
+            backend=backend,
+            backend_actual=(
                 str(backend_evidence["backend_actual"])
                 if backend_evidence is not None
                 else (backend if started else "")
             ),
-            "native_backend_used": (
+            native_backend_used=(
                 bool(backend_evidence["native_backend_used"])
                 if backend_evidence is not None
                 else False
             ),
-            "algorithm_backends": {
-                "local_planner": backend_evidence
-                or {
-                    "requested": backend,
-                    "configured_backend": backend,
-                    "backend_actual": backend if started else "",
-                    "degraded": False,
-                    "degraded_reason": "",
-                    "native_backend_used": False,
-                    "exercised_by": "dynamic_obstacle",
-                },
-                "path_follower": {
-                    "status": "not_exercised",
-                    "exercised_by": "not_exercised",
-                },
+            local_planner_evidence=backend_evidence,
+            execution_mode="runtime_error",
+            environment={
+                "platform_system": resolved_platform,
+                "accepted_host": True,
+                "blocked_reason": "runtime_error",
+                "blockers": [str(exc)],
+                "claim_boundary": "runtime_error_no_algorithm_claim",
             },
-            "dynamic_replan_verified": False,
-            "obstacle_response_verified": False,
-            "clear_path_recovery_verified": False,
-            "min_clearance_m": None,
-            "phases": [],
-            "frames": {
-                "cmd_vel": "not_published",
-            },
-            "errors": [str(exc)],
-        }
+            errors=[str(exc)],
+        )
     finally:
         if started:
             module.stop()
@@ -336,6 +465,11 @@ def main() -> int:
     parser.add_argument("--min-path-points", type=int, default=20)
     parser.add_argument("--min-lateral-response-m", type=float, default=0.08)
     parser.add_argument(
+        "--allow-unstable-windows-numpy",
+        action="store_true",
+        help="Manual diagnosis only: bypass the Windows/MINGW NumPy guard.",
+    )
+    parser.add_argument(
         "--json-out",
         type=Path,
         default=ROOT / "artifacts/server_sim_closure/dynamic_obstacle_local_planner/report.json",
@@ -348,6 +482,7 @@ def main() -> int:
         min_clearance_m=args.min_clearance_m,
         min_path_points=args.min_path_points,
         min_lateral_response_m=args.min_lateral_response_m,
+        allow_unstable_windows_numpy=args.allow_unstable_windows_numpy,
     )
     text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
     print(text)

@@ -29,14 +29,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+from core.msgs.numpy_compat import np, numpy_import_is_safe
 
 DEFAULT_MID360_PATTERN = ROOT / "sim/assets/livox/mid360.npy"
 DEFAULT_MID360_SAMPLES_PER_FRAME = 24000
@@ -52,6 +52,115 @@ class PctRoute:
     path: list[list[float]]
     plan: dict[str, Any]
     case: dict[str, Any]
+
+
+@dataclass
+class _VelocityCommand:
+    linear_x: float = 0.0
+    linear_y: float = 0.0
+    angular_z: float = 0.0
+
+
+@dataclass(frozen=True)
+class _Vector2:
+    x: float
+    y: float
+
+    def __iter__(self):
+        yield self.x
+        yield self.y
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int | slice) -> Any:
+        values = [self.x, self.y]
+        return values[index]
+
+    def __add__(self, other: Any) -> "_Vector2":
+        other_vec = _as_vec2(other)
+        return _Vector2(self.x + other_vec.x, self.y + other_vec.y)
+
+    def __sub__(self, other: Any) -> "_Vector2":
+        other_vec = _as_vec2(other)
+        return _Vector2(self.x - other_vec.x, self.y - other_vec.y)
+
+    def __mul__(self, scalar: float) -> "_Vector2":
+        return _Vector2(self.x * float(scalar), self.y * float(scalar))
+
+    __rmul__ = __mul__
+
+    def tolist(self) -> list[float]:
+        return [self.x, self.y]
+
+    def astype(self, _dtype: Any) -> "_Vector2":
+        return self
+
+
+class _ArrayColumn:
+    def __init__(self, values: list[float]) -> None:
+        self._values = values
+
+    def tolist(self) -> list[float]:
+        return list(self._values)
+
+
+class _Array2D:
+    def __init__(self, rows: list[list[float]]) -> None:
+        self._rows = rows
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (len(self._rows), len(self._rows[0]) if self._rows else 0)
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def __getitem__(self, key: Any) -> Any:
+        if not isinstance(key, tuple):
+            return self._rows[key]
+        row_key, col_key = key
+        rows = self._rows[row_key]
+        if rows and not isinstance(rows[0], list):
+            rows = [rows]
+        if isinstance(col_key, int):
+            return _ArrayColumn([float(row[col_key]) for row in rows])
+        return _Array2D([row[col_key] for row in rows])
+
+    def tolist(self) -> list[list[float]]:
+        return [list(row) for row in self._rows]
+
+    def copy(self) -> "_Array2D":
+        return _Array2D(self.tolist())
+
+
+def _as_vec2(value: Any) -> _Vector2:
+    if isinstance(value, _Vector2):
+        return value
+    return _Vector2(float(value[0]), float(value[1]))
+
+
+def _clip(value: float, low: float, high: float) -> float:
+    return max(float(low), min(float(high), float(value)))
+
+
+def _xy_points(points: Any) -> list[_Vector2]:
+    return [_Vector2(float(point[0]), float(point[1])) for point in points]
+
+
+def _percentile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * float(q) / 100.0
+    lower = int(math.floor(rank))
+    upper = int(math.ceil(rank))
+    if lower == upper:
+        return ordered[lower]
+    weight = rank - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
 def _tail(path: Path, limit: int = 1200) -> str:
@@ -172,7 +281,322 @@ def _planner_contract(route: "PctRoute", planner: str) -> dict[str, Any]:
         "plan_backend_class": route.plan.get("backend_class"),
         "native_backend_used": bool(route.plan.get("native_backend_used")),
         "native_runtime_ok": bool((route.plan.get("native_runtime") or {}).get("ok", True)),
+        "pct_optimizer_enabled": route.plan.get("pct_optimizer_enabled"),
+        "pct_optimizer_attempted": route.plan.get("pct_optimizer_attempted"),
+        "pct_optimizer_accepted": route.plan.get("pct_optimizer_accepted"),
+        "pct_optimizer_reject_reason": str(
+            route.plan.get("pct_optimizer_reject_reason") or ""
+        ),
+        "pct_optimizer_blocked_sample_count": int(
+            route.plan.get("pct_optimizer_blocked_sample_count") or 0
+        ),
+        "pct_planner_path_mode": str(route.plan.get("pct_planner_path_mode") or ""),
     }
+
+
+def _source_map_artifacts(route: "PctRoute") -> dict[str, Any]:
+    existing = route.case.get("map_artifacts")
+    if isinstance(existing, dict):
+        return dict(existing)
+
+    assets = route.case.get("assets") if isinstance(route.case.get("assets"), dict) else {}
+    metadata_raw = str(assets.get("map_metadata") or assets.get("metadata") or "")
+    metadata_path = Path(metadata_raw) if metadata_raw else None
+    metadata: dict[str, Any] = {}
+    if metadata_path is not None and metadata_path.exists():
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                metadata = loaded
+        except Exception:
+            metadata = {}
+
+    metadata_assets = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    map_pcd = (
+        dict(metadata_assets.get("map_pcd"))
+        if isinstance(metadata_assets.get("map_pcd"), dict)
+        else {}
+    )
+    tomogram = (
+        dict(metadata_assets.get("tomogram"))
+        if isinstance(metadata_assets.get("tomogram"), dict)
+        else {}
+    )
+    map_sha = str(map_pcd.get("sha256") or "")
+    tomogram_sha = str(tomogram.get("sha256") or "")
+    tomogram_source_sha = str(tomogram.get("source_map_sha256") or "")
+    same_source_pcd = bool(map_sha and int(map_pcd.get("point_count") or 0) > 0)
+    same_source_tomogram = bool(
+        tomogram_sha
+        and tomogram_source_sha
+        and map_sha
+        and tomogram_source_sha == map_sha
+    )
+    return {
+        "ok": same_source_pcd and same_source_tomogram,
+        "source_contract": {
+            "same_source_pcd": same_source_pcd,
+            "same_source_tomogram": same_source_tomogram,
+        },
+        "metadata": {
+            "path": str(metadata_path) if metadata_path is not None else "",
+            "schema_version": metadata.get("schema_version") or "",
+            "source_profile": metadata.get("source_profile") or "",
+            "data_source": metadata.get("data_source") or "",
+            "mapping_source": metadata.get("mapping_source") or "",
+            "frame_id": metadata.get("frame_id") or "",
+        },
+        "assets": {
+            "map_pcd": map_pcd,
+            "tomogram": tomogram,
+        },
+    }
+
+
+def _source_map_artifact_blockers(map_artifacts: dict[str, Any]) -> list[str]:
+    source_contract = (
+        map_artifacts.get("source_contract")
+        if isinstance(map_artifacts.get("source_contract"), dict)
+        else {}
+    )
+    assets = (
+        map_artifacts.get("assets")
+        if isinstance(map_artifacts.get("assets"), dict)
+        else {}
+    )
+    map_pcd = assets.get("map_pcd") if isinstance(assets.get("map_pcd"), dict) else {}
+    tomogram = (
+        assets.get("tomogram") if isinstance(assets.get("tomogram"), dict) else {}
+    )
+    map_sha = str(map_pcd.get("sha256") or "")
+    try:
+        map_point_count = int(map_pcd.get("point_count") or 0)
+    except (TypeError, ValueError):
+        map_point_count = 0
+    tomogram_sha = str(tomogram.get("sha256") or "")
+    tomogram_source_sha = str(
+        tomogram.get("source_map_sha256")
+        or tomogram.get("input_pcd_sha256")
+        or ""
+    )
+
+    blockers: list[str] = []
+    if map_artifacts.get("ok") is not True:
+        blockers.append("source report lacks same-source map/tomogram artifact proof")
+    if source_contract.get("same_source_pcd") is not True:
+        blockers.append("source report same_source_pcd is not true")
+    if source_contract.get("same_source_tomogram") is not True:
+        blockers.append("source report same_source_tomogram is not true")
+    if not map_sha:
+        blockers.append("source report map_pcd.sha256 missing")
+    if map_point_count <= 0:
+        blockers.append("source report map_pcd.point_count missing")
+    if not tomogram_sha:
+        blockers.append("source report tomogram.sha256 missing")
+    if not tomogram_source_sha:
+        blockers.append("source report tomogram.source_map_sha256 missing")
+    if map_sha and tomogram_source_sha and tomogram_source_sha != map_sha:
+        blockers.append("source report tomogram.source_map_sha256 does not match map_pcd.sha256")
+    return blockers
+
+
+def _write_report_if_requested(args: argparse.Namespace, report: dict[str, Any]) -> None:
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+
+def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
+    if args.generate_source_report or args.force_generate_source_report:
+        _generate_source_report(args)
+
+    planner_name = str(getattr(args, "planner", "pct")).lower().strip()
+    report: dict[str, Any] = {
+        "schema_version": "lingtu.native_pct_mujoco_gate.v1",
+        "execution_mode": "contract_only",
+        "validation_only": True,
+        "ok": False,
+        "simulation_only": True,
+        "real_robot_motion": False,
+        "cmd_vel_sent_to_hardware": False,
+        "driver_used": False,
+        "gateway_used": False,
+        "physical_gait_verified": False,
+        "slam_verified": False,
+        "real_lidar_verified": False,
+        "planner": planner_name,
+        "source_report": str(args.source_report),
+        "route": str(args.route),
+        "claim_boundary": "contract_only_no_ros_mujoco_motion",
+        "validation_limitations": [
+            "Validates the PCT source-report contract only.",
+            "Does not launch ROS2 localPlanner/pathFollower.",
+            "Does not create a MuJoCo engine or prove cmd_vel-driven motion.",
+            "Does not prove Fast-LIO2 localization or hardware command safety.",
+        ],
+        "blockers": [],
+    }
+
+    try:
+        route = _load_pct_route(args.source_report, route=args.route, planner=planner_name)
+        source_contract = _planner_contract(route, planner_name)
+        map_artifacts = _source_map_artifacts(route)
+        command_generation = _command_generation_report(args, route=route)
+        blockers: list[str] = []
+        if planner_name == "pct" and source_contract["primary_planner"] != "pct":
+            blockers.append("source report primary_planner is not pct")
+        if planner_name == "pct" and source_contract["selected_planner"] != "pct":
+            blockers.append("source report selected_planner is not pct")
+        if source_contract["fallback_used"]:
+            blockers.append("source report used planner fallback")
+        if not source_contract["selected_route_ok"]:
+            blockers.append("source report selected_route_ok is false")
+        if not source_contract["path_safety_ok"]:
+            blockers.append("source report path_safety is not ok")
+        if planner_name == "pct" and not source_contract["native_backend_used"]:
+            blockers.append("source report did not use PCT native backend")
+        if planner_name == "pct" and not source_contract["native_runtime_ok"]:
+            blockers.append("source report PCT native_runtime is not ok")
+        if planner_name == "pct" and not source_contract["tomogram_exists"]:
+            blockers.append("source report PCT tomogram is missing")
+        if not map_artifacts.get("ok"):
+            blockers.append("source report lacks same-source map/tomogram artifact proof")
+
+        report.update(
+            {
+                "ok": not blockers,
+                "blockers": blockers,
+                "source_report": str(route.source_report),
+                "scene_xml": str(route.scene_xml),
+                "source_planning_contract": source_contract,
+                "source_tomogram": source_contract["tomogram"],
+                "source_tomogram_sha256": source_contract["tomogram_sha256"],
+                "map_artifacts": map_artifacts,
+                "command_generation": command_generation,
+                "deliverable_contract": {
+                    "checks": {
+                        "same_source_map_artifact": map_artifacts.get("ok") is True,
+                    }
+                },
+                "pct_backend_class": route.plan.get("backend_class"),
+                "pct_native_backend_used": (
+                    bool(route.plan.get("native_backend_used"))
+                    if planner_name == "pct"
+                    else False
+                ),
+                "pct_runtime_ok": bool(
+                    (route.plan.get("native_runtime") or {}).get("ok", True)
+                ),
+                "pct_path_count": len(route.path),
+                "pct_optimizer_enabled": source_contract["pct_optimizer_enabled"],
+                "pct_optimizer_attempted": source_contract["pct_optimizer_attempted"],
+                "pct_optimizer_accepted": source_contract["pct_optimizer_accepted"],
+                "pct_optimizer_reject_reason": source_contract[
+                    "pct_optimizer_reject_reason"
+                ],
+                "pct_optimizer_blocked_sample_count": source_contract[
+                    "pct_optimizer_blocked_sample_count"
+                ],
+                "pct_planner_path_mode": source_contract["pct_planner_path_mode"],
+                "pct_plan_ms": route.plan.get("plan_ms"),
+                "pct_path": route.path,
+                "start_xy": route.start[:2],
+                "final_goal_xy": route.goal[:2],
+                "contract_checks": {
+                    "source_report_loads": True,
+                    "planner_no_fallback": not source_contract["fallback_used"],
+                    "pct_native_backend_used": (
+                        source_contract["native_backend_used"]
+                        if planner_name == "pct"
+                        else None
+                    ),
+                    "pct_native_runtime_ok": (
+                        source_contract["native_runtime_ok"]
+                        if planner_name == "pct"
+                        else None
+                    ),
+                    "pct_optimizer_mode_recorded": (
+                        source_contract["pct_optimizer_enabled"] in (True, False)
+                        if planner_name == "pct"
+                        else None
+                    ),
+                    "pct_path_mode_supported": (
+                        source_contract["pct_planner_path_mode"]
+                        in {"native_astar_raw_path", "optimized_trajectory"}
+                        if planner_name == "pct"
+                        else None
+                    ),
+                    "pct_path_mode_matches_optimizer": (
+                        _pct_path_mode_allowed_by_optimizer_contract(
+                            source_contract["pct_optimizer_enabled"],
+                            source_contract["pct_planner_path_mode"],
+                            source_contract,
+                        )
+                        if planner_name == "pct"
+                        else None
+                    ),
+                    "pct_optimizer_rejection_recorded": (
+                        _pct_optimizer_rejection_recorded(source_contract)
+                        if planner_name == "pct"
+                        else None
+                    ),
+                    "tomogram_exists": source_contract["tomogram_exists"],
+                    "path_safety_ok": source_contract["path_safety_ok"],
+                    "same_source_map_artifact": map_artifacts.get("ok") is True,
+                },
+            }
+        )
+    except Exception as exc:
+        report["ok"] = False
+        report["error"] = str(exc)
+        report["blockers"] = [str(exc)]
+        report["contract_checks"] = {
+            "source_report_loads": False,
+            "planner_no_fallback": False,
+            "pct_native_backend_used": None,
+            "pct_native_runtime_ok": None,
+            "pct_optimizer_mode_recorded": None,
+            "pct_path_mode_supported": None,
+            "pct_path_mode_matches_optimizer": None,
+            "pct_optimizer_rejection_recorded": None,
+            "tomogram_exists": False,
+            "path_safety_ok": False,
+            "same_source_map_artifact": False,
+        }
+
+    _write_report_if_requested(args, report)
+    return report
+
+
+def _pct_optimizer_rejection_recorded(plan: dict[str, Any]) -> bool:
+    return bool(
+        plan.get("pct_optimizer_attempted") is True
+        and plan.get("pct_optimizer_accepted") is False
+        and str(plan.get("pct_optimizer_reject_reason") or "").strip()
+    )
+
+
+def _pct_path_mode_allowed_by_optimizer_contract(
+    optimizer_enabled: Any,
+    path_mode: str,
+    plan: dict[str, Any],
+) -> bool:
+    if optimizer_enabled not in (True, False):
+        return False
+    if path_mode not in {"native_astar_raw_path", "optimized_trajectory"}:
+        return False
+    if optimizer_enabled is False:
+        return path_mode == "native_astar_raw_path"
+    if path_mode == "optimized_trajectory":
+        return plan.get("pct_optimizer_accepted") is not False
+    return _pct_optimizer_rejection_recorded(plan)
 
 
 def _load_pct_route(source_report: Path, *, route: str, planner: str = "pct") -> PctRoute:
@@ -213,6 +637,29 @@ def _load_pct_route(source_report: Path, *, route: str, planner: str = "pct") ->
         runtime = selected.get("native_runtime") or {}
         if runtime and not runtime.get("ok"):
             raise ValueError("PCT native runtime is not healthy")
+        optimizer_enabled = selected.get("pct_optimizer_enabled")
+        if optimizer_enabled not in (True, False):
+            raise ValueError("PCT plan did not record optimizer enabled/disabled mode")
+        path_mode = str(selected.get("pct_planner_path_mode") or "").strip()
+        if path_mode not in {"native_astar_raw_path", "optimized_trajectory"}:
+            raise ValueError(
+                "PCT plan did not record a supported path mode "
+                "(native_astar_raw_path or optimized_trajectory)"
+            )
+        if not _pct_path_mode_allowed_by_optimizer_contract(
+            optimizer_enabled,
+            path_mode,
+            selected,
+        ):
+            raise ValueError(
+                "PCT plan optimizer mode/path mode lacks accepted trajectory "
+                "or recorded optimizer rejection: "
+                f"optimizer_enabled={optimizer_enabled!r}, "
+                f"pct_planner_path_mode={path_mode!r}, "
+                f"pct_optimizer_attempted={selected.get('pct_optimizer_attempted')!r}, "
+                f"pct_optimizer_accepted={selected.get('pct_optimizer_accepted')!r}, "
+                f"pct_optimizer_reject_reason={selected.get('pct_optimizer_reject_reason')!r}"
+            )
 
     selected_safety = selected.get("path_safety")
     if selected_safety is None and str(case.get("primary_planner", "")).lower() == planner:
@@ -264,6 +711,7 @@ def _native_node_commands(
     max_speed: float,
     autonomy_speed: float,
     goal_clear_range: float,
+    near_field_stop_distance: float,
     lookahead: float,
     stop_distance: float,
     obstacle_aware: bool,
@@ -291,6 +739,8 @@ def _native_node_commands(
         f"maxSpeed:={float(max_speed)}",
         "-p",
         f"goalClearRange:={float(goal_clear_range)}",
+        "-p",
+        f"nearFieldStopDis:={float(near_field_stop_distance)}",
     ]
     path_follower_cmd = [
         "ros2",
@@ -314,6 +764,77 @@ def _native_node_commands(
         "noRotAtGoal:=true",
     ]
     return local_planner_cmd, path_follower_cmd
+
+
+def _source_report_fingerprint(source_report: Path) -> dict[str, Any]:
+    resolved = source_report.resolve() if source_report.exists() else source_report
+    return {
+        "path": str(source_report),
+        "resolved_path": str(resolved),
+        "exists": source_report.is_file(),
+        "sha256": _sha256(source_report) if source_report.is_file() else "",
+    }
+
+
+def _command_generation_report(
+    args: argparse.Namespace,
+    *,
+    route: PctRoute,
+    path_folder: Path | None = None,
+) -> dict[str, Any]:
+    resolved_path_folder = path_folder or getattr(args, "path_folder", None)
+    if resolved_path_folder is None:
+        resolved_path_folder = _default_local_planner_path_folder()
+    obstacle_aware = not bool(getattr(args, "disable_obstacle_check", False))
+    local_planner_cmd, path_follower_cmd = _native_node_commands(
+        path_folder=resolved_path_folder,
+        max_speed=float(getattr(args, "max_speed", 0.4)),
+        autonomy_speed=float(getattr(args, "autonomy_speed", 0.35)),
+        goal_clear_range=float(getattr(args, "goal_clear_range", 0.45)),
+        near_field_stop_distance=float(getattr(args, "near_field_stop_distance", 0.5)),
+        lookahead=float(getattr(args, "lookahead", 0.55)),
+        stop_distance=float(getattr(args, "stop_distance", 0.30)),
+        obstacle_aware=obstacle_aware,
+        check_rot_obstacle=bool(getattr(args, "check_rot_obstacle", False)),
+    )
+    return {
+        "ok": True,
+        "claim_boundary": "command_generation_only_no_process_launch",
+        "source_report_fingerprint": _source_report_fingerprint(route.source_report),
+        "route": route.route,
+        "scene_xml": str(route.scene_xml),
+        "path_folder": str(resolved_path_folder),
+        "path_folder_exists": resolved_path_folder.is_dir(),
+        "ros2_executable": shutil.which("ros2") or "",
+        "ros_distro": os.environ.get("ROS_DISTRO", ""),
+        "ros_domain_id": str(getattr(args, "ros_domain_id", os.environ.get("ROS_DOMAIN_ID", ""))),
+        "python_executable": sys.executable,
+        "pythonpath_prefix": [str(SRC), str(ROOT)],
+        "commands": {
+            "localPlanner": local_planner_cmd,
+            "pathFollower": path_follower_cmd,
+        },
+        "resolved_executables": {
+            "localPlanner": "ros2 run local_planner localPlanner",
+            "pathFollower": "ros2 run local_planner pathFollower",
+        },
+        "parameters": {
+            "max_speed": float(getattr(args, "max_speed", 0.4)),
+            "autonomy_speed": float(getattr(args, "autonomy_speed", 0.35)),
+            "goal_clear_range": float(getattr(args, "goal_clear_range", 0.45)),
+            "near_field_stop_distance": float(getattr(args, "near_field_stop_distance", 0.5)),
+            "lookahead": float(getattr(args, "lookahead", 0.55)),
+            "stop_distance": float(getattr(args, "stop_distance", 0.30)),
+            "obstacle_aware": obstacle_aware,
+            "check_rot_obstacle": bool(getattr(args, "check_rot_obstacle", False)),
+        },
+        "safety_boundary": {
+            "starts_gateway": False,
+            "starts_driver": False,
+            "starts_systemd": False,
+            "requires_isolated_ros_domain_for_launch": True,
+        },
+    }
 
 
 def _default_local_planner_path_folder() -> Path:
@@ -428,6 +949,12 @@ def _obstacle_boxes(route: PctRoute) -> list[dict[str, Any]]:
     for box in metadata.get("obstacles") or []:
         if not isinstance(box, dict):
             continue
+        navigation_blocking = box.get("navigation_blocking")
+        if navigation_blocking is False:
+            continue
+        kind = str(box.get("kind") or "obstacle").strip().lower()
+        if navigation_blocking is None and kind not in {"obstacle", "boundary"}:
+            continue
         name = str(box.get("name", ""))
         if "floor_plate" in name:
             continue
@@ -535,10 +1062,44 @@ def _trail_obstacle_clearance(
     }
 
 
-def _path_length_xy(points_xy: np.ndarray) -> float:
+def _path_length_xy(points_xy: Any) -> float:
+    points = _xy_points(points_xy)
+    if len(points) < 2:
+        return 0.0
+    return float(
+        sum(
+            math.hypot(points[idx].x - points[idx - 1].x, points[idx].y - points[idx - 1].y)
+            for idx in range(1, len(points))
+        )
+    )
+
+
+def _path_length_xy_numpy(points_xy: Any) -> float:
     if len(points_xy) < 2:
         return 0.0
     return float(np.sum(np.linalg.norm(np.diff(points_xy, axis=0), axis=1)))
+
+
+def _waypoint_goal_preservation(
+    original: list[list[float]],
+    filtered: list[list[float]],
+    *,
+    tolerance_m: float = 0.25,
+) -> dict[str, Any]:
+    original_goal = original[-1][:2] if original else []
+    follow_goal = filtered[-1][:2] if filtered else []
+    distance = (
+        float(math.dist(original_goal, follow_goal))
+        if len(original_goal) == 2 and len(follow_goal) == 2
+        else float("inf")
+    )
+    return {
+        "goal_preserved": bool(distance <= float(tolerance_m)),
+        "goal_preservation_tolerance_m": float(tolerance_m),
+        "source_path_goal_xy": original_goal,
+        "follow_path_goal_xy": follow_goal,
+        "goal_shift_m": None if not math.isfinite(distance) else round(distance, 4),
+    }
 
 
 def _local_path_obstacle_evidence(
@@ -568,30 +1129,29 @@ def _local_path_obstacle_evidence(
             "points_into_obstacle": False,
         }
 
-    arr = np.asarray(local_path, dtype=np.float64)
-    path_xy = arr[:, :2]
+    path_xy = _xy_points(local_path)
     if robot_frame:
         local_xy = path_xy
-        world_xy = _robot_xy_to_world_xy(path_xy, state)
+        world_xy = _xy_points(_robot_xy_to_world_xy(path_xy, state))
     else:
         world_xy = path_xy
-        local_xy = _world_xy_to_robot_xy(path_xy, state)
+        local_xy = _xy_points(_world_xy_to_robot_xy(path_xy, state))
 
-    forward_count = int(np.sum(local_xy[:, 0] >= -0.05))
+    forward_count = sum(1 for point in local_xy if point.x >= -0.05)
     behind_count = int(len(local_xy) - forward_count)
     best = None
     best_name = None
     segment_hits: list[dict[str, Any]] = []
     for idx, point in enumerate(world_xy):
         for box in boxes:
-            clearance = _point_box_clearance((float(point[0]), float(point[1])), box)
+            clearance = _point_box_clearance((point.x, point.y), box)
             if best is None or clearance < best:
                 best = clearance
                 best_name = box.get("name")
         if idx == 0:
             continue
-        a = [float(world_xy[idx - 1, 0]), float(world_xy[idx - 1, 1]), 0.0]
-        b = [float(world_xy[idx, 0]), float(world_xy[idx, 1]), 0.0]
+        a = [world_xy[idx - 1].x, world_xy[idx - 1].y, 0.0]
+        b = [world_xy[idx].x, world_xy[idx].y, 0.0]
         for box in boxes:
             if _segment_intersects_expanded_box(
                 a,
@@ -621,7 +1181,7 @@ def _local_path_obstacle_evidence(
         "behind_point_count": behind_count,
         "box_count": len(boxes),
         "path_length_m": round(_path_length_xy(world_xy), 4),
-        "max_abs_lateral_m": round(float(np.max(np.abs(local_xy[:, 1]))), 4),
+        "max_abs_lateral_m": round(max(abs(point.y) for point in local_xy), 4),
         "min_clearance_m": None if best is None else round(float(best), 4),
         "min_clearance_minus_robot_radius_m": (
             None if margin is None else round(float(margin), 4)
@@ -652,7 +1212,7 @@ def _summarize_local_path_obstacle_evidence(
     stopped = [value for value in stop_samples if int(value) > 0]
     slowed = [value for value in slow_down_samples if int(value) > 0]
     has_local_path = int(path_count) > 0 and bool(samples)
-    ok = has_local_path and (not obstacle_aware or (not collisions and not point_hits))
+    ok = has_local_path and (not obstacle_aware or (not collisions and not point_hits and not stopped))
     reasons: list[str] = []
     if not has_local_path:
         reasons.append("local_path_missing")
@@ -660,6 +1220,8 @@ def _summarize_local_path_obstacle_evidence(
         reasons.append("local_path_collision_margin")
     if point_hits:
         reasons.append("local_path_points_into_obstacle")
+    if stopped:
+        reasons.append("near_field_stop")
     return {
         "schema_version": "lingtu.native_local_path_obstacle_evidence.v1",
         "ok": bool(ok),
@@ -691,7 +1253,7 @@ def _summarize_local_path_obstacle_evidence(
     }
 
 
-def _polyline_progress_and_error(point: tuple[float, float], reference: np.ndarray, cumulative: np.ndarray) -> tuple[float, float]:
+def _polyline_progress_and_error(point: tuple[float, float], reference: Any, cumulative: Any) -> tuple[float, float]:
     best_distance = float("inf")
     best_progress = 0.0
     px, py = float(point[0]), float(point[1])
@@ -721,6 +1283,7 @@ def _trajectory_correctness(
     max_p95_error_m: float,
     max_progress_regressions: int,
     min_route_progress_ratio: float,
+    reached_goal: bool = False,
 ) -> dict[str, Any]:
     if len(trail) < 2 or len(reference_path) < 2:
         return {
@@ -731,9 +1294,14 @@ def _trajectory_correctness(
             "reference_point_count": len(reference_path),
         }
 
-    reference = np.asarray([[float(p[0]), float(p[1])] for p in reference_path], dtype=np.float64)
-    segment_lengths = np.linalg.norm(np.diff(reference, axis=0), axis=1)
-    cumulative = np.concatenate([[0.0], np.cumsum(segment_lengths)])
+    reference = _xy_points(reference_path)
+    segment_lengths = [
+        math.hypot(reference[idx].x - reference[idx - 1].x, reference[idx].y - reference[idx - 1].y)
+        for idx in range(1, len(reference))
+    ]
+    cumulative = [0.0]
+    for length in segment_lengths:
+        cumulative.append(cumulative[-1] + length)
     total = float(cumulative[-1])
     if total <= 1e-6:
         return {
@@ -761,15 +1329,18 @@ def _trajectory_correctness(
             max_regression = max(max_regression, regression)
         prev = max(prev, progress)
 
-    errors_arr = np.asarray(errors, dtype=np.float64)
-    p95 = float(np.percentile(errors_arr, 95))
-    mean = float(np.mean(errors_arr))
-    max_error = float(np.max(errors_arr))
+    p95 = _percentile(errors, 95)
+    mean = float(sum(errors) / len(errors))
+    max_error = float(max(errors))
     final_ratio = float(progresses[-1] / total)
+    progress_ok = (
+        final_ratio >= float(min_route_progress_ratio)
+        or bool(reached_goal)
+    )
     ok = (
         p95 <= float(max_p95_error_m)
         and regressions <= int(max_progress_regressions)
-        and final_ratio >= float(min_route_progress_ratio)
+        and progress_ok
     )
     return {
         "ok": bool(ok),
@@ -779,6 +1350,10 @@ def _trajectory_correctness(
         "reference_length_m": round(total, 4),
         "final_progress_m": round(float(progresses[-1]), 4),
         "final_progress_ratio": round(final_ratio, 4),
+        "route_progress_ok": bool(progress_ok),
+        "goal_reached_override": bool(
+            reached_goal and final_ratio < float(min_route_progress_ratio)
+        ),
         "mean_lateral_error_m": round(mean, 4),
         "p95_lateral_error_m": round(p95, 4),
         "max_lateral_error_m": round(max_error, 4),
@@ -825,6 +1400,24 @@ def _detour_for_box(
     clearance: float,
     extra_margin: float,
 ) -> list[list[float]]:
+    candidates = _detour_candidates_for_box(
+        a,
+        b,
+        box,
+        clearance=clearance,
+        extra_margin=extra_margin,
+    )
+    return candidates[0] if candidates else []
+
+
+def _detour_candidates_for_box(
+    a: list[float],
+    b: list[float],
+    box: dict[str, Any],
+    *,
+    clearance: float,
+    extra_margin: float,
+) -> list[list[list[float]]]:
     cx, cy = [float(v) for v in box["position"][:2]]
     hx, hy = [float(v) for v in box["half_size"][:2]]
     z = float(b[2]) if len(b) > 2 else 0.0
@@ -835,19 +1428,47 @@ def _detour_for_box(
     x_after = cx + expanded_x
     if float(b[0]) < float(a[0]):
         x_before, x_after = x_after, x_before
-    candidate_ys = [cy - expanded_y, cy + expanded_y]
-    best_y = min(
-        candidate_ys,
-        key=lambda y: math.hypot(x_before - float(a[0]), y - float(a[1]))
-        + math.hypot(x_after - x_before, 0.0)
-        + math.hypot(float(b[0]) - x_after, float(b[1]) - y),
-    )
-    turn_y = float(b[1])
-    return [
-        [float(x_before), float(best_y), z],
-        [float(x_after), float(best_y), z],
-        [float(x_after), turn_y, z],
-    ]
+
+    candidates: list[list[list[float]]] = []
+    for y in (cy - expanded_y, cy + expanded_y):
+        candidates.append(
+            [
+                [float(a[0]), float(y), z],
+                [float(b[0]), float(y), z],
+                [float(b[0]), float(b[1]), z],
+            ]
+        )
+        candidates.append(
+            [
+                [float(x_before), float(y), z],
+                [float(x_after), float(y), z],
+                [float(x_after), float(b[1]), z],
+            ]
+        )
+    for x in (cx - expanded_x, cx + expanded_x):
+        candidates.append(
+            [
+                [float(x), float(a[1]), z],
+                [float(x), float(b[1]), z],
+                [float(b[0]), float(b[1]), z],
+            ]
+        )
+
+    def cost(detour: list[list[float]]) -> float:
+        points = [a, *detour, b]
+        return sum(
+            math.hypot(
+                float(points[idx][0]) - float(points[idx - 1][0]),
+                float(points[idx][1]) - float(points[idx - 1][1]),
+            )
+            for idx in range(1, len(points))
+        )
+
+    unique: dict[tuple[tuple[float, float], ...], list[list[float]]] = {}
+    for detour in candidates:
+        key = tuple((round(float(point[0]), 4), round(float(point[1]), 4)) for point in detour)
+        unique.setdefault(key, detour)
+    return sorted(unique.values(), key=cost)
 
 
 def _detour_is_locally_progressive(a: list[float], b: list[float], detour: list[list[float]]) -> bool:
@@ -880,6 +1501,39 @@ def _dedupe_path(path: list[list[float]], *, min_step_m: float = 0.08) -> list[l
     return deduped
 
 
+def _detour_is_safe(
+    a: list[float],
+    b: list[float],
+    detour: list[list[float]],
+    boxes: list[dict[str, Any]],
+    *,
+    clearance: float,
+    sample_step_m: float,
+) -> bool:
+    if not detour or not _detour_is_locally_progressive(a, b, detour):
+        return False
+    candidate = [a, *detour, b]
+    for point in detour:
+        if any(
+            _point_inside_expanded_box((float(point[0]), float(point[1])), box, clearance)
+            for box in boxes
+        ):
+            return False
+    for start, end in zip(candidate, candidate[1:]):
+        if any(
+            _segment_intersects_expanded_box(
+                start,
+                end,
+                box,
+                clearance=clearance,
+                sample_step_m=sample_step_m,
+            )
+            for box in boxes
+        ):
+            return False
+    return True
+
+
 def _build_safe_follow_path(
     route: PctRoute,
     *,
@@ -890,7 +1544,12 @@ def _build_safe_follow_path(
 ) -> tuple[list[list[float]], dict[str, Any]]:
     original = [[float(v) for v in point[:3]] for point in route.path]
     if not enabled:
-        return original, {"enabled": False, "inserted_count": 0, "path_count": len(original)}
+        return original, {
+            "enabled": False,
+            "inserted_count": 0,
+            "path_count": len(original),
+            **_waypoint_goal_preservation(original, original),
+        }
 
     boxes = _obstacle_boxes(route)
     avoidance_clearance = float(clearance) + float(extra_margin)
@@ -928,7 +1587,40 @@ def _build_safe_follow_path(
             None,
         )
         if hit_box is not None and unsafe_box is None:
-            rejected_detours += 1
+            detour_candidates = _detour_candidates_for_box(
+                a,
+                b,
+                hit_box,
+                clearance=float(clearance),
+                extra_margin=float(extra_margin),
+            )
+            safe_detour = next(
+                (
+                    detour
+                    for detour in detour_candidates
+                    if _detour_is_safe(
+                        a,
+                        b,
+                        detour,
+                        boxes,
+                        clearance=avoidance_clearance,
+                        sample_step_m=sample_step_m,
+                    )
+                ),
+                None,
+            )
+            if safe_detour is not None:
+                inserted_for_segment = safe_detour
+                insertions.append(
+                    {
+                        "obstacle": str(hit_box.get("name") or ""),
+                        "from": a,
+                        "to": b,
+                        "detour": safe_detour,
+                    }
+                )
+            else:
+                rejected_detours += 1
         path.extend(inserted_for_segment)
         if unsafe_box is not None:
             skipped_unsafe_waypoints += 1
@@ -945,41 +1637,42 @@ def _build_safe_follow_path(
         "original_count": len(original),
         "path_count": len(filtered),
         "inserted_count": sum(len(item["detour"]) for item in insertions),
-        "auto_detour_enabled": False,
+        "auto_detour_enabled": True,
         "rejected_detour_count": rejected_detours,
         "skipped_unsafe_waypoint_count": skipped_unsafe_waypoints,
         "insertions": insertions,
+        **_waypoint_goal_preservation(original, filtered),
     }
 
 
-def _route_frame_at_ratio(route: PctRoute, ratio: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    path = np.asarray(route.path, dtype=np.float64)[:, :2]
-    if path.shape[0] < 2:
-        anchor = np.asarray(route.goal[:2], dtype=np.float64)
-        tangent = np.asarray([1.0, 0.0], dtype=np.float64)
-        return anchor, tangent, np.asarray([0.0, 1.0], dtype=np.float64)
-    segments = path[1:] - path[:-1]
-    lengths = np.linalg.norm(segments, axis=1)
-    total = float(np.sum(lengths))
+def _route_frame_at_ratio(route: PctRoute, ratio: float) -> tuple[_Vector2, _Vector2, _Vector2]:
+    path = _xy_points(route.path)
+    if len(path) < 2:
+        anchor = _as_vec2(route.goal[:2])
+        tangent = _Vector2(1.0, 0.0)
+        return anchor, tangent, _Vector2(0.0, 1.0)
+    segments = [path[idx + 1] - path[idx] for idx in range(len(path) - 1)]
+    lengths = [math.hypot(segment.x, segment.y) for segment in segments]
+    total = float(sum(lengths))
     if total < 1e-6:
         anchor = path[0]
-        tangent = np.asarray([1.0, 0.0], dtype=np.float64)
-        return anchor, tangent, np.asarray([0.0, 1.0], dtype=np.float64)
-    target = float(np.clip(float(ratio), 0.0, 1.0)) * total
+        tangent = _Vector2(1.0, 0.0)
+        return anchor, tangent, _Vector2(0.0, 1.0)
+    target = _clip(float(ratio), 0.0, 1.0) * total
     accum = 0.0
     anchor = path[-1]
-    tangent = np.asarray([1.0, 0.0], dtype=np.float64)
+    tangent = _Vector2(1.0, 0.0)
     for idx, (segment, length) in enumerate(zip(segments, lengths)):
         seg_len = float(length)
         if seg_len < 1e-6:
             continue
         if target <= accum + seg_len or idx == len(segments) - 1:
-            local_t = float(np.clip((target - accum) / seg_len, 0.0, 1.0))
+            local_t = _clip((target - accum) / seg_len, 0.0, 1.0)
             anchor = path[idx] + segment * local_t
-            tangent = segment / seg_len
+            tangent = _Vector2(segment.x / seg_len, segment.y / seg_len)
             break
         accum += seg_len
-    normal = np.asarray([-float(tangent[1]), float(tangent[0])], dtype=np.float64)
+    normal = _Vector2(-tangent.y, tangent.x)
     return anchor, tangent, normal
 
 
@@ -1085,20 +1778,38 @@ def _append_lidar_points(engine: Any, points: list[tuple[float, float, float, fl
     lidar = engine.get_lidar_points()
     if lidar is None or len(lidar) == 0:
         return
-    for row in np.asarray(lidar[: min(limit, len(lidar))]):
+    for row in lidar[: min(limit, len(lidar))]:
         intensity = float(row[3]) if len(row) > 3 else 1.0
         points.append((float(row[0]), float(row[1]), float(row[2]), intensity))
 
 
-def _sample_lidar_points(engine: Any, limit: int) -> np.ndarray:
-    if limit <= 0:
+def _empty_lidar_points() -> Any:
+    if numpy_import_is_safe():
         return np.zeros((0, 4), dtype=np.float32)
+    return _Array2D([])
+
+
+def _sample_lidar_points(engine: Any, limit: int) -> Any:
+    if limit <= 0:
+        return _empty_lidar_points()
     lidar = engine.get_lidar_points()
     if lidar is None:
-        return np.zeros((0, 4), dtype=np.float32)
+        return _empty_lidar_points()
+    if not numpy_import_is_safe():
+        rows: list[list[float]] = []
+        for row in lidar:
+            values = [float(row[0]), float(row[1]), float(row[2])]
+            values.append(float(row[3]) if len(row) > 3 else 1.0)
+            rows.append(values[:4])
+        if not rows:
+            return _empty_lidar_points()
+        if len(rows) > limit:
+            step = max(1, int(math.ceil(len(rows) / float(limit))))
+            rows = rows[::step][:limit]
+        return _Array2D(rows)
     pts = np.asarray(lidar, dtype=np.float32)
     if pts.size == 0:
-        return np.zeros((0, 4), dtype=np.float32)
+        return _empty_lidar_points()
     if pts.ndim != 2:
         pts = pts.reshape((-1, pts.shape[-1]))
     if pts.shape[1] == 3:
@@ -1116,7 +1827,17 @@ def _yaw_from_quat_xyzw(quat: Any) -> float:
     return math.atan2(siny_cosp, cosy_cosp)
 
 
-def _world_xy_to_robot_xy(points_xy: Any, state: Any) -> np.ndarray:
+def _world_xy_to_robot_xy(points_xy: Any, state: Any) -> Any:
+    if not numpy_import_is_safe():
+        yaw = _yaw_from_quat_xyzw(state.orientation)
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+        sx = float(state.position[0])
+        sy = float(state.position[1])
+        return [
+            _Vector2((point.x - sx) * c + (point.y - sy) * s, -(point.x - sx) * s + (point.y - sy) * c)
+            for point in _xy_points(points_xy)
+        ]
     pts = np.asarray(points_xy, dtype=np.float64)
     if pts.size == 0:
         return np.zeros((0, 2), dtype=np.float64)
@@ -1130,7 +1851,17 @@ def _world_xy_to_robot_xy(points_xy: Any, state: Any) -> np.ndarray:
     return np.stack([dx * c + dy * s, -dx * s + dy * c], axis=1)
 
 
-def _robot_xy_to_world_xy(points_xy: Any, state: Any) -> np.ndarray:
+def _robot_xy_to_world_xy(points_xy: Any, state: Any) -> Any:
+    if not numpy_import_is_safe():
+        yaw = _yaw_from_quat_xyzw(state.orientation)
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+        sx = float(state.position[0])
+        sy = float(state.position[1])
+        return [
+            _Vector2(sx + point.x * c - point.y * s, sy + point.x * s + point.y * c)
+            for point in _xy_points(points_xy)
+        ]
     pts = np.asarray(points_xy, dtype=np.float64)
     if pts.size == 0:
         return np.zeros((0, 2), dtype=np.float64)
@@ -1177,28 +1908,34 @@ def _select_local_target(
     local_path_frame_id: str,
     fallback_target: list[float],
     lookahead_m: float,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[Any, Any]:
     """Return a local-frame target and the equivalent world-frame target."""
 
-    target_local: np.ndarray | None = None
+    target_local: Any | None = None
     if len(local_path) >= 2:
-        path_arr = np.asarray(local_path, dtype=np.float64)[:, :2]
-        local_arr = path_arr if _path_is_robot_frame(local_path_frame_id) else _world_xy_to_robot_xy(path_arr, state)
-        mask = np.linalg.norm(local_arr, axis=1) > 0.08
-        candidates = local_arr[mask]
+        path_xy = _xy_points(local_path)
+        local_arr = (
+            path_xy
+            if _path_is_robot_frame(local_path_frame_id)
+            else _xy_points(_world_xy_to_robot_xy(path_xy, state))
+        )
+        candidates = [point for point in local_arr if math.hypot(point.x, point.y) > 0.08]
         if len(candidates):
-            forward = candidates[candidates[:, 0] > -0.15]
+            forward = [point for point in candidates if point.x > -0.15]
             candidates = forward if len(forward) else candidates
-            distances = np.linalg.norm(candidates, axis=1)
-            at_lookahead = np.flatnonzero(distances >= max(float(lookahead_m), 0.05))
-            idx = int(at_lookahead[0]) if len(at_lookahead) else int(np.argmax(distances))
+            distances = [math.hypot(point.x, point.y) for point in candidates]
+            threshold = max(float(lookahead_m), 0.05)
+            idx = next(
+                (candidate_idx for candidate_idx, distance in enumerate(distances) if distance >= threshold),
+                max(range(len(distances)), key=lambda candidate_idx: distances[candidate_idx]),
+            )
             target_local = candidates[idx]
 
     if target_local is None:
-        target_local = _world_xy_to_robot_xy(np.asarray([fallback_target[:2]], dtype=np.float64), state)[0]
+        target_local = _as_vec2(_world_xy_to_robot_xy([fallback_target[:2]], state)[0])
 
-    target_world = _robot_xy_to_world_xy(np.asarray([target_local], dtype=np.float64), state)[0]
-    return target_local.astype(np.float64), target_world.astype(np.float64)
+    target_world = _as_vec2(_robot_xy_to_world_xy([target_local], state)[0])
+    return target_local, target_world
 
 
 def _omni_cart_cmd(
@@ -1215,8 +1952,6 @@ def _omni_cart_cmd(
     max_yaw_rate: float,
     yaw_deadband: float,
 ) -> tuple[Any, dict[str, Any]]:
-    from sim.engine.core.engine import VelocityCommand
-
     target_local, target_world = _select_local_target(
         state=state,
         local_path=local_path,
@@ -1224,7 +1959,7 @@ def _omni_cart_cmd(
         fallback_target=fallback_target,
         lookahead_m=lookahead_m,
     )
-    distance = float(np.linalg.norm(target_local))
+    distance = math.hypot(float(target_local[0]), float(target_local[1]))
     debug = {
         "source": "omni_local_path_tracker",
         "target_distance_m": round(distance, 4),
@@ -1232,19 +1967,19 @@ def _omni_cart_cmd(
         "target_world": [round(float(v), 4) for v in target_world[:2]],
     }
     if distance < 0.05:
-        return VelocityCommand(), debug
+        return _VelocityCommand(), debug
 
     speed = min(float(max_speed), max(float(min_speed), min(float(max_speed), distance * 0.8)))
-    vx = float(np.clip(speed * target_local[0] / distance, -float(max_speed), float(max_speed)))
-    vy = float(np.clip(speed * target_local[1] / distance, -float(max_lateral_speed), float(max_lateral_speed)))
+    vx = _clip(speed * target_local[0] / distance, -float(max_speed), float(max_speed))
+    vy = _clip(speed * target_local[1] / distance, -float(max_lateral_speed), float(max_lateral_speed))
 
     dx = float(target_world[0]) - float(state.position[0])
     dy = float(target_world[1]) - float(state.position[1])
     target_yaw = math.atan2(dy, dx) if abs(dx) + abs(dy) > 1e-6 else _yaw_from_quat_xyzw(state.orientation)
     yaw_error = _wrap_angle(target_yaw - _yaw_from_quat_xyzw(state.orientation))
-    wz = 0.0 if abs(yaw_error) < float(yaw_deadband) else float(np.clip(float(yaw_gain) * yaw_error, -float(max_yaw_rate), float(max_yaw_rate)))
+    wz = 0.0 if abs(yaw_error) < float(yaw_deadband) else _clip(float(yaw_gain) * yaw_error, -float(max_yaw_rate), float(max_yaw_rate))
     debug["yaw_error_rad"] = round(float(yaw_error), 4)
-    return VelocityCommand(linear_x=vx, linear_y=vy, angular_z=wz), debug
+    return _VelocityCommand(linear_x=vx, linear_y=vy, angular_z=wz), debug
 
 
 def _ros_path_to_points(msg: Any) -> list[list[float]]:
@@ -1970,6 +2705,9 @@ def _stamp(node: Any, msg_or_header: Any) -> Any:
 
 
 def run_gate(args: argparse.Namespace) -> dict[str, Any]:
+    if getattr(args, "contract_only", False):
+        return _contract_only_report(args)
+
     if args.video_out and not os.environ.get("MUJOCO_GL"):
         os.environ["MUJOCO_GL"] = "egl"
         os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
@@ -1980,27 +2718,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     planner_name = str(getattr(args, "planner", "pct")).lower().strip()
     route = _load_pct_route(args.source_report, route=args.route, planner=planner_name)
     source_contract = _planner_contract(route, planner_name)
-    mods = _load_ros_modules()
-
-    from sim.engine.core.engine import VelocityCommand
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_engine, _resolve_mid360_pattern
-
-    rclpy = mods["rclpy"]
-    Odometry = mods["Odometry"]
-    PointStamped = mods["PointStamped"]
-    PointField = mods["PointField"]
-    RosPath = mods["RosPath"]
-    TwistStamped = mods["TwistStamped"]
-    Float32 = mods["Float32"]
-    Header = mods["Header"]
-    Int8 = mods["Int8"]
-    String = mods["String"]
-    point_cloud2 = mods["point_cloud2"]
-
-    os.environ["ROS_DOMAIN_ID"] = str(args.ros_domain_id)
-    env = os.environ.copy()
-    env["ROS_DOMAIN_ID"] = str(args.ros_domain_id)
-    env["PYTHONPATH"] = f"{SRC}{os.pathsep}{ROOT}{os.pathsep}" + env.get("PYTHONPATH", "")
+    map_artifacts = _source_map_artifacts(route)
 
     report: dict[str, Any] = {
         "schema_version": "lingtu.native_pct_mujoco_gate.v1",
@@ -2051,14 +2769,31 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "source_planning_contract": source_contract,
         "source_tomogram": source_contract["tomogram"],
         "source_tomogram_sha256": source_contract["tomogram_sha256"],
+        "map_artifacts": map_artifacts,
+        "deliverable_contract": {
+            "checks": {
+                "same_source_map_artifact": map_artifacts.get("ok") is True,
+            }
+        },
         "pct_backend_class": route.plan.get("backend_class"),
         "pct_native_backend_used": bool(route.plan.get("native_backend_used")) if planner_name == "pct" else False,
         "pct_runtime_ok": bool((route.plan.get("native_runtime") or {}).get("ok", True)),
         "pct_path_count": len(route.path),
+        "pct_optimizer_enabled": source_contract["pct_optimizer_enabled"],
+        "pct_optimizer_attempted": source_contract["pct_optimizer_attempted"],
+        "pct_optimizer_accepted": source_contract["pct_optimizer_accepted"],
+        "pct_optimizer_reject_reason": source_contract["pct_optimizer_reject_reason"],
+        "pct_optimizer_blocked_sample_count": source_contract[
+            "pct_optimizer_blocked_sample_count"
+        ],
+        "pct_planner_path_mode": source_contract["pct_planner_path_mode"],
         "pct_plan_ms": route.plan.get("plan_ms"),
         "pct_path": route.path,
         "start_xy": route.start[:2],
-        "final_goal_xy": route.goal[:2],
+        "requested_goal_xy": route.goal[:2],
+        "pct_path_goal_xy": route.path[-1][:2] if route.path else [],
+        "tracking_goal_xy": [],
+        "final_goal_xy": route.path[-1][:2] if route.path else route.goal[:2],
         "validation_limitations": [
             "MuJoCo kinematic base only; policy gait and contact stability are not verified by this gate.",
             "Fast-LIO2 live localization is not part of this gate; run the Fast-LIO2 MuJoCo/live gate separately.",
@@ -2073,8 +2808,15 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
 
     artifact_dir = args.json_out.parent if args.json_out else args.artifact_dir
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    local_planner_log = artifact_dir / "localPlanner.log"
-    path_follower_log = artifact_dir / "pathFollower.log"
+    source_artifact_blockers = _source_map_artifact_blockers(map_artifacts)
+    if source_artifact_blockers:
+        report["native_gate_skipped"] = True
+        report["claim_boundary"] = "pre_native_source_artifact_contract_failed"
+        report["blockers"] = source_artifact_blockers
+        report["remaining_gaps"] = source_artifact_blockers
+        _write_report_if_requested(args, report)
+        return report
+
     path_folder = args.path_folder or _default_local_planner_path_folder()
     obstacle_aware = not args.disable_obstacle_check
     local_planner_cmd, path_follower_cmd = _native_node_commands(
@@ -2082,6 +2824,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         max_speed=args.max_speed,
         autonomy_speed=args.autonomy_speed,
         goal_clear_range=args.goal_clear_range,
+        near_field_stop_distance=args.near_field_stop_distance,
         lookahead=args.lookahead,
         stop_distance=args.stop_distance,
         obstacle_aware=obstacle_aware,
@@ -2091,17 +2834,20 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "localPlanner": local_planner_cmd,
         "pathFollower": path_follower_cmd,
     }
-    obstacle_points, obstacle_names = _obstacle_points_from_metadata(
-        route,
-        spacing=args.obstacle_point_spacing,
-        intensity=args.obstacle_intensity,
+    report["command_generation"] = _command_generation_report(
+        args,
+        route=route,
+        path_folder=path_folder,
     )
+    obstacle_boxes = _obstacle_boxes(route)
+    obstacle_names = [str(box.get("name") or "") for box in obstacle_boxes]
     report["obstacle_aware"] = {
         "enabled": bool(obstacle_aware),
         "check_rot_obstacle": bool(args.check_rot_obstacle),
-        "metadata_points": len(obstacle_points),
+        "metadata_points": 0,
+        "metadata_obstacle_count": len(obstacle_boxes),
         "obstacles": obstacle_names,
-        "source": "metadata.added_obstacles" if obstacle_points else "",
+        "source": "metadata.added_obstacles" if obstacle_boxes else "",
     }
     report["moving_obstacles"] = {
         "enabled": str(args.moving_obstacle_mode) != "none",
@@ -2129,6 +2875,72 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     control_route = replace(route, path=follow_path)
     report["waypoint_safety_filter"] = waypoint_filter
     report["follow_path"] = follow_path
+    report["tracking_goal_xy"] = follow_path[-1][:2] if follow_path else []
+    report["final_goal_xy"] = report["tracking_goal_xy"]
+    if waypoint_filter.get("enabled") is True and waypoint_filter.get("goal_preserved") is not True:
+        blocker = "waypoint_safety_filter.goal_preserved is not true"
+        report["native_gate_skipped"] = True
+        report["claim_boundary"] = "waypoint_safety_filter_truncated_pct_path"
+        report["blockers"] = [blocker]
+        report["remaining_gaps"] = [blocker]
+        _write_report_if_requested(args, report)
+        return report
+
+    try:
+        mods = _load_ros_modules()
+    except Exception as exc:
+        blocker = f"ROS2 runtime unavailable for native local planner gate: {exc}"
+        report["native_gate_skipped"] = True
+        report["claim_boundary"] = "ros2_runtime_unavailable"
+        report["blockers"] = [blocker]
+        report["remaining_gaps"] = [blocker]
+        report["environment"] = {
+            "ros_domain_id": str(args.ros_domain_id),
+            "ros2_executable": shutil.which("ros2") or "",
+            "ros_distro": os.environ.get("ROS_DISTRO", ""),
+            "diagnostic_commands": [
+                "source /opt/ros/humble/setup.bash",
+                "source install/setup.bash",
+                "ros2 pkg executables local_planner",
+            ],
+        }
+        _write_report_if_requested(args, report)
+        return report
+
+    from sim.engine.core.engine import VelocityCommand
+    from sim.scripts.mujoco_fastlio2_live_gate import _build_engine, _resolve_mid360_pattern
+
+    rclpy = mods["rclpy"]
+    Odometry = mods["Odometry"]
+    PointStamped = mods["PointStamped"]
+    PointField = mods["PointField"]
+    RosPath = mods["RosPath"]
+    TwistStamped = mods["TwistStamped"]
+    Float32 = mods["Float32"]
+    Header = mods["Header"]
+    Int8 = mods["Int8"]
+    String = mods["String"]
+    point_cloud2 = mods["point_cloud2"]
+    obstacle_points, obstacle_names = _obstacle_points_from_metadata(
+        route,
+        spacing=args.obstacle_point_spacing,
+        intensity=args.obstacle_intensity,
+    )
+    report["obstacle_aware"].update(
+        {
+            "metadata_points": len(obstacle_points),
+            "obstacles": obstacle_names,
+            "source": "metadata.added_obstacles" if obstacle_points else "",
+        }
+    )
+
+    os.environ["ROS_DOMAIN_ID"] = str(args.ros_domain_id)
+    env = os.environ.copy()
+    env["ROS_DOMAIN_ID"] = str(args.ros_domain_id)
+    env["PYTHONPATH"] = f"{SRC}{os.pathsep}{ROOT}{os.pathsep}" + env.get("PYTHONPATH", "")
+
+    local_planner_log = artifact_dir / "localPlanner.log"
+    path_follower_log = artifact_dir / "pathFollower.log"
 
     procs: list[subprocess.Popen[bytes]] = []
     engine = None
@@ -2472,7 +3284,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             time.sleep(args.step_s)
 
         start_xy = np.asarray(state.position[:2], dtype=float)
-        final_goal_xy = np.asarray(route.goal[:2], dtype=float)
+        final_goal_xy = np.asarray(control_route.path[-1][:2], dtype=float)
         max_abs_linear = 0.0
         max_abs_angular_z = 0.0
         nonzero_cmd_count = 0
@@ -2650,6 +3462,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             max_p95_error_m=float(args.max_trajectory_p95_error_m),
             max_progress_regressions=int(args.max_progress_regressions),
             min_route_progress_ratio=float(args.min_route_progress_ratio),
+            reached_goal=bool(reached_goal),
         )
         local_path_evidence = _summarize_local_path_obstacle_evidence(
             samples=local_path_evidence_samples,
@@ -2793,9 +3606,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         report["localPlanner_log_tail"] = _tail(local_planner_log)
         report["pathFollower_log_tail"] = _tail(path_follower_log)
 
-    if args.json_out:
-        args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_report_if_requested(args, report)
     return report
 
 
@@ -2806,6 +3617,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force-generate-source-report", action="store_true")
     parser.add_argument("--route", default="same_floor")
     parser.add_argument("--planner", default="pct")
+    parser.add_argument(
+        "--contract-only",
+        action="store_true",
+        help=(
+            "Validate source-report/PCT/same-source artifact contracts without "
+            "launching ROS2 localPlanner/pathFollower or MuJoCo motion."
+        ),
+    )
     parser.add_argument("--artifact-dir", type=Path, default=ROOT / "artifacts/native_pct_mujoco_gate")
     parser.add_argument("--json-out", type=Path, default=ROOT / "artifacts/native_pct_mujoco_gate/report.json")
     parser.add_argument("--video-out", type=Path, default=None)
@@ -2839,6 +3658,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lookahead", type=float, default=0.55)
     parser.add_argument("--stop-distance", type=float, default=0.30)
     parser.add_argument("--goal-clear-range", type=float, default=0.45)
+    parser.add_argument("--near-field-stop-distance", type=float, default=0.5)
     parser.add_argument("--disable-obstacle-check", action="store_true")
     parser.add_argument("--check-rot-obstacle", action="store_true")
     parser.add_argument("--obstacle-point-spacing", type=float, default=0.08)

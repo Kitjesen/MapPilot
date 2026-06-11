@@ -76,6 +76,7 @@ class GazeboFrontierExplorationResult:
     local_path_z_range: tuple[float, float] | None = None
     trajectory_quality: dict = field(default_factory=dict)
     topic_sync: dict = field(default_factory=dict)
+    frontier_no_gain_stall: dict = field(default_factory=dict)
     cumulative_map_cloud: dict = field(default_factory=dict)
     registered_cloud: dict = field(default_factory=dict)
     static_obstacles: dict = field(default_factory=dict)
@@ -128,6 +129,7 @@ class GazeboFrontierExplorationResult:
             "local_path_z_range": self.local_path_z_range,
             "trajectory_quality": self.trajectory_quality,
             "topic_sync": self.topic_sync,
+            "frontier_no_gain_stall": self.frontier_no_gain_stall,
             "cumulative_map_cloud": self.cumulative_map_cloud,
             "registered_cloud": self.registered_cloud,
             "static_obstacles": self.static_obstacles,
@@ -1536,6 +1538,10 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
     next_costmap_tick = time.monotonic()
     next_trace_tick = time.monotonic()
     pass_seen_at: float | None = None
+    pass_seen_known_cells = 0
+    pass_seen_explored_area_m2 = 0.0
+    pass_seen_frontier_count_max = 0
+    stop_reason = "timeout"
     try:
         while time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.05)
@@ -1577,16 +1583,49 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
                 and (not args.require_trajectory_quality or trajectory_gate_ready())
             ):
                 if args.continue_after_pass_sec <= 0:
+                    stop_reason = "pass_condition_met"
                     break
                 if pass_seen_at is None:
                     pass_seen_at = now
+                    pass_seen_known_cells = result.known_cells_final
+                    pass_seen_explored_area_m2 = result.explored_area_final_m2
+                    pass_seen_frontier_count_max = result.frontier_count_max
                 elif now - pass_seen_at >= args.continue_after_pass_sec:
+                    stop_reason = "post_pass_observation_elapsed"
                     break
     finally:
         explorer.end_exploration()
         explorer.stop()
         node.destroy_node()
         rclpy.shutdown()
+
+    observed_after_pass_s = 0.0
+    if pass_seen_at is not None:
+        observed_after_pass_s = max(0.0, min(time.monotonic(), deadline) - pass_seen_at)
+    result.frontier_no_gain_stall = {
+        "checked": args.continue_after_pass_sec > 0.0,
+        "ok": (
+            args.continue_after_pass_sec > 0.0
+            and pass_seen_at is not None
+            and observed_after_pass_s >= args.continue_after_pass_sec
+            and stop_reason == "post_pass_observation_elapsed"
+        ),
+        "mode": "post_pass_observation",
+        "stop_reason": stop_reason,
+        "required_observation_s": round(float(args.continue_after_pass_sec), 3),
+        "observed_s": round(observed_after_pass_s, 3),
+        "known_cells_at_pass": int(pass_seen_known_cells),
+        "known_cells_final": int(result.known_cells_final),
+        "known_cells_delta_after_pass": int(result.known_cells_final - pass_seen_known_cells),
+        "explored_area_at_pass_m2": round(float(pass_seen_explored_area_m2), 4),
+        "explored_area_final_m2": round(float(result.explored_area_final_m2), 4),
+        "explored_area_delta_after_pass_m2": round(
+            float(result.explored_area_final_m2 - pass_seen_explored_area_m2),
+            4,
+        ),
+        "frontier_count_max_at_pass": int(pass_seen_frontier_count_max),
+        "frontier_count_max_final": int(result.frontier_count_max),
+    }
 
     if not result.frontier_started:
         result.errors.append("WavefrontFrontierExplorer did not start")

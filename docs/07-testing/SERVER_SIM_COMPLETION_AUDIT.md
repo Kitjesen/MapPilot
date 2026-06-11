@@ -2,13 +2,27 @@
 
 Last audited: 2026-05-15.
 
+Superseded status, 2026-06-08: this document preserves the 2026-05 completion
+audit but no longer describes the current DimOS readiness state. Current
+authoritative artifacts are
+`artifacts/server_sim_closure/summary_after_native_pct_goal_fix.json` and
+`artifacts/server_sim_closure/dimos_gap_after_native_pct_goal_fix.json`; they
+report `lingtu_readiness.ok=false`, `claim_allowed=false`, 7/13 required gates
+passed, and 6 failed or missing. The current host preflight is green at
+`artifacts/server_sim_closure/host_preflight_after_mid360_sync.json`, and
+`native_pct_mujoco` is green at
+`artifacts/server_sim_closure/native_pct_mujoco/report_after_goal_reached_fix.json`.
+Remaining red or missing gates are `fastlio2_dynamic_inspection`,
+`moving_obstacle_sweep`, `large_loop_closure`, `gazebo_runtime`,
+`saved_map_relocalize`, and `pct_saved_map_navigation`.
+
 This audit converts the active objective, "complete the testing push, verify
 everything, start with the core algorithms", into concrete server-side
 deliverables. It is intentionally stricter than a green test run: every claim
 below must map to a runtime artifact, a closure evaluator, and a regression
 test or an explicit boundary.
 
-## Current Result
+## Historical Result
 
 Server closure summary:
 
@@ -18,14 +32,15 @@ Core algorithm recheck summary:
 
 `artifacts/server_sim_closure/summary_core_algorithms_recheck.json`
 
-Latest server verification after the TARE/PCT repair and core-algorithm
-recheck:
+Historical server verification after the 2026-05 TARE/PCT repair and
+core-algorithm recheck:
 
-- Fresh 24-hour required closure:
+- Historical 24-hour required closure:
   `artifacts/server_sim_closure/summary_freshness_24h.json` reports
   `ok=true`, `13` required gates passed, `remaining_gaps=[]`,
   `simulation_only=true`, `real_robot_motion=false`, and
-  `cmd_vel_sent_to_hardware=false`.
+  `cmd_vel_sent_to_hardware=false` under the older gate set. This is not the
+  current DimOS readiness result.
 - Server regression after the CMU runtime freshness and MuJoCo LiDAR fallback
   fixes: `src/core/tests/test_server_sim_closure.py`,
   `src/core/tests/test_sim_runtime_compat.py`, and
@@ -66,9 +81,14 @@ recheck:
   non-zero samples `2779`, odom moved `2.4868 m`, `/nav/registered_cloud`
   grew `59.6875 m2`, `/nav/terrain_map_ext` grew `39.3125 m2`, planner
   selected `pct`, `fallback_used=false`, and `reached_goal=true`.
-- `server_sim_closure.py --required-only --strict`: `ok=true`.
-- Required gates: `13`.
-- Remaining gaps in the required simulation closure: `[]`.
+- Historical `server_sim_closure.py --required-only --strict`: `ok=true`.
+- Historical required gates: `13`.
+- Historical remaining gaps in that required simulation closure: `[]`.
+- Current 2026-06-08 DimOS result:
+  `artifacts/server_sim_closure/summary_after_native_pct_goal_fix.json` and
+  `artifacts/server_sim_closure/dimos_gap_after_native_pct_goal_fix.json`
+  report `lingtu_readiness.ok=false`, `claim_allowed=false`, 7/13 required
+  gates passed, and 6 failed or missing.
 - All required gates report `simulation_only=true`, `real_robot_motion=false`,
   and `cmd_vel_sent_to_hardware=false`.
 - Core Python regression set:

@@ -564,6 +564,9 @@ start_runtime() {
       --min-late-cmd-vel-samples "${LINGTU_CMU_GATE_MIN_LATE_CMD_VEL_SAMPLES:-10}" \
       --min-late-path-samples "${LINGTU_CMU_GATE_MIN_LATE_PATH_SAMPLES:-5}" \
       --min-late-map-area-delta-m2 "${LINGTU_CMU_GATE_MIN_LATE_MAP_AREA_DELTA_M2:-1.0}" \
+      --require-tare-strategy-quality \
+      --min-tare-strategy-paths "${LINGTU_CMU_GATE_MIN_TARE_STRATEGY_PATHS:-1}" \
+      --require-frontier-no-gain-stall \
       --json-out "$run_dir/report.json" \
       --strict
     )
@@ -614,6 +617,9 @@ run_gate_only() {
     --min-late-cmd-vel-samples "${LINGTU_CMU_GATE_MIN_LATE_CMD_VEL_SAMPLES:-10}" \
     --min-late-path-samples "${LINGTU_CMU_GATE_MIN_LATE_PATH_SAMPLES:-5}" \
     --min-late-map-area-delta-m2 "${LINGTU_CMU_GATE_MIN_LATE_MAP_AREA_DELTA_M2:-1.0}" \
+    --require-tare-strategy-quality \
+    --min-tare-strategy-paths "${LINGTU_CMU_GATE_MIN_TARE_STRATEGY_PATHS:-1}" \
+    --require-frontier-no-gain-stall \
     --json-out "$run_dir/report.json" \
     --strict
   )

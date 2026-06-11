@@ -261,6 +261,13 @@ that LingTu can consume CMU/TARE evidence through its own `/nav/*` contract:
 - Simulated odometry moves non-zero distance and remains inside the environment
   bounds.
 - Mapped or traversable area grows over time.
+- Strict runs emit `frontier_no_gain_stall` late-window evidence, proving
+  odometry, non-zero command, path publication, and map/no-gain handling stayed
+  live after the initial exploration pass condition.
+- Strict runs emit `tare_strategy_quality`, proving Gateway/TARE stats show
+  accepted waypoints, accepted paths, at least one strategy path, bounded
+  suppressed-waypoint ratio, visible rejection reasons, and successful
+  navigation without recorded TARE navigation failures.
 - Gateway planner diagnostics are available, so the report can prove the
   LingTu planning chain participated instead of accepting topic-only motion.
 - No driver, Thunder bridge, robot Gateway motion command, or hardware

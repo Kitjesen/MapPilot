@@ -27,6 +27,8 @@ RUN_MUJOCO="${LINGTU_RUN_MUJOCO:-1}"
 RUN_PCT="${LINGTU_RUN_PCT:-1}"
 RUN_MULTIFLOOR="${LINGTU_RUN_MULTIFLOOR:-1}"
 RUN_NAV_CORE="${LINGTU_RUN_NAV_CORE:-1}"
+RUN_ROS2_LOCAL_PLANNER="${LINGTU_RUN_ROS2_LOCAL_PLANNER:-1}"
+RUN_ROS2_FASTLIO2="${LINGTU_RUN_ROS2_FASTLIO2:-1}"
 RUN_ROUTECHECK_PREFLIGHT="${LINGTU_RUN_ROUTECHECK_PREFLIGHT:-1}"
 SETUP_CLOSURE_MAX_REPORT_AGE_S="${LINGTU_SETUP_CLOSURE_MAX_REPORT_AGE_S:-21600}"
 INSTALL_SYSTEM_DEPS="${LINGTU_INSTALL_SYSTEM_DEPS:-1}"
@@ -35,6 +37,7 @@ RUN_VERIFY="${LINGTU_RUN_VERIFY:-1}"
 SUDO_PASSWORD="${LINGTU_SUDO_PASSWORD:-}"
 APT_RETRIES="${LINGTU_APT_RETRIES:-3}"
 APT_TIMEOUT="${LINGTU_APT_TIMEOUT:-30}"
+MID360_PATTERN_SHA256="448821576a658673e8f7929992c8c0d687eb052657d7b584d038729a83da1bfb"
 
 log() {
   printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"
@@ -288,6 +291,146 @@ build_nav_core_runtime() {
   bash "${ROOT}/scripts/build_nav_core.sh" --clean
 }
 
+verify_mid360_pattern_asset() {
+  if [[ "${RUN_MUJOCO}" != "1" ]]; then
+    return
+  fi
+  local pattern="${ROOT}/sim/assets/livox/mid360.npy"
+  if [[ ! -f "${pattern}" ]]; then
+    log "missing official MID-360 scan pattern asset: sim/assets/livox/mid360.npy"
+    return 1
+  fi
+  python3 - "${pattern}" "${MID360_PATTERN_SHA256}" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+expected = sys.argv[2]
+digest = hashlib.sha256(path.read_bytes()).hexdigest()
+if digest != expected:
+    print(f"MID-360 pattern SHA256 mismatch: {digest} != {expected}", file=sys.stderr)
+    raise SystemExit(1)
+print(f"MID-360 pattern ok: {path} {digest}")
+PY
+}
+
+verify_ros2_local_planner_runtime() {
+  if [[ "${RUN_ROS2_LOCAL_PLANNER}" != "1" ]]; then
+    return
+  fi
+  if ! have ros2; then
+    log "ros2 is unavailable; cannot verify local_planner executables"
+    return 1
+  fi
+
+  log "verifying ROS2 local_planner executables"
+  local executables
+  if ! executables="$(ros2 pkg executables local_planner 2>&1)"; then
+    printf '%s\n' "${executables}" >&2
+    log "local_planner package is not visible; source install/setup.bash or rerun the colcon build"
+    return 1
+  fi
+
+  local required
+  for required in localPlanner pathFollower; do
+    if ! grep -Eq "^[[:space:]]*local_planner[[:space:]]+${required}([[:space:]]|\$)" <<<"${executables}"; then
+      printf '%s\n' "${executables}" >&2
+      log "local_planner executable missing: ${required}"
+      return 1
+    fi
+  done
+
+  log "verifying ROS2 pct_adapters executable"
+  local adapter_executables
+  if ! adapter_executables="$(ros2 pkg executables pct_adapters 2>&1)"; then
+    printf '%s\n' "${adapter_executables}" >&2
+    log "pct_adapters package is not visible; source install/setup.bash or rerun the colcon build"
+    return 1
+  fi
+  if ! grep -Eq "^[[:space:]]*pct_adapters[[:space:]]+pct_path_adapter([[:space:]]|\$)" <<<"${adapter_executables}"; then
+    printf '%s\n' "${adapter_executables}" >&2
+    log "pct_adapters executable missing: pct_path_adapter"
+    return 1
+  fi
+}
+
+verify_ros2_fastlio2_runtime() {
+  if [[ "${RUN_ROS2_FASTLIO2}" != "1" ]]; then
+    return
+  fi
+  if ! have ros2; then
+    log "ros2 is unavailable; cannot verify fastlio2 executable"
+    return 1
+  fi
+
+  log "verifying ROS2 fastlio2 executable"
+  local executables
+  if ! executables="$(ros2 pkg executables fastlio2 2>&1)"; then
+    printf '%s\n' "${executables}" >&2
+    log "fastlio2 package is not visible; source install/setup.bash or rerun the colcon build"
+    return 1
+  fi
+  if ! grep -Eq "^[[:space:]]*fastlio2[[:space:]]+lio_node([[:space:]]|\$)" <<<"${executables}"; then
+    printf '%s\n' "${executables}" >&2
+    log "fastlio2 executable missing: lio_node"
+    return 1
+  fi
+
+  if ! ros2 pkg prefix livox_ros_driver2 >/dev/null 2>&1; then
+    log "livox_ros_driver2 package is not visible; fastlio2 CustomMsg dependency is incomplete"
+    return 1
+  fi
+}
+
+build_ros2_local_planner_runtime() {
+  local distro="$1"
+  if [[ "${RUN_ROS2_LOCAL_PLANNER}" != "1" ]]; then
+    log "LINGTU_RUN_ROS2_LOCAL_PLANNER=0; skipping ROS2 local_planner build"
+    return
+  fi
+  if ! have ros2; then
+    log "ros2 is unavailable; cannot build ROS2 local_planner package"
+    return 1
+  fi
+  if ! have colcon; then
+    log "colcon is unavailable; install python3-colcon-common-extensions first"
+    return 1
+  fi
+
+  log "building ROS2 local_planner package and dependencies"
+  colcon build \
+    --packages-up-to local_planner pct_adapters \
+    --merge-install \
+    --cmake-args -DBUILD_TESTING=OFF
+  source_ros_if_present "${distro}"
+  verify_ros2_local_planner_runtime
+}
+
+build_ros2_fastlio2_runtime() {
+  local distro="$1"
+  if [[ "${RUN_ROS2_FASTLIO2}" != "1" ]]; then
+    log "LINGTU_RUN_ROS2_FASTLIO2=0; skipping ROS2 fastlio2 build"
+    return
+  fi
+  if ! have ros2; then
+    log "ros2 is unavailable; cannot build ROS2 fastlio2 package"
+    return 1
+  fi
+  if ! have colcon; then
+    log "colcon is unavailable; install python3-colcon-common-extensions first"
+    return 1
+  fi
+
+  log "building ROS2 fastlio2 package and dependencies"
+  colcon build \
+    --packages-up-to fastlio2 \
+    --merge-install \
+    --cmake-args -DBUILD_TESTING=OFF
+  source_ros_if_present "${distro}"
+  verify_ros2_fastlio2_runtime
+}
+
 run_verification() {
   if [[ "${RUN_VERIFY}" != "1" ]]; then
     log "LINGTU_RUN_VERIFY=0; skipping verification commands"
@@ -414,6 +557,9 @@ main() {
   install_python_deps
   build_pct_runtime
   build_nav_core_runtime
+  build_ros2_local_planner_runtime "${distro}"
+  build_ros2_fastlio2_runtime "${distro}"
+  verify_mid360_pattern_asset
   run_verification
 
   log "server setup and non-motion verification complete"

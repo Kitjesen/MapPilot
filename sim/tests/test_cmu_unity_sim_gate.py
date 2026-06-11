@@ -213,6 +213,10 @@ def test_cmu_unity_runtime_wrapper_can_open_cmu_operator_rviz():
     assert "--min-late-cmd-vel-samples" in text
     assert "--min-late-path-samples" in text
     assert "--min-late-map-area-delta-m2" in text
+    assert "--require-tare-strategy-quality" in text
+    assert "--min-tare-strategy-paths" in text
+    assert "LINGTU_CMU_GATE_MIN_TARE_STRATEGY_PATHS" in text
+    assert "--require-frontier-no-gain-stall" in text
     assert "--allow-flat-late-map-after-total-growth" in text
     assert "LINGTU_CMU_GATE_ALLOW_FLAT_LATE_MAP_AFTER_TOTAL_GROWTH" in text
     assert "--require-planner-diagnostics" in text

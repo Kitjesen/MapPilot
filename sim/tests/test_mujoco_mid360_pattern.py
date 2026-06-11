@@ -132,6 +132,28 @@ def test_pct_saved_map_navigation_uses_relocalized_same_source_tomogram(
     ) == relocalized_tomogram
 
 
+def test_pct_saved_map_navigation_rejects_mismatched_explicit_tomogram(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from sim.scripts import pct_saved_map_navigation_gate as gate
+
+    relocalized_map = tmp_path / "same_source_map_a" / "map.pcd"
+    relocalized_tomogram = relocalized_map.parent / "tomogram.pickle"
+    mismatched_tomogram = tmp_path / "same_source_map_b" / "tomogram.pickle"
+    for path in (relocalized_map, relocalized_tomogram, mismatched_tomogram):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"asset")
+
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+
+    with pytest.raises(ValueError, match="explicit tomogram does not match"):
+        gate._resolve_tomogram(
+            mismatched_tomogram,
+            relocalize_report={"map_pcd": str(relocalized_map)},
+        )
+
+
 def test_pct_saved_map_navigation_passes_short_route_progress_threshold() -> None:
     from sim.scripts.pct_saved_map_navigation_gate import _build_parser
 
@@ -319,6 +341,22 @@ def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> Non
     assert '"goal_frame_id"' in exploration_stack
     assert '"hold_active_goal_until_terminal"' in full_stack
     assert '"hold_active_goal_until_terminal"' in exploration_stack
+
+
+def test_mujoco_inspection_stack_keeps_static_tomogram_saved_map_frame_contract() -> None:
+    stack = Path("src/drivers/sim/mujoco_lingtu_stack.py")
+    text = stack.read_text(encoding="utf-8")
+    nav_stack = Path("src/core/blueprints/stacks/navigation.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "MUJOCO_LIVE_PLANNING_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in text
+    assert (
+        "MUJOCO_LIVE_SAVED_MAP_FRAME_ID = "
+        "topic_default_frame_id(TOPICS.saved_map_cloud)"
+    ) in text
+    assert "expected_saved_map_frame_id=MUJOCO_LIVE_SAVED_MAP_FRAME_ID" in text
+    assert '"expected_saved_map_frame_id"' in nav_stack
 
 
 def test_fastlio_live_gate_reports_sim_realtime_factor() -> None:

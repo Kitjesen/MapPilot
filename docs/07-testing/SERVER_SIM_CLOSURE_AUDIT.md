@@ -2,13 +2,24 @@
 
 Last audited: 2026-05-15.
 
+Superseded status, 2026-06-08: this audit is historical and must not be used
+as the current DimOS readiness claim. The current DimOS benchmark evidence is
+`artifacts/server_sim_closure/summary_after_native_pct_goal_fix.json` plus
+`artifacts/server_sim_closure/dimos_gap_after_native_pct_goal_fix.json`, which
+report `lingtu_readiness.ok=false`, `claim_allowed=false`, 7 of 13 required
+gates passed, and 6 failed or missing. The current passing target-host
+preflight is
+`artifacts/server_sim_closure/host_preflight_after_mid360_sync.json`, and
+`native_pct_mujoco` now passes at
+`artifacts/server_sim_closure/native_pct_mujoco/report_after_goal_reached_fix.json`.
+
 This audit records the product delivery boundary for the current simulation
 work. It separates what is verified from what remains a claim gap.
 
-## Decision
+## Historical Decision
 
-The server-side simulation closure is currently passing for the required
-product gates:
+The 2026-05 server-side simulation closure previously passed for the then
+required product gates:
 
 - Gazebo wavefront frontier exploration from a Gazebo LiDAR-derived occupancy
   grid.
@@ -28,18 +39,21 @@ product gates:
 - Dynamic obstacle local planner response.
 - ONNX gait policy navigation smoke.
 
-The current closure summary is:
+The historical 2026-05 closure summary is:
 
 `artifacts/server_sim_closure/summary_freshness_24h.json`
 
-It reports `ok=true`, `13` required gates passed, `remaining_gaps=[]`,
+It reported `ok=true`, `13` required gates passed, `remaining_gaps=[]`,
 `simulation_only=true`, `real_robot_motion=false`, and
-`cmd_vel_sent_to_hardware=false`. The server regression set
+`cmd_vel_sent_to_hardware=false` under the older gate set. That artifact is
+superseded by the 2026-06-08 DimOS 13-gate result: 7/13 passed,
+`lingtu_readiness.ok=false`, and `claim_allowed=false`. The historical server
+regression set
 `src/core/tests/test_server_sim_closure.py`,
 `src/core/tests/test_sim_runtime_compat.py`, and
 `src/core/tests/test_mujoco_mid360_pattern.py` reports `88 passed`.
 
-## Required Gate Evidence
+## Historical Required Gate Evidence
 
 | Gate | Evidence | Status | Key result |
 | --- | --- | --- | --- |

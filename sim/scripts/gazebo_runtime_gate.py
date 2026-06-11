@@ -16,7 +16,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_GAZEBO_WORLD = ROOT / "sim" / "worlds" / "lingtu_gazebo_demo_room.sdf"
+DEFAULT_GAZEBO_WORLD = (
+    ROOT / "sim" / "worlds" / "gazebo" / "lingtu_gazebo_demo_room.sdf"
+)
 
 
 def _resolve_world_arg(value: str | os.PathLike[str]) -> str:
@@ -127,7 +129,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     ]
     smoke_cmd = [
         sys.executable,
-        str(ROOT / "tests" / "integration" / "tf_contract_smoke.py"),
+        str(ROOT / "sim" / "scripts" / "tf_contract_smoke.py"),
         "--timeout-sec",
         str(args.smoke_timeout_sec),
         "--min-samples",
@@ -142,7 +144,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     nav_launch_cmd = [
         "ros2",
         "launch",
-        str(ROOT / "tests" / "planning" / "sim_navigation.launch.py"),
+        str(ROOT / "sim" / "planning" / "sim_navigation.launch.py"),
         "use_sim_robot:=false",
         "use_terrain_passthrough:=false",
         "flatten_global_path_z:=true",
@@ -154,7 +156,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     frontier_nav_launch_cmd = [*nav_launch_cmd, "gazebo_line_require_grid:=true"]
     nav_smoke_cmd = [
         sys.executable,
-        str(ROOT / "tests" / "integration" / "gazebo_nav_loop_smoke.py"),
+        str(ROOT / "sim" / "scripts" / "gazebo_nav_loop_smoke.py"),
         "--timeout-sec",
         str(args.nav_timeout_sec),
         "--goal-delay-sec",
@@ -175,7 +177,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         nav_smoke_cmd.append("--require-forward-progress")
     frontier_smoke_cmd = [
         sys.executable,
-        str(ROOT / "tests" / "integration" / "gazebo_frontier_exploration_smoke.py"),
+        str(ROOT / "sim" / "scripts" / "gazebo_frontier_exploration_smoke.py"),
         "--timeout-sec",
         str(args.frontier_timeout_sec),
         "--json",

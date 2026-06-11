@@ -43,6 +43,12 @@ def _xy(value: Any) -> tuple[float, float] | None:
     return x, y
 
 
+def _xy_list(value: tuple[float, float] | None) -> list[float] | None:
+    if value is None:
+        return None
+    return [round(float(value[0]), 4), round(float(value[1]), 4)]
+
+
 def _distance(a: tuple[float, float] | None, b: tuple[float, float] | None) -> float | None:
     if a is None or b is None:
         return None
@@ -209,6 +215,28 @@ def _to_map_frame_xy(
     return world_xy[0] - origin[0], world_xy[1] - origin[1]
 
 
+def _goal_frame_metadata(
+    metadata: dict[str, Any],
+    inspection: dict[str, Any],
+) -> dict[str, Any]:
+    result = dict(metadata)
+    origin = _xy(inspection.get("planning_frame_origin_world_xy"))
+    if origin is None:
+        origin = _xy(inspection.get("map_frame_origin_world_xy"))
+    if origin is None:
+        result["source"] = "same_source_metadata"
+        return result
+    frame = str(inspection.get("planning_frame") or inspection.get("frame_id") or "")
+    result.update(
+        {
+            "map_frame": frame or str(result.get("map_frame") or ""),
+            "map_frame_origin_world_xy": [origin[0], origin[1]],
+            "source": "lingtu_inspection.planning_frame_origin_world_xy",
+        }
+    )
+    return result
+
+
 def _case_from_report(
     path: Path,
     report: dict[str, Any],
@@ -245,13 +273,14 @@ def _case_from_report(
     )
     same_source = _same_source_artifacts(report, inspection)
     metadata = _frame_metadata(same_source)
+    goal_metadata = _goal_frame_metadata(metadata, inspection)
     video = _video_evidence(report)
     scan_time = _scan_time_evidence(report)
     required_scan_time_profile = str(required_scan_time_profile or "").strip()
     first_sim_xy = _xy(report.get("first_sim_xyz"))
     last_sim_xy = _xy(report.get("last_sim_xyz"))
-    first_sim_map_xy = _to_map_frame_xy(first_sim_xy, metadata)
-    last_sim_map_xy = _to_map_frame_xy(last_sim_xy, metadata)
+    first_sim_map_xy = _to_map_frame_xy(first_sim_xy, goal_metadata)
+    last_sim_map_xy = _to_map_frame_xy(last_sim_xy, goal_metadata)
     first_odom_xy = _xy(report.get("first_odom_xyz"))
     last_odom_xy = _xy(report.get("last_odom_xyz"))
     sim_loop_error = _distance(first_sim_xy, last_sim_xy)
@@ -262,6 +291,8 @@ def _case_from_report(
     fastlio_path_length = _safe_float(report.get("fastlio2_path_length_m"), default=0.0) or 0.0
     goals = list(inspection.get("goals") or [])
     final_goal_xy = _xy(goals[-1]) if goals else None
+    metadata_start_xy = _xy(metadata.get("start"))
+    runtime_start_xy = _xy(report.get("start_position"))
     final_goal_to_start = _distance(first_sim_map_xy or first_sim_xy, final_goal_xy)
     goal_span = _goal_span_m(first_sim_map_xy or first_sim_xy, goals)
 
@@ -313,8 +344,6 @@ def _case_from_report(
     elif not metadata["ok"]:
         blockers.extend(str(blocker) for blocker in metadata.get("blockers") or [])
     else:
-        metadata_start_xy = _xy(metadata.get("start"))
-        runtime_start_xy = _xy(report.get("start_position"))
         start_delta = _distance(metadata_start_xy, runtime_start_xy)
         if (
             metadata_start_xy is not None
@@ -407,15 +436,31 @@ def _case_from_report(
         "same_source_artifacts": bool(same_source["ok"]),
         "world_parent": same_source["world_parent"],
         "tomogram_parent": same_source["tomogram_parent"],
+        "deliverable_contract": (
+            report.get("deliverable_contract")
+            if isinstance(report.get("deliverable_contract"), dict)
+            else {}
+        ),
+        "map_artifacts": (
+            report.get("map_artifacts")
+            if isinstance(report.get("map_artifacts"), dict)
+            else {}
+        ),
+        "assets": report.get("assets") if isinstance(report.get("assets"), dict) else {},
         "metadata": metadata["path"],
         "map_frame": metadata["map_frame"],
         "map_frame_origin_world_xy": metadata["map_frame_origin_world_xy"],
-        "first_sim_map_xy": (
-            None if first_sim_map_xy is None else [round(first_sim_map_xy[0], 4), round(first_sim_map_xy[1], 4)]
-        ),
-        "last_sim_map_xy": (
-            None if last_sim_map_xy is None else [round(last_sim_map_xy[0], 4), round(last_sim_map_xy[1], 4)]
-        ),
+        "goal_frame": goal_metadata["map_frame"],
+        "goal_frame_origin_world_xy": goal_metadata["map_frame_origin_world_xy"],
+        "goal_frame_origin_source": goal_metadata.get("source", "same_source_metadata"),
+        "metadata_start_xy": _xy_list(metadata_start_xy),
+        "runtime_start_position_xy": _xy_list(runtime_start_xy),
+        "first_sim_xy": _xy_list(first_sim_xy),
+        "last_sim_xy": _xy_list(last_sim_xy),
+        "first_sim_map_xy": _xy_list(first_sim_map_xy),
+        "last_sim_map_xy": _xy_list(last_sim_map_xy),
+        "final_goal_xy": _xy_list(final_goal_xy),
+        "inspection_goals": goals[-20:],
         "goal_count": inspection.get("goal_count"),
         "successful_navigation_goal_count": inspection.get("successful_navigation_goal_count"),
         "global_path_points_max": inspection.get("global_path_points_max"),
@@ -533,6 +578,17 @@ def _minimal_red_defect(cases: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "local_path_count": case.get("local_path_count"),
         "local_path_points_max": case.get("local_path_points_max"),
         "nav_cmd_vel_nonzero": case.get("nav_cmd_vel_nonzero"),
+        "map_frame": case.get("map_frame"),
+        "map_frame_origin_world_xy": case.get("map_frame_origin_world_xy"),
+        "goal_frame": case.get("goal_frame"),
+        "goal_frame_origin_world_xy": case.get("goal_frame_origin_world_xy"),
+        "goal_frame_origin_source": case.get("goal_frame_origin_source"),
+        "metadata_start_xy": case.get("metadata_start_xy"),
+        "runtime_start_position_xy": case.get("runtime_start_position_xy"),
+        "first_sim_xy": case.get("first_sim_xy"),
+        "first_sim_map_xy": case.get("first_sim_map_xy"),
+        "final_goal_xy": case.get("final_goal_xy"),
+        "final_goal_to_start_m": case.get("final_goal_to_start_m"),
         "sim_path_length_m": case.get("sim_path_length_m"),
         "fastlio2_path_length_m": case.get("fastlio2_path_length_m"),
         "sim_loop_closure_error_m": case.get("sim_loop_closure_error_m"),

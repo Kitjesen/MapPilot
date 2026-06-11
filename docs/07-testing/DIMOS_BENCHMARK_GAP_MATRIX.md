@@ -1,6 +1,6 @@
 # DimOS Benchmark Gap Matrix
 
-Last updated: 2026-05-21.
+Last updated: 2026-06-08.
 
 This matrix converts the DimOS-style validation pattern into LingTu gates. It is
 not a product claim that LingTu matches DimOS feature-for-feature. It is a
@@ -42,8 +42,8 @@ Concrete upstream anchors used for this matrix:
 | No-hardware replay | `dimos --replay run unitree-go2` in the README; described as quadruped navigation replay with SLAM, costmap, and A* planning. | Saved-map relocalization plus `pct_saved_map_navigation`; add real-log replay before field claims. |
 | Simulation run | `dimos --simulation run unitree-go2` and `unitree-g1-sim`. | MuJoCo/Gazebo/CMU Unity runtime gates, all marked simulation-only. |
 | Modular nav stack | `create_nav_stack()` composes terrain analysis, local planner, path follower, PGO, FAR/Simple planner, and optional TARE. | Fast-LIO/PCT/local planner/path follower gates, with TARE and wavefront exploration kept as separate surfaces. |
-| Rosbag/deviation tests | `test_local_planner_rosbag.py`, `test_path_follower_rosbag.py`, `test_far_planner_rosbag.py`, and `test_pgo_rosbag.py`. | Missing stronger LingTu replay/deviation gates for local path endpoint error, cmd velocity ratio, PGO/loop correction, and path tracking drift. |
-| Dynamic replanning e2e | `test_dimsim_path_replaning.py` adds a wall when the robot approaches a door and requires replanning to the target. | `moving_obstacle_sweep` should remain stricter: continuous moving actors, speed/density bins, clearance, live Fast-LIO/PCT/local/cmd proof, and video evidence. |
+| Rosbag/deviation tests | `test_local_planner_rosbag.py`, `test_path_follower_rosbag.py`, `test_far_planner_rosbag.py`, and `test_pgo_rosbag.py`. | `navigation_replay_deviation` now covers local path, cmd velocity ratio, odometry motion, endpoint error, and path tracking drift for recorded traces; PGO/loop correction remains covered by live loop gates. |
+| Dynamic replanning e2e | `test_dimsim_path_replaning.py` adds a wall when the robot approaches a door and requires replanning to the target. | `blocked_route_replan_preflight` covers no-motion route blocking at Gateway preview level; `moving_obstacle_sweep` remains stricter with continuous moving actors, speed/density bins, clearance, live Fast-LIO/PCT/local/cmd proof, and video evidence. |
 | Heavy-test separation | DimOS testing docs separate default tests from self-hosted/LFS/ROS/CUDA/MuJoCo/DimSim tests. | LingTu must report which evidence is local pytest, remote simulation, replay, or hardware; local green tests are not enough for algorithm health. |
 
 ## Dimos-Style LingTu Preset
@@ -61,11 +61,402 @@ PYTHONPATH=src:. python3 sim/scripts/server_sim_closure.py \
   --json-out artifacts/server_sim_closure/summary_dimos_benchmark_24h.json
 ```
 
+Run that command only after the target-host preflight is green. On a mixed
+development workstation, use `--host-preflight` or the target-host runner
+dry-run first; `--skip-host-blocked` is diagnostic-only and must not be used to
+claim DimOS closure.
+
+## Latest Target-Host Evidence, 2026-06-08
+
+Current latest target-host evidence supersedes the older domain75/domain76/
+domain83/domain108/domain138 historical notes below. It was generated in
+`/home/bsrl/hongsenpang/lingtu_dimos_20260608` with `ROS_DOMAIN_ID=79`,
+`MUJOCO_GL=egl`, and `PYOPENGL_PLATFORM=egl`.
+
+- Host preflight:
+  `artifacts/server_sim_closure/host_preflight_after_large_loop_report_guard.json`
+  reports `ok=true`, `blocked_gates=[]`, and all 13 required gates runnable.
+- Historical strict summary from that rerun window:
+  `artifacts/server_sim_closure/summary_after_large_loop_report_guard.json`
+  reports `ok=false` with `missing_or_failed=["large_loop_closure"]`; the
+  runner and large-loop aggregation keep the closure red instead of reusing a
+  stale child report after a failed live launch.
+- Current gap report:
+  `artifacts/server_sim_closure/dimos_gap_after_large_loop_report_guard.json`
+  reports `lingtu_readiness.ok=false`,
+  `lingtu_readiness.claim_allowed=false`, `host_preflight_ok=true`,
+  `gap_counts.required=13`, `gap_counts.passed=12`,
+  `gap_counts.failed=1`, `runtime_dataflow_checked=true`,
+  `runtime_dataflow_complete=true`, and `runtime_dataflow_ok=false`.
+
+The passing required gates are `gateway_runtime_acceptance`,
+`routecheck_preflight`, `blocked_route_replan_preflight`,
+`navigation_replay_deviation`, `large_terrain`, `native_pct_mujoco`,
+`dynamic_obstacle_local_planner`, `fastlio2_dynamic_inspection`,
+`moving_obstacle_sweep`, `gazebo_runtime`, `saved_map_relocalize`, and
+`pct_saved_map_navigation`. The only remaining failed required gate is
+`large_loop_closure`. The `pct_saved_map_navigation`
+report at `artifacts/server_sim_closure/pct_saved_map_navigation/report.json`
+is now green with `plan_preview.ok=true`, `selected_planner=pct`,
+`pct_optimizer_enabled=false`, `pct_planner_path_mode=native_astar_raw_path`,
+`path_count=7`, and `native_gate.ok=true` with `fallback_used=false`. This is
+real PCT saved-map evidence and is not an A* fallback.
+
+This still does not permit a DimOS readiness claim. The latest
+`large_loop_closure` report has `ok=false`, `passed_case_count=0`, and
+`blockers=["no passing large-loop runtime report"]`. The source live run
+`artifacts/server_sim_closure/mujoco_fastlio2_live/inspection-loop-video-20260608_164410/`
+ended without writing a child `report.json` before the launcher-level fallback
+was installed. A red diagnostic child report now records
+`runtime_report_missing_after_launcher`, and future launcher runs write the same
+kind of red report automatically when a child exits without a report. Until
+`lingtu_readiness.ok=true`, `claim_allowed=true`, and all 13 required gates
+pass, do not claim `PCT_planner + MuJoCo` or saved-map navigation as full DimOS
+closure.
+
+Historical Linux target-host work was executed in the isolated workspace
+`/home/bsrl/hongsenpang/lingtu_dimos_20260608` with `ROS_DOMAIN_ID=75`.
+The earlier red preflight was real: the ROS 2 `local_planner` package was not
+visible, so the closure runner stopped before launching runtime gates. That
+blocker has now been moved forward by building the `local_planner` package with
+`colcon`, verifying `localPlanner` and `pathFollower`, and syncing the official
+MID-360 scan-pattern asset into `sim/assets/livox/mid360.npy`.
+
+The older target-host preflight artifact
+`artifacts/server_sim_closure/host_preflight_after_mid360_sync.json` reported
+`ok=true`, `failed_checks=[]`, and `blocked_gates=[]` before Fast-LIO2 package
+availability was audited. That audit exposed a real blocker in
+`host_preflight_dimos_benchmark_after_fastlio_guard.json`, but it has now moved
+forward: after building/sourcing Fast-LIO2, the current sourced target-host
+preflight artifact is
+`artifacts/server_sim_closure/host_preflight_dimos_benchmark_after_fastlio2_build_domain75.json`.
+It reports `ok=true`, `failed_checks=[]`, `blocked_gates=[]`, and all 13 DimOS
+required gates runnable. `ros2 pkg executables fastlio2` exposes
+`fastlio2 lio_node`, `ros2_local_planner.ok=true`, hardware subscriber audit is
+green, PCT native runtime is green, MuJoCo headless is green, and the official
+MID-360 asset is present. The older
+`host_preflight_after_pct_raw_path.json`,
+`host_preflight_after_local_planner_guard.json`,
+`host_preflight_after_mid360_sync.json`, and
+`host_preflight_dimos_benchmark_after_fastlio_guard.json` reports remain useful
+only as historical diagnostics.
+
+The PCT native runtime diagnostic
+`artifacts/server_sim_closure/pct_runtime_preflight_remote_after_build_report.json`
+reports `ok=true` with Linux x86_64, Python `py310`, all required PCT extension
+modules present, and no missing shared libraries. The `native_pct_mujoco` gate
+now passes at
+`artifacts/server_sim_closure/native_pct_mujoco/report_after_goal_reached_fix.json`:
+`ok=true`, `selected_planner=pct`, `fallback_used=false`,
+`pct_native_backend_used=true`, `path_count=175`, `cmd_count_nonzero=484`,
+`moved_m=3.4101`, `final_distance_m=0.4944`, and `reached_goal=true`. The
+trajectory-quality check is green with `final_progress_ratio=0.8593` and
+`goal_reached_override=true`, which prevents a successful near-goal run from
+being rejected only because the projected route-progress ratio is below the
+long-route threshold.
+
+That does not make the DimOS benchmark green. A full target-host execute after
+the Fast-LIO2 build produced
+`artifacts/server_sim_closure/summary_after_fastlio2_build_execute.json`; the
+strict result is still 7 of 13 required gates passed and 6 of 13 failed or
+missing. After fixing the observed Python runtime type faults in
+`OccupancyGridModule` and `WaypointTracker`, disabling the live-gate GPMP
+optimizer by default, and cleaning stale Fast-LIO2 nodes between runs, a clean
+`ROS_DOMAIN_ID=76` inspection generated
+`artifacts/server_sim_closure/mujoco_fastlio2_live/inspection-moving-obstacle-video-20260608_064916/report.json`.
+That report is useful because it no longer dies in the PCT native optimizer and
+it proves the live chain is partially connected:
+`fastlio2_cloud_registered=55`, `fastlio2_cloud_map=55`,
+`fastlio2_odometry=55`, `nav_map_cloud=55`, `nav_registered_cloud=55`,
+`nav_odometry=55`, `global_path_count=1`, `local_path_count=55`,
+`nav_cmd_vel=62`, and `nav_cmd_vel_nonzero=18`.
+
+The same report is still red. Its current primary dataflow blocker is
+`fastlio_motion_consistency`: Fast-LIO reports about `0.983m` motion while the
+MuJoCo body reports about `0.00072m`, the inspection reaches `0/3`
+checkpoints, moving-obstacle point updates are missing/empty, and
+`body_to_camera` frame evidence is missing. The refreshed target-host summary
+and gap report are:
+
+- `artifacts/server_sim_closure/summary_after_fastlio2_cleanup_domain76_refreshed.json`
+- `artifacts/server_sim_closure/dimos_gap_after_fastlio2_cleanup_domain76_refreshed.json`
+
+They report `lingtu_readiness.ok=false`, `claim_allowed=false`,
+`gap_counts.required=13`, `gap_counts.passed=7`, and
+`gap_counts.failed=6`. The passing gates are
+`gateway_runtime_acceptance`,
+`routecheck_preflight`, `blocked_route_replan_preflight`,
+`navigation_replay_deviation`, `large_terrain`, `native_pct_mujoco`, and
+`dynamic_obstacle_local_planner`. The failing or missing gates are
+`fastlio2_dynamic_inspection`, `moving_obstacle_sweep`, `large_loop_closure`,
+`gazebo_runtime`, `saved_map_relocalize`, and `pct_saved_map_navigation`.
+`fastlio2_dynamic_inspection` is no longer a host-blocked gate; it is now a
+runtime-red gate. The runtime dataflow checker classifies the red edges as
+`fastlio_motion_consistency` for `fastlio2_dynamic_inspection`,
+`report_missing` for `moving_obstacle_sweep`, `large_loop_closure`, and
+`pct_saved_map_navigation`, `gazebo_tf_topic_contract` for `gazebo_runtime`,
+and `same_source_map_metadata_contract` for `saved_map_relocalize`.
+
+Fresh target-host evidence after the MuJoCo live-gate hardening was generated
+in the same Linux workspace. With `ROS_DOMAIN_ID=83`,
+`artifacts/server_sim_closure/host_preflight_after_motion_window_domain83.json`
+reports `ok=true`, `failed_checks=[]`, `blocked_gates=[]`, and all 13 required
+gates runnable. The latest focused live inspection report is
+`artifacts/server_sim_closure/mujoco_fastlio2_live_motion_window/inspection-moving-obstacle-video-20260608_074940/report.json`.
+It confirms that several earlier blockers moved forward:
+`runtime_evidence.ok=true`, `body_to_camera` frame evidence is present,
+moving obstacles publish non-empty points, PCT is the selected global planner,
+global/local path and `/nav/cmd_vel` evidence exist, and no hardware command
+sink is used. It is still a failed gate: `ok=false`, Fast-LIO reports
+`3.278m` motion against `1.459m` MuJoCo motion
+(`motion_scale_ratio=2.2468`), angular saturation ratio is `0.5822`, and the
+inspection reaches only `1/3` checkpoints.
+
+The fresh summary and gap outputs are:
+
+- `artifacts/server_sim_closure/dimos_benchmark_after_motion_window.json`
+- `artifacts/server_sim_closure/dimos_gap_after_motion_window.json`
+- `artifacts/server_sim_closure/dimos_gap_after_motion_window.md`
+
+They intentionally used a strict freshness window (`max_report_age_s=7200`).
+Older successful artifacts were stale under that window, so the domain83
+fresh-window status at that stage was `lingtu_readiness.ok=false`,
+`claim_allowed=false`, and `0/13` required gates passed. This does not
+contradict the earlier 7/13 historical summary; it prevents stale artifacts
+from being reused as a readiness claim.
+
+The previous upstream blocker was the `large_terrain` PCT native optimizer
+crash in the GPMP/height-smoother path. The current report at
+`artifacts/server_sim_closure/large_terrain/report.json` is green because the
+gate now runs PCT in an isolated child process with
+`LINGTU_PCT_OPTIMIZE_TRAJECTORY=0`. Each route records
+`native_backend_used=true`, `pct_optimizer_enabled=false`,
+`pct_planner_path_mode=native_astar_raw_path`, and child process return code 0.
+This is a real native PCT discrete-path pass over same-source map/tomogram
+assets, not an A* fallback. The new `native_pct_mujoco` pass proves the
+PCT-to-ROS2-local-planner/path-follower-to-MuJoCo kinematic motion loop. It is
+still not proof that Fast-LIO live inspection, moving-obstacle sweep,
+large-loop closure, Gazebo runtime, saved-map relocalization, or saved-map PCT
+navigation are healthy.
+
+For a reviewer-facing gap matrix without manually reading every gate report:
+
+```bash
+PYTHONPATH=src:. python3 sim/scripts/dimos_gap_report.py \
+  --summary artifacts/server_sim_closure/summary_dimos_benchmark_24h.json \
+  --host-preflight \
+  --include-dataflow \
+  --format markdown \
+  --json-out artifacts/server_sim_closure/dimos_gap_report.md
+```
+
+Omit `--summary` to build the matrix from the current
+`artifacts/server_sim_closure/` reports. The generated report preserves the
+canonical `dimos_benchmark` gate order, classifies each blocker, and keeps the
+next strict rerun command next to the failing gate. `--host-preflight` is
+read-only: it checks whether the current host can run the selected gates, but it
+does not launch ROS, MuJoCo, PCT, or any gate command. When host checks fail,
+the report also includes a `Host Setup Blockers` section that groups blocked
+gates by failed check such as `pct_native`, `ros2_humble`, `mujoco_headless`,
+or `isolated_ros_domain`.
+
+If the input summary already came from `server_sim_closure.py --run-missing
+--skip-host-blocked`, the gap report reads the embedded
+`run_missing_host_preflight` and `gate_runs[].status="host_blocked"` evidence.
+Those rows are shown as `host_blocked` without requiring a second preflight
+command.
+
+`--include-dataflow` inspects existing runtime gate reports and attaches a
+`runtime_dataflow` section. For flat live Fast-LIO reports it summarizes
+`outputs` and `lingtu_inspection` directly. For aggregate or wrapper gates it
+follows child report paths when present, or uses embedded case evidence such as
+`live_nav_chain`, `best_case`, `minimal_red_defect`, and `native_gate`. The
+reported edges identify where a stale or red runtime report stopped: Fast-LIO
+feedback, PCT/global path, local path, cmd_vel, MuJoCo motion, or checkpoints.
+This is diagnostic evidence only; a stale or missing report remains red even if
+an older child report shows an internally connected data path.
+`lingtu_readiness.ok` requires this runtime-dataflow pass; a green gate summary
+without `--include-dataflow` is treated as an incomplete claim boundary, not a
+closed DimOS-style proof.
+
+For `pct_saved_map_navigation`, the parser keeps the wrapper semantics instead
+of reducing the report to the embedded native gate. Its dataflow row must show
+saved-map relocalization, PCT preview, source-report handoff, native PCT
+backend, local planner/path follower command output, MuJoCo motion, and final
+goal evidence. This prevents a passing embedded native run from hiding a failed
+saved-map relocalization prerequisite.
+
+The same offline artifact parser is used by the Gateway diagnostic endpoint
+`/api/v1/diagnostics/algorithm-benchmark/latest`: the endpoint remains
+read-only, but its `dimos_gap` payload includes the same runtime-dataflow row
+briefs when the selected benchmark summary points at readable gate reports.
+This is separate from the live Gateway `/api/v1/runtime/dataflow` endpoint,
+which observes current Module/Gateway ports rather than historical gate
+artifacts.
+
+The runtime-dataflow summary also carries a cross-gate chain named
+`pct_mujoco_and_fastlio_live`. It requires `native_pct_mujoco` dataflow for
+PCT -> localPlanner/pathFollower -> MuJoCo evidence plus at least one live
+Fast-LIO gate (`fastlio2_dynamic_inspection`, `moving_obstacle_sweep`, or
+`large_loop_closure`). The live Fast-LIO gate must also prove PCT planner
+provenance in that same run (`global_planner=pct` and no planner fallback or
+repair). Two separately green reports are not enough: `same_run_proven=false`
+keeps `lingtu_readiness.ok=false` until the Fast-LIO live report itself proves
+PCT -> local path -> cmd_vel -> MuJoCo motion in the same runtime. A failing
+cross-gate chain keeps `lingtu_readiness.ok=false` even if the individual gate
+summary appears green.
+
+Same-source proof is artifact-level, not just a boolean flag. The live Fast-LIO
+report must carry `map_artifacts.source_contract.same_source_pcd=true`, a
+non-empty `map_artifacts.assets.map_pcd.sha256`, positive
+`map_pcd.point_count`, and, when a tomogram is present,
+`same_source_tomogram=true` with
+`map_artifacts.assets.tomogram.source_map_sha256` matching the map PCD sha.
+`map_artifacts.ok=true` or matching parent directories alone are not sufficient
+to prove DimOS-style same-run map/tomogram provenance.
+
+When the blockers are ROS/PCT host setup related, start from the existing
+project entry point instead of inventing a parallel installer:
+
+```bash
+PYTHONPATH=src:. python3 sim/scripts/pct_runtime_preflight.py \
+  --json-out artifacts/server_sim_closure/pct_runtime_preflight/report.json
+
+PYTHONPATH=src:. python3 sim/scripts/saved_map_relocalize_runtime_gate.py \
+  --preflight-only \
+  --json-out artifacts/server_sim_closure/saved_map_relocalize_runtime_preflight/report.json
+
+bash scripts/deploy/setup_server_ros_pct.sh
+
+PYTHONPATH=src:. python3 sim/scripts/pct_runtime_preflight.py \
+  --strict \
+  --json-out artifacts/server_sim_closure/pct_runtime_preflight/report.json
+
+PYTHONPATH=src:. python3 sim/scripts/saved_map_relocalize_runtime_gate.py \
+  --preflight-only \
+  --json-out artifacts/server_sim_closure/saved_map_relocalize_runtime_preflight/report.json
+
+PYTHONPATH=src:. python3 sim/scripts/server_sim_closure.py \
+  --preset dimos_benchmark \
+  --required-only \
+  --host-preflight \
+  --json-out artifacts/server_sim_closure/host_preflight_dimos_benchmark.json
+```
+
+The first PCT runtime preflight is non-strict so the JSON report can capture
+the current ABI, platform, extension-module, and shared-library blockers
+without aborting a setup script. After `setup_server_ros_pct.sh`, run the same
+check with `--strict`; it must pass before treating PCT-backed gates such as
+`large_terrain`, `native_pct_mujoco`, `moving_obstacle_sweep`, and
+`pct_saved_map_navigation` as runnable. The saved-map relocalize preflight is
+also non-motion: it checks same-source map assets, localizer config, current
+host markers, and ROS 2 Python importability, but it does not launch
+MuJoCo/Fast-LIO/localizer or prove `runtime_relocalization_validated=true`.
+The final `server_sim_closure.py --host-preflight` confirms the whole DimOS
+gate set, including ROS 2 Humble, isolated `ROS_DOMAIN_ID`, MuJoCo/Gazebo
+availability, and hardware-subscriber safety checks.
+
+Do not combine `--host-preflight` with `--run-missing`: preflight is read-only,
+while `--run-missing` launches gate commands. For the DimOS target-host closure,
+use `sim/scripts/run_dimos_linux_closure.sh`; it runs preflight first and
+refuses runtime gates while the host is red. `--skip-host-blocked` remains a
+developer diagnostic mode for local aggregation, not an acceptance path.
+
+The generated JSON also contains `execution_plan`. It is intentionally
+conservative: if the host preflight is red, `ok_to_run_missing=false` and the
+gate commands are listed under `blocked_gate_commands` for later execution on a
+passing simulation host. This prevents a local Windows/Python report from being
+mistaken for proof that the ROS/PCT/MuJoCo pipeline can run here.
+Runnable and blocked command phases use `order=dimos_dependency_order` so
+upstream assets such as `large_terrain` scene/tomogram reports are generated
+before downstream MuJoCo/PCT stress gates, even when those downstream gates are
+higher priority in the gap matrix.
+
+To export the same execution plan as a shell-readable command checklist:
+
+```bash
+PYTHONPATH=src:. python3 sim/scripts/dimos_gap_report.py \
+  --summary artifacts/server_sim_closure/summary_dimos_benchmark_24h.json \
+  --host-preflight-report artifacts/server_sim_closure/host_preflight_dimos_benchmark.json \
+  --include-dataflow \
+  --format shell \
+  --json-out artifacts/server_sim_closure/dimos_execution_plan.sh
+```
+
+Use `--host-preflight` when you want `dimos_gap_report.py` to run the read-only
+checks in-process. Use `--host-preflight-report <json>` when the preflight was
+already produced by `server_sim_closure.py --host-preflight`; the report will
+preserve the source as `file:<path>` so environment claims remain traceable.
+When `--summary <json>` is supplied, the summary file's own modification time
+is checked against `--max-report-age-s`; a stale summary remains red even if its
+embedded gate payloads look green. Runtime-dataflow closure is also complete
+only when every required runtime gate has an inspected dataflow row, so a subset
+of green runtime reports cannot unlock `lingtu_readiness.ok`.
+
+Blocked gate commands are emitted as `# BLOCKED:` comments until host preflight
+passes. Host setup diagnostics are emitted as executable commands in the
+`host_setup` phase: the shell checklist runs the non-strict PCT runtime
+diagnostic, the server setup script, the strict PCT runtime diagnostic, and the
+full host preflight before any downstream gate command is uncommented.
+
+The report also includes `pipeline_trace`, a static code-path map for the
+PCT/MuJoCo navigation chain. It names the code surfaces for
+`GlobalPlannerService`, PCT backend loading, native `localPlanner`/
+`pathFollower`, MuJoCo motion execution, Fast-LIO feedback, and saved-map PCT
+navigation. This trace answers where the program path lives, but it is not a
+runtime pass signal; the matching gate still has to pass.
+
+For local source-report wiring checks that do not require ROS 2 or MuJoCo,
+`native_pct_mujoco_gate.py` also supports a contract-only mode:
+
+```bash
+PYTHONPATH=src:. python3 sim/scripts/native_pct_mujoco_gate.py \
+  --contract-only \
+  --strict \
+  --source-report artifacts/server_sim_closure/large_terrain/report.json \
+  --route same_floor \
+  --json-out artifacts/server_sim_closure/native_pct_mujoco/contract_report.json
+```
+
+This mode validates the PCT source report, no-fallback selection, native
+runtime fields, tomogram presence, path safety, and same-source map/tomogram
+artifact proof. It also emits `command_generation` with the source-report
+fingerprint and the exact `localPlanner`/`pathFollower` command contract that
+would be launched on a ROS 2 simulation host. Its report is marked
+`validation_only=true` and
+`claim_boundary=contract_only_no_ros_mujoco_motion`; it must not be counted as
+`native_pct_mujoco` runtime evidence because it does not launch ROS 2
+`localPlanner`/`pathFollower`, create a MuJoCo engine, publish cmd_vel, or prove
+goal-reaching motion.
+
+The saved-map wrapper has the same local-only boundary when an already-built
+PCT source report is available:
+
+```bash
+PYTHONPATH=src:. python3 sim/scripts/pct_saved_map_navigation_gate.py \
+  --contract-only \
+  --strict \
+  --relocalize-report artifacts/server_sim_closure/saved_map_relocalize/report.json \
+  --tomogram artifacts/server_sim_closure/saved_map_relocalize/same_source_map/tomogram.pickle \
+  --source-report artifacts/server_sim_closure/pct_saved_map_navigation/pct_saved_map_source_report.json \
+  --json-out artifacts/server_sim_closure/pct_saved_map_navigation/contract_report.json
+```
+
+That mode checks relocalization health, saved-map tomogram resolution,
+source-report map/tomogram/scene binding, no-fallback PCT selection, and
+same-source artifact metadata. It is marked
+`claim_boundary=contract_only_no_pct_preview_or_mujoco_motion`, so it is only a
+local wiring check; the full `pct_saved_map_navigation` gate still has to run
+PCT preview and native MuJoCo motion on the simulation host.
+
 `dimos_benchmark` requires:
 
 | Gate | DimOS-style evidence covered |
 | --- | --- |
+| `gateway_runtime_acceptance` | Product-visible Gateway/ModulePort runtime streams, stage evidence, and non-motion command whitelist. |
 | `routecheck_preflight` | Non-motion route preview and command-safety counters. |
+| `blocked_route_replan_preflight` | Non-motion blocked-route preview: baseline path intersects a synthetic obstruction, candidate path replans around it, and no motion command is published. |
+| `navigation_replay_deviation` | Offline replay/deviation over routecheck-derived plans, JSON traces, or recorded topic JSONL global path, local path, cmd_vel, and odometry; it stays non-motion and fails when the source evidence is missing. |
 | `large_terrain` | Fixed large-scene route matrix over saved tomogram assets. |
 | `native_pct_mujoco` | PCT global path through local planner/path follower into simulated motion. |
 | `dynamic_obstacle_local_planner` | Local replanning around changing obstacle phases. |
@@ -76,6 +467,34 @@ PYTHONPATH=src:. python3 sim/scripts/server_sim_closure.py \
 | `saved_map_relocalize` | Saved-map/localizer contract, same-source metadata, live Fast-LIO, and localization health. |
 | `pct_saved_map_navigation` | Saved map/tomogram -> PCT -> local planning/path following -> motion. |
 
+Recorded navigation topics can now enter the aggregate gate directly with
+`server_sim_closure.py --navigation-replay-deviation-topic-jsonl <path>`.
+That keeps the DimOS-style replay/deviation lane close to rosbag tests while
+preserving the boundary that live PCT/MuJoCo closure still requires the
+runtime gates below.
+
+Existing moving-obstacle child reports can also be re-aggregated locally
+without launching the ROS2/MuJoCo matrix:
+
+```bash
+PYTHONPATH=src:. python3 sim/scripts/server_sim_closure.py \
+  --preset dimos_benchmark \
+  --required-only \
+  --moving-obstacle-sweep-report-glob \
+    'artifacts/server_sim_closure/mujoco_fastlio2_live*/inspection*/*/report.json' \
+  --json-out artifacts/server_sim_closure/summary_dimos_benchmark_24h.json
+```
+
+This path writes the standard
+`artifacts/server_sim_closure/moving_obstacle_sweep/report.json` aggregate with
+`execution_mode=report_only_aggregate`. It still requires the child reports to
+prove physical-rolling scan timing, Fast-LIO2 nav data source, PCT planner
+provenance, local path, nonzero cmd_vel, same-source map/tomogram artifacts,
+and slow/fast x sparse/dense coverage. It does not run the matrix or create new
+runtime evidence; it only makes already-captured live child reports visible to
+the closure summary. Do not combine it with `--host-preflight`, because
+preflight is read-only.
+
 ## Current Gaps To Keep Visible
 
 | Gap | Why it matters | Next gate shape |
@@ -84,8 +503,8 @@ PYTHONPATH=src:. python3 sim/scripts/server_sim_closure.py \
 | Dynamic obstacle sweep runtime evidence is newly required | Passing one speed/density, or passing videos without proving live navigation chain wiring, does not prove crowd robustness. | Run `moving_obstacle_sweep` after generating slow/fast x sparse/dense live inspection videos. Each child case must carry `live_nav_chain.ok=true`; the aggregate must carry `required_live_nav_chain=true`. |
 | Long-range loop closure runtime evidence is newly required | Short patrol proves local consistency, not large loop drift recovery. | Run `large_loop_closure` and require Fast-LIO/PCT/local path/cmd_vel plus start/end closure error. |
 | Saved-map assets must remain same-source | Pairing a relocalization report with a different or merely newer tomogram/map can create false failures or false passes. | Keep saved-map relocalize and PCT navigation gates tied to the same `same_source_map` directory. |
-| Real S100P hardware is outside the simulation closure | Simulation-only gates must not be called field readiness. | Add real-log replay first, then hardware dry-run with command boundary and localization health evidence. |
-| Frontier/no-gain behavior is spread across runtime gates | Exploration can pass by motion alone if no-gain termination is not checked. | Add a frontier no-gain/stall termination metric to the relevant runtime reports. |
+| Real S100P hardware is outside the simulation closure | Simulation-only gates must not be called field readiness. | Keep `navigation_replay_deviation` green on real-log traces first, then add hardware dry-run with command boundary and localization health evidence. |
+| TARE strategy-quality evidence needs fresh strict runtime data | Exploration can pass with motion and late activity while hiding poor frontier rejection/selection behavior. | `cmu_unity_runtime` strict reports now require `tare_strategy_quality` over TARE waypoint/path counts, strategy-path acceptance, suppressions, rejection reasons, and navigation success/failure. Rerun it on the CMU/ROS2 host before treating exploration quality as current evidence. |
 | Video evidence can become a weak proxy | Frame counters alone do not prove the MP4 artifact exists or is decodable. | Strict dynamic-inspection evaluation resolves the video path, requires a non-empty file, and decodes the first frame when OpenCV is available. |
 
 The previous 8-gate `dimos_benchmark` required summary on 2026-05-21 is green:
@@ -100,12 +519,15 @@ The previous 8-gate `dimos_benchmark` required summary on 2026-05-21 is green:
   `pct_saved_map_navigation`.
 
 The current preset is stricter than that artifact. It now also requires
-`moving_obstacle_sweep` and `large_loop_closure`, so the old green summary is
-no longer enough to claim full benchmark closure. Those two reports must be
-freshly generated before a new `dimos_benchmark` summary can be green.
+`gateway_runtime_acceptance`, `blocked_route_replan_preflight`,
+`navigation_replay_deviation`,
+`moving_obstacle_sweep`, and `large_loop_closure`, so the old green summary is
+no longer enough to claim full benchmark closure. Those reports must be freshly
+generated before a new `dimos_benchmark` summary can be green.
 
-Current stricter status after the latest remote physical-rolling reruns and
-gate hardening:
+Historical stricter status from the earlier remote physical-rolling reruns and
+gate hardening. Keep this section as diagnostic history; the authoritative
+current status is the 2026-06-08 target-host evidence section above:
 
 - The strict live MuJoCo/Fast-LIO input default is now
   `scan_time_profile=physical_rolling`. This supersedes the earlier
@@ -119,11 +541,11 @@ gate hardening:
   (`artifacts/server_sim_closure/inspection_onegoal_physical_fastlio/inspection-20260521_154351/report.json`).
   This is not a DimOS benchmark pass until the large-loop and dynamic-obstacle
   speed/density gates are refreshed under the same physical-rolling default.
-- Current strict summary:
+- Historical strict summary from that rerun window:
   `artifacts/server_sim_closure/summary_dimos_benchmark_physical_rolling_current.json`
   has `ok=false`, `missing_or_failed=["large_loop_closure","moving_obstacle_sweep"]`,
   and `algorithm_validation.claim_allowed=false`.
-- `moving_obstacle_sweep` is red under the current strict evaluator:
+- `moving_obstacle_sweep` was red under that strict evaluator:
   `artifacts/server_sim_closure/moving_obstacle_sweep/report_physical_rolling_20260521.json`.
   It covers `slow:sparse`, `slow:dense`, `fast:sparse`, and `fast:dense` with
   `scan_time_profile=physical_rolling`, the
@@ -134,7 +556,7 @@ gate hardening:
   summary now surfaces `fastlio2_consistency`, `blocking_subsystems`, and
   `minimal_red_defect` so this failure is visible without manually opening
   every child report.
-- `large_loop_closure` is red under the current same-source strict evaluator:
+- `large_loop_closure` was red under that same-source strict evaluator:
   `artifacts/server_sim_closure/large_loop_physical_rolling_same_source/large_loop_closure_report.json`
   over child runtime report
   `artifacts/server_sim_closure/large_loop_physical_rolling_same_source/inspection-loop-video-20260521_161429/report.json`.
@@ -319,27 +741,33 @@ PYTHONPATH=src:. python3 sim/scripts/large_loop_closure_gate.py \
   --strict
 ```
 
-The saved-map relocalize gate now keeps the runtime map selection on
-TARE/exploration same-source artifacts before generic recent MuJoCo inspection
-maps. The refreshed report uses live MuJoCo MID-360/IMU through Fast-LIO,
-`/nav/relocalize`, and localizer health:
+Historical domain108 saved-map diagnosis, superseded by the latest target-host
+evidence above: the saved-map relocalize gate was updated to accept both historical
+`lingtu.same_source_map_artifacts.*` metadata and the current
+`lingtu.saved_map_artifacts.*` schema, and host preflight was updated to require
+the ROS 2 `localizer_node` executable before the Linux closure runner can start
+runtime gates. At that domain108 stage, the target report used live MuJoCo
+MID-360/IMU through Fast-LIO, `/nav/relocalize`, and localizer health, but it
+was still a failed gate:
 
 - `artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json`
-- `localizer.latest_health_state=LOCKED`, `tracking_health_samples=485`,
-  `lost_health_samples=0`.
-- Live Fast-LIO consistency passed:
-  `sim_moved_m=3.294`, `fastlio2_moved_m=3.317`,
-  `z_delta_error_m=0.0189`.
+- `map_metadata_contract.ok=true`, `schema_version=lingtu.saved_map_artifacts.v1`.
+- `/nav/relocalize` service returns success and
+  `localizer.latest_health_state=LOCKED`.
+- At that stage the gate remained red because `live_feed.ok=false`:
+  `fastlio2_moved_m=1.555`, `sim_moved_m=0.029`,
+  `motion_scale_ratio=54.29`, and `yaw_per_meter` is too high.
 
-The saved-map PCT gate now uses the tomogram next to the relocalized
-`map.pcd`, passes that directory as `--map-root`, and uses a bounded saved-map
-goal. Refreshed evidence:
+At that same domain108 stage, the saved-map PCT gate refused stale or failed
+relocalization prerequisites. The report was present and fresh, but it was still
+red:
 
 - `artifacts/server_sim_closure/pct_saved_map_navigation/report.json`
-- PCT selected with no fallback; native local planner/path follower reached
-  the goal.
-- `moved_m=3.797`, `final_distance_m=0.494`,
-  `trajectory_quality.final_progress_ratio=0.902`.
+- `relocalize_report_freshness.fresh=true`.
+- `relocalization.ok=false` because the relocalize gate itself was red.
+- `plan_preview.skipped=true` and `native_gate.skipped=true` with
+  `reason=saved_map_relocalization_prerequisite_failed`, so no PCT preview or
+  native saved-map navigation proof is attempted until relocalization passes.
 
 The saved-map runtime gate now reads `same_source_map/metadata.json` for the
 MuJoCo world and scan-time profile instead of defaulting to an unrelated

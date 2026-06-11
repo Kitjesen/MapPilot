@@ -49,7 +49,15 @@ def _args(**overrides):
         "require_planner_path_safety": False,
         "require_exploration_navigation_success": False,
         "min_exploration_navigation_successes": 1,
+        "require_tare_strategy_quality": False,
+        "min_tare_waypoints": 1,
+        "min_tare_paths": 1,
+        "min_tare_strategy_paths": 0,
+        "min_tare_navigation_successes": 1,
+        "max_tare_suppressed_waypoint_ratio": 0.75,
         "require_runtime_contract": False,
+        "require_frontier_no_gain_stall": False,
+        "require_same_source_tomogram": False,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -958,6 +966,109 @@ def test_evaluate_report_rejects_one_target_tare_run_that_stalls_late():
     assert report["late_activity"]["odometry"]["observed_best_delta_m"] == 0.0
 
 
+def test_evaluate_report_records_frontier_no_gain_stall_observation():
+    metrics = _complete_runtime_metrics()
+    metrics["duration_sec"] = 180.0
+    metrics["cmd_vel"]["nonzero_samples"] = 12
+    metrics["cmd_vel"]["nonzero_times_sec"] = [
+        125.0,
+        130.0,
+        135.0,
+        140.0,
+        145.0,
+        150.0,
+        155.0,
+        160.0,
+        165.0,
+        170.0,
+    ]
+    metrics["odometry"]["/nav/odometry"]["delta_m"] = 1.0
+    metrics["odometry"]["/nav/odometry"]["history"] = [
+        {"t": 0.0, "xy": [0.0, 0.0]},
+        {"t": 121.0, "xy": [0.0, 0.0]},
+        {"t": 180.0, "xy": [0.75, 0.0]},
+    ]
+    metrics["paths"]["/nav/local_path"]["nonempty_times_sec"] = [
+        130.0,
+        140.0,
+        150.0,
+        160.0,
+        170.0,
+    ]
+    metrics["paths"]["/nav/global_path"]["nonempty_times_sec"] = [130.0]
+    for item in (metrics["cloud_coverage"]["topics"] or {}).values():
+        item["history"] = [
+            {"t": 0.0, "area_m2": 1.0},
+            {"t": 121.0, "area_m2": 2.0},
+            {"t": 180.0, "area_m2": 3.2},
+        ]
+    metrics["cloud_coverage"]["best_area_delta_m2"] = 2.2
+    metrics["gateway_exploration_status"] = {
+        "available": True,
+        "data": {
+            "backend": "tare",
+            "tare": {
+                "status": {"started": True},
+                "stats": {
+                    "navigation_success_count": 1,
+                    "navigation_failure_count": 0,
+                    "navigation_terminal_count": 1,
+                },
+            },
+        },
+    }
+
+    report = cmu_unity_runtime_gate.evaluate_report(
+        metrics,
+        _args(
+            require_frontier_no_gain_stall=True,
+            late_window_sec=60.0,
+            min_late_odom_delta_m=0.5,
+            min_late_cmd_vel_samples=10,
+            min_late_path_samples=5,
+            min_late_map_area_delta_m2=1.0,
+            required_path_topics=["/nav/local_path"],
+        ),
+        "73",
+    )
+
+    assert report["ok"] is True
+    stall = report["frontier_no_gain_stall"]
+    assert stall["checked"] is True
+    assert stall["ok"] is True
+    assert stall["mode"] == "late_activity_observation"
+    assert stall["stop_reason"] == "late_activity_window_verified"
+    assert stall["required_observation_s"] == 60.0
+    assert stall["late_activity"]["odometry_ok"] is True
+    assert stall["late_activity"]["cmd_vel_ok"] is True
+    assert stall["late_activity"]["paths_ok"] is True
+    assert stall["late_activity"]["map_growth_ok"] is True
+
+
+def test_evaluate_report_rejects_frontier_no_gain_stall_without_late_activity():
+    metrics = _complete_runtime_metrics()
+    metrics["duration_sec"] = 180.0
+
+    report = cmu_unity_runtime_gate.evaluate_report(
+        metrics,
+        _args(
+            require_frontier_no_gain_stall=True,
+            late_window_sec=60.0,
+            min_late_odom_delta_m=0.5,
+            min_late_cmd_vel_samples=10,
+            min_late_path_samples=5,
+            min_late_map_area_delta_m2=1.0,
+            required_path_topics=["/nav/local_path"],
+        ),
+        "73",
+    )
+
+    assert report["ok"] is False
+    assert report["frontier_no_gain_stall"]["ok"] is False
+    assert "frontier_no_gain_stall: late odometry evidence is not ok" in report["blockers"]
+    assert "frontier_no_gain_stall: late cmd_vel evidence is not ok" in report["blockers"]
+
+
 def test_evaluate_report_rejects_default_domain_and_missing_motion():
     metrics = {
         "waypoints": {"/way_point": {"samples": 0}},
@@ -1071,6 +1182,17 @@ def test_strict_runtime_gate_requires_lingtu_planner_diagnostics(monkeypatch):
         captured["require_exploration_navigation_success"] = (
             args.require_exploration_navigation_success
         )
+        captured["require_tare_strategy_quality"] = args.require_tare_strategy_quality
+        captured["min_tare_strategy_paths"] = args.min_tare_strategy_paths
+        captured["require_frontier_no_gain_stall"] = args.require_frontier_no_gain_stall
+        captured["late_window_sec"] = args.late_window_sec
+        captured["min_late_odom_delta_m"] = args.min_late_odom_delta_m
+        captured["min_late_cmd_vel_samples"] = args.min_late_cmd_vel_samples
+        captured["min_late_path_samples"] = args.min_late_path_samples
+        captured["min_late_map_area_delta_m2"] = args.min_late_map_area_delta_m2
+        captured["allow_flat_late_map_after_total_growth"] = (
+            args.allow_flat_late_map_after_total_growth
+        )
         return {
             "schema_version": "lingtu.cmu_unity_runtime_gate.v1",
             "ok": True,
@@ -1091,6 +1213,15 @@ def test_strict_runtime_gate_requires_lingtu_planner_diagnostics(monkeypatch):
     assert captured["require_planner_diagnostics"] is True
     assert captured["require_runtime_contract"] is True
     assert captured["require_exploration_navigation_success"] is True
+    assert captured["require_tare_strategy_quality"] is True
+    assert captured["min_tare_strategy_paths"] == 1
+    assert captured["require_frontier_no_gain_stall"] is True
+    assert captured["late_window_sec"] == 60.0
+    assert captured["min_late_odom_delta_m"] == 0.5
+    assert captured["min_late_cmd_vel_samples"] == 10
+    assert captured["min_late_path_samples"] == 5
+    assert captured["min_late_map_area_delta_m2"] == 1.0
+    assert captured["allow_flat_late_map_after_total_growth"] is True
 
 
 def test_evaluate_report_can_reject_planner_fallback_when_required():

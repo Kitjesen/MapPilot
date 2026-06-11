@@ -367,6 +367,74 @@ def _late_path_report(
     }
 
 
+def _frontier_no_gain_stall_report(
+    metrics: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    late_activity: dict[str, Any],
+    tare_navigation: dict[str, Any],
+) -> dict[str, Any]:
+    checked = bool(getattr(args, "require_frontier_no_gain_stall", False))
+    window_sec = float(getattr(args, "late_window_sec", 0.0) or 0.0)
+    duration_sec = float(metrics.get("duration_sec") or 0.0)
+    observed_s = max(0.0, min(duration_sec, window_sec)) if window_sec > 0.0 else 0.0
+    blockers: list[str] = []
+    if checked:
+        if window_sec <= 0.0:
+            blockers.append("late_window_sec <= 0")
+        if duration_sec < window_sec:
+            blockers.append("duration below required late observation window")
+        for name in ("odometry", "cmd_vel", "paths"):
+            evidence = late_activity.get(name)
+            if not isinstance(evidence, dict):
+                blockers.append(f"late {name} evidence missing")
+            elif evidence.get("ok") is not True:
+                blockers.append(f"late {name} evidence is not ok")
+        map_growth = late_activity.get("map_growth")
+        if not isinstance(map_growth, dict):
+            blockers.append("late map_growth evidence missing")
+        elif not (
+            map_growth.get("ok") is True
+            or map_growth.get("accepted_flat_after_total_growth") is True
+        ):
+            blockers.append("late map_growth evidence is not ok")
+        if int(tare_navigation.get("failure_count") or 0) > 0:
+            blockers.append("TARE navigation failure_count is nonzero")
+
+    return {
+        "checked": checked,
+        "ok": checked and not blockers,
+        "mode": "late_activity_observation",
+        "stop_reason": (
+            "late_activity_window_verified"
+            if checked and not blockers
+            else "late_activity_window_failed"
+            if checked
+            else "not_required"
+        ),
+        "required_observation_s": round(window_sec, 3) if checked else 0.0,
+        "observed_s": round(observed_s, 3),
+        "duration_sec": round(duration_sec, 3),
+        "late_activity": {
+            "odometry_ok": (late_activity.get("odometry") or {}).get("ok") is True,
+            "cmd_vel_ok": (late_activity.get("cmd_vel") or {}).get("ok") is True,
+            "paths_ok": (late_activity.get("paths") or {}).get("ok") is True,
+            "map_growth_ok": (late_activity.get("map_growth") or {}).get("ok") is True,
+            "map_growth_accepted_flat_after_total_growth": (
+                (late_activity.get("map_growth") or {}).get("accepted_flat_after_total_growth")
+                is True
+            ),
+        },
+        "tare_navigation": {
+            "available": tare_navigation.get("available"),
+            "success_count": int(tare_navigation.get("success_count") or 0),
+            "failure_count": int(tare_navigation.get("failure_count") or 0),
+            "terminal_count": int(tare_navigation.get("terminal_count") or 0),
+        },
+        "blockers": blockers,
+    }
+
+
 def _fetch_gateway_navigation_status(gateway_url: str, timeout_sec: float) -> dict[str, Any]:
     """Fetch Gateway navigation diagnostics without making Gateway a hard dependency."""
     url = str(gateway_url or "").rstrip("/")
@@ -591,6 +659,147 @@ def _tare_navigation_from_gateway_exploration(status: dict[str, Any]) -> dict[st
         "failure_count": _counter("navigation_failure_count"),
         "terminal_count": _counter("navigation_terminal_count"),
         "last_navigation_status": last_navigation_status,
+    }
+
+
+def _tare_strategy_quality_from_gateway_exploration(
+    status: dict[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    min_waypoints = max(0, int(getattr(args, "min_tare_waypoints", 1) or 0))
+    min_paths = max(0, int(getattr(args, "min_tare_paths", 1) or 0))
+    min_strategy_paths = max(0, int(getattr(args, "min_tare_strategy_paths", 0) or 0))
+    min_successes = max(
+        0,
+        int(
+            getattr(
+                args,
+                "min_tare_navigation_successes",
+                getattr(args, "min_exploration_navigation_successes", 1),
+            )
+            or 0
+        ),
+    )
+    try:
+        max_suppressed_ratio = float(
+            getattr(args, "max_tare_suppressed_waypoint_ratio", 1.0)
+        )
+    except (TypeError, ValueError):
+        max_suppressed_ratio = 1.0
+    max_suppressed_ratio = min(1.0, max(0.0, max_suppressed_ratio))
+    thresholds = {
+        "min_tare_waypoints": min_waypoints,
+        "min_tare_paths": min_paths,
+        "min_tare_strategy_paths": min_strategy_paths,
+        "min_tare_navigation_successes": min_successes,
+        "max_tare_suppressed_waypoint_ratio": max_suppressed_ratio,
+    }
+
+    if not status.get("available"):
+        return {
+            "checked": False,
+            "ok": False,
+            "available": False,
+            "reason": status.get("reason", "gateway_unavailable"),
+            "thresholds": thresholds,
+            "blockers": ["Gateway exploration status unavailable"],
+        }
+    data = status.get("data") or {}
+    if not isinstance(data, dict):
+        return {
+            "checked": False,
+            "ok": False,
+            "available": False,
+            "reason": "exploration_status_not_object",
+            "thresholds": thresholds,
+            "blockers": ["Gateway exploration status is not an object"],
+        }
+
+    tare = data.get("tare") if isinstance(data.get("tare"), dict) else {}
+    raw_status = tare.get("status") if isinstance(tare, dict) else {}
+    stats = tare.get("stats") if isinstance(tare, dict) else {}
+    if not isinstance(raw_status, dict):
+        raw_status = {}
+    if not isinstance(stats, dict):
+        stats = {}
+
+    def _counter(name: str) -> int:
+        for source in (stats, raw_status):
+            if name not in source:
+                continue
+            try:
+                return max(0, int(source.get(name) or 0))
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    def _text(name: str) -> str:
+        for source in (stats, raw_status):
+            value = source.get(name)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    waypoint_count = _counter("waypoint_count")
+    path_count = _counter("path_count")
+    strategy_path_count = _counter("strategy_path_count")
+    suppressed_waypoint_count = _counter("suppressed_waypoint_count")
+    suppressed_far_waypoint_count = _counter("suppressed_far_waypoint_count")
+    navigation_terminal_count = _counter("navigation_terminal_count")
+    navigation_success_count = _counter("navigation_success_count")
+    navigation_failure_count = _counter("navigation_failure_count")
+    suppressed_total = suppressed_waypoint_count + suppressed_far_waypoint_count
+    suppression_denominator = waypoint_count + suppressed_total
+    suppressed_ratio = (
+        float(suppressed_total) / float(suppression_denominator)
+        if suppression_denominator > 0
+        else 0.0
+    )
+    reject_reasons = [
+        reason
+        for reason in (
+            _text("last_waypoint_reject_reason"),
+            _text("last_strategy_path_reject_reason"),
+        )
+        if reason
+    ]
+
+    blockers: list[str] = []
+    if waypoint_count < min_waypoints:
+        blockers.append("waypoint_count below threshold")
+    if path_count < min_paths:
+        blockers.append("path_count below threshold")
+    if strategy_path_count < min_strategy_paths:
+        blockers.append("strategy_path_count below threshold")
+    if suppressed_ratio > max_suppressed_ratio:
+        blockers.append("suppressed_waypoint_ratio above threshold")
+    if navigation_success_count < min_successes:
+        blockers.append("navigation_success_count below threshold")
+    if navigation_failure_count > 0:
+        blockers.append("navigation_failure_count is nonzero")
+
+    return {
+        "checked": True,
+        "ok": not blockers,
+        "available": True,
+        "source": "gateway_exploration_status.tare.stats" if stats else "gateway_exploration_status.tare.status",
+        "backend": str(data.get("backend") or ""),
+        "started": bool(raw_status.get("started") or data.get("exploring")),
+        "thresholds": thresholds,
+        "waypoint_count": waypoint_count,
+        "path_count": path_count,
+        "strategy_path_count": strategy_path_count,
+        "suppressed_waypoint_count": suppressed_waypoint_count,
+        "suppressed_far_waypoint_count": suppressed_far_waypoint_count,
+        "suppressed_waypoint_ratio": suppressed_ratio,
+        "navigation_terminal_count": navigation_terminal_count,
+        "navigation_success_count": navigation_success_count,
+        "navigation_failure_count": navigation_failure_count,
+        "reject_reasons": reject_reasons,
+        "blockers": blockers,
     }
 
 
@@ -1284,6 +1493,16 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
     navigation_failure = _navigation_failure_from_gateway(gateway_navigation_status)
     direct_goal_fallback = _direct_goal_fallback_from_gateway(gateway_navigation_status)
     tare_navigation = _tare_navigation_from_gateway_exploration(gateway_exploration_status)
+    tare_strategy_quality = _tare_strategy_quality_from_gateway_exploration(
+        gateway_exploration_status,
+        args,
+    )
+    frontier_no_gain_stall = _frontier_no_gain_stall_report(
+        metrics,
+        args,
+        late_activity=late_activity,
+        tare_navigation=tare_navigation,
+    )
     same_source_tomogram = _same_source_tomogram_evidence()
     runtime_contract = _cmu_runtime_contract_evidence(
         metrics,
@@ -1322,6 +1541,20 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
             blockers.append("TARE navigation success count below threshold")
         if int(tare_navigation.get("failure_count") or 0) > 0:
             blockers.append("TARE navigation failure count is nonzero")
+    if bool(getattr(args, "require_tare_strategy_quality", False)) and (
+        tare_strategy_quality.get("ok") is not True
+    ):
+        for blocker in tare_strategy_quality.get("blockers") or [
+            "TARE strategy quality failed"
+        ]:
+            blockers.append(f"TARE strategy quality: {blocker}")
+    if bool(getattr(args, "require_frontier_no_gain_stall", False)) and (
+        frontier_no_gain_stall.get("ok") is not True
+    ):
+        for blocker in frontier_no_gain_stall.get("blockers") or [
+            "frontier late activity observation failed"
+        ]:
+            blockers.append(f"frontier_no_gain_stall: {blocker}")
     if bool(getattr(args, "require_same_source_tomogram", False)):
         if same_source_tomogram.get("ok") is not True:
             for error in same_source_tomogram.get("errors") or ["same-source tomogram missing"]:
@@ -1362,6 +1595,20 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
             "min_exploration_navigation_successes": int(
                 getattr(args, "min_exploration_navigation_successes", 1) or 1
             ),
+            "require_tare_strategy_quality": bool(
+                getattr(args, "require_tare_strategy_quality", False)
+            ),
+            "min_tare_waypoints": int(getattr(args, "min_tare_waypoints", 1) or 1),
+            "min_tare_paths": int(getattr(args, "min_tare_paths", 1) or 1),
+            "min_tare_strategy_paths": int(
+                getattr(args, "min_tare_strategy_paths", 0) or 0
+            ),
+            "max_tare_suppressed_waypoint_ratio": float(
+                getattr(args, "max_tare_suppressed_waypoint_ratio", 1.0) or 1.0
+            ),
+            "require_frontier_no_gain_stall": bool(
+                getattr(args, "require_frontier_no_gain_stall", False)
+            ),
             "require_same_source_tomogram": bool(
                 getattr(args, "require_same_source_tomogram", False)
             ),
@@ -1390,6 +1637,8 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
         "navigation_failure": navigation_failure,
         "direct_goal_fallback": direct_goal_fallback,
         "tare_navigation": tare_navigation,
+        "tare_strategy_quality": tare_strategy_quality,
+        "frontier_no_gain_stall": frontier_no_gain_stall,
         "same_source_tomogram": same_source_tomogram,
         "warnings": warnings,
         "blockers": blockers,
@@ -1685,9 +1934,61 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Minimum successful TARE navigation terminal results required by the strict gate.",
     )
     parser.add_argument(
+        "--require-tare-strategy-quality",
+        action="store_true",
+        help=(
+            "Fail validation unless Gateway TARE stats show accepted waypoints, "
+            "paths, bounded suppressions, and successful navigation."
+        ),
+    )
+    parser.add_argument(
+        "--min-tare-waypoints",
+        type=int,
+        default=1,
+        help="Minimum accepted TARE waypoints required by strategy-quality validation.",
+    )
+    parser.add_argument(
+        "--min-tare-paths",
+        type=int,
+        default=1,
+        help="Minimum accepted TARE paths required by strategy-quality validation.",
+    )
+    parser.add_argument(
+        "--min-tare-strategy-paths",
+        type=int,
+        default=0,
+        help=(
+            "Minimum accepted TARE strategy paths required by strategy-quality "
+            "validation. Strict mode raises this to at least one."
+        ),
+    )
+    parser.add_argument(
+        "--min-tare-navigation-successes",
+        type=int,
+        default=1,
+        help="Minimum successful TARE navigation results required by strategy-quality validation.",
+    )
+    parser.add_argument(
+        "--max-tare-suppressed-waypoint-ratio",
+        type=float,
+        default=0.75,
+        help=(
+            "Maximum allowed ratio of suppressed TARE waypoints to accepted plus "
+            "suppressed waypoints."
+        ),
+    )
+    parser.add_argument(
         "--require-runtime-contract",
         action="store_true",
         help="Fail validation unless the CMU Unity runtime contract evidence is complete.",
+    )
+    parser.add_argument(
+        "--require-frontier-no-gain-stall",
+        action="store_true",
+        help=(
+            "Fail validation unless late-window odom, cmd_vel, path, and map/no-gain "
+            "evidence proves exploration stayed live after the initial pass condition."
+        ),
     )
     parser.add_argument(
         "--require-same-source-tomogram",
@@ -1710,6 +2011,16 @@ def main() -> int:
         args.require_planner_diagnostics = True
         args.require_runtime_contract = True
         args.require_exploration_navigation_success = True
+        args.require_tare_strategy_quality = True
+        args.min_tare_strategy_paths = max(int(args.min_tare_strategy_paths or 0), 1)
+        args.require_frontier_no_gain_stall = True
+        if float(args.late_window_sec or 0.0) == 120.0:
+            args.late_window_sec = 60.0
+        args.min_late_odom_delta_m = max(float(args.min_late_odom_delta_m or 0.0), 0.5)
+        args.min_late_cmd_vel_samples = max(int(args.min_late_cmd_vel_samples or 0), 10)
+        args.min_late_path_samples = max(int(args.min_late_path_samples or 0), 5)
+        args.min_late_map_area_delta_m2 = max(float(args.min_late_map_area_delta_m2 or 0.0), 1.0)
+        args.allow_flat_late_map_after_total_growth = True
     try:
         report = run_gate(args)
     except Exception as exc:

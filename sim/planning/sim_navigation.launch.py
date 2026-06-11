@@ -156,6 +156,15 @@ def generate_launch_description():
         'pct_planner',
         'planner',
         'scripts',
+        'global_planner.py',
+    )
+    legacy_global_planner_script = os.path.join(
+        repo_root,
+        'src',
+        'global_planning',
+        'pct_planner',
+        'planner',
+        'scripts',
         'legacy',
         'global_planner.py',
     )
@@ -168,6 +177,8 @@ def generate_launch_description():
     global_planner_script = (
         source_global_planner_script
         if os.path.exists(source_global_planner_script)
+        else legacy_global_planner_script
+        if os.path.exists(legacy_global_planner_script)
         else installed_global_planner_script
     )
 
@@ -471,7 +482,9 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     ) if _use_rviz else None
 
-    # Clear transient-local path latch at startup to avoid stale paths from previous runs.
+    # Clear transient-local path latch for the legacy latched PCT planner only.
+    # The Gazebo line planner republishes live paths; a late empty latch can
+    # reset pct_path_adapter after the real path is already accepted.
     clear_latch = ExecuteProcess(
         cmd=[
             'ros2', 'topic', 'pub', '--once',
@@ -480,6 +493,7 @@ def generate_launch_description():
         ],
         output='screen',
         name='clear_path_latch',
+        condition=UnlessCondition(use_gazebo_line_planner),
     )
 
     nodes = [

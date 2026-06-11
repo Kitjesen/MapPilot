@@ -39,8 +39,12 @@ def _write_child_report(
             "-> /nav/odometry + /nav/map_cloud"
         ),
         "outputs": {
+            "fastlio2_cloud_registered": 20,
+            "fastlio2_odometry": 20,
             "nav_odometry": 20,
+            "nav_registered_cloud": 20,
             "nav_map_cloud": 20,
+            "nav_cmd_vel": 12,
             "nav_cmd_vel_nonzero": 12,
         },
         "lingtu_inspection": {
@@ -58,6 +62,27 @@ def _write_child_report(
         "navigation_chain": {
             "planner_fallback_used": False,
             "planner_repair_used": False,
+            "last_plan_report": {"selected_planner": "pct"},
+        },
+        "deliverable_contract": {
+            "checks": {"same_source_map_artifact": True},
+        },
+        "map_artifacts": {
+            "ok": True,
+            "source_contract": {
+                "same_source_pcd": True,
+                "same_source_tomogram": True,
+            },
+            "assets": {
+                "map_pcd": {
+                    "sha256": "map-sha-123",
+                    "point_count": 128,
+                },
+                "tomogram": {
+                    "sha256": "tomogram-sha-123",
+                    "source_map_sha256": "map-sha-123",
+                },
+            },
         },
         "moving_obstacles": {
             "enabled": True,
@@ -115,6 +140,41 @@ def test_moving_obstacle_sweep_requires_speed_density_pairs(tmp_path: Path):
         "fast:dense",
     ]
     assert summary["missing_pairs"] == []
+
+
+def test_moving_obstacle_sweep_preserves_live_same_source_artifacts(
+    tmp_path: Path,
+):
+    report = _write_child_report(
+        tmp_path / "same_source_child.json",
+        speed_mps=0.35,
+        spacing_m=0.16,
+    )
+
+    summary = moving_obstacle_sweep_gate.evaluate_reports(
+        [report],
+        required_speed_bins=("slow",),
+        required_density_bins=("sparse",),
+    )
+
+    case = summary["cases"][0]
+    live = case["live_nav_chain"]
+    assert live["outputs"]["fastlio2_cloud_registered"] == 20
+    assert live["outputs"]["fastlio2_odometry"] == 20
+    assert live["outputs"]["nav_cmd_vel_nonzero"] == 12
+    assert live["nav_outputs"]["nav_odometry"] == 20
+    assert live["navigation_chain"]["last_plan_report"] == {
+        "selected_planner": "pct"
+    }
+    assert live["deliverable_contract"]["checks"]["same_source_map_artifact"] is True
+    assert live["map_artifacts"]["assets"]["map_pcd"] == {
+        "sha256": "map-sha-123",
+        "point_count": 128,
+    }
+    assert live["map_artifacts"]["assets"]["tomogram"] == {
+        "sha256": "tomogram-sha-123",
+        "source_map_sha256": "map-sha-123",
+    }
 
 
 def test_moving_obstacle_sweep_rejects_single_speed_density_point(tmp_path: Path):
@@ -328,6 +388,8 @@ def test_moving_obstacle_sweep_builds_runtime_matrix_parameters(tmp_path: Path):
     )
     assert env["LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER"] == "pct"
     assert env["LINGTU_MUJOCO_LIVE_INSPECTION_TOMOGRAM"] == "artifacts/tomogram.pickle"
+    assert env["LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM"] == "1"
+    assert env["LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER"] == "10"
     assert env["LINGTU_MUJOCO_LIVE_WORLD"] == "industrial_park"
     assert env["ROS_DOMAIN_ID"] == "99"
     assert env["LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE"] == "physical_rolling"
@@ -466,6 +528,76 @@ def test_moving_obstacle_sweep_run_matrix_collects_child_reports(tmp_path: Path)
         "fast:sparse",
         "fast:dense",
     ]
+
+
+def test_moving_obstacle_sweep_run_matrix_ignores_existing_reports_by_default(
+    tmp_path: Path,
+    monkeypatch,
+):
+    old_green = _write_child_report(
+        tmp_path / "old" / "report.json",
+        speed_mps=0.95,
+        spacing_m=0.05,
+    )
+    new_red = _write_child_report(
+        tmp_path / "children" / "fast-dense" / "inspection" / "report.json",
+        speed_mps=0.95,
+        spacing_m=0.05,
+    )
+    payload = json.loads(new_red.read_text(encoding="utf-8"))
+    payload["ok"] = False
+    payload["remaining_gaps"] = ["angular saturation ratio too high"]
+    payload["control_quality"] = {
+        "ok": False,
+        "angular_saturation_ratio": 0.369,
+        "max_angular_saturation_ratio": 0.35,
+        "blockers": ["angular saturation ratio too high"],
+    }
+    new_red.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setattr(
+        moving_obstacle_sweep_gate,
+        "run_matrix_preflight",
+        lambda **_kwargs: {"ok": True, "warnings": []},
+    )
+    monkeypatch.setattr(
+        moving_obstacle_sweep_gate,
+        "run_matrix_cases",
+        lambda *args, **_kwargs: [
+            {
+                "case_id": "fast-dense",
+                "returncode": 1,
+                "report_path": str(new_red),
+                "error": "",
+            }
+        ],
+    )
+    output = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "moving_obstacle_sweep_gate.py",
+            "--run-matrix",
+            "--report",
+            str(old_green),
+            "--required-speed-bins",
+            "fast",
+            "--required-density-bins",
+            "dense",
+            "--json-out",
+            str(output),
+            "--strict",
+        ],
+    )
+
+    assert moving_obstacle_sweep_gate.main() == 1
+    summary = json.loads(output.read_text(encoding="utf-8"))
+    assert summary["ok"] is False
+    assert summary["case_count"] == 1
+    assert summary["cases"][0]["path"] == str(new_red)
+    assert summary["run_matrix"]["included_existing_report_count"] == 0
+    assert "fast-dense returncode=1: child run failed" in summary["blockers"]
 
 
 def test_moving_obstacle_sweep_run_matrix_isolates_ros_domain_per_case(tmp_path: Path):

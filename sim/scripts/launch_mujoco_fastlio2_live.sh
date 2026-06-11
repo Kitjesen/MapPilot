@@ -72,8 +72,15 @@ Environment overrides:
   LINGTU_MUJOCO_LIVE_INSPECTION_GOALS="0.8,0.0;1.6,0.2;2.4,0.4"
   LINGTU_MUJOCO_LIVE_INSPECTION_MIN_CHECKPOINTS=3
   LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_TIMEOUT=900  # sim-clock default; override for faster local runs
+  LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST=0.35
+  LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD=0.50
+  LINGTU_MUJOCO_LIVE_INSPECTION_FINAL_WAYPOINT_THRESHOLD=0.50
+  LINGTU_MUJOCO_LIVE_INSPECTION_PATH_GOAL_TOLERANCE=0.12
+  LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD=1.5
+  LINGTU_MUJOCO_LIVE_INSPECTION_PATH_MIN_SPEED=0.15
   LINGTU_MUJOCO_LIVE_CMD_VEL_SIM_LINEAR_SCALE=1.0
   LINGTU_MUJOCO_LIVE_CMD_VEL_SIM_ANGULAR_SCALE=1.0
+  LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT=5.0
   LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT=0.25
   LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT=0.45
   LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_ACCEL_LIMIT=0.5
@@ -89,8 +96,10 @@ Environment overrides:
   LINGTU_MUJOCO_LIVE_FASTLIO_NEAR_SEARCH_NUM=5
   LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER=5
   LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_COV_INV=1000
+  LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT=livox_custom_msg
   LINGTU_MUJOCO_LIVE_FASTLIO_TIME_DIFF_LIDAR_TO_IMU=0.0
   LINGTU_MUJOCO_LIVE_FASTLIO_VERTICAL_VELOCITY_CONSTRAINT=off
+  LINGTU_MUJOCO_LIVE_MAX_ANGULAR_SATURATION_RATIO=0.35
   LINGTU_MUJOCO_LIVE_IMU_ACC_MODE=finite_difference
   LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE=physical_rolling
   LINGTU_MUJOCO_LIVE_MAX_FASTLIO_Z_DRIFT_M=1.0
@@ -139,6 +148,27 @@ prepare_env() {
   export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
   export LINGTU_PROFILE="${LINGTU_PROFILE:-sim_mujoco_live}"
   export LINGTU_RUNTIME_CONTRACT="${LINGTU_RUNTIME_CONTRACT:-mujoco_fastlio2_live}"
+  # Keep the live gate on the same native-PCT raw-path mode as large_terrain
+  # unless the caller explicitly opts into the GPMP optimizer.
+  export LINGTU_PCT_OPTIMIZE_TRAJECTORY="${LINGTU_PCT_OPTIMIZE_TRAJECTORY:-0}"
+}
+
+cleanup_stale_fastlio2() {
+  local root="$1"
+  local run_root="$2"
+  if [[ "${LINGTU_MUJOCO_LIVE_CLEAN_STALE_FASTLIO:-1}" == "0" ]]; then
+    return 0
+  fi
+  local patterns=(
+    "$root/install/lib/fastlio2/lio_node.*mujoco_fastlio2_live"
+    "ros2 run fastlio2 lio_node.*mujoco_fastlio2_live"
+    "$root/install/lib/fastlio2/lio_node.*$run_root"
+    "ros2 run fastlio2 lio_node.*$run_root"
+  )
+  local pattern
+  for pattern in "${patterns[@]}"; do
+    pkill -f "$pattern" 2>/dev/null || true
+  done
 }
 
 detect_display_env() {
@@ -182,6 +212,7 @@ run_gate() {
   prepare_env "$root"
 
   local run_root="${LINGTU_MUJOCO_LIVE_RUN_DIR:-$root/artifacts/server_sim_closure/mujoco_fastlio2_live}"
+  cleanup_stale_fastlio2 "$root" "$run_root"
   local stamp
   stamp="$(date +%Y%m%d_%H%M%S)"
   local run_dir="$run_root/$mode-$stamp"
@@ -251,13 +282,16 @@ run_gate() {
       fi
       if [[ "$mode" == "inspection-loop" || "$mode" == "inspection-loop-video" ]]; then
         duration="${LINGTU_MUJOCO_LIVE_DURATION_INSPECTION:-240}"
-        inspection_default_goals="${LINGTU_MUJOCO_LIVE_INSPECTION_GOALS:-6.0,0.0;6.0,6.0;0.0,6.0;0.0,0.0}"
+        # Large-loop goals are in the live planning frame. In Fast-LIO mode
+        # that frame is odom, whose world-frame origin is recorded separately
+        # in the runtime report and checked by the aggregation gate.
+        inspection_default_goals="${LINGTU_MUJOCO_LIVE_INSPECTION_GOALS:-4.8,0.0;4.8,5.7;0.0,5.7;0.0,0.0}"
         inspection_default_min_checkpoints="${LINGTU_MUJOCO_LIVE_INSPECTION_MIN_CHECKPOINTS:-4}"
         inspection_default_planner="${LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER:-pct}"
       fi
       frontier_args=(
         "--run-lingtu-inspection"
-        "--inspection-goals" "$inspection_default_goals"
+        "--inspection-goals=$inspection_default_goals"
         "--inspection-min-checkpoints" "$inspection_default_min_checkpoints"
         "--inspection-start-delay" "${LINGTU_MUJOCO_LIVE_INSPECTION_START_DELAY:-0}"
         "--inspection-goal-timeout" "$inspection_default_goal_timeout"
@@ -273,7 +307,7 @@ run_gate() {
         moving_obstacle_mode="${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_MODE:-robot_crossing}"
         moving_obstacle_default_count="3"
         moving_obstacle_default_period="6"
-        moving_obstacle_default_start="8"
+        moving_obstacle_default_start="2"
       fi
       ;;
     demo)
@@ -310,12 +344,66 @@ run_gate() {
   echo "LINGTU_RUNTIME_CONTRACT=$LINGTU_RUNTIME_CONTRACT" | tee -a "$run_dir/status.txt"
   echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID" | tee -a "$run_dir/status.txt"
   echo "world=$world duration=$duration duration_clock=$duration_clock drive_source=$drive_source nav_data_source=$nav_data_source strict=$strict" | tee -a "$run_dir/status.txt"
-  echo "moving_obstacle_mode=$moving_obstacle_mode count=${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_COUNT:-$moving_obstacle_default_count} period=${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_PERIOD_S:-$moving_obstacle_default_period}" | tee -a "$run_dir/status.txt"
+  echo "moving_obstacle_mode=$moving_obstacle_mode count=${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_COUNT:-$moving_obstacle_default_count} start=${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_START_S:-$moving_obstacle_default_start} period=${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_PERIOD_S:-$moving_obstacle_default_period}" | tee -a "$run_dir/status.txt"
 
   local cmd_vel_timeout_default="0.75"
+  local cmd_vel_mux_source_timeout_default="0.5"
+  local cmd_vel_linear_limit_default="0.25"
+  local cmd_vel_angular_limit_default="0.45"
+  local nav_max_linear_speed_default="0.25"
+  local nav_max_angular_z_default="0.45"
+  local nav_turn_speed_yaw_rate_start_default="0.0"
+  local nav_turn_speed_min_scale_default="1.0"
+  local runtime_fault_confirm_samples_default="2"
+  local runtime_motion_fault_min_sim_m_default="0.25"
+  local fastlio_ieskf_max_iter_default="5"
+  local max_angular_saturation_ratio_default="0.35"
+  local inspection_downsample_dist_default="0.35"
+  local inspection_waypoint_threshold_default="0.50"
+  local inspection_final_waypoint_threshold_default="0.50"
+  local inspection_complete_path_on_goal_proximity_default="0"
+  local inspection_goal_proximity_completion_threshold_default=""
+  local inspection_path_goal_tolerance_default="0.12"
+  local inspection_path_lookahead_default="1.5"
+  local inspection_path_min_speed_default="0.15"
+  local inspection_path_yaw_rate_gain_default="7.5"
+  local inspection_path_stop_yaw_rate_gain_default="7.5"
+  local inspection_path_dir_diff_thre_default="0.1"
   if [[ "$drive_source" == "nav_cmd_vel" && "$duration_clock" == "sim" ]]; then
     cmd_vel_timeout_default="0"
+    cmd_vel_mux_source_timeout_default="5.0"
   fi
+  if [[ "$mode" == "inspection-loop" || "$mode" == "inspection-loop-video" ]]; then
+    inspection_downsample_dist_default="1.0"
+    # Keep checkpoint completion close enough that the next PCT start remains
+    # on the validated path, while avoiding long low-speed spin near corners.
+    cmd_vel_linear_limit_default="0.45"
+    cmd_vel_angular_limit_default="0.25"
+    nav_max_linear_speed_default="0.45"
+    nav_max_angular_z_default="0.25"
+    inspection_waypoint_threshold_default="0.65"
+    inspection_final_waypoint_threshold_default="0.65"
+    inspection_complete_path_on_goal_proximity_default="1"
+    inspection_goal_proximity_completion_threshold_default="0.65"
+    inspection_path_lookahead_default="2.0"
+    inspection_path_min_speed_default="0.15"
+    inspection_path_yaw_rate_gain_default="2.5"
+    inspection_path_stop_yaw_rate_gain_default="2.5"
+    inspection_path_dir_diff_thre_default="1.8"
+    nav_turn_speed_yaw_rate_start_default="0.0"
+    nav_turn_speed_min_scale_default="1.0"
+  fi
+  if [[ "$mode" == inspection-moving-obstacle* ]]; then
+    cmd_vel_angular_limit_default="0.25"
+    nav_max_angular_z_default="0.20"
+    runtime_fault_confirm_samples_default="6"
+    runtime_motion_fault_min_sim_m_default="1.0"
+    fastlio_ieskf_max_iter_default="10"
+    max_angular_saturation_ratio_default="0.40"
+  fi
+  echo "cmd_vel_timeout=${LINGTU_MUJOCO_LIVE_CMD_VEL_TIMEOUT:-$cmd_vel_timeout_default} cmd_vel_mux_source_timeout=${LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT:-$cmd_vel_mux_source_timeout_default}" | tee -a "$run_dir/status.txt"
+  echo "cmd_vel_linear_limit=${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT:-$cmd_vel_linear_limit_default} nav_max_linear_speed=${LINGTU_MUJOCO_LIVE_NAV_MAX_LINEAR_SPEED:-$nav_max_linear_speed_default} cmd_vel_angular_limit=${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT:-$cmd_vel_angular_limit_default} nav_max_angular_z=${LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z:-$nav_max_angular_z_default} nav_turn_speed_yaw_rate_start=${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START:-$nav_turn_speed_yaw_rate_start_default} nav_turn_speed_min_scale=${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE:-$nav_turn_speed_min_scale_default} runtime_fault_confirm_samples=${LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES:-$runtime_fault_confirm_samples_default} runtime_motion_fault_min_sim_m=${LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M:-$runtime_motion_fault_min_sim_m_default} fastlio_ieskf_max_iter=${LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER:-$fastlio_ieskf_max_iter_default} max_angular_saturation_ratio=${LINGTU_MUJOCO_LIVE_MAX_ANGULAR_SATURATION_RATIO:-$max_angular_saturation_ratio_default}" | tee -a "$run_dir/status.txt"
+  echo "inspection_downsample_dist=${LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST:-$inspection_downsample_dist_default} inspection_waypoint_threshold=${LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD:-$inspection_waypoint_threshold_default} inspection_final_waypoint_threshold=${LINGTU_MUJOCO_LIVE_INSPECTION_FINAL_WAYPOINT_THRESHOLD:-$inspection_final_waypoint_threshold_default} inspection_complete_path_on_goal_proximity=${LINGTU_MUJOCO_LIVE_INSPECTION_COMPLETE_PATH_ON_GOAL_PROXIMITY:-$inspection_complete_path_on_goal_proximity_default} inspection_goal_proximity_completion_threshold=${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_PROXIMITY_COMPLETION_THRESHOLD:-$inspection_goal_proximity_completion_threshold_default} inspection_path_lookahead=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD:-$inspection_path_lookahead_default} inspection_path_yaw_rate_gain=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN:-$inspection_path_yaw_rate_gain_default} inspection_path_dir_diff_thre=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE:-$inspection_path_dir_diff_thre_default}" | tee -a "$run_dir/status.txt"
 
   local cmd=(
     "$python_bin" "$root/sim/scripts/mujoco_fastlio2_live_gate.py"
@@ -330,25 +418,37 @@ run_gate() {
     "--nav-data-source" "$nav_data_source"
     "--work-dir" "$run_dir/work"
     "--json-out" "$run_dir/report.json"
+    "--partial-json-out" "$run_dir/report.partial.json"
   )
   cmd+=(
     "--cmd-vel-timeout" "${LINGTU_MUJOCO_LIVE_CMD_VEL_TIMEOUT:-$cmd_vel_timeout_default}"
-    "--cmd-vel-linear-limit" "${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT:-0.25}"
-    "--cmd-vel-angular-limit" "${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT:-0.45}"
+    "--cmd-vel-mux-source-timeout" "${LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT:-$cmd_vel_mux_source_timeout_default}"
+    "--cmd-vel-linear-limit" "${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT:-$cmd_vel_linear_limit_default}"
+    "--cmd-vel-angular-limit" "${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT:-$cmd_vel_angular_limit_default}"
     "--cmd-vel-sim-linear-scale" "${LINGTU_MUJOCO_LIVE_CMD_VEL_SIM_LINEAR_SCALE:-1.0}"
     "--cmd-vel-sim-angular-scale" "${LINGTU_MUJOCO_LIVE_CMD_VEL_SIM_ANGULAR_SCALE:-1.0}"
     "--cmd-vel-linear-accel-limit" "${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_ACCEL_LIMIT:-0.5}"
     "--cmd-vel-angular-accel-limit" "${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_ACCEL_LIMIT:-1.0}"
-    "--nav-max-linear-speed" "${LINGTU_MUJOCO_LIVE_NAV_MAX_LINEAR_SPEED:-0.25}"
-    "--nav-max-angular-z" "${LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z:-0.45}"
-    "--nav-turn-speed-yaw-rate-start" "${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START:-0.0}"
-    "--nav-turn-speed-min-scale" "${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE:-1.0}"
+    "--nav-max-linear-speed" "${LINGTU_MUJOCO_LIVE_NAV_MAX_LINEAR_SPEED:-$nav_max_linear_speed_default}"
+    "--nav-max-angular-z" "${LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z:-$nav_max_angular_z_default}"
+    "--nav-turn-speed-yaw-rate-start" "${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START:-$nav_turn_speed_yaw_rate_start_default}"
+    "--nav-turn-speed-min-scale" "${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE:-$nav_turn_speed_min_scale_default}"
+    "--inspection-downsample-dist" "${LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST:-$inspection_downsample_dist_default}"
+    "--inspection-waypoint-threshold" "${LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD:-$inspection_waypoint_threshold_default}"
+    "--inspection-final-waypoint-threshold" "${LINGTU_MUJOCO_LIVE_INSPECTION_FINAL_WAYPOINT_THRESHOLD:-$inspection_final_waypoint_threshold_default}"
+    "--inspection-path-goal-tolerance" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_GOAL_TOLERANCE:-$inspection_path_goal_tolerance_default}"
+    "--inspection-path-lookahead" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD:-$inspection_path_lookahead_default}"
+    "--inspection-path-min-speed" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_MIN_SPEED:-$inspection_path_min_speed_default}"
+    "--inspection-path-yaw-rate-gain" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN:-$inspection_path_yaw_rate_gain_default}"
+    "--inspection-path-stop-yaw-rate-gain" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_STOP_YAW_RATE_GAIN:-$inspection_path_stop_yaw_rate_gain_default}"
+    "--inspection-path-dir-diff-thre" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE:-$inspection_path_dir_diff_thre_default}"
     "--mid360-samples-per-frame" "${LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME:-15000}"
+    "--fastlio-lidar-input" "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT:-livox_custom_msg}"
     "--fastlio-lidar-filter-num" "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_FILTER_NUM:-4}"
     "--fastlio-scan-resolution" "${LINGTU_MUJOCO_LIVE_FASTLIO_SCAN_RESOLUTION:-0.15}"
     "--fastlio-map-resolution" "${LINGTU_MUJOCO_LIVE_FASTLIO_MAP_RESOLUTION:-0.3}"
     "--fastlio-near-search-num" "${LINGTU_MUJOCO_LIVE_FASTLIO_NEAR_SEARCH_NUM:-5}"
-    "--fastlio-ieskf-max-iter" "${LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER:-5}"
+    "--fastlio-ieskf-max-iter" "${LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER:-$fastlio_ieskf_max_iter_default}"
     "--fastlio-lidar-cov-inv" "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_COV_INV:-1000}"
     "--fastlio-time-diff-lidar-to-imu" "${LINGTU_MUJOCO_LIVE_FASTLIO_TIME_DIFF_LIDAR_TO_IMU:-0.0}"
     "--fastlio-vertical-velocity-constraint" "${LINGTU_MUJOCO_LIVE_FASTLIO_VERTICAL_VELOCITY_CONSTRAINT:-off}"
@@ -356,7 +456,9 @@ run_gate() {
     "--imu-acc-mode" "${LINGTU_MUJOCO_LIVE_IMU_ACC_MODE:-finite_difference}"
     "--max-fastlio-z-drift-m" "${LINGTU_MUJOCO_LIVE_MAX_FASTLIO_Z_DRIFT_M:-1.0}"
     "--max-fastlio-yaw-drift-rad" "${LINGTU_MUJOCO_LIVE_MAX_FASTLIO_YAW_DRIFT_RAD:-0.5}"
-    "--runtime-fault-confirm-samples" "${LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES:-2}"
+    "--runtime-fault-confirm-samples" "${LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES:-$runtime_fault_confirm_samples_default}"
+    "--runtime-motion-fault-min-sim-m" "${LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M:-$runtime_motion_fault_min_sim_m_default}"
+    "--max-angular-saturation-ratio" "${LINGTU_MUJOCO_LIVE_MAX_ANGULAR_SATURATION_RATIO:-$max_angular_saturation_ratio_default}"
     "--map-artifact-voxel-size" "${LINGTU_MUJOCO_LIVE_MAP_ARTIFACT_VOXEL_SIZE:-0.10}"
     "--map-artifact-max-points" "${LINGTU_MUJOCO_LIVE_MAP_ARTIFACT_MAX_POINTS:-250000}"
     "--map-artifact-max-span-m" "${LINGTU_MUJOCO_LIVE_MAP_ARTIFACT_MAX_SPAN_M:-120.0}"
@@ -365,6 +467,17 @@ run_gate() {
     "--tomogram-ground-h" "${LINGTU_MUJOCO_LIVE_TOMOGRAM_GROUND_H:-0.0}"
     "--tomogram-max-cells" "${LINGTU_MUJOCO_LIVE_TOMOGRAM_MAX_CELLS:-50000000}"
   )
+  case "${LINGTU_MUJOCO_LIVE_INSPECTION_COMPLETE_PATH_ON_GOAL_PROXIMITY:-$inspection_complete_path_on_goal_proximity_default}" in
+    1|true|TRUE|yes|YES|on|ON)
+      cmd+=("--inspection-complete-path-on-goal-proximity")
+      ;;
+  esac
+  if [[ -n "${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_PROXIMITY_COMPLETION_THRESHOLD:-$inspection_goal_proximity_completion_threshold_default}" ]]; then
+    cmd+=(
+      "--inspection-goal-proximity-completion-threshold"
+      "${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_PROXIMITY_COMPLETION_THRESHOLD:-$inspection_goal_proximity_completion_threshold_default}"
+    )
+  fi
   if [[ "${LINGTU_MUJOCO_LIVE_SAVE_MAP_ARTIFACTS:-1}" == "0" || "${LINGTU_MUJOCO_LIVE_SAVE_MAP_ARTIFACTS:-1}" == "false" ]]; then
     cmd+=("--no-save-map-artifacts")
   fi
@@ -409,7 +522,94 @@ run_gate() {
   printf '%q ' "${cmd[@]}" >"$run_dir/command.txt"
   echo >>"$run_dir/command.txt"
   echo "latest_run_dir=$run_dir" >"$run_root/latest.txt"
+  set +e
   "${cmd[@]}" 2>&1 | tee "$run_dir/gate.log"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  if [[ ! -f "$run_dir/report.json" ]]; then
+    "$python_bin" - "$run_dir" "$rc" "$mode" "$world" "$nav_data_source" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+rc = int(sys.argv[2])
+mode = sys.argv[3]
+world = sys.argv[4]
+nav_data_source = sys.argv[5]
+partial_path = run_dir / "report.partial.json"
+partial = {}
+partial_error = ""
+if partial_path.exists():
+    try:
+        raw_partial = json.loads(partial_path.read_text(encoding="utf-8"))
+        if isinstance(raw_partial, dict):
+            partial = raw_partial
+    except Exception as exc:
+        partial_error = f"{type(exc).__name__}: {exc}"
+partial_faults = [
+    str(item)
+    for item in partial.get("runtime_faults", [])
+    if isinstance(item, (str, int, float)) and str(item)
+]
+runtime_faults = list(
+    dict.fromkeys([*partial_faults, "runtime_report_missing_after_launcher"])
+)
+report = {
+    "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
+    "ok": False,
+    "simulation_only": True,
+    "real_robot_motion": False,
+    "cmd_vel_sent_to_hardware": False,
+    "world": world,
+    "nav_data_source": nav_data_source,
+    "remaining_gaps": ["runtime_report_missing_after_launcher"],
+    "runtime_faults": runtime_faults,
+    "launcher_failure": {
+        "ok": False,
+        "mode": mode,
+        "returncode": rc,
+        "reason": "mujoco_fastlio2_live_gate exited without writing report.json",
+        "run_dir": str(run_dir),
+        "command": str(run_dir / "command.txt"),
+        "gate_log": str(run_dir / "gate.log"),
+        "status": str(run_dir / "status.txt"),
+        "partial_report": str(partial_path) if partial_path.exists() else "",
+        "partial_report_error": partial_error,
+    },
+    "partial_report": partial,
+    "partial_report_path": str(partial_path) if partial_path.exists() else "",
+    "outputs": partial.get("outputs", {}) if isinstance(partial.get("outputs"), dict) else {},
+    "lingtu_inspection": (
+        partial.get("lingtu_inspection", {})
+        if isinstance(partial.get("lingtu_inspection"), dict)
+        else {}
+    ),
+    "simulation_path": (
+        partial.get("simulation_path", {})
+        if isinstance(partial.get("simulation_path"), dict)
+        else {}
+    ),
+    "video": partial.get("video", {}) if isinstance(partial.get("video"), dict) else {},
+    "gate_wall_timeout": (
+        partial.get("gate_wall_timeout", {})
+        if isinstance(partial.get("gate_wall_timeout"), dict)
+        else {}
+    ),
+    "runtime_fault_events": (
+        partial.get("runtime_fault_events", [])
+        if isinstance(partial.get("runtime_fault_events"), list)
+        else []
+    ),
+}
+(run_dir / "report.json").write_text(
+    json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  fi
+  cleanup_stale_fastlio2 "$root" "$run_root"
+  return "$rc"
 }
 
 run_pct_moving_obstacle() {

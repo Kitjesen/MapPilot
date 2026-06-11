@@ -91,7 +91,7 @@ start_demo() {
   rm -f "$run_dir"/*.pid "$run_dir"/*.log "$run_dir"/*report*.json "$run_dir"/*trace*.json
 
   local world="$root/sim/worlds/gazebo/lingtu_gazebo_industrial_park.sdf"
-  local rviz_config="${LINGTU_GAZEBO_INDUSTRIAL_RVIZ:-$root/tests/planning/lingtu_industrial_demo.rviz}"
+  local rviz_config="${LINGTU_GAZEBO_INDUSTRIAL_RVIZ:-$root/sim/planning/lingtu_industrial_demo.rviz}"
   local python_bin="${LINGTU_PYTHON:-/usr/bin/python3}"
   [[ -x "$python_bin" ]] || python_bin="python3"
 
@@ -113,7 +113,7 @@ start_demo() {
 
   sleep "${LINGTU_GAZEBO_BOOT_WAIT_SEC:-8}"
 
-  ros2 launch "$root/tests/planning/sim_navigation.launch.py" \
+  ros2 launch "$root/sim/planning/sim_navigation.launch.py" \
     use_sim_robot:=false \
     use_terrain_passthrough:=false \
     flatten_global_path_z:=true \
@@ -134,7 +134,7 @@ start_demo() {
     timeout_sec="${LINGTU_GAZEBO_DEMO_GATE_TIMEOUT_SEC:-300}"
   fi
 
-  "$python_bin" "$root/tests/integration/gazebo_frontier_exploration_smoke.py" \
+  "$python_bin" "$root/sim/scripts/gazebo_frontier_exploration_smoke.py" \
     --timeout-sec "$timeout_sec" \
     --continue-after-pass-sec "$continue_after_pass" \
     --coverage-size-m 38 \

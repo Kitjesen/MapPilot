@@ -20,7 +20,9 @@ def _write_live_loop_report(
     tomogram: str | None = None,
     first_sim_xy: tuple[float, float] = (0.0, 0.0),
     map_frame_origin_world_xy: tuple[float, float] = (0.0, 0.0),
+    planning_frame_origin_world_xy: tuple[float, float] | None = None,
     scan_time_profile: str = "physical_rolling",
+    goals: list[list[float]] | None = None,
 ) -> Path:
     artifact_dir = path.parent / "large_terrain_odom"
     world = world or str(artifact_dir / "large_terrain_scene.xml")
@@ -102,7 +104,14 @@ def _write_live_loop_report(
             "global_planner": planner,
             "tomogram": tomogram,
             "replan_on_costmap_update": False,
-            "goals": [
+            "planning_frame": "odom",
+            "planning_frame_origin_world_xy": (
+                [] if planning_frame_origin_world_xy is None else list(planning_frame_origin_world_xy)
+            ),
+            "planning_frame_origin_source": (
+                "" if planning_frame_origin_world_xy is None else "runtime_start_position"
+            ),
+            "goals": goals or [
                 [6.0, 0.0, 0.0],
                 [6.0, 6.0, 0.0],
                 [0.0, 6.0, 0.0],
@@ -113,6 +122,27 @@ def _write_live_loop_report(
             "planner_fallback_used": False,
             "planner_repair_used": False,
             "direct_goal_fallback": {"used": False},
+            "last_plan_report": {"selected_planner": "pct"},
+        },
+        "deliverable_contract": {
+            "checks": {"same_source_map_artifact": True},
+        },
+        "map_artifacts": {
+            "ok": True,
+            "source_contract": {
+                "same_source_pcd": True,
+                "same_source_tomogram": True,
+            },
+            "assets": {
+                "map_pcd": {
+                    "sha256": "map-sha-123",
+                    "point_count": 256,
+                },
+                "tomogram": {
+                    "sha256": "tomogram-sha-123",
+                    "source_map_sha256": "map-sha-123",
+                },
+            },
         },
         "navigation_diagnostics": {
             "sample_period_s": 2.0,
@@ -175,6 +205,26 @@ def test_large_loop_closure_gate_preserves_runtime_samples_tail(tmp_path: Path):
     assert diagnostics["sample_count"] == 2
     assert len(diagnostics["samples_tail"]) == 2
     assert diagnostics["last_sample"]["navigation"]["patrol_index"] == 4
+
+
+def test_large_loop_closure_gate_preserves_live_same_source_artifacts(
+    tmp_path: Path,
+):
+    report = _write_live_loop_report(tmp_path / "loop_same_source.json")
+
+    summary = large_loop_closure_gate.evaluate_reports([report])
+
+    case = summary["best_case"]
+    assert case["deliverable_contract"]["checks"]["same_source_map_artifact"] is True
+    assert case["map_artifacts"]["assets"]["map_pcd"] == {
+        "sha256": "map-sha-123",
+        "point_count": 256,
+    }
+    assert case["map_artifacts"]["assets"]["tomogram"] == {
+        "sha256": "tomogram-sha-123",
+        "source_map_sha256": "map-sha-123",
+    }
+    assert case["assets"] == {}
 
 
 def test_large_loop_closure_gate_rejects_short_or_non_pct_loop(tmp_path: Path):
@@ -396,3 +446,95 @@ def test_large_loop_closure_gate_uses_map_frame_metadata_for_loop_goal_check(
     assert case["map_frame_origin_world_xy"] == [-9.5, -5.6]
     assert case["first_sim_map_xy"] == [0.0, 0.0]
     assert case["final_goal_to_start_m"] == 0.1
+
+
+def test_large_loop_closure_gate_accepts_large_terrain_world_frame_closed_loop(
+    tmp_path: Path,
+):
+    goals = [
+        [-5.2, -5.6, 0.0],
+        [-5.2, 0.8, 0.0],
+        [-9.5, 0.8, 0.0],
+        [-9.5, -5.6, 0.0],
+    ]
+    report = _write_live_loop_report(
+        tmp_path / "large_terrain_world_loop_runtime.json",
+        first_sim_xy=(-9.5, -5.6),
+        map_frame_origin_world_xy=(0.0, 0.0),
+        goals=goals,
+    )
+
+    summary = large_loop_closure_gate.evaluate_reports([report])
+
+    assert summary["ok"] is True
+    case = summary["best_case"]
+    assert case["map_frame"] == "world"
+    assert case["metadata_start_xy"] == [-9.5, -5.6]
+    assert case["runtime_start_position_xy"] == [-9.5, -5.6]
+    assert case["first_sim_xy"] == [-9.5, -5.6]
+    assert case["final_goal_xy"] == [-9.5, -5.6]
+    assert case["final_goal_to_start_m"] == 0.0
+    assert case["goal_span_m"] > 4.0
+
+
+def test_large_loop_closure_gate_uses_inspection_planning_frame_origin_for_odom_goals(
+    tmp_path: Path,
+):
+    report = _write_live_loop_report(
+        tmp_path / "large_terrain_odom_loop_runtime.json",
+        first_sim_xy=(-9.5, -5.6),
+        map_frame_origin_world_xy=(0.0, 0.0),
+        planning_frame_origin_world_xy=(-9.5, -5.6),
+        goals=[
+            [4.8, 0.0, 0.0],
+            [4.8, 5.7, 0.0],
+            [0.0, 5.7, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+    )
+
+    summary = large_loop_closure_gate.evaluate_reports([report])
+
+    assert summary["ok"] is True
+    case = summary["best_case"]
+    assert case["map_frame"] == "world"
+    assert case["map_frame_origin_world_xy"] == [0.0, 0.0]
+    assert case["goal_frame"] == "odom"
+    assert case["goal_frame_origin_world_xy"] == [-9.5, -5.6]
+    assert case["goal_frame_origin_source"] == (
+        "lingtu_inspection.planning_frame_origin_world_xy"
+    )
+    assert case["first_sim_map_xy"] == [0.0, 0.0]
+    assert case["final_goal_xy"] == [0.0, 0.0]
+    assert case["final_goal_to_start_m"] == 0.0
+    assert case["goal_span_m"] > 5.0
+
+
+def test_large_loop_closure_gate_rejects_origin_loop_when_world_start_is_offset_without_goal_frame(
+    tmp_path: Path,
+):
+    report = _write_live_loop_report(
+        tmp_path / "open_origin_loop_runtime.json",
+        first_sim_xy=(-9.5, -5.6),
+        map_frame_origin_world_xy=(0.0, 0.0),
+        goals=[
+            [6.0, 0.0, 0.0],
+            [6.0, 6.0, 0.0],
+            [0.0, 6.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+    )
+
+    summary = large_loop_closure_gate.evaluate_reports([report])
+
+    assert summary["ok"] is False
+    case = summary["cases"][0]
+    assert case["first_sim_xy"] == [-9.5, -5.6]
+    assert case["final_goal_xy"] == [0.0, 0.0]
+    assert case["final_goal_to_start_m"] > 11.0
+    blockers = "\n".join(case["blockers"])
+    assert "final inspection goal is not near loop start <= 1m" in blockers
+    defect = summary["minimal_red_defect"]
+    assert defect["first_sim_xy"] == [-9.5, -5.6]
+    assert defect["final_goal_xy"] == [0.0, 0.0]
+    assert defect["final_goal_to_start_m"] == case["final_goal_to_start_m"]

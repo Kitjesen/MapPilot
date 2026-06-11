@@ -470,6 +470,40 @@ def test_launch_mujoco_fastlio2_live_passes_wall_timeout_guard():
 
     assert "--max-wall-time-s" in text
     assert "LINGTU_MUJOCO_LIVE_MAX_WALL_TIME_S" in text
+    assert '"--partial-json-out" "$run_dir/report.partial.json"' in text
+
+
+def test_mujoco_fastlio2_live_gate_accepts_partial_report_path():
+    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+
+    args = _build_parser().parse_args(
+        ["--partial-json-out", "artifacts/live/report.partial.json"]
+    )
+
+    assert args.partial_json_out == "artifacts/live/report.partial.json"
+
+
+def test_mujoco_fastlio2_live_gate_periodically_writes_partial_report():
+    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
+
+    assert '"schema_version": "lingtu.mujoco_fastlio2_live_gate.partial.v1"' in text
+    assert "_write_partial_report(" in text
+    assert "_load_exception_partial_report(args)" in text
+    assert '"partial_report_available"' in text
+    assert '"running",' in text
+    assert '"wall_timeout",' in text
+    assert '"finalizing",' in text
+    assert '"partial_report": True' in text
+
+
+def test_mujoco_fastlio2_live_gate_writes_json_before_stdout_print():
+    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
+
+    json_write = text.index("if args.json_out:")
+    stdout_print = text.index("print(text)")
+
+    assert json_write < stdout_print
+    assert "except BrokenPipeError:" in text
 
 
 def test_launch_mujoco_fastlio2_live_defaults_mid360_lidar_to_rolling_scan_time():
@@ -486,6 +520,58 @@ def test_launch_mujoco_fastlio2_live_uses_sim_clock_inspection_timeout_default()
     assert 'inspection_default_goal_timeout="${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_TIMEOUT:-900}"' in text
     assert 'if [[ "$duration_clock" != "sim"' in text
     assert '"--inspection-goal-timeout" "$inspection_default_goal_timeout"' in text
+
+
+def test_launch_mujoco_fastlio2_live_disables_pct_optimizer_by_default():
+    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+
+    assert 'LINGTU_PCT_OPTIMIZE_TRAJECTORY="${LINGTU_PCT_OPTIMIZE_TRAJECTORY:-0}"' in text
+    assert "explicitly opts into the GPMP optimizer" in text
+
+
+def test_mujoco_fastlio2_live_gate_disables_pct_optimizer_by_default():
+    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
+
+    assert 'PCT_OPTIMIZE_TRAJECTORY_ENV = "LINGTU_PCT_OPTIMIZE_TRAJECTORY"' in text
+    assert 'os.environ.setdefault(PCT_OPTIMIZE_TRAJECTORY_ENV, "0")' in text
+    assert '"pct_optimizer_enabled": pct_optimizer_enabled' in text
+    assert '"pct_planner_path_mode": (' in text
+
+
+def test_mujoco_fastlio2_live_gate_samples_video_on_duration_clock():
+    from sim.scripts.mujoco_fastlio2_live_gate import _video_sample_elapsed_s
+
+    assert _video_sample_elapsed_s(
+        "sim",
+        elapsed_sim_s=12.5,
+        elapsed_wall_s=90.0,
+    ) == pytest.approx(12.5)
+    assert _video_sample_elapsed_s(
+        "wall",
+        elapsed_sim_s=12.5,
+        elapsed_wall_s=90.0,
+    ) == pytest.approx(90.0)
+    assert _video_sample_elapsed_s(
+        "",
+        elapsed_sim_s=12.5,
+        elapsed_wall_s=90.0,
+    ) == pytest.approx(90.0)
+
+
+def test_mujoco_fastlio2_live_gate_reports_video_sample_clock():
+    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
+
+    assert '"video_sample_clock": str("sim" if duration_clock == "sim" else "wall")' in text
+    assert '"t_clock": str("sim" if duration_clock == "sim" else "wall")' in text
+
+
+def test_launch_mujoco_fastlio2_live_cleans_stale_fastlio_processes():
+    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+
+    assert "cleanup_stale_fastlio2" in text
+    assert "pkill -f" in text
+    assert "mujoco_fastlio2_live" in text
+    assert "PIPESTATUS[0]" in text
 
 
 def test_mujoco_fastlio2_live_gate_accepts_fastlio_tuning_args():
@@ -552,6 +638,60 @@ def test_mujoco_fastlio2_live_gate_accepts_turn_speed_coupling_args():
     assert args.nav_turn_speed_min_scale == pytest.approx(0.45)
 
 
+def test_mujoco_fastlio2_live_gate_accepts_inspection_tracking_args():
+    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+
+    default_args = _build_parser().parse_args([])
+    args = _build_parser().parse_args(
+        [
+            "--inspection-waypoint-threshold",
+            "1.2",
+            "--inspection-downsample-dist",
+            "1.8",
+            "--inspection-final-waypoint-threshold",
+            "0.65",
+            "--inspection-complete-path-on-goal-proximity",
+            "--inspection-goal-proximity-completion-threshold",
+            "1.2",
+            "--inspection-path-goal-tolerance",
+            "0.11",
+            "--inspection-path-lookahead",
+            "2.0",
+            "--inspection-path-min-speed",
+            "0.10",
+            "--inspection-path-yaw-rate-gain",
+            "0.9",
+            "--inspection-path-stop-yaw-rate-gain",
+            "0.9",
+            "--inspection-path-dir-diff-thre",
+            "1.8",
+        ]
+    )
+
+    assert default_args.inspection_waypoint_threshold == pytest.approx(0.50)
+    assert default_args.inspection_downsample_dist == pytest.approx(0.35)
+    assert default_args.inspection_final_waypoint_threshold == pytest.approx(0.50)
+    assert default_args.inspection_complete_path_on_goal_proximity is False
+    assert default_args.inspection_goal_proximity_completion_threshold is None
+    assert default_args.inspection_path_goal_tolerance == pytest.approx(0.12)
+    assert default_args.inspection_path_lookahead == pytest.approx(1.5)
+    assert default_args.inspection_path_min_speed == pytest.approx(0.15)
+    assert default_args.inspection_path_yaw_rate_gain == pytest.approx(7.5)
+    assert default_args.inspection_path_stop_yaw_rate_gain == pytest.approx(7.5)
+    assert default_args.inspection_path_dir_diff_thre == pytest.approx(0.1)
+    assert args.inspection_waypoint_threshold == pytest.approx(1.2)
+    assert args.inspection_downsample_dist == pytest.approx(1.8)
+    assert args.inspection_final_waypoint_threshold == pytest.approx(0.65)
+    assert args.inspection_complete_path_on_goal_proximity is True
+    assert args.inspection_goal_proximity_completion_threshold == pytest.approx(1.2)
+    assert args.inspection_path_goal_tolerance == pytest.approx(0.11)
+    assert args.inspection_path_lookahead == pytest.approx(2.0)
+    assert args.inspection_path_min_speed == pytest.approx(0.10)
+    assert args.inspection_path_yaw_rate_gain == pytest.approx(0.9)
+    assert args.inspection_path_stop_yaw_rate_gain == pytest.approx(0.9)
+    assert args.inspection_path_dir_diff_thre == pytest.approx(1.8)
+
+
 def test_launch_mujoco_fastlio2_live_passes_fastlio_time_diff_control():
     text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
 
@@ -568,6 +708,138 @@ def test_launch_mujoco_fastlio2_live_passes_turn_speed_coupling_controls():
     assert "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START" in text
     assert "--nav-turn-speed-min-scale" in text
     assert "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE" in text
+
+
+def test_launch_mujoco_fastlio2_live_passes_inspection_tracking_controls():
+    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+
+    assert "--inspection-waypoint-threshold" in text
+    assert "--inspection-downsample-dist" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD" in text
+    assert "--inspection-final-waypoint-threshold" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_FINAL_WAYPOINT_THRESHOLD" in text
+    assert "--inspection-complete-path-on-goal-proximity" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_COMPLETE_PATH_ON_GOAL_PROXIMITY" in text
+    assert "--inspection-goal-proximity-completion-threshold" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_PROXIMITY_COMPLETION_THRESHOLD" in text
+    assert "--inspection-path-goal-tolerance" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_GOAL_TOLERANCE" in text
+    assert "--inspection-path-lookahead" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD" in text
+    assert "--inspection-path-min-speed" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_MIN_SPEED" in text
+    assert "--inspection-path-yaw-rate-gain" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN" in text
+    assert "--inspection-path-stop-yaw-rate-gain" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_STOP_YAW_RATE_GAIN" in text
+    assert "--inspection-path-dir-diff-thre" in text
+    assert "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE" in text
+    assert 'inspection_downsample_dist_default="1.0"' in text
+    assert 'cmd_vel_angular_limit_default="0.25"' in text
+    assert 'nav_max_angular_z_default="0.25"' in text
+    assert 'inspection_waypoint_threshold_default="0.65"' in text
+    assert 'inspection_final_waypoint_threshold_default="0.65"' in text
+    assert 'inspection_complete_path_on_goal_proximity_default="0"' in text
+    assert 'inspection_complete_path_on_goal_proximity_default="1"' in text
+    assert 'inspection_goal_proximity_completion_threshold_default="0.65"' in text
+    assert 'inspection_path_lookahead_default="2.0"' in text
+    assert 'inspection_path_min_speed_default="0.15"' in text
+    assert 'cmd_vel_linear_limit_default="0.45"' in text
+    assert 'nav_max_linear_speed_default="0.45"' in text
+    assert 'inspection_path_yaw_rate_gain_default="2.5"' in text
+    assert 'inspection_path_stop_yaw_rate_gain_default="2.5"' in text
+    assert 'inspection_path_dir_diff_thre_default="1.8"' in text
+    assert 'nav_turn_speed_yaw_rate_start_default="0.0"' in text
+    assert 'nav_turn_speed_min_scale_default="1.0"' in text
+
+
+def test_mujoco_fastlio2_live_gate_passes_inspection_tracking_to_stack():
+    import inspect
+
+    from sim.scripts import mujoco_fastlio2_live_gate
+
+    source = inspect.getsource(mujoco_fastlio2_live_gate.run_gate)
+    call = source[source.index("build_fastlio2_inspection_stack("):]
+    compact = "".join(call.split())
+
+    assert "waypoint_threshold=float(inspection_waypoint_threshold)" in call
+    assert "final_waypoint_threshold=float(inspection_final_waypoint_threshold)" in call
+    assert (
+        "complete_path_on_goal_proximity=bool("
+        "inspection_complete_path_on_goal_proximity)"
+    ) in compact
+    assert "goal_proximity_completion_threshold=(" in compact
+    assert "path_follower_goal_tolerance=float(inspection_path_goal_tolerance)" in call
+    assert "path_follower_lookahead=float(inspection_path_lookahead)" in call
+    assert "path_follower_min_speed=float(inspection_path_min_speed)" in call
+    assert "path_follower_yaw_rate_gain=float(inspection_path_yaw_rate_gain)" in call
+    assert (
+        "path_follower_stop_yaw_rate_gain=float("
+        "inspection_path_stop_yaw_rate_gain)"
+    ) in compact
+    assert "path_follower_dir_diff_thre=float(inspection_path_dir_diff_thre)" in call
+
+
+def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
+    from drivers.sim import mujoco_lingtu_stack
+    import core.blueprints.full_stack as full_stack_module
+
+    captured = {}
+    modules = {
+        "OccupancyGridModule": object(),
+        "NavigationModule": object(),
+        "LocalPlannerModule": object(),
+        "PathFollowerModule": object(),
+        "CmdVelMux": object(),
+    }
+
+    class FakeSystem:
+        def get_module(self, name):
+            return modules[name]
+
+    class FakeBlueprint:
+        def build(self):
+            return FakeSystem()
+
+    def fake_full_stack_blueprint(**kwargs):
+        captured.update(kwargs)
+        return FakeBlueprint()
+
+    monkeypatch.setattr(
+        full_stack_module,
+        "full_stack_blueprint",
+        fake_full_stack_blueprint,
+    )
+
+    stack = mujoco_lingtu_stack.build_fastlio2_inspection_stack(
+        planner_backend="pct",
+        downsample_dist=1.0,
+        waypoint_threshold=1.2,
+        final_waypoint_threshold=0.65,
+        complete_path_on_goal_proximity=True,
+        goal_proximity_completion_threshold=1.2,
+        path_follower_goal_tolerance=0.11,
+        path_follower_lookahead=2.0,
+        path_follower_min_speed=0.10,
+        path_follower_yaw_rate_gain=2.5,
+        path_follower_stop_yaw_rate_gain=2.25,
+        path_follower_dir_diff_thre=0.35,
+    )
+
+    assert stack.navigation is modules["NavigationModule"]
+    assert captured["planner_backend"] == "pct"
+    assert captured["downsample_dist"] == pytest.approx(1.0)
+    assert captured["waypoint_threshold"] == pytest.approx(1.2)
+    assert captured["final_waypoint_threshold"] == pytest.approx(0.65)
+    assert captured["complete_path_on_goal_proximity"] is True
+    assert captured["goal_proximity_completion_threshold"] == pytest.approx(1.2)
+    assert captured["path_follower_goal_tolerance"] == pytest.approx(0.11)
+    assert captured["path_follower_lookahead"] == pytest.approx(2.0)
+    assert captured["path_follower_min_speed"] == pytest.approx(0.10)
+    assert captured["path_follower_yaw_rate_gain"] == pytest.approx(2.5)
+    assert captured["path_follower_stop_yaw_rate_gain"] == pytest.approx(2.25)
+    assert captured["path_follower_dir_diff_thre"] == pytest.approx(0.35)
 
 
 def test_mujoco_fastlio2_live_gate_reports_fastlio_observability_warnings(tmp_path: Path):
@@ -788,6 +1060,57 @@ def test_fastlio2_nav_bridge_records_odom_header_stamps():
 
     assert bridge.first_odom_stamp_s == pytest.approx(12.34)
     assert bridge.last_odom_stamp_s == pytest.approx(12.34)
+
+
+def test_mujoco_fastlio2_motion_window_aligns_sim_samples_to_odom_stamps():
+    from sim.scripts.mujoco_fastlio2_live_gate import _aligned_motion_window
+
+    window = _aligned_motion_window(
+        [
+            (0.0, 0.0, 0.0, 0.0, 0.0),
+            (1.0, 0.9, 0.1, 0.0, 0.1),
+            (2.0, 1.8, 0.2, 0.0, 0.2),
+            (4.0, 3.5, 0.5, 0.0, 0.4),
+        ],
+        ros_time_origin_s=10.0,
+        first_odom_stamp_s=11.02,
+        last_odom_stamp_s=13.98,
+        fallback_first_sim_xyz=[-1.0, 0.0, 0.0],
+        fallback_last_sim_xyz=[9.0, 0.0, 0.0],
+        fallback_first_sim_yaw=-0.5,
+        fallback_last_sim_yaw=0.5,
+    )
+
+    assert window["time_aligned"] is True
+    assert window["first_source"] == "fastlio2_stamp_aligned"
+    assert window["last_source"] == "fastlio2_stamp_aligned"
+    assert window["first_sim_xyz"] == pytest.approx([0.9, 0.1, 0.0])
+    assert window["last_sim_xyz"] == pytest.approx([3.5, 0.5, 0.0])
+    assert window["first_dt_s"] == pytest.approx(0.02)
+    assert window["last_dt_s"] == pytest.approx(0.02)
+
+
+def test_mujoco_fastlio2_motion_window_reports_fallback_when_stamps_are_missing():
+    from sim.scripts.mujoco_fastlio2_live_gate import _aligned_motion_window
+
+    window = _aligned_motion_window(
+        [],
+        ros_time_origin_s=10.0,
+        first_odom_stamp_s=None,
+        last_odom_stamp_s=None,
+        fallback_first_sim_xyz=[-1.0, 0.0, 0.2],
+        fallback_last_sim_xyz=[2.0, 0.4, 0.3],
+        fallback_first_sim_yaw=-0.1,
+        fallback_last_sim_yaw=0.2,
+    )
+
+    assert window["time_aligned"] is False
+    assert window["first_source"] == "gate_first_sim_pose"
+    assert window["last_source"] == "gate_last_sim_pose"
+    assert window["first_sim_xyz"] == pytest.approx([-1.0, 0.0, 0.2])
+    assert window["last_sim_xyz"] == pytest.approx([2.0, 0.4, 0.3])
+    assert window["first_sim_yaw_rad"] == pytest.approx(-0.1)
+    assert window["last_sim_yaw_rad"] == pytest.approx(0.2)
 
 
 def test_fastlio2_nav_bridge_uses_runtime_default_frames():
@@ -1068,6 +1391,7 @@ def test_mujoco_fastlio2_live_gate_defaults_use_raw_fastlio2_topics():
     assert args.cmd_vel_angular_limit == pytest.approx(0.45)
     assert args.nav_max_linear_speed == pytest.approx(0.25)
     assert args.nav_max_angular_z == pytest.approx(0.45)
+    assert args.runtime_motion_fault_min_sim_m == pytest.approx(0.25)
     assert args.drive_vx > 0.0
     assert args.mujoco_memory == "64M"
     assert args.work_dir.endswith("mujoco_fastlio2_live")
@@ -1115,12 +1439,48 @@ def test_mujoco_fastlio2_live_gate_builds_navigation_diagnostic_sample():
             "state": "RUNNING",
             "patrol_index": 1,
             "patrol_total": 4,
+            "wp_index": 2,
+            "wp_total": 8,
             "failure_reason": "",
+            "goal": [4.8, 5.7, 0.0],
+            "current_waypoint": [3.5, 5.5, 0.0],
+            "distance_to_goal_m": 2.25,
+            "active_waypoint_distance_m": 0.85,
+            "complete_path_on_goal_proximity": True,
+            "goal_proximity_completion_threshold": 0.75,
             "last_plan_report": {
                 "primary_planner": "pct",
                 "selected_planner": "pct",
                 "fallback_reason": "",
             },
+        },
+        local_planner_health={
+            "local_planner": {
+                "last_local_path_points": 0,
+                "last_local_path_span_m": 0.0,
+                "last_control_hint": {
+                    "reason": "untrackable_local_path",
+                    "safety_stop": True,
+                    "near_field_stop": True,
+                    "path_found": False,
+                    "recovery_state": 0,
+                },
+                "last_result": {
+                    "path_point_count": 1,
+                    "path_length_m": 0.02,
+                    "path_span_m": 0.02,
+                    "path_found": False,
+                    "near_field_stop": True,
+                    "recovery_state": 0,
+                },
+            }
+        },
+        path_follower_health={
+            "path_follower": {
+                "has_path": False,
+                "vehicle_speed": 0.0,
+                "control_hint": {"reason": "untrackable_local_path"},
+            }
         },
         runtime_faults=["runtime Fast-LIO Z drift (error=1.02m, allowed=1.0m)"],
     )
@@ -1134,10 +1494,131 @@ def test_mujoco_fastlio2_live_gate_builds_navigation_diagnostic_sample():
     assert sample["nav_cmd"]["age_s"] == pytest.approx(0.2)
     assert sample["navigation"]["state"] == "RUNNING"
     assert sample["navigation"]["patrol_index"] == 1
+    assert sample["navigation"]["wp_index"] == 2
+    assert sample["navigation"]["wp_total"] == 8
+    assert sample["navigation"]["distance_to_goal_m"] == pytest.approx(2.25)
+    assert sample["navigation"]["active_waypoint_distance_m"] == pytest.approx(0.85)
+    assert sample["navigation"]["complete_path_on_goal_proximity"] is True
+    assert sample["navigation"]["goal_proximity_completion_threshold"] == pytest.approx(0.75)
     assert sample["navigation"]["selected_planner"] == "pct"
     assert sample["paths"]["global_path_count"] == 2
     assert sample["paths"]["local_path_points_latest"] == 18
+    assert sample["local_planner"]["last_control_hint"]["reason"] == "untrackable_local_path"
+    assert sample["local_planner"]["last_control_hint"]["safety_stop"] is True
+    assert sample["local_planner"]["last_result"]["path_point_count"] == 1
+    assert sample["path_follower"]["has_path"] is False
     assert sample["runtime_fault_count"] == 1
+
+
+def test_mujoco_fastlio2_live_gate_can_stop_when_inspection_evidence_is_complete():
+    from sim.scripts.mujoco_fastlio2_live_gate import _inspection_gate_evidence_complete
+
+    ready = _inspection_gate_evidence_complete(
+        run_lingtu_inspection=True,
+        navigation_health={"state": "SUCCESS", "patrol_index": 3, "patrol_total": 3},
+        inspection_goal_count=3,
+        inspection_min_checkpoints=3,
+        algorithm_verified=True,
+        canonical_nav_outputs_verified=True,
+        global_path_counts=[3],
+        local_path_counts=[91],
+        nav_cmd_nonzero=12,
+        moving_obstacle_enabled=True,
+        moving_obstacle_published_update_count=4,
+        moving_obstacle_published_point_count_max=288,
+        video_required=True,
+        video_sample_count=1,
+    )
+
+    assert ready["ok"] is True
+    assert ready["reason"] == "inspection evidence complete"
+    assert ready["missing"] == []
+
+    not_ready = _inspection_gate_evidence_complete(
+        run_lingtu_inspection=True,
+        navigation_health={"state": "SUCCESS", "patrol_index": 3, "patrol_total": 3},
+        inspection_goal_count=3,
+        inspection_min_checkpoints=3,
+        algorithm_verified=True,
+        canonical_nav_outputs_verified=True,
+        global_path_counts=[3],
+        local_path_counts=[91],
+        nav_cmd_nonzero=12,
+        moving_obstacle_enabled=True,
+        moving_obstacle_published_update_count=0,
+        moving_obstacle_published_point_count_max=0,
+        video_required=True,
+        video_sample_count=0,
+    )
+
+    assert not_ready["ok"] is False
+    assert not_ready["missing"] == ["moving_obstacles", "video_samples"]
+
+    latest_path_empty = _inspection_gate_evidence_complete(
+        run_lingtu_inspection=True,
+        navigation_health={"state": "SUCCESS", "patrol_index": 3, "patrol_total": 3},
+        inspection_goal_count=3,
+        inspection_min_checkpoints=3,
+        algorithm_verified=True,
+        canonical_nav_outputs_verified=True,
+        global_path_counts=[3],
+        local_path_counts=[91, 0],
+        nav_cmd_nonzero=12,
+        moving_obstacle_enabled=False,
+        moving_obstacle_published_update_count=0,
+        moving_obstacle_published_point_count_max=0,
+        video_required=False,
+        video_sample_count=0,
+    )
+
+    assert latest_path_empty["ok"] is True
+    assert latest_path_empty["missing"] == []
+    assert latest_path_empty["terminal_success"] is True
+
+    latest_path_empty_before_success = _inspection_gate_evidence_complete(
+        run_lingtu_inspection=True,
+        navigation_health={"state": "PATROLLING", "patrol_index": 1, "patrol_total": 3},
+        inspection_goal_count=3,
+        inspection_min_checkpoints=3,
+        algorithm_verified=True,
+        canonical_nav_outputs_verified=True,
+        global_path_counts=[3],
+        local_path_counts=[91, 0],
+        nav_cmd_nonzero=12,
+        moving_obstacle_enabled=False,
+        moving_obstacle_published_update_count=0,
+        moving_obstacle_published_point_count_max=0,
+        video_required=False,
+        video_sample_count=0,
+    )
+
+    assert latest_path_empty_before_success["ok"] is False
+    assert latest_path_empty_before_success["missing"] == [
+        "patrol_success",
+        "checkpoint_count",
+        "local_path",
+    ]
+    assert latest_path_empty_before_success["terminal_success"] is False
+
+    latest_path_never_trackable = _inspection_gate_evidence_complete(
+        run_lingtu_inspection=True,
+        navigation_health={"state": "SUCCESS", "patrol_index": 3, "patrol_total": 3},
+        inspection_goal_count=3,
+        inspection_min_checkpoints=3,
+        algorithm_verified=True,
+        canonical_nav_outputs_verified=True,
+        global_path_counts=[3],
+        local_path_counts=[1, 0],
+        nav_cmd_nonzero=12,
+        moving_obstacle_enabled=False,
+        moving_obstacle_published_update_count=0,
+        moving_obstacle_published_point_count_max=0,
+        video_required=False,
+        video_sample_count=0,
+    )
+
+    assert latest_path_never_trackable["ok"] is False
+    assert latest_path_never_trackable["missing"] == ["local_path"]
 
 
 def test_mujoco_fastlio2_live_gate_emits_navigation_diagnostics_in_report():
@@ -1148,6 +1629,8 @@ def test_mujoco_fastlio2_live_gate_emits_navigation_diagnostics_in_report():
     assert '"navigation_diagnostics": navigation_diagnostics' in source
     assert '"stale_nav_cmd_samples"' in source
     assert '"path_diagnostics":' in source
+    assert '"local_planner": {' in source
+    assert '"path_follower": {' in source
 
 
 def test_mujoco_fastlio2_live_gate_summarizes_path_geometry():
@@ -1176,6 +1659,24 @@ def test_mujoco_fastlio2_live_gate_summarizes_path_geometry():
     assert summary["first_xyz"] == pytest.approx([0.0, 0.0, 0.0])
     assert summary["last_xyz"] == pytest.approx([3.0, 4.0, 0.0])
     assert summary["bounds_xy"] == pytest.approx([0.0, 0.0, 3.0, 4.0])
+
+
+def test_mujoco_fastlio2_live_gate_summarizes_numpy_path_points():
+    from sim.scripts.mujoco_fastlio2_live_gate import _path_summary
+
+    summary = _path_summary(
+        [
+            np.array([-9.5, -5.6, 0.0], dtype=np.float32),
+            np.array([-4.7, -5.6, 0.2], dtype=np.float32),
+        ]
+    )
+
+    assert summary["point_count"] == 2
+    assert summary["finite_point_count"] == 2
+    assert summary["path_length_m"] > 4.8
+    assert summary["first_xyz"] == pytest.approx([-9.5, -5.6, 0.0])
+    assert summary["last_xyz"] == pytest.approx([-4.7, -5.6, 0.2])
+    assert summary["bounds_xy"] == pytest.approx([-9.5, -5.6, -4.7, -5.6])
 
 
 def test_mujoco_truth_nav_pose_aligns_to_tomogram_map_frame(tmp_path: Path):
@@ -1283,6 +1784,48 @@ def test_mujoco_fastlio2_live_gate_rejects_spin_without_translation():
     assert "angular saturation ratio too high" in report["blockers"]
 
 
+def test_mujoco_fastlio2_live_gate_accepts_moving_obstacle_saturation_margin():
+    from sim.scripts.mujoco_fastlio2_live_gate import _control_quality_report
+
+    report = _control_quality_report(
+        applied_cmd_stats={
+            "linear_distance_integral_m": 1.3451,
+            "angular_abs_integral_rad": 1.4064,
+            "angular_saturation_samples": 369,
+            "cmd_samples": 1000,
+        },
+        max_yaw_per_meter=1.2,
+        max_angular_saturation_ratio=0.40,
+    )
+    strict_report = _control_quality_report(
+        applied_cmd_stats={
+            "linear_distance_integral_m": 1.3451,
+            "angular_abs_integral_rad": 1.4064,
+            "angular_saturation_samples": 369,
+            "cmd_samples": 1000,
+        },
+        max_yaw_per_meter=1.2,
+        max_angular_saturation_ratio=0.35,
+    )
+    spin_report = _control_quality_report(
+        applied_cmd_stats={
+            "linear_distance_integral_m": 1.1,
+            "angular_abs_integral_rad": 3.2,
+            "angular_saturation_samples": 399,
+            "cmd_samples": 1000,
+        },
+        max_yaw_per_meter=1.2,
+        max_angular_saturation_ratio=0.40,
+    )
+
+    assert report["ok"] is True
+    assert report["yaw_per_meter"] == pytest.approx(1.0456, abs=1e-4)
+    assert strict_report["ok"] is False
+    assert strict_report["blockers"] == ["angular saturation ratio too high"]
+    assert spin_report["ok"] is False
+    assert "yaw_per_meter too high" in spin_report["blockers"]
+
+
 def test_mujoco_fastlio2_live_gate_summarizes_dynamic_obstacle_sweep_quality():
     from sim.scripts.mujoco_fastlio2_live_gate import _dynamic_obstacle_sweep_quality
 
@@ -1305,9 +1848,33 @@ def test_launch_mujoco_fastlio2_live_exposes_cmd_vel_timeout_override():
     text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--cmd-vel-timeout" in text
+    assert "--cmd-vel-mux-source-timeout" in text
     assert "LINGTU_MUJOCO_LIVE_CMD_VEL_TIMEOUT" in text
+    assert "LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT" in text
     assert 'cmd_vel_timeout_default="0"' in text
+    assert 'cmd_vel_mux_source_timeout_default="5.0"' in text
     assert 'drive_source" == "nav_cmd_vel"' in text
+    assert 'moving_obstacle_default_start="2"' in text
+    assert 'cmd_vel_angular_limit_default="0.25"' in text
+    assert 'nav_max_angular_z_default="0.20"' in text
+    assert 'runtime_fault_confirm_samples_default="6"' in text
+    assert 'runtime_motion_fault_min_sim_m_default="1.0"' in text
+    assert 'max_angular_saturation_ratio_default="0.40"' in text
+    assert "--runtime-motion-fault-min-sim-m" in text
+    assert "--max-angular-saturation-ratio" in text
+    assert "cmd_vel_angular_limit=" in text
+    assert "runtime_fault_confirm_samples=" in text
+    assert "runtime_motion_fault_min_sim_m=" in text
+    assert "max_angular_saturation_ratio=" in text
+
+
+def test_safety_stack_allows_sim_specific_cmd_vel_mux_source_timeout():
+    from core.blueprints.stacks.safety import safety
+
+    system = safety(cmd_vel_mux_source_timeout=5.0).build()
+    mux = system.get_module("CmdVelMux")
+
+    assert mux.health()["source_timeout_s"] == pytest.approx(5.0)
 
 
 def test_mujoco_fastlio2_live_gate_robot_crossing_obstacles_scale_density_and_speed():
@@ -1474,20 +2041,63 @@ def test_mujoco_fastlio2_live_gate_exception_report_keeps_runtime_contract():
         ),
         mid360_samples_per_frame=1200,
         n_rays=6400,
+        json_out="artifacts/live/report.json",
+        partial_json_out="artifacts/live/report.partial.json",
         scan_time_profile="physical_rolling",
     )
+    partial_report = {
+        "schema_version": "lingtu.mujoco_fastlio2_live_gate.partial.v1",
+        "ok": False,
+        "partial_report": True,
+        "world": "artifacts/server_sim_closure/large_terrain/large_terrain_scene.xml",
+        "nav_data_source": "fastlio2",
+        "elapsed_wall_s": 1140.5,
+        "elapsed_sim_s": 63.68,
+        "counts": {"sim_steps": 120},
+        "outputs": {"nav_cmd_vel": 240, "nav_cmd_vel_nonzero": 120},
+        "lingtu_inspection": {
+            "enabled": True,
+            "start_status": "patrolling",
+            "patrol_index": 0,
+            "patrol_total": 4,
+            "global_path_points_max": 7,
+            "local_path_points_max": 8,
+        },
+        "simulation_path": {
+            "first_sim_xyz": [-9.5, -5.6, 0.0],
+            "last_sim_xyz": [-4.98, -4.83, 0.0],
+            "first_sim_yaw_rad": 0.0,
+            "last_sim_yaw_rad": 0.3,
+            "sim_path_length_m": 9.43,
+        },
+        "runtime_faults": ["gate wall timeout after 1140.5s"],
+        "gate_wall_timeout": {"enabled": True, "triggered": True},
+    }
     report = _gate_exception_report(
         args,
         RuntimeError("ROS2 Python modules are unavailable"),
+        partial_report=partial_report,
+        partial_report_path=Path("artifacts/live/report.partial.json"),
     )
 
     assert report["ok"] is False
+    assert report["partial_report_available"] is True
+    assert report["partial_report_path"] == "artifacts/live/report.partial.json"
+    assert report["partial_report"] == partial_report
     assert report["simulation_only"] is True
     assert report["real_robot_motion"] is False
     assert report["cmd_vel_sent_to_hardware"] is False
+    assert report["world"] == partial_report["world"]
+    assert report["elapsed_sim_s"] == pytest.approx(63.68)
+    assert report["outputs"]["nav_cmd_vel_nonzero"] == 120
+    assert report["lingtu_inspection"]["patrol_total"] == 4
+    assert report["last_sim_xyz"] == pytest.approx([-4.98, -4.83, 0.0])
+    assert report["sim_path_length_m"] == pytest.approx(9.43)
+    assert "gate wall timeout after 1140.5s" in report["runtime_faults"]
     assert report["runtime_contract"]["name"] == "mujoco_fastlio2_live"
     assert report["runtime_contract"]["ok"] is False
     assert sorted(report["runtime_contract"]["frame_evidence"]) == [
+        "body_to_camera",
         "body_to_lidar",
         "map_to_odom",
         "odom_to_body",
@@ -1508,6 +2118,7 @@ def test_mujoco_fastlio2_live_gate_exception_report_keeps_runtime_contract():
     assert report["lidar_source"]["samples_per_frame"] == 1200
     gaps = "\n".join(report["remaining_gaps"])
     assert "gate_exception: RuntimeError: ROS2 Python modules are unavailable" in gaps
+    assert "partial_runtime_fault: gate wall timeout after 1140.5s" in gaps
     assert "runtime_contract.ok is not true" in gaps
     assert "frame evidence missing or failed for map_to_odom" in gaps
     assert "data-flow evidence missing or failed for endpoint_adapter" in gaps

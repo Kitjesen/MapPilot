@@ -72,6 +72,7 @@ SIM_MAP_FRAME_ID = FRAME_LINKS["map_to_odom"].parent
 SIM_ODOM_FRAME_ID = FRAME_LINKS["map_to_odom"].child
 SIM_BODY_FRAME_ID = FRAME_LINKS["odom_to_body"].child
 SIM_LIDAR_FRAME_ID = FRAME_LINKS["body_to_lidar"].child
+SIM_CAMERA_FRAME_ID = FRAME_LINKS["body_to_camera"].child
 SIM_NAV_ODOMETRY_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
 SIM_NAV_REGISTERED_CLOUD_FRAME_ID = topic_default_frame_id(TOPICS.registered_cloud)
 # Fast-LIO live map clouds remain in local odom until a localizer owns map->odom.
@@ -82,7 +83,17 @@ FASTLIO_REGISTERED_CLOUD_TOPIC = adapter_source_for_target(
 )
 FASTLIO_MAP_CLOUD_TOPIC = adapter_source_for_target("fastlio2", TOPICS.map_cloud)
 FASTLIO_ODOMETRY_TOPIC = adapter_source_for_target("fastlio2", TOPICS.odometry)
+PCT_OPTIMIZE_TRAJECTORY_ENV = "LINGTU_PCT_OPTIMIZE_TRAJECTORY"
+_FALSE_ENV_VALUES = {"0", "false", "no", "off"}
 _MUJOCO_SENSOR_BRIDGE: Any | None = None
+
+
+def _pct_optimizer_enabled_from_env(env: dict[str, str] | None = None) -> bool:
+    values = os.environ if env is None else env
+    raw = values.get(PCT_OPTIMIZE_TRAJECTORY_ENV)
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() not in _FALSE_ENV_VALUES
 
 
 def _mujoco_sensor_bridge() -> Any:
@@ -180,6 +191,13 @@ def _mujoco_frame_evidence(
             "ok": bool(static_tf_published),
             "parent": FRAME_LINKS["body_to_lidar"].parent,
             "child": FRAME_LINKS["body_to_lidar"].child,
+            "static": bool(static_tf_published),
+            "source": "static_tf_broadcaster" if static_tf_published else "not_published",
+        },
+        "body_to_camera": {
+            "ok": bool(static_tf_published),
+            "parent": FRAME_LINKS["body_to_camera"].parent,
+            "child": FRAME_LINKS["body_to_camera"].child,
             "static": bool(static_tf_published),
             "source": "static_tf_broadcaster" if static_tf_published else "not_published",
         },
@@ -354,7 +372,109 @@ def _exception_lidar_source(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _gate_exception_report(args: argparse.Namespace, exc: Exception) -> dict[str, Any]:
+def _exception_partial_report_path(args: argparse.Namespace) -> Path | None:
+    explicit = getattr(args, "partial_json_out", None)
+    if explicit:
+        return Path(explicit)
+    json_out = getattr(args, "json_out", None)
+    if json_out:
+        return Path(json_out).with_suffix(".partial.json")
+    return None
+
+
+def _load_exception_partial_report(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any] | None, Path | None]:
+    partial_path = _exception_partial_report_path(args)
+    if partial_path is None or not partial_path.is_file():
+        return None, partial_path
+    try:
+        payload = json.loads(partial_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None, partial_path
+    if not isinstance(payload, dict):
+        return None, partial_path
+    return payload, partial_path
+
+
+def _append_unique(items: list[str], values: Sequence[Any]) -> list[str]:
+    seen = set(items)
+    for value in values:
+        text = str(value)
+        if not text or text in seen:
+            continue
+        items.append(text)
+        seen.add(text)
+    return items
+
+
+def _merge_exception_partial_report(
+    report: dict[str, Any],
+    partial_report: dict[str, Any] | None,
+    partial_report_path: Path | None,
+) -> dict[str, Any]:
+    if not partial_report:
+        if partial_report_path is not None:
+            report["partial_report_path"] = str(partial_report_path)
+            report["partial_report_available"] = False
+        return report
+
+    report["partial_report_path"] = str(partial_report_path) if partial_report_path else ""
+    report["partial_report_available"] = True
+    report["partial_report"] = partial_report
+    for key in (
+        "world",
+        "nav_data_source",
+        "elapsed_wall_s",
+        "elapsed_sim_s",
+        "counts",
+        "outputs",
+        "lingtu_inspection",
+        "video",
+        "runtime_fault_events",
+        "gate_wall_timeout",
+        "process_returncode",
+    ):
+        if key in partial_report:
+            report[key] = partial_report[key]
+
+    simulation_path = partial_report.get("simulation_path")
+    if isinstance(simulation_path, dict):
+        report["simulation_path"] = simulation_path
+        for key in (
+            "first_sim_xyz",
+            "last_sim_xyz",
+            "first_sim_yaw_rad",
+            "last_sim_yaw_rad",
+            "sim_path_length_m",
+        ):
+            if key in simulation_path:
+                report[key] = simulation_path[key]
+
+    partial_faults = [
+        str(fault)
+        for fault in (partial_report.get("runtime_faults") or [])
+        if str(fault)
+    ]
+    report["runtime_faults"] = _append_unique(
+        list(report.get("runtime_faults") or []),
+        partial_faults,
+    )
+    report["remaining_gaps"] = _append_unique(
+        list(report.get("remaining_gaps") or []),
+        [f"partial_runtime_fault: {fault}" for fault in partial_faults],
+    )
+    report["ok"] = False
+    return report
+
+
+def _gate_exception_report(
+    args: argparse.Namespace,
+    exc: Exception,
+    *,
+    partial_report: dict[str, Any] | None = None,
+    partial_report_path: Path | None = None,
+) -> dict[str, Any]:
     definition, definition_errors = _mujoco_fastlio_contract_definition()
     required_topics = list((definition or {}).get("required_runtime_topics") or ())
     required_slam_topics = list((definition or {}).get("required_slam_topics") or ())
@@ -396,7 +516,7 @@ def _gate_exception_report(args: argparse.Namespace, exc: Exception) -> dict[str
         require_data_flow=True,
     )
     runtime_fault = f"{type(exc).__name__}: {exc}"
-    return {
+    report = {
         "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
         "ok": False,
         "remaining_gaps": [
@@ -415,6 +535,11 @@ def _gate_exception_report(args: argparse.Namespace, exc: Exception) -> dict[str
         "lidar_source": _exception_lidar_source(args),
         "args": vars(args),
     }
+    return _merge_exception_partial_report(
+        report,
+        partial_report=partial_report,
+        partial_report_path=partial_report_path,
+    )
 
 
 _DEGENERACY_RE = re.compile(
@@ -500,6 +625,108 @@ def _wall_timeout_status(elapsed_wall_s: float, max_wall_time_s: float) -> dict[
     }
 
 
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+        + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _video_sample_elapsed_s(
+    duration_clock: str,
+    *,
+    elapsed_sim_s: float,
+    elapsed_wall_s: float,
+) -> float:
+    if str(duration_clock or "wall").strip().lower() == "sim":
+        return float(elapsed_sim_s)
+    return float(elapsed_wall_s)
+
+
+def _inspection_gate_evidence_complete(
+    *,
+    run_lingtu_inspection: bool,
+    navigation_health: dict[str, Any],
+    inspection_goal_count: int,
+    inspection_min_checkpoints: int,
+    algorithm_verified: bool,
+    canonical_nav_outputs_verified: bool,
+    global_path_counts: Sequence[int],
+    local_path_counts: Sequence[int],
+    nav_cmd_nonzero: int,
+    moving_obstacle_enabled: bool,
+    moving_obstacle_published_update_count: int,
+    moving_obstacle_published_point_count_max: int,
+    video_required: bool,
+    video_sample_count: int,
+) -> dict[str, Any]:
+    if not run_lingtu_inspection:
+        return {"ok": False, "reason": "inspection disabled"}
+    patrol_total = int(
+        navigation_health.get("patrol_total")
+        or inspection_goal_count
+        or 0
+    )
+    patrol_index = int(navigation_health.get("patrol_index") or 0)
+    patrol_state = str(navigation_health.get("state") or "").upper()
+    required_checkpoints = max(1, int(inspection_min_checkpoints))
+    successful_checkpoints = min(max(patrol_index, 0), patrol_total)
+    patrol_success = bool(
+        patrol_state == "SUCCESS"
+        and patrol_total > 0
+        and patrol_index >= patrol_total
+    )
+    checkpoint_count_ok = bool(successful_checkpoints >= required_checkpoints)
+    terminal_success = patrol_success and checkpoint_count_ok
+    local_path_had_trackable_segment = bool(
+        local_path_counts and max(int(count) for count in local_path_counts) >= 2
+    )
+    latest_local_path_active = bool(
+        local_path_counts and int(local_path_counts[-1]) >= 2
+    )
+    checks = {
+        "patrol_success": patrol_success,
+        "checkpoint_count": checkpoint_count_ok,
+        "fastlio2_algorithm_outputs": bool(algorithm_verified),
+        "canonical_nav_outputs": bool(canonical_nav_outputs_verified),
+        "global_path": bool(global_path_counts and max(global_path_counts) > 0),
+        "local_path": bool(
+            local_path_had_trackable_segment
+            and (terminal_success or latest_local_path_active)
+        ),
+        "nav_cmd_nonzero": bool(nav_cmd_nonzero > 0),
+        "moving_obstacles": bool(
+            not moving_obstacle_enabled
+            or (
+                moving_obstacle_published_update_count > 0
+                and moving_obstacle_published_point_count_max > 0
+            )
+        ),
+        "video_samples": bool(not video_required or video_sample_count > 0),
+    }
+    missing = [name for name, passed in checks.items() if not passed]
+    return {
+        "ok": not missing,
+        "reason": (
+            "inspection evidence complete"
+            if not missing
+            else "inspection evidence incomplete"
+        ),
+        "missing": missing,
+        "checks": checks,
+        "successful_checkpoints": successful_checkpoints,
+        "required_checkpoints": required_checkpoints,
+        "terminal_success": terminal_success,
+        "patrol_state": patrol_state,
+        "patrol_index": patrol_index,
+        "patrol_total": patrol_total,
+    }
+
+
 def _round_float(value: Any, digits: int = 4) -> float | None:
     try:
         result = float(value)
@@ -508,6 +735,17 @@ def _round_float(value: Any, digits: int = 4) -> float | None:
     if not math.isfinite(result):
         return None
     return round(result, digits)
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _round_xyz(value: Any) -> list[float] | None:
@@ -541,6 +779,15 @@ def _path_xyz(point: Any) -> list[float] | None:
         try:
             z_value = position[2] if len(position) >= 3 else 0.0
             return [float(position[0]), float(position[1]), float(z_value)]
+        except (TypeError, ValueError):
+            return None
+    if is_numpy_array(position):
+        try:
+            flat = np.asarray(position, dtype=np.float64).reshape(-1)
+            if flat.shape[0] < 2:
+                return None
+            z_value = flat[2] if flat.shape[0] >= 3 else 0.0
+            return [float(flat[0]), float(flat[1]), float(z_value)]
         except (TypeError, ValueError):
             return None
     return None
@@ -700,6 +947,96 @@ def _nearest_sim_pose_sample(
     }
 
 
+def _sim_pose_sample_from_xyz_yaw(
+    xyz: list[float] | tuple[float, float, float] | None,
+    yaw: float | None,
+) -> dict[str, Any] | None:
+    if xyz is None:
+        return None
+    return {
+        "sim_time_s": None,
+        "xyz": [float(xyz[0]), float(xyz[1]), float(xyz[2])],
+        "yaw": float(yaw) if yaw is not None else None,
+        "dt_s": None,
+    }
+
+
+def _aligned_motion_window(
+    samples: list[tuple[float, float, float, float, float]],
+    *,
+    ros_time_origin_s: float,
+    first_odom_stamp_s: float | None,
+    last_odom_stamp_s: float | None,
+    fallback_first_sim_xyz: list[float] | None,
+    fallback_last_sim_xyz: list[float] | None,
+    fallback_first_sim_yaw: float | None,
+    fallback_last_sim_yaw: float | None,
+    max_dt_s: float = 0.25,
+) -> dict[str, Any]:
+    first_target_sim_time_s = (
+        float(first_odom_stamp_s) - float(ros_time_origin_s)
+        if first_odom_stamp_s is not None
+        else None
+    )
+    last_target_sim_time_s = (
+        float(last_odom_stamp_s) - float(ros_time_origin_s)
+        if last_odom_stamp_s is not None
+        else None
+    )
+    first_aligned = (
+        _nearest_sim_pose_sample(
+            samples,
+            target_sim_time_s=float(first_target_sim_time_s),
+            max_dt_s=max_dt_s,
+        )
+        if first_target_sim_time_s is not None
+        else None
+    )
+    last_aligned = (
+        _nearest_sim_pose_sample(
+            samples,
+            target_sim_time_s=float(last_target_sim_time_s),
+            max_dt_s=max_dt_s,
+        )
+        if last_target_sim_time_s is not None
+        else None
+    )
+    fallback_first = _sim_pose_sample_from_xyz_yaw(
+        fallback_first_sim_xyz,
+        fallback_first_sim_yaw,
+    )
+    fallback_last = _sim_pose_sample_from_xyz_yaw(
+        fallback_last_sim_xyz,
+        fallback_last_sim_yaw,
+    )
+    first_sample = first_aligned or fallback_first
+    last_sample = last_aligned or fallback_last
+    time_aligned = bool(first_aligned and last_aligned)
+    return {
+        "time_aligned": time_aligned,
+        "first_source": (
+            "fastlio2_stamp_aligned" if first_aligned else "gate_first_sim_pose"
+        ),
+        "last_source": (
+            "fastlio2_stamp_aligned" if last_aligned else "gate_last_sim_pose"
+        ),
+        "max_alignment_dt_s": float(max_dt_s),
+        "sample_count": len(samples),
+        "first_fastlio2_stamp_s": _round_float(first_odom_stamp_s),
+        "last_fastlio2_stamp_s": _round_float(last_odom_stamp_s),
+        "first_target_sim_time_s": _round_float(first_target_sim_time_s),
+        "last_target_sim_time_s": _round_float(last_target_sim_time_s),
+        "first_sim_time_s": _round_float(first_sample.get("sim_time_s") if first_sample else None),
+        "last_sim_time_s": _round_float(last_sample.get("sim_time_s") if last_sample else None),
+        "first_dt_s": _round_float(first_sample.get("dt_s") if first_sample else None),
+        "last_dt_s": _round_float(last_sample.get("dt_s") if last_sample else None),
+        "first_sim_xyz": first_sample.get("xyz") if first_sample else None,
+        "last_sim_xyz": last_sample.get("xyz") if last_sample else None,
+        "first_sim_yaw_rad": first_sample.get("yaw") if first_sample else None,
+        "last_sim_yaw_rad": last_sample.get("yaw") if last_sample else None,
+    }
+
+
 def _navigation_diagnostic_sample(
     *,
     sim_time_s: float,
@@ -720,6 +1057,8 @@ def _navigation_diagnostic_sample(
     local_path_counts: list[int],
     waypoint_count: int,
     navigation_health: dict[str, Any],
+    local_planner_health: dict[str, Any] | None = None,
+    path_follower_health: dict[str, Any] | None = None,
     runtime_faults: list[str],
 ) -> dict[str, Any]:
     sim_z_delta = None
@@ -754,6 +1093,14 @@ def _navigation_diagnostic_sample(
         if isinstance(navigation_health.get("last_plan_report"), dict)
         else {}
     )
+    local_planner = _mapping(
+        _mapping(local_planner_health or {}).get("local_planner")
+    )
+    local_hint = _mapping(local_planner.get("last_control_hint"))
+    local_result = _mapping(local_planner.get("last_result"))
+    path_follower = _mapping(
+        _mapping(path_follower_health or {}).get("path_follower")
+    )
     return {
         "sim_time_s": round(float(sim_time_s), 3),
         "wall_time_s": round(float(wall_time_s), 3),
@@ -772,7 +1119,23 @@ def _navigation_diagnostic_sample(
             "state": str(navigation_health.get("state") or ""),
             "patrol_index": int(navigation_health.get("patrol_index") or 0),
             "patrol_total": int(navigation_health.get("patrol_total") or 0),
+            "wp_index": _safe_int(navigation_health.get("wp_index")),
+            "wp_total": _safe_int(navigation_health.get("wp_total")),
             "failure_reason": str(navigation_health.get("failure_reason") or ""),
+            "goal": navigation_health.get("goal"),
+            "current_waypoint": navigation_health.get("current_waypoint"),
+            "distance_to_goal_m": _round_float(
+                navigation_health.get("distance_to_goal_m")
+            ),
+            "active_waypoint_distance_m": _round_float(
+                navigation_health.get("active_waypoint_distance_m")
+            ),
+            "complete_path_on_goal_proximity": bool(
+                navigation_health.get("complete_path_on_goal_proximity")
+            ),
+            "goal_proximity_completion_threshold": _round_float(
+                navigation_health.get("goal_proximity_completion_threshold")
+            ),
             "primary_planner": str(last_plan.get("primary_planner") or ""),
             "selected_planner": str(last_plan.get("selected_planner") or ""),
             "fallback_reason": str(last_plan.get("fallback_reason") or ""),
@@ -785,6 +1148,60 @@ def _navigation_diagnostic_sample(
             "local_path_points_latest": int(local_path_counts[-1]) if local_path_counts else 0,
             "local_path_points_max": max(local_path_counts) if local_path_counts else 0,
             "waypoint_count": int(waypoint_count),
+        },
+        "local_planner": {
+            "last_local_path_points": _safe_int(
+                local_planner.get("last_local_path_points")
+            ),
+            "last_local_path_span_m": _round_float(
+                local_planner.get("last_local_path_span_m")
+            ),
+            "last_control_hint": {
+                "reason": str(local_hint.get("reason") or ""),
+                "safety_stop": bool(local_hint.get("safety_stop")),
+                "near_field_stop": bool(local_hint.get("near_field_stop")),
+                "path_found": (
+                    bool(local_hint.get("path_found"))
+                    if "path_found" in local_hint
+                    else None
+                ),
+                "recovery_state": (
+                    _safe_int(local_hint.get("recovery_state"))
+                    if "recovery_state" in local_hint
+                    else None
+                ),
+            },
+            "last_result": {
+                "path_point_count": _safe_int(
+                    local_result.get("path_point_count")
+                ),
+                "path_length_m": _round_float(local_result.get("path_length_m")),
+                "path_span_m": _round_float(local_result.get("path_span_m")),
+                "path_found": (
+                    bool(local_result.get("path_found"))
+                    if "path_found" in local_result
+                    else None
+                ),
+                "near_field_stop": (
+                    bool(local_result.get("near_field_stop"))
+                    if "near_field_stop" in local_result
+                    else None
+                ),
+                "recovery_state": (
+                    _safe_int(local_result.get("recovery_state"))
+                    if "recovery_state" in local_result
+                    else None
+                ),
+            },
+        },
+        "path_follower": {
+            "has_path": (
+                bool(path_follower.get("has_path"))
+                if "has_path" in path_follower
+                else None
+            ),
+            "vehicle_speed": _round_float(path_follower.get("vehicle_speed")),
+            "control_hint": _mapping(path_follower.get("control_hint")),
         },
         "runtime_fault_count": len(runtime_faults),
         "latest_runtime_fault": runtime_faults[-1] if runtime_faults else "",
@@ -2411,6 +2828,7 @@ def run_gate(
     nav_max_angular_z: float = 0.15,
     nav_turn_speed_yaw_rate_start: float = 0.0,
     nav_turn_speed_min_scale: float = 1.0,
+    cmd_vel_mux_source_timeout: float = 0.5,
     run_lingtu_frontier: bool = False,
     run_lingtu_tare: bool = False,
     run_lingtu_inspection: bool = False,
@@ -2425,14 +2843,26 @@ def run_gate(
     inspection_min_checkpoints: int = 3,
     inspection_start_delay: float = 0.0,
     inspection_goal_timeout: float = 90.0,
+    inspection_downsample_dist: float = 0.35,
     inspection_planner: str = "astar",
     inspection_tomogram: Path | str | None = None,
+    inspection_waypoint_threshold: float = 0.50,
+    inspection_final_waypoint_threshold: float = 0.50,
+    inspection_complete_path_on_goal_proximity: bool = False,
+    inspection_goal_proximity_completion_threshold: float | None = None,
+    inspection_path_goal_tolerance: float = 0.12,
+    inspection_path_lookahead: float = 1.5,
+    inspection_path_min_speed: float = 0.15,
+    inspection_path_yaw_rate_gain: float = 7.5,
+    inspection_path_stop_yaw_rate_gain: float = 7.5,
+    inspection_path_dir_diff_thre: float = 0.1,
     min_map_area_growth_m2: float = 0.25,
     min_explored_area_growth_m2: float = 0.25,
     min_exploration_coverage_growth_ratio: float = 0.001,
     max_fastlio_z_drift_m: float = 1.0,
     max_fastlio_yaw_drift_rad: float = 0.5,
     runtime_fault_confirm_samples: int = 2,
+    runtime_motion_fault_min_sim_m: float = 0.25,
     fastlio_lidar_input: str = "livox_custom_msg",
     fastlio_lidar_filter_num: int = 4,
     fastlio_scan_resolution: float = 0.15,
@@ -2475,6 +2905,7 @@ def run_gate(
     tomogram_slice_dh: float = 0.25,
     tomogram_ground_h: float = 0.0,
     tomogram_max_cells: int = 50_000_000,
+    partial_json_out: Path | str | None = None,
 ) -> dict[str, Any]:
     selected_lingtu_modes = [
         name
@@ -2490,6 +2921,16 @@ def run_gate(
             "--run-lingtu-frontier, --run-lingtu-tare, and "
             "--run-lingtu-inspection are mutually exclusive"
         )
+    inspection_planner = str(inspection_planner or "astar").strip().lower()
+    pct_optimizer_defaulted = False
+    if run_lingtu_inspection and inspection_planner == "pct":
+        pct_optimizer_defaulted = PCT_OPTIMIZE_TRAJECTORY_ENV not in os.environ
+        os.environ.setdefault(PCT_OPTIMIZE_TRAJECTORY_ENV, "0")
+    pct_optimizer_enabled = (
+        _pct_optimizer_enabled_from_env()
+        if run_lingtu_inspection and inspection_planner == "pct"
+        else None
+    )
     inspection_goal_list = _parse_inspection_goals(inspection_goals)
     if run_lingtu_inspection and not inspection_goal_list:
         raise ValueError("--run-lingtu-inspection requires at least one inspection goal")
@@ -2499,6 +2940,11 @@ def run_gate(
     max_wall_time_s = float(max_wall_time_s or 0.0)
     if max_wall_time_s < 0.0:
         raise ValueError("--max-wall-time-s must be non-negative")
+    cmd_vel_mux_source_timeout = max(0.02, float(cmd_vel_mux_source_timeout))
+    runtime_motion_fault_min_sim_m = max(
+        0.0,
+        float(runtime_motion_fault_min_sim_m),
+    )
     moving_obstacle_mode = str(moving_obstacle_mode or "none").strip().lower()
     if moving_obstacle_mode not in {"none", "robot_crossing"}:
         raise ValueError(f"unsupported moving_obstacle_mode: {moving_obstacle_mode}")
@@ -2634,6 +3080,7 @@ def run_gate(
     runtime_fault_events: list[dict[str, Any]] = []
     runtime_fault_streaks = {"motion": 0, "z": 0, "yaw": 0}
     wall_timeout = _wall_timeout_status(0.0, max_wall_time_s)
+    early_success: dict[str, Any] = {"ok": False, "reason": ""}
     source_end_bridge_status: dict[str, Any] | None = None
     latest_nav_cmd = {"vx": 0.0, "vy": 0.0, "wz": 0.0, "stamp": 0.0}
     nav_cmd_vel_samples: list[dict[str, float]] = []
@@ -2696,6 +3143,23 @@ def run_gate(
     truth_nav_origin_source = (
         "inspection_tomogram_metadata" if truth_nav_origin_world_xy is not None else ""
     )
+    resolved_start_position = start or _scene_start(world)
+    inspection_planning_frame_origin_world_xy: tuple[float, float] | None = None
+    inspection_planning_frame_origin_source = ""
+    if run_lingtu_inspection:
+        if demo_truth_nav and truth_nav_origin_world_xy is not None:
+            inspection_planning_frame_origin_world_xy = truth_nav_origin_world_xy
+            inspection_planning_frame_origin_source = truth_nav_origin_source
+        elif isinstance(resolved_start_position, (list, tuple)) and len(resolved_start_position) >= 2:
+            try:
+                inspection_planning_frame_origin_world_xy = (
+                    float(resolved_start_position[0]),
+                    float(resolved_start_position[1]),
+                )
+                inspection_planning_frame_origin_source = "runtime_start_position"
+            except (TypeError, ValueError):
+                inspection_planning_frame_origin_world_xy = None
+                inspection_planning_frame_origin_source = ""
     video_samples: list[dict[str, Any]] = []
     navigation_diagnostic_samples: list[dict[str, Any]] = []
     imu_diagnostic_samples: list[dict[str, Any]] = []
@@ -2794,6 +3258,22 @@ def run_gate(
         except Exception as exc:
             return {"error": f"{type(exc).__name__}: {exc}"}
 
+    def _current_local_planner_health() -> dict[str, Any]:
+        if local_planner_module is None:
+            return {}
+        try:
+            return dict(local_planner_module.health() or {})
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    def _current_path_follower_health() -> dict[str, Any]:
+        if path_follower_module is None:
+            return {}
+        try:
+            return dict(path_follower_module.health() or {})
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
     def _append_navigation_diagnostic_sample(
         *,
         elapsed_sim_s: float,
@@ -2820,6 +3300,8 @@ def run_gate(
                 local_path_counts=local_path_counts,
                 waypoint_count=waypoint_count,
                 navigation_health=_current_navigation_health(),
+                local_planner_health=_current_local_planner_health(),
+                path_follower_health=_current_path_follower_health(),
                 runtime_faults=runtime_faults,
             )
         )
@@ -2856,6 +3338,12 @@ def run_gate(
                 child=SIM_LIDAR_FRAME_ID,
                 translation_xyz=mujoco_lidar_extrinsic.translation,
                 rotation_xyzw=mujoco_lidar_extrinsic.rotation_xyzw,
+            ),
+            _make_transform_msg(
+                stamp=node.get_clock().now().to_msg(),
+                transform_cls=TransformStamped,
+                parent=SIM_BODY_FRAME_ID,
+                child=SIM_CAMERA_FRAME_ID,
             ),
         ]
     )
@@ -2900,6 +3388,87 @@ def run_gate(
     first_sim_yaw: float | None = None
     last_sim_yaw: float | None = None
     lingtu_system = None
+    partial_report_path = Path(partial_json_out) if partial_json_out else None
+    partial_report_period_s = 5.0
+    next_partial_report_wall_s = 0.0
+
+    def _write_partial_report(reason: str, *, elapsed_wall_s: float, elapsed_sim_s: float) -> None:
+        if partial_report_path is None:
+            return
+        nav_cmd_nonzero = sum(
+            1
+            for item in nav_cmd_vel_samples
+            if abs(item["vx"]) > 1e-4
+            or abs(item["vy"]) > 1e-4
+            or abs(item["wz"]) > 1e-4
+        )
+        navigation_health = _current_navigation_health()
+        payload = {
+            "schema_version": "lingtu.mujoco_fastlio2_live_gate.partial.v1",
+            "ok": False,
+            "partial_report": True,
+            "reason": str(reason),
+            "simulation_only": True,
+            "real_robot_motion": False,
+            "cmd_vel_sent_to_hardware": False,
+            "world": str(world),
+            "nav_data_source": nav_data_source,
+            "duration_clock": duration_clock,
+            "elapsed_wall_s": round(float(elapsed_wall_s), 3),
+            "elapsed_sim_s": round(float(elapsed_sim_s), 3),
+            "counts": dict(counts),
+            "outputs": {
+                "fastlio2_odometry": len(nav_bridge.odom_out),
+                "fastlio2_cloud_registered": len(nav_bridge.registered_cloud_out),
+                "fastlio2_cloud_map": len(nav_bridge.map_cloud_out),
+                "nav_odometry": len(nav_bridge.nav_odom_out),
+                "nav_registered_cloud": len(nav_bridge.nav_registered_cloud_out),
+                "nav_map_cloud": len(nav_bridge.nav_map_cloud_out),
+                "nav_cmd_vel": len(nav_cmd_vel_samples),
+                "nav_cmd_vel_nonzero": int(nav_cmd_nonzero),
+            },
+            "lingtu_inspection": {
+                "enabled": bool(run_lingtu_inspection),
+                "started_after_slam_ready": bool(inspection_started_after_slam_ready),
+                "start_status": inspection_start_status,
+                "goal_count": len(inspection_goal_list),
+                "sent_goal_count": len(inspection_goals_sent),
+                "min_checkpoints": int(inspection_min_checkpoints),
+                "navigation_state": str(navigation_health.get("state") or ""),
+                "patrol_index": navigation_health.get("patrol_index"),
+                "patrol_total": navigation_health.get("patrol_total"),
+                "global_path_count": len(global_path_counts),
+                "global_path_points_max": max(global_path_counts or [0]),
+                "local_path_count": len(local_path_counts),
+                "local_path_points_max": max(local_path_counts or [0]),
+                "planning_frame": (
+                    SIM_NAV_ODOMETRY_FRAME_ID if not demo_truth_nav else SIM_MAP_FRAME_ID
+                ),
+                "planning_frame_origin_world_xy": (
+                    list(inspection_planning_frame_origin_world_xy)
+                    if inspection_planning_frame_origin_world_xy is not None
+                    else []
+                ),
+                "planning_frame_origin_source": inspection_planning_frame_origin_source,
+                "early_success": dict(early_success),
+            },
+            "simulation_path": {
+                "first_sim_xyz": first_sim_xyz,
+                "last_sim_xyz": last_sim_xyz,
+                "first_sim_yaw_rad": first_sim_yaw,
+                "last_sim_yaw_rad": last_sim_yaw,
+                "sim_path_length_m": round(float(sim_path_length_m), 4),
+            },
+            "video": {
+                "path": str(video_out_path) if video_out_path is not None else "",
+                "sample_count": len(video_samples),
+            },
+            "runtime_faults": list(runtime_faults),
+            "runtime_fault_events": list(runtime_fault_events[-10:]),
+            "gate_wall_timeout": dict(wall_timeout),
+            "process_returncode": process.returncode if process is not None else None,
+        }
+        _write_json_atomic(partial_report_path, payload)
 
     def _read_current_lidar_world_xyzi() -> tuple[np.ndarray, int]:
         cloud_world = engine.get_lidar_points()
@@ -2969,6 +3538,7 @@ def run_gate(
                 nav_max_angular_z=float(nav_max_angular_z),
                 nav_turn_speed_yaw_rate_start=float(nav_turn_speed_yaw_rate_start),
                 nav_turn_speed_min_scale=float(nav_turn_speed_min_scale),
+                cmd_vel_mux_source_timeout=float(cmd_vel_mux_source_timeout),
             )
             lingtu_system = stack.system
             frontier = stack.frontier
@@ -3060,6 +3630,7 @@ def run_gate(
                 nav_max_angular_z=float(nav_max_angular_z),
                 nav_turn_speed_yaw_rate_start=float(nav_turn_speed_yaw_rate_start),
                 nav_turn_speed_min_scale=float(nav_turn_speed_min_scale),
+                cmd_vel_mux_source_timeout=float(cmd_vel_mux_source_timeout),
             )
             lingtu_system = stack.system
             tare = stack.tare
@@ -3148,10 +3719,30 @@ def run_gate(
                 planner_backend=str(inspection_planner or "astar"),
                 tomogram=str(inspection_tomogram or ""),
                 inspection_goal_timeout=max(1.0, float(inspection_goal_timeout)),
+                downsample_dist=float(inspection_downsample_dist),
                 nav_max_linear_speed=float(nav_max_linear_speed),
                 nav_max_angular_z=float(nav_max_angular_z),
                 nav_turn_speed_yaw_rate_start=float(nav_turn_speed_yaw_rate_start),
                 nav_turn_speed_min_scale=float(nav_turn_speed_min_scale),
+                cmd_vel_mux_source_timeout=float(cmd_vel_mux_source_timeout),
+                waypoint_threshold=float(inspection_waypoint_threshold),
+                final_waypoint_threshold=float(inspection_final_waypoint_threshold),
+                complete_path_on_goal_proximity=bool(
+                    inspection_complete_path_on_goal_proximity
+                ),
+                goal_proximity_completion_threshold=(
+                    None
+                    if inspection_goal_proximity_completion_threshold is None
+                    else float(inspection_goal_proximity_completion_threshold)
+                ),
+                path_follower_goal_tolerance=float(inspection_path_goal_tolerance),
+                path_follower_lookahead=float(inspection_path_lookahead),
+                path_follower_min_speed=float(inspection_path_min_speed),
+                path_follower_yaw_rate_gain=float(inspection_path_yaw_rate_gain),
+                path_follower_stop_yaw_rate_gain=float(
+                    inspection_path_stop_yaw_rate_gain
+                ),
+                path_follower_dir_diff_thre=float(inspection_path_dir_diff_thre),
             )
             lingtu_system = stack.system
             nav = stack.navigation
@@ -3246,6 +3837,11 @@ def run_gate(
                         "elapsed_sim_s": round(float(elapsed_sim_for_duration), 3),
                         "max_wall_time_s": current_wall_timeout["max_wall_time_s"],
                     }
+                )
+                _write_partial_report(
+                    "wall_timeout",
+                    elapsed_wall_s=elapsed_wall_for_duration,
+                    elapsed_sim_s=elapsed_sim_for_duration,
                 )
                 break
             if duration_clock == "sim":
@@ -3592,6 +4188,20 @@ def run_gate(
 
             rclpy.spin_once(node, timeout_sec=0.0)
             elapsed_sim_wall = time.time() - sim_start_wall
+            elapsed_video_sample_s = _video_sample_elapsed_s(
+                duration_clock,
+                elapsed_sim_s=elapsed_sim_for_duration,
+                elapsed_wall_s=elapsed_sim_wall,
+            )
+            if elapsed_sim_wall >= next_partial_report_wall_s:
+                _write_partial_report(
+                    "running",
+                    elapsed_wall_s=elapsed_sim_wall,
+                    elapsed_sim_s=elapsed_sim_for_duration,
+                )
+                next_partial_report_wall_s = (
+                    elapsed_sim_wall + partial_report_period_s
+                )
             if elapsed_sim_wall >= next_runtime_guard_s:
                 next_runtime_guard_s += 2.0
                 if (
@@ -3600,56 +4210,22 @@ def run_gate(
                     and first_sim_xyz
                     and last_sim_xyz
                 ):
-                    first_aligned_sim = None
-                    last_aligned_sim = None
-                    if (
-                        nav_bridge.first_odom_stamp_s is not None
-                        and nav_bridge.last_odom_stamp_s is not None
-                    ):
-                        first_aligned_sim = _nearest_sim_pose_sample(
-                            sim_pose_timed_trail,
-                            target_sim_time_s=(
-                                float(nav_bridge.first_odom_stamp_s)
-                                - float(ros_time_origin_s)
-                            ),
-                        )
-                        last_aligned_sim = _nearest_sim_pose_sample(
-                            sim_pose_timed_trail,
-                            target_sim_time_s=(
-                                float(nav_bridge.last_odom_stamp_s)
-                                - float(ros_time_origin_s)
-                            ),
-                        )
-                    time_aligned_guard = bool(first_aligned_sim and last_aligned_sim)
-                    guard_first_sim_xyz = (
-                        first_aligned_sim["xyz"] if first_aligned_sim else first_sim_xyz
+                    guard_alignment = _aligned_motion_window(
+                        sim_pose_timed_trail,
+                        ros_time_origin_s=float(ros_time_origin_s),
+                        first_odom_stamp_s=nav_bridge.first_odom_stamp_s,
+                        last_odom_stamp_s=nav_bridge.last_odom_stamp_s,
+                        fallback_first_sim_xyz=first_sim_xyz,
+                        fallback_last_sim_xyz=last_sim_xyz,
+                        fallback_first_sim_yaw=first_sim_yaw,
+                        fallback_last_sim_yaw=last_sim_yaw,
                     )
-                    guard_last_sim_xyz = (
-                        last_aligned_sim["xyz"] if last_aligned_sim else last_sim_xyz
-                    )
-                    guard_first_sim_yaw = (
-                        float(first_aligned_sim["yaw"])
-                        if first_aligned_sim
-                        else first_sim_yaw
-                    )
-                    guard_last_sim_yaw = (
-                        float(last_aligned_sim["yaw"])
-                        if last_aligned_sim
-                        else last_sim_yaw
-                    )
-                    guard_alignment = {
-                        "time_aligned": time_aligned_guard,
-                        "first_dt_s": (
-                            _round_float(first_aligned_sim.get("dt_s"))
-                            if first_aligned_sim
-                            else None
-                        ),
-                        "last_dt_s": (
-                            _round_float(last_aligned_sim.get("dt_s"))
-                            if last_aligned_sim
-                            else None
-                        ),
-                    }
+                    guard_first_sim_xyz = guard_alignment.get("first_sim_xyz")
+                    guard_last_sim_xyz = guard_alignment.get("last_sim_xyz")
+                    guard_first_sim_yaw = guard_alignment.get("first_sim_yaw_rad")
+                    guard_last_sim_yaw = guard_alignment.get("last_sim_yaw_rad")
+                    if not guard_first_sim_xyz or not guard_last_sim_xyz:
+                        continue
                     guard_fastlio_m = math.dist(
                         nav_bridge.first_odom_xyz,
                         nav_bridge.last_odom_xyz,
@@ -3661,11 +4237,16 @@ def run_gate(
                         sim_moved_m=guard_sim_m,
                         sim_path_length_m=None,
                     )
+                    motion_guard_has_enough_displacement = bool(
+                        guard_sim_m >= runtime_motion_fault_min_sim_m
+                        or guard_fastlio_m
+                        >= max(1.0, runtime_motion_fault_min_sim_m * 2.0)
+                    )
                     fault_kind = ""
                     fault_message = ""
                     if (
                         not bool(guard_motion.get("ok"))
-                        and (guard_sim_m > 0.05 or guard_fastlio_m > 0.5)
+                        and motion_guard_has_enough_displacement
                     ):
                         fault_kind = "motion"
                         fault_message = (
@@ -3775,7 +4356,7 @@ def run_gate(
                 except Exception as exc:
                     live_window_error = f"{type(exc).__name__}: {exc}"
                     show_mujoco_window = False
-            if video_out_path is not None and elapsed_sim_wall >= next_video_sample_s:
+            if video_out_path is not None and elapsed_video_sample_s >= next_video_sample_s:
                 latest_status = bridge_statuses[-1] if bridge_statuses else {}
                 current_odom_m = (
                     math.dist(nav_bridge.first_odom_xyz, nav_bridge.last_odom_xyz)
@@ -3793,7 +4374,8 @@ def run_gate(
                     else {}
                 )
                 video_samples.append({
-                    "t_s": float(elapsed_sim_wall),
+                    "t_s": float(elapsed_video_sample_s),
+                    "t_clock": str("sim" if duration_clock == "sim" else "wall"),
                     "overview_rgb": _render_mujoco_overview(engine, video_render_state),
                     "raw_points": latest_raw_world_points.copy(),
                     "map_points": latest_map_points.copy(),
@@ -3948,6 +4530,54 @@ def run_gate(
                         }
                 else:
                     inspection_ready_since = None
+            if (
+                run_lingtu_inspection
+                and inspection_started_after_slam_ready
+                and nav_module is not None
+            ):
+                try:
+                    current_navigation_health = dict(
+                        (nav_module.health() or {}).get("navigation") or {}
+                    )
+                except Exception:
+                    current_navigation_health = {}
+                current_nav_cmd_nonzero = sum(
+                    1
+                    for item in nav_cmd_vel_samples
+                    if abs(item["vx"]) > 1e-4
+                    or abs(item["vy"]) > 1e-4
+                    or abs(item["wz"]) > 1e-4
+                )
+                early_success = _inspection_gate_evidence_complete(
+                    run_lingtu_inspection=run_lingtu_inspection,
+                    navigation_health=current_navigation_health,
+                    inspection_goal_count=len(inspection_goals_sent),
+                    inspection_min_checkpoints=inspection_min_checkpoints,
+                    algorithm_verified=(
+                        len(nav_bridge.odom_out) > 0
+                        and len(nav_bridge.map_cloud_out) > 0
+                    ),
+                    canonical_nav_outputs_verified=(
+                        len(nav_bridge.nav_odom_out) > 0
+                        and len(nav_bridge.nav_registered_cloud_out) > 0
+                        and len(nav_bridge.nav_map_cloud_out) > 0
+                    ),
+                    global_path_counts=global_path_counts,
+                    local_path_counts=local_path_counts,
+                    nav_cmd_nonzero=current_nav_cmd_nonzero,
+                    moving_obstacle_enabled=moving_obstacle_enabled,
+                    moving_obstacle_published_update_count=(
+                        moving_obstacle_published_update_count
+                    ),
+                    moving_obstacle_published_point_count_max=(
+                        moving_obstacle_published_point_count_max
+                    ),
+                    video_required=video_out_path is not None,
+                    video_sample_count=len(video_samples),
+                )
+                if bool(early_success.get("ok")):
+                    final_navigation_health = current_navigation_health
+                    break
             target_dt = float(engine.control_dt)
             elapsed = time.time() - loop_wall
             if elapsed < target_dt:
@@ -4024,6 +4654,30 @@ def run_gate(
                 pass
         if process is not None:
             process.stop(timeout_s=3)
+        if sim_loop_end_wall is None:
+            partial_elapsed_wall_s = (
+                time.time() - sim_loop_start_wall
+                if sim_loop_start_wall is not None
+                else time.time() - started
+            )
+            partial_elapsed_sim_s = (
+                float(getattr(engine, "sim_time", sim_loop_start_time))
+                - float(sim_loop_start_time)
+            )
+        else:
+            partial_elapsed_wall_s = max(
+                0.0,
+                float(sim_loop_end_wall) - float(sim_loop_start_wall or started),
+            )
+            partial_elapsed_sim_s = max(
+                0.0,
+                float(sim_loop_end_time) - float(sim_loop_start_time),
+            )
+        _write_partial_report(
+            "finalizing",
+            elapsed_wall_s=partial_elapsed_wall_s,
+            elapsed_sim_s=partial_elapsed_sim_s,
+        )
         bridge.stop()
         try:
             node.destroy_node()
@@ -4073,16 +4727,34 @@ def run_gate(
     first_odom_yaw = nav_bridge.first_odom_yaw
     last_odom_yaw = nav_bridge.last_odom_yaw
     odom_path_length_m = nav_bridge.odom_path_length_m
+    motion_window = _aligned_motion_window(
+        sim_pose_timed_trail,
+        ros_time_origin_s=float(ros_time_origin_s),
+        first_odom_stamp_s=nav_bridge.first_odom_stamp_s,
+        last_odom_stamp_s=nav_bridge.last_odom_stamp_s,
+        fallback_first_sim_xyz=first_sim_xyz,
+        fallback_last_sim_xyz=last_sim_xyz,
+        fallback_first_sim_yaw=first_sim_yaw,
+        fallback_last_sim_yaw=last_sim_yaw,
+    )
+    motion_first_sim_xyz = motion_window.get("first_sim_xyz")
+    motion_last_sim_xyz = motion_window.get("last_sim_xyz")
+    motion_first_sim_yaw = motion_window.get("first_sim_yaw_rad")
+    motion_last_sim_yaw = motion_window.get("last_sim_yaw_rad")
     moved_m = math.dist(first_odom_xyz, last_odom_xyz) if first_odom_xyz and last_odom_xyz else None
-    sim_moved_m = math.dist(first_sim_xyz, last_sim_xyz) if first_sim_xyz and last_sim_xyz else None
+    sim_moved_m = (
+        math.dist(motion_first_sim_xyz, motion_last_sim_xyz)
+        if motion_first_sim_xyz and motion_last_sim_xyz
+        else None
+    )
     fastlio_z_delta = (
         float(last_odom_xyz[2] - first_odom_xyz[2])
         if first_odom_xyz and last_odom_xyz
         else None
     )
     sim_z_delta = (
-        float(last_sim_xyz[2] - first_sim_xyz[2])
-        if first_sim_xyz and last_sim_xyz
+        float(motion_last_sim_xyz[2] - motion_first_sim_xyz[2])
+        if motion_first_sim_xyz and motion_last_sim_xyz
         else None
     )
     z_delta_error = (
@@ -4102,8 +4774,9 @@ def run_gate(
         "max_allowed_z_drift_m": float(max_fastlio_z_drift_m),
         "first_odom_z": first_odom_xyz[2] if first_odom_xyz else None,
         "last_odom_z": last_odom_xyz[2] if last_odom_xyz else None,
-        "first_sim_z": first_sim_xyz[2] if first_sim_xyz else None,
-        "last_sim_z": last_sim_xyz[2] if last_sim_xyz else None,
+        "first_sim_z": motion_first_sim_xyz[2] if motion_first_sim_xyz else None,
+        "last_sim_z": motion_last_sim_xyz[2] if motion_last_sim_xyz else None,
+        "time_alignment": motion_window,
     }
     fastlio_yaw_delta = (
         _angle_delta_rad(last_odom_yaw, first_odom_yaw)
@@ -4111,8 +4784,8 @@ def run_gate(
         else None
     )
     sim_yaw_delta = (
-        _angle_delta_rad(last_sim_yaw, first_sim_yaw)
-        if first_sim_yaw is not None and last_sim_yaw is not None
+        _angle_delta_rad(motion_last_sim_yaw, motion_first_sim_yaw)
+        if motion_first_sim_yaw is not None and motion_last_sim_yaw is not None
         else None
     )
     yaw_delta_error = (
@@ -4132,8 +4805,9 @@ def run_gate(
         "max_allowed_yaw_drift_rad": float(max_fastlio_yaw_drift_rad),
         "first_odom_yaw_rad": first_odom_yaw,
         "last_odom_yaw_rad": last_odom_yaw,
-        "first_sim_yaw_rad": first_sim_yaw,
-        "last_sim_yaw_rad": last_sim_yaw,
+        "first_sim_yaw_rad": motion_first_sim_yaw,
+        "last_sim_yaw_rad": motion_last_sim_yaw,
+        "time_alignment": motion_window,
     }
     process_returncode = process.returncode if process is not None else None
     algorithm_verified = len(odom_out) > 0 and len(map_cloud_out) > 0
@@ -4249,6 +4923,7 @@ def run_gate(
         sim_moved_m=sim_moved_m,
         sim_path_length_m=round(float(sim_path_length_m), 4),
     )
+    motion_consistency["time_alignment"] = motion_window
     cmd_samples = int(applied_cmd_stats["samples"])
     applied_command_summary = {
         "samples": cmd_samples,
@@ -5032,9 +5707,12 @@ def run_gate(
         "runtime_faults": runtime_faults,
         "runtime_fault_events": runtime_fault_events,
         "runtime_fault_confirm_samples": int(runtime_fault_confirm_samples),
+        "runtime_motion_fault_min_sim_m": float(runtime_motion_fault_min_sim_m),
         "gate_wall_timeout": wall_timeout,
+        "early_success": early_success,
         "nav_data_source": nav_data_source,
         "duration_clock": duration_clock,
+        "video_sample_clock": str("sim" if duration_clock == "sim" else "wall"),
         "imu_acc_mode": imu_acc_mode,
         "scan_time_profile": scan_time_profile,
         "sim_zupt_disabled": disable_sim_zupt,
@@ -5086,12 +5764,12 @@ def run_gate(
             "slam_bridge_output": SIM_NAV_ODOMETRY_FRAME_ID,
             "cmd_vel": (
                 TOPICS.cmd_vel
-                if (run_lingtu_frontier or run_lingtu_tare)
+                if (run_lingtu_frontier or run_lingtu_tare or run_lingtu_inspection)
                 else "not_published"
             ),
         },
         "world": str(world),
-        "start_position": start or _scene_start(world),
+        "start_position": resolved_start_position,
         "mujoco_memory": mujoco_memory,
         "drive_mode": drive_mode,
         "sensor_timestamp_source": "mujoco_sim_time",
@@ -5188,12 +5866,34 @@ def run_gate(
             "nav_max_angular_z": float(nav_max_angular_z),
             "nav_turn_speed_yaw_rate_start": float(nav_turn_speed_yaw_rate_start),
             "nav_turn_speed_min_scale": float(nav_turn_speed_min_scale),
+            "cmd_vel_mux_source_timeout_s": float(cmd_vel_mux_source_timeout),
             "cmd_vel_linear_limit": float(cmd_vel_linear_limit),
             "cmd_vel_angular_limit": float(cmd_vel_angular_limit),
             "cmd_vel_linear_accel_limit": float(cmd_vel_linear_accel_limit),
             "cmd_vel_angular_accel_limit": float(cmd_vel_angular_accel_limit),
             "nav_cmd_vel_sim_linear_scale": float(cmd_vel_sim_linear_scale),
             "nav_cmd_vel_sim_angular_scale": float(cmd_vel_sim_angular_scale),
+            "inspection_waypoint_threshold": float(inspection_waypoint_threshold),
+            "inspection_final_waypoint_threshold": float(
+                inspection_final_waypoint_threshold
+            ),
+            "inspection_complete_path_on_goal_proximity": bool(
+                inspection_complete_path_on_goal_proximity
+            ),
+            "inspection_goal_proximity_completion_threshold": (
+                None
+                if inspection_goal_proximity_completion_threshold is None
+                else float(inspection_goal_proximity_completion_threshold)
+            ),
+            "inspection_path_goal_tolerance": float(inspection_path_goal_tolerance),
+            "inspection_path_lookahead": float(inspection_path_lookahead),
+            "inspection_path_min_speed": float(inspection_path_min_speed),
+            "inspection_path_yaw_rate_gain": float(inspection_path_yaw_rate_gain),
+            "inspection_path_stop_yaw_rate_gain": float(
+                inspection_path_stop_yaw_rate_gain
+            ),
+            "inspection_path_dir_diff_thre": float(inspection_path_dir_diff_thre),
+            "inspection_downsample_dist": float(inspection_downsample_dist),
         },
         "moving_obstacles": {
             "enabled": bool(moving_obstacle_enabled),
@@ -5360,11 +6060,49 @@ def run_gate(
             "patrol_total": int(inspection_patrol_total),
             "global_planner": str(inspection_planner or "astar"),
             "tomogram": str(inspection_tomogram or ""),
+            "pct_optimizer_enabled": pct_optimizer_enabled,
+            "pct_optimizer_defaulted": (
+                pct_optimizer_defaulted if inspection_planner == "pct" else None
+            ),
+            "pct_planner_path_mode": (
+                "optimized_trajectory"
+                if pct_optimizer_enabled is True
+                else "native_astar_raw_path"
+                if pct_optimizer_enabled is False
+                else None
+            ),
             "replan_on_costmap_update": final_navigation_health.get(
                 "replan_on_costmap_update"
             ),
             "planning_frame": SIM_NAV_ODOMETRY_FRAME_ID,
             "occupancy_frame": SIM_FASTLIO_LIVE_MAP_FRAME_ID,
+            "planning_frame_origin_world_xy": (
+                list(inspection_planning_frame_origin_world_xy)
+                if inspection_planning_frame_origin_world_xy is not None
+                else []
+            ),
+            "planning_frame_origin_source": inspection_planning_frame_origin_source,
+            "tracking_parameters": {
+                "waypoint_threshold": float(inspection_waypoint_threshold),
+                "final_waypoint_threshold": float(inspection_final_waypoint_threshold),
+                "complete_path_on_goal_proximity": bool(
+                    inspection_complete_path_on_goal_proximity
+                ),
+                "goal_proximity_completion_threshold": (
+                    None
+                    if inspection_goal_proximity_completion_threshold is None
+                    else float(inspection_goal_proximity_completion_threshold)
+                ),
+                "path_follower_goal_tolerance": float(inspection_path_goal_tolerance),
+                "path_follower_lookahead": float(inspection_path_lookahead),
+                "path_follower_min_speed": float(inspection_path_min_speed),
+                "path_follower_yaw_rate_gain": float(inspection_path_yaw_rate_gain),
+                "path_follower_stop_yaw_rate_gain": float(
+                    inspection_path_stop_yaw_rate_gain
+                ),
+                "path_follower_dir_diff_thre": float(inspection_path_dir_diff_thre),
+                "downsample_dist": float(inspection_downsample_dist),
+            },
         },
         "navigation_chain": {
             "health": final_navigation_health,
@@ -5393,6 +6131,11 @@ def run_gate(
         "last_sim_xyz": last_sim_xyz,
         "first_sim_yaw_rad": first_sim_yaw,
         "last_sim_yaw_rad": last_sim_yaw,
+        "motion_window": motion_window,
+        "motion_first_sim_xyz": motion_first_sim_xyz,
+        "motion_last_sim_xyz": motion_last_sim_xyz,
+        "motion_first_sim_yaw_rad": motion_first_sim_yaw,
+        "motion_last_sim_yaw_rad": motion_last_sim_yaw,
         "sim_moved_m": sim_moved_m,
         "sim_path_length_m": round(float(sim_path_length_m), 4),
         "sim_time_s": round(sim_time_s, 3),
@@ -5496,6 +6239,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="Minimum PathFollower linear speed scale at max yaw rate.",
     )
+    parser.add_argument(
+        "--cmd-vel-mux-source-timeout",
+        type=float,
+        default=0.5,
+        help=(
+            "CmdVelMux source timeout for LingTu-driven live simulation. "
+            "Keep production defaults unchanged; launcher raises this only "
+            "for slow sim-clock MuJoCo validation runs."
+        ),
+    )
     parser.add_argument("--run-lingtu-frontier", action="store_true")
     parser.add_argument("--run-lingtu-tare", action="store_true")
     parser.add_argument("--run-lingtu-inspection", action="store_true")
@@ -5515,6 +6268,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inspection-start-delay", type=float, default=0.0)
     parser.add_argument("--inspection-goal-timeout", type=float, default=90.0)
     parser.add_argument(
+        "--inspection-downsample-dist",
+        type=float,
+        default=0.35,
+        help=(
+            "Global path waypoint spacing used by NavigationModule for "
+            "simulation-only inspection runs."
+        ),
+    )
+    parser.add_argument(
         "--inspection-planner",
         choices=["astar", "pct"],
         default="astar",
@@ -5529,6 +6291,85 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Tomogram path used when --inspection-planner=pct.",
+    )
+    parser.add_argument(
+        "--inspection-waypoint-threshold",
+        type=float,
+        default=0.50,
+        help=(
+            "NavigationModule intermediate patrol waypoint radius for "
+            "simulation-only inspection runs."
+        ),
+    )
+    parser.add_argument(
+        "--inspection-final-waypoint-threshold",
+        type=float,
+        default=0.50,
+        help=(
+            "NavigationModule final patrol waypoint radius for simulation-only "
+            "inspection runs."
+        ),
+    )
+    parser.add_argument(
+        "--inspection-complete-path-on-goal-proximity",
+        action="store_true",
+        help=(
+            "Simulation-only inspection guard: allow NavigationModule to mark a "
+            "path complete when the robot is within the patrol goal radius even "
+            "if an intermediate waypoint was skipped. Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--inspection-goal-proximity-completion-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Goal-proximity completion radius used only with "
+            "--inspection-complete-path-on-goal-proximity. Defaults to the "
+            "NavigationModule final waypoint threshold."
+        ),
+    )
+    parser.add_argument(
+        "--inspection-path-goal-tolerance",
+        type=float,
+        default=0.12,
+        help="PathFollower local-path stop radius for simulation-only inspection runs.",
+    )
+    parser.add_argument(
+        "--inspection-path-lookahead",
+        type=float,
+        default=1.5,
+        help="PathFollower lookahead for simulation-only inspection runs.",
+    )
+    parser.add_argument(
+        "--inspection-path-min-speed",
+        type=float,
+        default=0.15,
+        help="PathFollower minimum speed for simulation-only inspection runs.",
+    )
+    parser.add_argument(
+        "--inspection-path-yaw-rate-gain",
+        type=float,
+        default=7.5,
+        help="PathFollower yaw-rate gain for simulation-only inspection runs.",
+    )
+    parser.add_argument(
+        "--inspection-path-stop-yaw-rate-gain",
+        type=float,
+        default=7.5,
+        help=(
+            "PathFollower yaw-rate gain used when nearly stopped for "
+            "simulation-only inspection runs."
+        ),
+    )
+    parser.add_argument(
+        "--inspection-path-dir-diff-thre",
+        type=float,
+        default=0.1,
+        help=(
+            "PathFollower heading-error threshold for allowing acceleration "
+            "during simulation-only inspection runs."
+        ),
     )
     parser.add_argument("--min-map-area-growth-m2", type=float, default=0.25)
     parser.add_argument("--min-explored-area-growth-m2", type=float, default=0.25)
@@ -5550,6 +6391,16 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Consecutive runtime guard samples required before aborting a live run.",
+    )
+    parser.add_argument(
+        "--runtime-motion-fault-min-sim-m",
+        type=float,
+        default=0.25,
+        help=(
+            "Minimum MuJoCo displacement before a Fast-LIO XY motion mismatch "
+            "can terminate the run. The final motion_consistency check remains "
+            "strict and always reports the actual error."
+        ),
     )
     parser.add_argument("--n-rays", type=int, default=6400)
     parser.add_argument("--mid360-pattern", type=Path, default=DEFAULT_MID360_PATTERN)
@@ -5630,6 +6481,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backend-profile", default="fastlio2")
     parser.add_argument("--work-dir", default="artifacts/mujoco_fastlio2_live")
     parser.add_argument("--json-out", default="")
+    parser.add_argument(
+        "--partial-json-out",
+        default="",
+        help=(
+            "Optional diagnostic JSON path updated while the live gate is still "
+            "running. This is always red/partial evidence and is not an "
+            "acceptance report."
+        ),
+    )
     parser.add_argument(
         "--video-out",
         default="",
@@ -5718,6 +6578,7 @@ def main() -> int:
             nav_max_angular_z=args.nav_max_angular_z,
             nav_turn_speed_yaw_rate_start=args.nav_turn_speed_yaw_rate_start,
             nav_turn_speed_min_scale=args.nav_turn_speed_min_scale,
+            cmd_vel_mux_source_timeout=args.cmd_vel_mux_source_timeout,
             run_lingtu_frontier=args.run_lingtu_frontier,
             run_lingtu_tare=args.run_lingtu_tare,
             run_lingtu_inspection=args.run_lingtu_inspection,
@@ -5732,14 +6593,30 @@ def main() -> int:
             inspection_min_checkpoints=args.inspection_min_checkpoints,
             inspection_start_delay=args.inspection_start_delay,
             inspection_goal_timeout=args.inspection_goal_timeout,
+            inspection_downsample_dist=args.inspection_downsample_dist,
             inspection_planner=args.inspection_planner,
             inspection_tomogram=args.inspection_tomogram,
+            inspection_waypoint_threshold=args.inspection_waypoint_threshold,
+            inspection_final_waypoint_threshold=args.inspection_final_waypoint_threshold,
+            inspection_complete_path_on_goal_proximity=(
+                args.inspection_complete_path_on_goal_proximity
+            ),
+            inspection_goal_proximity_completion_threshold=(
+                args.inspection_goal_proximity_completion_threshold
+            ),
+            inspection_path_goal_tolerance=args.inspection_path_goal_tolerance,
+            inspection_path_lookahead=args.inspection_path_lookahead,
+            inspection_path_min_speed=args.inspection_path_min_speed,
+            inspection_path_yaw_rate_gain=args.inspection_path_yaw_rate_gain,
+            inspection_path_stop_yaw_rate_gain=args.inspection_path_stop_yaw_rate_gain,
+            inspection_path_dir_diff_thre=args.inspection_path_dir_diff_thre,
             min_map_area_growth_m2=args.min_map_area_growth_m2,
             min_explored_area_growth_m2=args.min_explored_area_growth_m2,
             min_exploration_coverage_growth_ratio=args.min_exploration_coverage_growth_ratio,
             max_fastlio_z_drift_m=args.max_fastlio_z_drift_m,
             max_fastlio_yaw_drift_rad=args.max_fastlio_yaw_drift_rad,
             runtime_fault_confirm_samples=args.runtime_fault_confirm_samples,
+            runtime_motion_fault_min_sim_m=args.runtime_motion_fault_min_sim_m,
             fastlio_lidar_input=args.fastlio_lidar_input,
             fastlio_lidar_filter_num=args.fastlio_lidar_filter_num,
             fastlio_scan_resolution=args.fastlio_scan_resolution,
@@ -5782,15 +6659,31 @@ def main() -> int:
             tomogram_slice_dh=args.tomogram_slice_dh,
             tomogram_ground_h=args.tomogram_ground_h,
             tomogram_max_cells=args.tomogram_max_cells,
+            partial_json_out=(
+                Path(args.partial_json_out)
+                if args.partial_json_out
+                else Path(args.json_out).with_suffix(".partial.json")
+                if args.json_out
+                else None
+            ),
         )
     except Exception as exc:
-        report = _gate_exception_report(args, exc)
+        partial_report, partial_report_path = _load_exception_partial_report(args)
+        report = _gate_exception_report(
+            args,
+            exc,
+            partial_report=partial_report,
+            partial_report_path=partial_report_path,
+        )
     text = json.dumps(report, indent=2, sort_keys=True, default=str)
-    print(text)
     if args.json_out:
         out = Path(args.json_out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text + "\n", encoding="utf-8")
+    try:
+        print(text)
+    except BrokenPipeError:
+        pass
     return 0 if report.get("ok") or not args.strict else 1
 
 

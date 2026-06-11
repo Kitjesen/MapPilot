@@ -24,6 +24,7 @@ Simulation and development profiles are separate:
 - `dev`
 - `sim`
 - `sim_mujoco_live`
+- `sim_mujoco_pct_live`
 - `sim_gazebo`
 - `sim_industrial`
 - `sim_cmu_tare`
@@ -103,9 +104,10 @@ separates live SLAM/map use from saved artifacts such as a PCT tomogram.
 `src/core/blueprints/runtime_endpoint.py` defines the Dimos-style split between
 task and connection layer. The product task remains `map`, `nav`, `explore`, or
 `tare_explore`; `--endpoint real_s100p|mujoco_live|gazebo|cmu_unity|replay`
-selects the runtime source/sink. Compatibility profiles such as `sim_mujoco_live`,
-`sim_industrial`, and `sim_cmu_tare` are launcher aliases for gates and demos,
-not independent product architectures.
+selects the runtime source/sink. Compatibility profiles such as
+`sim_mujoco_live`, `sim_mujoco_pct_live`, `sim_industrial`, and `sim_cmu_tare`
+are launcher aliases for gates and demos, not independent product
+architectures.
 
 Examples:
 

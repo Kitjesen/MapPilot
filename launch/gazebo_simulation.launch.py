@@ -22,7 +22,13 @@ from launch.substitutions import LaunchConfiguration
 
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DEFAULT_WORLD = os.path.join(_REPO_ROOT, "sim", "worlds", "lingtu_gazebo_demo_room.sdf")
+_DEFAULT_WORLD = os.path.join(
+    _REPO_ROOT,
+    "sim",
+    "worlds",
+    "gazebo",
+    "lingtu_gazebo_demo_room.sdf",
+)
 _DEFAULT_ROBOT_MODEL = os.path.join(
     _REPO_ROOT,
     "sim",
