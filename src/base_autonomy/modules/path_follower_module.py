@@ -520,12 +520,17 @@ class PathFollowerModule(Module, layer=2):
 
         robot = np.array([self._robot_x, self._robot_y])
         dists = np.linalg.norm(self._path_points - robot, axis=1)
-        # Find lookahead point
-        beyond = np.where(dists > self._lookahead)[0]
+        # Find lookahead point: search forward from the closest path point so
+        # far-away points *behind* the robot (e.g. near the path start once the
+        # robot approaches the end) are never selected as the target. Without
+        # this, the follower targets early path points forever and never
+        # reaches the goal-tolerance stop branch below.
+        nearest = int(np.argmin(dists))
+        beyond = np.where(dists[nearest:] > self._lookahead)[0]
         if len(beyond) == 0:
             target = self._path_points[-1]
         else:
-            target = self._path_points[beyond[0]]
+            target = self._path_points[nearest + beyond[0]]
 
         dx = target[0] - self._robot_x
         dy = target[1] - self._robot_y
