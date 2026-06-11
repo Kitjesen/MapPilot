@@ -50,6 +50,7 @@ _PROFILE_META = {
     "sim":     ("◈", "MuJoCo simulation",                            T.blue),
     "sim_gazebo": ("▣", "Gazebo/GZ ROS-native simulation",            T.blue),
     "sim_mujoco_live": ("M", "MuJoCo MID-360 + Fast-LIO live simulation", T.blue),
+    "sim_mujoco_pct_live": ("P", "MuJoCo Fast-LIO + PCT closed-loop simulation", T.blue),
     "sim_industrial": ("#", "Gazebo industrial-yard delivery simulation", T.blue),
     "sim_cmu_tare": ("C", "CMU Unity + external TARE simulation",      T.blue),
     "dev":     ("◇", "Test perception & planning without a robot",   T.navy),
@@ -87,6 +88,7 @@ _PROFILE_WIZARD: dict[str, tuple[bool, bool, bool]] = {
     "sim":     (True,  True,  True),   # full stack in sim
     "sim_gazebo": (True, True, True),  # ROS-native Gazebo simulation
     "sim_mujoco_live": (False, True, False),  # external MuJoCo/Fast-LIO live gate
+    "sim_mujoco_pct_live": (False, True, False),  # external MuJoCo/Fast-LIO/PCT gate
     "sim_industrial": (True, True, False),  # ROS-native delivery simulation
     "sim_cmu_tare": (False, True, False),  # external CMU Unity/TARE graph
     "dev":     (True,  True,  False),  # no robot → no teleop

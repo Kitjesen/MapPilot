@@ -203,6 +203,39 @@ def test_external_simulation_profile_runs_relative_launcher(monkeypatch):
 
 
 @pytest.mark.sim
+def test_pct_mujoco_profile_defaults_to_pct_video_launcher(monkeypatch):
+    import subprocess
+
+    import cli.main as main_mod
+
+    captured = {}
+
+    def _fake_run(cmd, *, cwd, env, check):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        captured["env"] = env
+        captured["check"] = check
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(sys, "argv", ["lingtu.py", "sim_mujoco_pct_live"])
+
+    main_mod.main()
+
+    assert captured["cmd"] == [
+        "bash",
+        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "pct-moving-obstacle-video",
+    ]
+    assert (Path(captured["cwd"]) / "lingtu.py").exists()
+    assert captured["env"]["LINGTU_PROFILE"] == "sim_mujoco_pct_live"
+    assert captured["env"]["LINGTU_ENDPOINT"] == "mujoco_live"
+    assert captured["env"]["LINGTU_DATA_SOURCE"] == "mujoco_fastlio2_live"
+    assert captured["env"]["LINGTU_RUNTIME_CONTRACT"] == "mujoco_fastlio2_live"
+    assert captured["check"] is False
+
+
+@pytest.mark.sim
 def test_product_task_endpoint_routes_to_mujoco_live_launcher(monkeypatch):
     import subprocess
 
