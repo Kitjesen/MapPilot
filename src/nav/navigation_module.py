@@ -62,6 +62,8 @@ logger = logging.getLogger(__name__)
 LOCALIZATION_MOTION_HOLD_SIGNALS = {"ODOM_MISSING"}
 LOCALIZATION_MOTION_HOLD_ACTIONS = {"restart_localization_chain"}
 PLANNING_FRAME_ID = map_frame_id()
+PATH_START_REPLACE_TOLERANCE_M = 0.5
+PATH_START_INSERT_MAX_M = 2.0
 
 
 class _PlanPreviewBusy(RuntimeError):
@@ -148,6 +150,8 @@ class NavigationModule(Module, layer=5):
         downsample_dist: float = 2.0,
         enable_ros2_bridge: bool = False,
         final_waypoint_threshold: float | None = None,
+        complete_path_on_goal_proximity: bool = False,
+        goal_proximity_completion_threshold: float | None = None,
         waypoint_z_threshold: float | None = 0.25,
         allow_direct_goal_fallback: bool = False,
         direct_goal_fallback_on_planner_failure: bool = False,
@@ -164,6 +168,7 @@ class NavigationModule(Module, layer=5):
         empty_path_retry_timeout_s: float = 30.0,
         replan_on_costmap_update: bool | None = None,
         auto_resume_after_teleop: bool = False,
+        allow_path_start_insert: bool = False,
         **kw,
     ):
         super().__init__(**kw)
@@ -178,6 +183,16 @@ class NavigationModule(Module, layer=5):
         self._using_external_strategy_path = False
         self._goal_update_epsilon = goal_update_epsilon
         self._safe_goal_tolerance = safe_goal_tolerance
+        self._complete_path_on_goal_proximity = bool(
+            complete_path_on_goal_proximity
+        )
+        self._goal_proximity_completion_threshold = (
+            self._normalise_goal_proximity_completion_threshold(
+                goal_proximity_completion_threshold,
+                final_waypoint_threshold=final_waypoint_threshold,
+                waypoint_threshold=waypoint_threshold,
+            )
+        )
         self._accept_partial_goal_progress = accept_partial_goal_progress
         self._partial_goal_repeat_ignore_window_s = max(
             0.0,
@@ -198,8 +213,15 @@ class NavigationModule(Module, layer=5):
             replan_on_costmap_update = planner_key != "pct"
         self._replan_on_costmap_update = bool(replan_on_costmap_update)
         self._direct_goal_fallback_status: dict[str, Any] | None = None
+        self._allow_path_start_insert = bool(allow_path_start_insert)
+        self._path_start_anchor_status: dict[str, Any] = {}
         self._deferred_empty_path_first_ts: float = 0.0
         self._deferred_empty_path_attempts: int = 0
+        planning_frame_id = str(kw.get("planning_frame_id", PLANNING_FRAME_ID))
+        expected_saved_map_frame_id = str(
+            kw.get("expected_saved_map_frame_id", planning_frame_id)
+            or planning_frame_id
+        )
 
         self._planner_svc = GlobalPlannerService(
             planner_name=planner,
@@ -208,6 +230,7 @@ class NavigationModule(Module, layer=5):
             downsample_dist=downsample_dist,
             plan_safety_policy=plan_safety_policy,
             fallback_planner_name=fallback_planner_name,
+            expected_saved_map_frame_id=expected_saved_map_frame_id,
         )
         self._tracker = WaypointTracker(
             threshold=waypoint_threshold,
@@ -222,7 +245,7 @@ class NavigationModule(Module, layer=5):
         self._state = MissionState.IDLE
         self._robot_pos = [0.0, 0.0, 0.0]
         self._robot_yaw = 0.0
-        self._planning_frame_id = str(kw.get("planning_frame_id", PLANNING_FRAME_ID))
+        self._planning_frame_id = planning_frame_id
         self._frame_contract = FrameContract(
             planning_frame_id=self._planning_frame_id,
             publish_adapter_status=self.adapter_status.publish,
@@ -418,6 +441,8 @@ class NavigationModule(Module, layer=5):
             "last_plan_report": self._current_plan_report(),
             "map_artifact_gate": getattr(self._planner_svc, "map_artifact_gate", {}),
             "direct_goal_fallback": self._direct_goal_fallback_status,
+            "path_start_anchor": dict(self._path_start_anchor_status),
+            "allow_path_start_insert": self._allow_path_start_insert,
             "external_strategy_path_control": self._external_strategy_path_control,
             "using_external_strategy_path": self._using_external_strategy_path,
             "accept_partial_goal_progress": self._accept_partial_goal_progress,
@@ -1159,44 +1184,24 @@ class NavigationModule(Module, layer=5):
         status = self._tracker.update(self._robot_pos, self._robot_yaw)
 
         if status.event == EV_PATH_COMPLETE:
-            if self._should_continue_after_partial_path():
-                self.adapter_status.publish({
-                    "event": "partial_path_complete_replan",
-                    "goal": self._point_summary(self._goal),
-                    "path_terminal_goal": self._point_summary(
-                        self._active_path_terminal_goal
-                    ),
-                    "distance_to_goal_m": self._distance_xy(
-                        self._robot_pos,
-                        self._goal,
-                    ),
-                    "ts": time.time(),
-                })
-                self._plan()
-                return
-            partial_status = self._partial_path_terminal_status()
-            if (
-                self._accept_partial_goal_progress
-                and partial_status.get("partial")
-            ):
-                self._record_partial_goal_progress_complete()
-                self.adapter_status.publish({
-                    "event": "partial_goal_progress_complete",
-                    "original_goal": self._point_summary(self._goal),
-                    "path_terminal_goal": self._point_summary(
-                        self._active_path_terminal_goal
-                    ),
-                    "terminal_gap_m": partial_status.get("terminal_gap_m"),
-                    "distance_to_goal_m": partial_status.get("robot_gap_m"),
-                    "selected_planner": partial_status.get("selected_planner"),
-                    "reason": partial_status.get("reason"),
-                    "ts": time.time(),
-                })
-            if self._get_state() == MissionState.PATROLLING and self._patrol_goals:
-                if self._advance_patrol():
-                    return
-            self._publish_motion_stop()
-            self._set_state(MissionState.SUCCESS)
+            self._handle_path_complete()
+            return
+
+        proximity_status = self._goal_proximity_path_complete_status()
+        if proximity_status.get("complete"):
+            self.adapter_status.publish({
+                "event": "goal_proximity_path_complete",
+                "distance_to_goal_m": proximity_status.get("distance_to_goal_m"),
+                "threshold_m": proximity_status.get("threshold_m"),
+                "current_waypoint_distance_m": proximity_status.get(
+                    "current_waypoint_distance_m"
+                ),
+                "waypoint_index": self._tracker.wp_index,
+                "path_length": self._tracker.path_length,
+                "goal": self._point_summary(self._goal),
+                "ts": time.time(),
+            })
+            self._handle_path_complete()
             return
 
         elif status.event == EV_WAYPOINT_REACHED:
@@ -1225,6 +1230,107 @@ class NavigationModule(Module, layer=5):
                 self._failure_reason = "stuck after max replans"
                 self._set_state(MissionState.STUCK)
 
+        self._check_mission_timeout()
+
+    @staticmethod
+    def _normalise_goal_proximity_completion_threshold(
+        value: float | None,
+        *,
+        final_waypoint_threshold: float | None,
+        waypoint_threshold: float,
+    ) -> float:
+        if value is None:
+            value = (
+                final_waypoint_threshold
+                if final_waypoint_threshold is not None
+                else waypoint_threshold
+            )
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(parsed) or parsed <= 0.0:
+            return 0.0
+        return parsed
+
+    def _goal_proximity_path_complete_status(self) -> dict[str, Any]:
+        if not self._complete_path_on_goal_proximity:
+            return {"complete": False, "enabled": False}
+        if self._goal is None or not self._tracker.has_path:
+            return {"complete": False, "enabled": True}
+        threshold = self._goal_proximity_completion_threshold
+        if threshold <= 0.0:
+            return {"complete": False, "enabled": True, "threshold_m": threshold}
+        try:
+            robot = np.asarray(self._robot_pos[:2], dtype=float)
+            goal = np.asarray(self._goal[:2], dtype=float)
+        except (TypeError, ValueError):
+            return {"complete": False, "enabled": True, "threshold_m": threshold}
+        if not (np.all(np.isfinite(robot)) and np.all(np.isfinite(goal))):
+            return {"complete": False, "enabled": True, "threshold_m": threshold}
+        goal_distance = float(np.linalg.norm(robot - goal))
+        current_wp_distance: float | None = None
+        current_wp = self._tracker.current_waypoint
+        if current_wp is not None:
+            try:
+                current_wp_xy = np.asarray(current_wp[:2], dtype=float)
+                if np.all(np.isfinite(current_wp_xy)):
+                    current_wp_distance = float(np.linalg.norm(robot - current_wp_xy))
+            except (TypeError, ValueError):
+                current_wp_distance = None
+        return {
+            "complete": goal_distance <= threshold,
+            "enabled": True,
+            "distance_to_goal_m": round(goal_distance, 3),
+            "threshold_m": round(float(threshold), 3),
+            "current_waypoint_distance_m": (
+                round(current_wp_distance, 3)
+                if current_wp_distance is not None
+                else None
+            ),
+        }
+
+    def _handle_path_complete(self) -> None:
+        if self._should_continue_after_partial_path():
+            self.adapter_status.publish({
+                "event": "partial_path_complete_replan",
+                "goal": self._point_summary(self._goal),
+                "path_terminal_goal": self._point_summary(
+                    self._active_path_terminal_goal
+                ),
+                "distance_to_goal_m": self._distance_xy(
+                    self._robot_pos,
+                    self._goal,
+                ),
+                "ts": time.time(),
+            })
+            self._plan()
+            return
+        partial_status = self._partial_path_terminal_status()
+        if (
+            self._accept_partial_goal_progress
+            and partial_status.get("partial")
+        ):
+            self._record_partial_goal_progress_complete()
+            self.adapter_status.publish({
+                "event": "partial_goal_progress_complete",
+                "original_goal": self._point_summary(self._goal),
+                "path_terminal_goal": self._point_summary(
+                    self._active_path_terminal_goal
+                ),
+                "terminal_gap_m": partial_status.get("terminal_gap_m"),
+                "distance_to_goal_m": partial_status.get("robot_gap_m"),
+                "selected_planner": partial_status.get("selected_planner"),
+                "reason": partial_status.get("reason"),
+                "ts": time.time(),
+            })
+        if self._get_state() == MissionState.PATROLLING and self._patrol_goals:
+            if self._advance_patrol():
+                return
+        self._publish_motion_stop()
+        self._set_state(MissionState.SUCCESS)
+
+    def _check_mission_timeout(self) -> None:
         # Mission timeout — only applies while mission is active
         if (self._get_state() in (MissionState.EXECUTING, MissionState.PATROLLING)
                 and self._mission_start_time > 0
@@ -2055,8 +2161,31 @@ class NavigationModule(Module, layer=5):
         robot = np.asarray(self._robot_pos[:3], dtype=float)
         first = np.asarray(path[0][:3], dtype=float)
         if not (np.all(np.isfinite(robot)) and np.all(np.isfinite(first))):
+            self._path_start_anchor_status = {
+                "mode": "skipped_non_finite",
+            }
             return path
-        if float(np.linalg.norm(first[:2] - robot[:2])) > 0.5:
+        start_gap_m = float(np.linalg.norm(first[:2] - robot[:2]))
+        if start_gap_m > PATH_START_INSERT_MAX_M:
+            self._path_start_anchor_status = {
+                "mode": "skipped_far",
+                "distance_m": round(start_gap_m, 3),
+                "insert_max_m": PATH_START_INSERT_MAX_M,
+                "replace_tolerance_m": PATH_START_REPLACE_TOLERANCE_M,
+                "insert_enabled": self._allow_path_start_insert,
+            }
+            return path
+        if (
+            start_gap_m > PATH_START_REPLACE_TOLERANCE_M
+            and not self._allow_path_start_insert
+        ):
+            self._path_start_anchor_status = {
+                "mode": "skipped_insert_disabled",
+                "distance_m": round(start_gap_m, 3),
+                "insert_max_m": PATH_START_INSERT_MAX_M,
+                "replace_tolerance_m": PATH_START_REPLACE_TOLERANCE_M,
+                "insert_enabled": False,
+            }
             return path
         anchored = [point.copy() for point in path]
         original_z = np.array([point[2] for point in anchored], dtype=float)
@@ -2069,7 +2198,20 @@ class NavigationModule(Module, layer=5):
         if planar_zero_height:
             for point in anchored:
                 point[2] = robot[2]
-        anchored[0] = robot.copy()
+        if start_gap_m <= PATH_START_REPLACE_TOLERANCE_M:
+            anchored[0] = robot.copy()
+            mode = "replace"
+        else:
+            anchored.insert(0, robot.copy())
+            mode = "insert"
+        self._path_start_anchor_status = {
+            "mode": mode,
+            "distance_m": round(start_gap_m, 3),
+            "insert_max_m": PATH_START_INSERT_MAX_M,
+            "replace_tolerance_m": PATH_START_REPLACE_TOLERANCE_M,
+            "insert_enabled": self._allow_path_start_insert,
+            "planar_zero_height": planar_zero_height,
+        }
         return anchored
 
     def _advance_patrol(self) -> bool:
@@ -2210,6 +2352,10 @@ class NavigationModule(Module, layer=5):
             "goal": goal,
             "path_length": self._tracker.path_length,
             "waypoint_index": self._tracker.wp_index,
+            "complete_path_on_goal_proximity": self._complete_path_on_goal_proximity,
+            "goal_proximity_completion_threshold": (
+                self._goal_proximity_completion_threshold
+            ),
             "replan_count": self._get_replan_count(),
             "failure_reason": self._get_failure_reason(),
             "plan_safety_policy": getattr(
@@ -2221,6 +2367,8 @@ class NavigationModule(Module, layer=5):
             "last_plan_report": self._current_plan_report(),
             "map_artifact_gate": getattr(self._planner_svc, "map_artifact_gate", {}),
             "direct_goal_fallback": self._direct_goal_fallback_status,
+            "path_start_anchor": dict(self._path_start_anchor_status),
+            "allow_path_start_insert": self._allow_path_start_insert,
         })
 
     @skill
@@ -2292,10 +2440,16 @@ class NavigationModule(Module, layer=5):
             "state": self._get_state(),
             "wp_index": self._tracker.wp_index,
             "wp_total": self._tracker.path_length,
+            "complete_path_on_goal_proximity": self._complete_path_on_goal_proximity,
+            "goal_proximity_completion_threshold": (
+                self._goal_proximity_completion_threshold
+            ),
             "replan_count": self._get_replan_count(),
             "failure_reason": self._get_failure_reason(),
             "replan_on_costmap_update": self._replan_on_costmap_update,
             "direct_goal_fallback": self._direct_goal_fallback_status,
+            "path_start_anchor": dict(self._path_start_anchor_status),
+            "allow_path_start_insert": self._allow_path_start_insert,
             "patrol_index": self._patrol_index if self._patrol_goals else -1,
             "patrol_total": len(self._patrol_goals),
         }

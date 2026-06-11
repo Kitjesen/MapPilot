@@ -401,6 +401,7 @@ class LocalPlannerModule(Module, layer=2):
         self._last_local_path_points: int = 0
         self._last_local_path_span_m: float = 0.0
         self._last_direct_track_fallback_ts: float = 0.0
+        self._last_result_diagnostics: dict[str, Any] = {}
         self._effective_local_planner_params: dict[str, Any] = {}
 
         # W2-6: cmu_py grid parameters — pulled from config at setup() if the
@@ -897,58 +898,80 @@ class LocalPlannerModule(Module, layer=2):
         obs_flat = merged.ravel().tolist() if merged.shape[0] > 0 else []
 
         result = self._core.plan(obs_flat, timestamp)
+        result_path = list(getattr(result, "path", []) or [])
+        path_found = bool(getattr(result, "path_found", True))
+        near_field_stop = bool(getattr(result, "near_field_stop", False))
+        recovery_state = int(getattr(result, "recovery_state", 0) or 0)
+        slow_down = int(getattr(result, "slow_down", 0) or 0)
+        xy_length, xy_span = self._result_path_xy_metrics(result_path)
+        self._last_result_diagnostics = {
+            "backend": "nanobind",
+            "timestamp": float(timestamp),
+            "path_point_count": len(result_path),
+            "path_length_m": round(float(xy_length), 3),
+            "path_span_m": round(float(xy_span), 3),
+            "path_found": path_found,
+            "near_field_stop": near_field_stop,
+            "recovery_state": recovery_state,
+            "slow_down": slow_down,
+            "effective_goal": [
+                round(float(goal[0]), 3),
+                round(float(goal[1]), 3),
+                round(float(goal[2]), 3) if len(goal) >= 3 else 0.0,
+            ],
+            "robot_pos": [
+                round(float(self._robot_pos[0]), 3),
+                round(float(self._robot_pos[1]), 3),
+                round(float(self._robot_pos[2]), 3)
+                if len(self._robot_pos) >= 3
+                else 0.0,
+            ],
+            "robot_yaw": round(float(self._robot_yaw), 3),
+            "obstacle_point_count": int(merged.shape[0]),
+        }
         self._publish_control_hint(
-            slow_down=int(getattr(result, "slow_down", 0) or 0),
-            near_field_stop=bool(getattr(result, "near_field_stop", False)),
-            path_found=bool(getattr(result, "path_found", True)),
-            recovery_state=int(getattr(result, "recovery_state", 0) or 0),
+            slow_down=slow_down,
+            near_field_stop=near_field_stop,
+            path_found=path_found,
+            recovery_state=recovery_state,
             reason="nanobind",
         )
 
-        if not result.path:
+        if not result_path:
             if self._publish_direct_track_fallback(
-                near_field_stop=bool(getattr(result, "near_field_stop", False)),
-                path_found=bool(getattr(result, "path_found", False)),
-                recovery_state=int(getattr(result, "recovery_state", 0) or 0),
+                near_field_stop=near_field_stop,
+                path_found=path_found,
+                recovery_state=recovery_state,
                 reason="no_local_path",
             ):
                 return
             self._publish_control_hint(
-                slow_down=int(getattr(result, "slow_down", 0) or 0),
-                near_field_stop=bool(getattr(result, "near_field_stop", False)),
-                path_found=bool(getattr(result, "path_found", False)),
-                recovery_state=int(getattr(result, "recovery_state", 0) or 0),
+                slow_down=slow_down,
+                near_field_stop=near_field_stop,
+                path_found=path_found,
+                recovery_state=recovery_state,
                 safety_stop=True,
                 reason="no_local_path",
             )
             self._publish_local_path([])
             return
 
-        raw_xy = np.asarray([[float(v.x), float(v.y)] for v in result.path], dtype=float)
-        xy_length = (
-            float(np.sum(np.linalg.norm(np.diff(raw_xy, axis=0), axis=1)))
-            if len(raw_xy) > 1
-            else 0.0
-        )
-        xy_span = float(np.linalg.norm(raw_xy[-1] - raw_xy[0])) if len(raw_xy) > 1 else 0.0
-        path_found = bool(getattr(result, "path_found", True))
-        recovery_state = int(getattr(result, "recovery_state", 0))
         trackable = (
-            len(result.path) >= 2
+            len(result_path) >= 2
             and max(xy_length, xy_span) >= self._min_trackable_local_path_xy
             and (path_found or recovery_state in (1, 2))
         )
         if not trackable:
             if self._publish_direct_track_fallback(
-                near_field_stop=bool(getattr(result, "near_field_stop", False)),
+                near_field_stop=near_field_stop,
                 path_found=path_found,
                 recovery_state=recovery_state,
                 reason="untrackable_local_path",
             ):
                 return
             self._publish_control_hint(
-                slow_down=int(getattr(result, "slow_down", 0) or 0),
-                near_field_stop=bool(getattr(result, "near_field_stop", False)),
+                slow_down=slow_down,
+                near_field_stop=near_field_stop,
                 path_found=path_found,
                 recovery_state=recovery_state,
                 safety_stop=True,
@@ -960,7 +983,7 @@ class LocalPlannerModule(Module, layer=2):
         poses = []
         cos_yaw = math.cos(self._robot_yaw)
         sin_yaw = math.sin(self._robot_yaw)
-        for v in result.path:
+        for v in result_path:
             wx = v.x * cos_yaw - v.y * sin_yaw + self._robot_pos[0]
             wy = v.x * sin_yaw + v.y * cos_yaw + self._robot_pos[1]
             wz = v.z + self._robot_pos[2]
@@ -1094,6 +1117,15 @@ class LocalPlannerModule(Module, layer=2):
     # Helpers                                                              #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _result_path_xy_metrics(path: list[Any]) -> tuple[float, float]:
+        if len(path) < 2:
+            return 0.0, 0.0
+        raw_xy = np.asarray([[float(v.x), float(v.y)] for v in path], dtype=float)
+        xy_length = float(np.sum(np.linalg.norm(np.diff(raw_xy, axis=0), axis=1)))
+        xy_span = float(np.linalg.norm(raw_xy[-1] - raw_xy[0]))
+        return xy_length, xy_span
+
     def _straight_line(self, start: np.ndarray, goal: np.ndarray, step: float = 0.5):
         diff = goal - start
         dist = np.linalg.norm(diff)
@@ -1219,6 +1251,7 @@ class LocalPlannerModule(Module, layer=2):
             "last_control_hint": dict(self._last_control_hint),
             "last_local_path_points": self._last_local_path_points,
             "last_local_path_span_m": round(self._last_local_path_span_m, 3),
+            "last_result": dict(self._last_result_diagnostics),
             "effective_params": dict(self._effective_local_planner_params),
         }
         return info

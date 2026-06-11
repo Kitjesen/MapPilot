@@ -25,6 +25,7 @@ SIMULATION_PROFILES = (
     "dev",
     "sim",
     "sim_mujoco_live",
+    "sim_mujoco_pct_live",
     "sim_gazebo",
     "sim_industrial",
     "sim_cmu_tare",

@@ -1288,6 +1288,12 @@ PROFILE_DATA_SOURCE_BINDINGS = {
         mode="mujoco_raw_mid360_fastlio_live",
         note="First-class raw-sensor MuJoCo path: MID-360 pattern LiDAR + IMU -> Fast-LIO -> /nav/*.",
     ),
+    "sim_mujoco_pct_live": ProfileDataSourceBinding(
+        profile="sim_mujoco_pct_live",
+        data_source="mujoco_fastlio2_live",
+        mode="mujoco_raw_mid360_fastlio_pct_closed_loop",
+        note="PCT-specific MuJoCo path: MID-360 + Fast-LIO source, PCT global plan, local planner/path follower, and simulated cmd_vel closure.",
+    ),
     "sim_gazebo": ProfileDataSourceBinding(
         profile="sim_gazebo",
         data_source="gazebo_industrial",

@@ -13,6 +13,7 @@ from core.runtime_interface import TOPICS, topic_default_frame_id
 MUJOCO_LIVE_PLANNING_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
 MUJOCO_LIVE_OCCUPANCY_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
 MUJOCO_LIVE_GOAL_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
+MUJOCO_LIVE_SAVED_MAP_FRAME_ID = topic_default_frame_id(TOPICS.saved_map_cloud)
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ def build_fastlio2_frontier_stack(
     nav_max_angular_z: float = 0.15,
     nav_turn_speed_yaw_rate_start: float = 0.0,
     nav_turn_speed_min_scale: float = 1.0,
+    cmd_vel_mux_source_timeout: float = 0.5,
 ) -> MuJoCoLingTuStack:
     """Build the canonical LingTu frontier stack for MuJoCo + Fast-LIO live runs.
 
@@ -122,6 +124,7 @@ def build_fastlio2_frontier_stack(
             0.0,
             min(1.0, float(nav_turn_speed_min_scale)),
         ),
+        cmd_vel_mux_source_timeout=max(0.02, float(cmd_vel_mux_source_timeout)),
         path_follower_two_way_drive=False,
         latch_stop_signal=False,
         safety_stop_wiring=False,
@@ -147,10 +150,22 @@ def build_fastlio2_inspection_stack(
     tomogram: str = "",
     replan_on_costmap_update: bool | None = None,
     inspection_goal_timeout: float = 90.0,
+    downsample_dist: float = 0.35,
     nav_max_linear_speed: float = 0.25,
     nav_max_angular_z: float = 0.15,
     nav_turn_speed_yaw_rate_start: float = 0.0,
     nav_turn_speed_min_scale: float = 1.0,
+    cmd_vel_mux_source_timeout: float = 0.5,
+    waypoint_threshold: float = 0.50,
+    final_waypoint_threshold: float = 0.50,
+    complete_path_on_goal_proximity: bool = False,
+    goal_proximity_completion_threshold: float | None = None,
+    path_follower_goal_tolerance: float = 0.12,
+    path_follower_lookahead: float = 1.5,
+    path_follower_min_speed: float = 0.15,
+    path_follower_yaw_rate_gain: float = 7.5,
+    path_follower_stop_yaw_rate_gain: float = 7.5,
+    path_follower_dir_diff_thre: float = 0.1,
 ) -> MuJoCoLingTuStack:
     """Build the LingTu patrol/inspection stack for MuJoCo + Fast-LIO live runs.
 
@@ -184,6 +199,7 @@ def build_fastlio2_inspection_stack(
         cloud_topic=cloud_topic,
         cmd_vel_topic=cmd_vel_topic,
         planning_frame_id=MUJOCO_LIVE_PLANNING_FRAME_ID,
+        expected_saved_map_frame_id=MUJOCO_LIVE_SAVED_MAP_FRAME_ID,
         occupancy_frame_id=MUJOCO_LIVE_OCCUPANCY_FRAME_ID,
         goal_frame_id=MUJOCO_LIVE_GOAL_FRAME_ID,
         occupancy_raycast_free_space=True,
@@ -193,8 +209,14 @@ def build_fastlio2_inspection_stack(
         grid_radius=12.0,
         grid_resolution=0.2,
         inflation_radius=0.25,
-        waypoint_threshold=0.50,
-        final_waypoint_threshold=0.50,
+        waypoint_threshold=max(0.05, float(waypoint_threshold)),
+        final_waypoint_threshold=max(0.05, float(final_waypoint_threshold)),
+        complete_path_on_goal_proximity=bool(complete_path_on_goal_proximity),
+        goal_proximity_completion_threshold=(
+            None
+            if goal_proximity_completion_threshold is None
+            else max(0.05, float(goal_proximity_completion_threshold))
+        ),
         stuck_timeout=max(45.0, float(inspection_goal_timeout) * 0.5),
         stuck_dist_thre=0.05,
         max_replan_count=6,
@@ -202,17 +224,26 @@ def build_fastlio2_inspection_stack(
         defer_empty_path_planning_failure=True,
         empty_path_retry_interval_s=2.0,
         empty_path_retry_timeout_s=min(45.0, max(12.0, float(inspection_goal_timeout) * 0.5)),
-        downsample_dist=0.35,
+        downsample_dist=max(0.05, float(downsample_dist)),
         safe_goal_tolerance=6.0,
         plan_safety_policy="reject",
         replan_on_costmap_update=bool(replan_on_costmap_update),
+        allow_path_start_insert=True,
         python_autonomy_backend="nanobind",
         python_path_follower_backend="nav_core",
         local_planner_allow_direct_track_fallback=True,
         local_planner_ignore_near_field_stop=True,
         local_planner_direct_track_fallback_min_distance_m=0.3,
         local_planner_min_trackable_local_path_m=0.3,
-        path_follower_goal_tolerance=0.12,
+        path_follower_goal_tolerance=max(0.05, float(path_follower_goal_tolerance)),
+        path_follower_lookahead=max(0.2, float(path_follower_lookahead)),
+        path_follower_min_speed=max(0.0, float(path_follower_min_speed)),
+        path_follower_yaw_rate_gain=max(0.0, float(path_follower_yaw_rate_gain)),
+        path_follower_stop_yaw_rate_gain=max(
+            0.0,
+            float(path_follower_stop_yaw_rate_gain),
+        ),
+        path_follower_dir_diff_thre=max(0.0, float(path_follower_dir_diff_thre)),
         path_follower_max_speed=max(0.02, float(nav_max_linear_speed)),
         path_follower_max_yaw_rate=max(0.02, float(nav_max_angular_z)),
         path_follower_turn_speed_yaw_rate_start=max(
@@ -223,6 +254,7 @@ def build_fastlio2_inspection_stack(
             0.0,
             min(1.0, float(nav_turn_speed_min_scale)),
         ),
+        cmd_vel_mux_source_timeout=max(0.02, float(cmd_vel_mux_source_timeout)),
         path_follower_two_way_drive=False,
         latch_stop_signal=False,
         safety_stop_wiring=False,
@@ -249,6 +281,7 @@ def build_fastlio2_tare_stack(
     nav_max_angular_z: float = 0.15,
     nav_turn_speed_yaw_rate_start: float = 0.0,
     nav_turn_speed_min_scale: float = 1.0,
+    cmd_vel_mux_source_timeout: float = 0.5,
 ) -> MuJoCoLingTuStack:
     """Build the canonical LingTu TARE stack for MuJoCo + Fast-LIO live runs.
 
@@ -322,6 +355,7 @@ def build_fastlio2_tare_stack(
             0.0,
             min(1.0, float(nav_turn_speed_min_scale)),
         ),
+        cmd_vel_mux_source_timeout=max(0.02, float(cmd_vel_mux_source_timeout)),
         path_follower_two_way_drive=False,
         latch_stop_signal=False,
         safety_stop_wiring=False,

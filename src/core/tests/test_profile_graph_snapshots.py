@@ -73,6 +73,12 @@ SIMULATION_PROFILE_RUNTIME_MATRIX = {
         "external_launcher": "sim/scripts/launch_mujoco_fastlio2_live.sh",
         "runtime_contract": "mujoco_fastlio2_live",
     },
+    "sim_mujoco_pct_live": {
+        "data_source": "mujoco_fastlio2_live",
+        "profile_contracts": ("mujoco_fastlio2_live",),
+        "external_launcher": "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "runtime_contract": "mujoco_fastlio2_live",
+    },
     "sim_gazebo": {
         "data_source": "gazebo_industrial",
         "profile_contracts": (),
@@ -431,6 +437,48 @@ def test_sim_mujoco_live_profile_is_raw_fastlio_simulation_entry():
     assert not graph.dangling_wires()
 
 
+@pytest.mark.sim
+def test_sim_mujoco_pct_live_profile_is_pct_closed_loop_entry():
+    graph = graph_for_profile("sim_mujoco_pct_live")
+    wires = _wire_set(graph)
+    config = resolve_profile_config("sim_mujoco_pct_live")
+
+    assert config["robot"] == "sim_ros2"
+    assert config["slam_profile"] == "none"
+    assert PROFILES["sim_mujoco_pct_live"]["_external_launcher"] == (
+        "sim/scripts/launch_mujoco_fastlio2_live.sh"
+    )
+    assert PROFILES["sim_mujoco_pct_live"]["_runtime_contract"] == "mujoco_fastlio2_live"
+    assert config["planner"] == "pct"
+    assert config["planner_backend"] == "pct"
+    assert config["tomogram"].endswith("src/global_planning/pct_planner/rsc/tomogram/building2_9.pickle")
+    assert config["plan_safety_policy"] == "reject"
+    assert config["fallback_planner_name"] == ""
+    assert config["planning_frame_id"] == "map"
+    assert config["enable_frontier"] is False
+    assert config["enable_traversable_frontier"] is False
+    assert config["exploration_backend"] == "none"
+    assert config["enable_native"] is False
+    assert config["enable_semantic"] is False
+    assert config["enable_teleop"] is False
+    assert config["local_planner_allow_direct_track_fallback"] is False
+    assert config["local_planner_ignore_near_field_stop"] is False
+    assert config["run_startup_checks"] is False
+    assert config["manage_external_services"] is False
+    assert config["cloud_topic"] == "/nav/map_cloud"
+    assert "ROS2SimDriverModule" in graph.modules
+    assert "WavefrontFrontierExplorer" not in graph.modules
+    assert "TraversableFrontierModule" not in graph.modules
+    assert "MujocoDriverModule" not in graph.modules
+    assert "ThunderDriver" not in graph.modules
+    assert "ROS2SimDriverModule.odometry->NavigationModule.odometry" in wires
+    assert "ROS2SimDriverModule.map_cloud->OccupancyGridModule.map_cloud" in wires
+    assert "ROS2SimDriverModule.map_cloud->TerrainModule.map_cloud" in wires
+    assert "NavigationModule.global_path->LocalPlannerModule.global_path" in wires
+    assert "LocalPlannerModule.local_path->PathFollowerModule.local_path" in wires
+    assert not graph.dangling_wires()
+
+
 def test_product_explore_can_run_on_mujoco_live_endpoint():
     endpoint = runtime_endpoint("mujoco_live")
     config = resolve_profile_config("explore", runtime_endpoint="mujoco_live")
@@ -723,6 +771,7 @@ def test_profile_groups_make_simulation_boundary_explicit():
     assert "tare_explore" in PRODUCT_PROFILES
     assert "tare_explore" in OPTIONAL_NATIVE_PRODUCT_PROFILES
     assert "sim_mujoco_live" in SIMULATION_PROFILES
+    assert "sim_mujoco_pct_live" in SIMULATION_PROFILES
     assert "sim_gazebo" in SIMULATION_PROFILES
     assert "sim_industrial" in SIMULATION_PROFILES
     assert "sim_cmu_tare" in SIMULATION_PROFILES
@@ -735,7 +784,11 @@ def test_only_sanctioned_external_simulator_profiles_are_first_class():
         if config.get("_external_launcher")
     }
 
-    assert external_profiles == {"sim_cmu_tare", "sim_mujoco_live"}
+    assert external_profiles == {
+        "sim_cmu_tare",
+        "sim_mujoco_live",
+        "sim_mujoco_pct_live",
+    }
 
 
 def test_profile_robot_presets_resolve_through_driver_stack():
@@ -909,6 +962,7 @@ def test_simulation_runtime_contracts_lock_simulator_boundary():
     assert runtime_contracts_for_profile("sim_industrial") == (gazebo,)
     assert runtime_contracts_for_profile("sim_cmu_tare") == (cmu,)
     assert runtime_contracts_for_profile("sim_mujoco_live") == (fastlio,)
+    assert runtime_contracts_for_profile("sim_mujoco_pct_live") == (fastlio,)
     assert "gazebo_industrial" in SIMULATION_RUNTIME_CONTRACTS
     assert "cmu_unity_baseline" in SIMULATION_RUNTIME_CONTRACTS
     assert "mujoco_fastlio2_live" in SIMULATION_RUNTIME_CONTRACTS
@@ -922,6 +976,7 @@ def test_simulation_runtime_contracts_lock_simulator_boundary():
     assert profile_data_source("sim_industrial").data_source == "gazebo_industrial"
     assert profile_data_source("sim_cmu_tare").data_source == "cmu_unity_external"
     assert profile_data_source("sim_mujoco_live").data_source == "mujoco_fastlio2_live"
+    assert profile_data_source("sim_mujoco_pct_live").data_source == "mujoco_fastlio2_live"
     assert profile_data_source("sim").data_source == "mujoco_module_graph"
     assert profile_data_source("map").data_source == "real_s100p"
 

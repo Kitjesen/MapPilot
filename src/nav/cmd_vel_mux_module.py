@@ -223,5 +223,6 @@ class CmdVelMux(Module, layer=0):
             active = self._active or "none"
         return {
             "active_source": active,
+            "source_timeout_s": float(self._source_timeout),
             "sources": sources,
         }

@@ -82,6 +82,44 @@ def test_saved_map_artifact_dir_gate_accepts_same_source_metadata(tmp_path: Path
     ]
 
 
+def test_tomogram_builder_loader_falls_back_to_legacy_pct_script_dir(
+    tmp_path: Path,
+    monkeypatch,
+):
+    import builtins
+
+    import core.same_source_map_artifacts as artifacts
+
+    script_dir = tmp_path / "PCT_planner" / "tomography" / "scripts"
+    script_dir.mkdir(parents=True)
+    (script_dir / "build_tomogram.py").write_text(
+        "def build_tomogram_from_pcd(*args, **kwargs):\n"
+        "    return {'data': [1], 'source': 'legacy'}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(artifacts, "_tomography_script_dirs", lambda: [script_dir])
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "global_planning.pct_planner.tomography.scripts.build_tomogram":
+            raise ModuleNotFoundError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    sys.modules.pop("build_tomogram", None)
+    try:
+        builder = artifacts._load_build_tomogram_from_pcd()
+        assert builder("map.pcd", "tomogram.pickle") == {
+            "data": [1],
+            "source": "legacy",
+        }
+    finally:
+        sys.modules.pop("build_tomogram", None)
+        while str(script_dir) in sys.path:
+            sys.path.remove(str(script_dir))
+
+
 def test_saved_map_artifact_dir_gate_reports_expected_source_contract(
     tmp_path: Path,
 ):
@@ -178,6 +216,73 @@ def test_saved_map_artifact_dir_gate_normalizes_expected_frame_ids(
     assert result["blockers"] == []
     assert metadata["frame_id"] == "odom"
     assert metadata["artifacts"]["map_pcd"]["frame_id"] == "odom"
+
+
+def test_saved_map_artifact_dir_gate_accepts_repo_relative_artifact_paths(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from core.same_source_map_artifacts import (
+        build_saved_map_metadata,
+        sha256_file,
+        validate_saved_map_artifact_dir,
+    )
+
+    artifact_dir = (
+        tmp_path
+        / "artifacts/server_sim_closure/runtime/run/same_source_map"
+    )
+    artifact_dir.mkdir(parents=True)
+    map_pcd = artifact_dir / "map.pcd"
+    tomogram = artifact_dir / "tomogram.pickle"
+    map_pcd.write_text("VERSION 0.7\nDATA ascii\n", encoding="ascii")
+    tomogram.write_bytes(b"tomogram")
+    map_rel = map_pcd.relative_to(tmp_path).as_posix()
+    tomogram_rel = tomogram.relative_to(tmp_path).as_posix()
+    metadata = build_saved_map_metadata(
+        source_profile="mujoco_fastlio2_live_gate",
+        data_source="fastlio2",
+        slam_source="fastlio2",
+        localization_source="fastlio2",
+        mapping_source="/points_raw -> fastlio2 -> /nav/map_cloud",
+        frame_id="odom",
+        artifacts={
+            "map_pcd": {
+                "path": map_rel,
+                "sha256": sha256_file(map_pcd),
+                "point_count": 1,
+                "source_profile": "mujoco_fastlio2_live_gate",
+                "data_source": "fastlio2",
+                "slam_source": "fastlio2",
+                "frame_id": "odom",
+            },
+            "tomogram": {
+                "path": tomogram_rel,
+                "sha256": sha256_file(tomogram),
+                "source_map_sha256": sha256_file(map_pcd),
+                "source_profile": "mujoco_fastlio2_live_gate",
+                "data_source": "fastlio2",
+                "frame_id": "odom",
+                "shape": [1, 1],
+            },
+        },
+    )
+    (artifact_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = validate_saved_map_artifact_dir(
+        artifact_dir,
+        require_tomogram=True,
+        expected_frame_id="odom",
+    )
+
+    assert result["ok"] is True
+    assert result["blockers"] == []
+    assert result["artifacts"]["map_pcd"]["path"] == str(map_pcd)
+    assert result["artifacts"]["tomogram"]["path"] == str(tomogram)
 
 
 def test_saved_map_artifact_gate_script_rejects_missing_required_tomogram(

@@ -107,6 +107,37 @@ def test_plan_safety_uses_backend_3d_tomogram_slice() -> None:
     assert clear_upper["ok"] is True
 
 
+def test_plan_safety_uses_backend_elevation_layers_for_pct_height_samples() -> None:
+    class Backend:
+        _grid = np.zeros((3, 3), dtype=np.float32)
+        _trav_3d = np.zeros((2, 3, 3), dtype=np.float32)
+        _elev_3d = np.zeros((2, 3, 3), dtype=np.float32)
+        _resolution = 1.0
+        _origin = np.asarray([0.0, 0.0], dtype=float)
+        _slice_h0 = 0.0
+        _slice_dh = 0.25
+        _grid_is_projection = True
+
+    Backend._elev_3d[1, :, :] = 2.5
+
+    safe_elevated = evaluate_backend_path_safety(
+        [[1.0, 1.0, 2.5]],
+        Backend(),
+        obstacle_thr=49.9,
+    )
+    far_above = evaluate_backend_path_safety(
+        [[1.0, 1.0, 5.0]],
+        Backend(),
+        obstacle_thr=49.9,
+    )
+
+    assert safe_elevated is not None
+    assert far_above is not None
+    assert safe_elevated["ok"] is True
+    assert far_above["ok"] is False
+    assert far_above["blocked_samples"][0]["reason"] == "z_out_of_bounds"
+
+
 def test_plan_safety_clamps_near_ground_height_to_first_tomogram_slice() -> None:
     grid = PlanSafetyGrid(
         grid=np.zeros((3, 3), dtype=np.float32),

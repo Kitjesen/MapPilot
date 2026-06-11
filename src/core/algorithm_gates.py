@@ -18,6 +18,8 @@ INSPECTION_MVP_REQUIRED_GATES: tuple[str, ...] = (
 DIMOS_BENCHMARK_REQUIRED_GATES: tuple[str, ...] = (
     "gateway_runtime_acceptance",
     "routecheck_preflight",
+    "blocked_route_replan_preflight",
+    "navigation_replay_deviation",
     "large_terrain",
     "native_pct_mujoco",
     "dynamic_obstacle_local_planner",
@@ -32,6 +34,8 @@ DIMOS_BENCHMARK_REQUIRED_GATES: tuple[str, ...] = (
 G4_SERVER_FULL_SIM_REQUIRED_GATES: tuple[str, ...] = (
     "gateway_runtime_acceptance",
     "routecheck_preflight",
+    "blocked_route_replan_preflight",
+    "navigation_replay_deviation",
     "multifloor_exploration",
     "large_terrain",
     "native_pct_mujoco",

@@ -13,6 +13,8 @@ _NAVIGATION_CONFIG_KEYS = (
     "obstacle_thr",
     "waypoint_threshold",
     "final_waypoint_threshold",
+    "complete_path_on_goal_proximity",
+    "goal_proximity_completion_threshold",
     "stuck_timeout",
     "stuck_dist_thre",
     "max_replan_count",
@@ -24,6 +26,7 @@ _NAVIGATION_CONFIG_KEYS = (
     "goal_update_epsilon",
     "mission_timeout",
     "planning_frame_id",
+    "expected_saved_map_frame_id",
     "planning_timeout",
     "preview_timeout",
     "safe_goal_tolerance",
@@ -35,6 +38,7 @@ _NAVIGATION_CONFIG_KEYS = (
     "empty_path_retry_interval_s",
     "empty_path_retry_timeout_s",
     "replan_on_costmap_update",
+    "allow_path_start_insert",
 )
 
 
@@ -101,6 +105,9 @@ def autonomy_stack_config(enable_native: bool = True, **config) -> dict:
             ("path_follower_max_yaw_rate", "max_yaw_rate"),
             ("path_follower_turn_speed_yaw_rate_start", "turn_speed_yaw_rate_start"),
             ("path_follower_turn_speed_min_scale", "turn_speed_min_scale"),
+            ("path_follower_yaw_rate_gain", "yaw_rate_gain"),
+            ("path_follower_stop_yaw_rate_gain", "stop_yaw_rate_gain"),
+            ("path_follower_dir_diff_thre", "dir_diff_thre"),
             ("path_follower_two_way_drive", "two_way_drive"),
         )
         if key in config

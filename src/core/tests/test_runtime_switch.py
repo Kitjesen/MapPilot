@@ -295,6 +295,7 @@ def test_in_process_sim_profiles_resolve_without_runtime_endpoint(
     ),
     (
         ("sim_mujoco_live", "mujoco_live", "mujoco_fastlio2_live", "mujoco_fastlio2_live"),
+        ("sim_mujoco_pct_live", "mujoco_live", "mujoco_fastlio2_live", "mujoco_fastlio2_live"),
         ("sim_gazebo", "gazebo", "gazebo_industrial", "gazebo_industrial"),
         ("sim_industrial", "gazebo", "gazebo_industrial", "gazebo_industrial"),
         ("sim_cmu_tare", "cmu_unity", "cmu_unity_external", "cmu_unity_external"),

@@ -9,6 +9,7 @@ from typing import Any, Literal, Sequence
 from core.msgs.numpy_compat import np
 
 GridIndexOrder = Literal["yx", "xy"]
+MAX_ELEVATION_NOMINAL_DELTA_M = 10.0
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class PlanSafetyGrid:
     origin: tuple[float, float]
     index_order: GridIndexOrder = "yx"
     trav_3d: np.ndarray | None = None
+    elev_3d: np.ndarray | None = None
     slice_h0: float = 0.0
     slice_dh: float = 0.5
     use_grid_overlay: bool = False
@@ -40,12 +42,6 @@ class PlanSafetyGrid:
                 layer = 0
             else:
                 layer = int(round((float(z) - self.slice_h0) / self.slice_dh))
-            if layer < 0 and float(z) >= self.slice_h0 - abs(self.slice_dh):
-                layer = 0
-            elif layer >= self.trav_3d.shape[0] and float(z) <= (
-                self.slice_h0 + (self.trav_3d.shape[0] - 1) * self.slice_dh + abs(self.slice_dh)
-            ):
-                layer = self.trav_3d.shape[0] - 1
             if row < 0 or col < 0 or row >= self.trav_3d.shape[1] or col >= self.trav_3d.shape[2]:
                 return {
                     "cost": float("inf"),
@@ -54,6 +50,28 @@ class PlanSafetyGrid:
                     "layer": layer,
                     "reason": "xy_out_of_bounds",
                 }
+            elev = self.elev_3d
+            if elev is not None and elev.shape == self.trav_3d.shape:
+                column_heights = np.asarray(elev[:, row, col], dtype=float)
+                nominal_heights = self.slice_h0 + np.arange(self.trav_3d.shape[0]) * self.slice_dh
+                finite = (
+                    np.isfinite(column_heights)
+                    & (np.abs(column_heights - nominal_heights) <= MAX_ELEVATION_NOMINAL_DELTA_M)
+                )
+                if np.any(finite):
+                    finite_indices = np.where(finite)[0]
+                    nearest_pos = int(np.argmin(np.abs(column_heights[finite] - float(z))))
+                    nearest_layer = int(finite_indices[nearest_pos])
+                    nearest_error = abs(float(column_heights[nearest_layer]) - float(z))
+                    height_tolerance = max(abs(float(self.slice_dh)), float(self.resolution), 0.5)
+                    if nearest_error <= height_tolerance:
+                        layer = nearest_layer
+            if layer < 0 and float(z) >= self.slice_h0 - abs(self.slice_dh):
+                layer = 0
+            elif layer >= self.trav_3d.shape[0] and float(z) <= (
+                self.slice_h0 + (self.trav_3d.shape[0] - 1) * self.slice_dh + abs(self.slice_dh)
+            ):
+                layer = self.trav_3d.shape[0] - 1
             if layer < 0 or layer >= self.trav_3d.shape[0]:
                 return {
                     "cost": float("inf"),
@@ -242,17 +260,24 @@ def grid_from_backend(backend: Any) -> PlanSafetyGrid | None:
     origin = getattr(backend, "_origin", (0.0, 0.0))
     resolution = float(getattr(backend, "_resolution", 0.2))
     trav_3d = getattr(backend, "_trav_3d", None)
+    elev_3d = getattr(backend, "_elev_3d", None)
     trav_arr = None
+    elev_arr = None
     if trav_3d is not None and hasattr(trav_3d, "shape"):
         arr3 = np.asarray(trav_3d, dtype=np.float32)
         if arr3.ndim == 3:
             trav_arr = arr3
+    if elev_3d is not None and hasattr(elev_3d, "shape"):
+        elev3 = np.asarray(elev_3d, dtype=np.float32)
+        if elev3.ndim == 3:
+            elev_arr = elev3
     return PlanSafetyGrid(
         grid=arr,
         resolution=resolution,
         origin=(float(origin[0]), float(origin[1])),
         index_order="yx",
         trav_3d=trav_arr,
+        elev_3d=elev_arr,
         slice_h0=float(getattr(backend, "_slice_h0", 0.0)),
         slice_dh=float(getattr(backend, "_slice_dh", 0.5)),
         use_grid_overlay=bool(getattr(backend, "_grid_is_projection", False)),

@@ -806,6 +806,12 @@ class TestLocalPlannerModule(unittest.TestCase):
         self.assertEqual(paths[-1].poses, [])
         self.assertTrue(hints[-1]["safety_stop"])
         self.assertEqual(hints[-1]["reason"], "no_local_path")
+        diag = m.health()["local_planner"]["last_result"]
+        self.assertEqual(diag["path_point_count"], 0)
+        self.assertFalse(diag["path_found"])
+        self.assertFalse(diag["near_field_stop"])
+        self.assertEqual(diag["recovery_state"], 0)
+        self.assertEqual(diag["effective_goal"], [5.0, 0.0, 0.0])
 
     def test_nanobind_direct_track_fallback_keeps_trackable_path(self):
         from base_autonomy.modules.local_planner_module import LocalPlannerModule

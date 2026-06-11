@@ -37,6 +37,7 @@ class GlobalPlannerService:
         downsample_dist: float = 2.0,
         plan_safety_policy: str = "observe",
         fallback_planner_name: str = "astar",
+        expected_saved_map_frame_id: str | None = None,
     ) -> None:
         self._planner_name = planner_name
         self._tomogram = tomogram
@@ -44,6 +45,7 @@ class GlobalPlannerService:
         self._downsample_dist = downsample_dist
         self._plan_safety_policy = plan_safety_policy
         self._fallback_planner_name = fallback_planner_name
+        self._expected_saved_map_frame_id = expected_saved_map_frame_id
         self._backend = None
         self._fallback_backend = None
         self._last_plan_report: dict[str, Any] = {}
@@ -179,6 +181,7 @@ class GlobalPlannerService:
                 getattr(self._backend, "_last_plan_error", "") or ""
             ).strip()
             empty_path_reason = backend_plan_error or "primary planner returned empty path"
+            planner_diagnostics = self._backend_plan_diagnostics(self._backend)
             if self._plan_safety_policy == "reject":
                 self._last_plan_report = {
                     "primary_planner": self._planner_name,
@@ -188,11 +191,13 @@ class GlobalPlannerService:
                         {
                             "planner": self._planner_name,
                             "reason": empty_path_reason,
+                            "planner_diagnostics": planner_diagnostics,
                         }
                     ],
                     "fallback_reason": empty_path_reason,
                     "policy": self._plan_safety_policy,
                     "reached_goal": False,
+                    "planner_diagnostics": planner_diagnostics,
                 }
                 raise RuntimeError(f"GlobalPlannerService: {empty_path_reason}")
             repaired = self._try_primary_safe_replan(
@@ -218,11 +223,13 @@ class GlobalPlannerService:
                         {
                             "planner": self._planner_name,
                             "reason": empty_path_reason,
+                            "planner_diagnostics": planner_diagnostics,
                         }
                     ],
                     "fallback_reason": empty_path_reason,
                     "policy": self._plan_safety_policy,
                     "reached_goal": False,
+                    "planner_diagnostics": planner_diagnostics,
                 }
                 raise RuntimeError(f"GlobalPlannerService: {empty_path_reason}")
             (
@@ -413,6 +420,9 @@ class GlobalPlannerService:
             "policy": self._plan_safety_policy,
             "reached_goal": selected_reached_goal,
         }
+        planner_diagnostics = self._backend_plan_diagnostics(selected_backend)
+        if planner_diagnostics:
+            self._last_plan_report["planner_diagnostics"] = planner_diagnostics
         if primary_replan is not None:
             self._last_plan_report["primary_replan"] = primary_replan
         path = self._downsample(selected_path, downsample_goal)
@@ -656,6 +666,13 @@ class GlobalPlannerService:
         if self._plan_safety_policy == "off":
             return None
         return evaluate_backend_path_safety(path, backend, obstacle_thr=self._obstacle_thr)
+
+    @staticmethod
+    def _backend_plan_diagnostics(backend: Any) -> dict[str, Any]:
+        diagnostics = getattr(backend, "_last_plan_diagnostics", None)
+        if not isinstance(diagnostics, dict):
+            return {}
+        return dict(diagnostics)
 
     def _try_primary_safe_replan(
         self,
@@ -1042,7 +1059,10 @@ class GlobalPlannerService:
                 "blockers": [],
             }
         tomogram_path = self._resolve_tomogram_path()
-        expected_frame_id = topic_default_frame_id(TOPICS.saved_map_cloud)
+        expected_frame_id = (
+            self._expected_saved_map_frame_id
+            or topic_default_frame_id(TOPICS.saved_map_cloud)
+        )
         if not tomogram_path:
             return {
                 "schema_version": "lingtu.saved_map_artifacts.gate.v1",

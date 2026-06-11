@@ -6,7 +6,7 @@ from core.blueprint import Blueprint
 from core.blueprints.stacks._registry import optional_stack_module, stack_module
 
 
-def safety() -> Blueprint:
+def safety(*, cmd_vel_mux_source_timeout: float | None = None) -> Blueprint:
     """Safety reflex + geofence boundary enforcement + cmd_vel arbitration."""
     bp = Blueprint()
 
@@ -24,7 +24,10 @@ def safety() -> Blueprint:
         seed_group="safety",
         fallback="nav.cmd_vel_mux_module.CmdVelMux",
     )
-    bp.add(CmdVelMux, alias="CmdVelMux")
+    mux_kwargs = {}
+    if cmd_vel_mux_source_timeout is not None:
+        mux_kwargs["source_timeout"] = float(cmd_vel_mux_source_timeout)
+    bp.add(CmdVelMux, alias="CmdVelMux", **mux_kwargs)
 
     GeofenceManagerModule = optional_stack_module(
         "safety",

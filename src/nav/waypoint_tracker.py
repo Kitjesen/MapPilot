@@ -95,10 +95,10 @@ class WaypointTracker:
         Pass ``robot_yaw`` (radians) to enable yaw-aware stuck detection.
         Without yaw, legacy distance-only behaviour applies.
         """
-        self._path = path
+        self._path = [np.asarray(point, dtype=float) for point in path]
         self._wp_index = 0
         self._last_progress_time = time.time()
-        self._last_progress_pos = robot_pos.copy()
+        self._last_progress_pos = np.asarray(robot_pos, dtype=float).copy()
         self._last_progress_yaw = robot_yaw
         self._stuck_warn_sent = False
         self._stuck_sent = False
@@ -127,6 +127,7 @@ class WaypointTracker:
         rotation in place counts as progress (prevents "robot spins a bit and
         resets the timer forever" bug). Without yaw, legacy behaviour applies.
         """
+        robot_pos_arr = np.asarray(robot_pos, dtype=float)
         if not self._path or self._wp_index >= len(self._path):
             return TrackerStatus(self._wp_index, len(self._path))
 
@@ -134,10 +135,10 @@ class WaypointTracker:
         wp = self._path[self._wp_index]
         is_final_wp = self._wp_index >= len(self._path) - 1
         threshold = self._final_threshold if is_final_wp else self._threshold
-        if self._is_waypoint_reached(robot_pos, wp, threshold):
+        if self._is_waypoint_reached(robot_pos_arr, wp, threshold):
             self._wp_index += 1
             self._last_progress_time = time.time()
-            self._last_progress_pos = robot_pos.copy()
+            self._last_progress_pos = robot_pos_arr.copy()
             self._last_progress_yaw = robot_yaw
             self._stuck_warn_sent = False
             self._stuck_sent = False
@@ -150,7 +151,7 @@ class WaypointTracker:
 
         # -- Stuck detection -------------------------------------------------
         now = time.time()
-        moved = self._progress_distance(robot_pos, self._last_progress_pos)
+        moved = self._progress_distance(robot_pos_arr, self._last_progress_pos)
         elapsed = now - self._last_progress_time
 
         # Yaw progress — only when caller supplies yaw on both reset/update
@@ -167,7 +168,7 @@ class WaypointTracker:
         # Reset if robot has moved enough OR rotated enough
         if moved >= self._stuck_dist or yaw_progress:
             self._last_progress_time = now
-            self._last_progress_pos = robot_pos.copy()
+            self._last_progress_pos = robot_pos_arr.copy()
             if robot_yaw is not None:
                 self._last_progress_yaw = robot_yaw
             self._stuck_warn_sent = False
@@ -206,6 +207,8 @@ class WaypointTracker:
         waypoint: np.ndarray,
         threshold: float,
     ) -> bool:
+        robot_pos = np.asarray(robot_pos, dtype=float)
+        waypoint = np.asarray(waypoint, dtype=float)
         if not np.isfinite(robot_pos).all() or not np.isfinite(waypoint).all():
             logger.warning("Non-finite position in waypoint check, skipping")
             return False
@@ -222,6 +225,8 @@ class WaypointTracker:
         return abs(robot_z - waypoint_z) <= self._z_threshold
 
     def _progress_distance(self, robot_pos: np.ndarray, last_pos: np.ndarray) -> float:
+        robot_pos = np.asarray(robot_pos, dtype=float)
+        last_pos = np.asarray(last_pos, dtype=float)
         if not np.isfinite(robot_pos).all() or not np.isfinite(last_pos).all():
             logger.warning("Non-finite robot position in progress check, returning inf")
             return float('inf')

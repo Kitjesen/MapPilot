@@ -115,6 +115,7 @@ public:
     declare_parameter<double>("omniDirGoalThre", omniDirGoalThre_);
     declare_parameter<double>("goalClearRange", goalClearRange_);
     declare_parameter<double>("goalBehindRange", goalBehindRange_);
+    declare_parameter<double>("nearFieldStopDis", nearFieldStopDis_);
     declare_parameter<double>("goalX", goalX_);
     declare_parameter<double>("goalY", goalY_);
     declare_parameter<double>("slopeWeight", slopeWeight_);
@@ -167,6 +168,7 @@ public:
     omniDirGoalThre_ = get_parameter("omniDirGoalThre").as_double();
     goalClearRange_ = get_parameter("goalClearRange").as_double();
     goalBehindRange_ = get_parameter("goalBehindRange").as_double();
+    nearFieldStopDis_ = get_parameter("nearFieldStopDis").as_double();
     goalX_ = get_parameter("goalX").as_double();
     goalY_ = get_parameter("goalY").as_double();
     slopeWeight_ = get_parameter("slopeWeight").as_double();
@@ -206,6 +208,7 @@ public:
             else if (n == "maxRelZ") maxRelZ_ = p.as_double();
             else if (n == "goalClearRange") goalClearRange_ = p.as_double();
             else if (n == "goalBehindRange") goalBehindRange_ = p.as_double();
+            else if (n == "nearFieldStopDis") nearFieldStopDis_ = p.as_double();
             else if (n == "freezeAng") freezeAng_ = p.as_double();
             else if (n == "freezeTime") freezeTime_ = p.as_double();
             else if (n == "slopeWeight") slopeWeight_ = p.as_double();

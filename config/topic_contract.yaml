@@ -1032,6 +1032,7 @@ profile_data_sources:
   sim_nav: {data_source: in_process_stub, mode: pure_python_navigation_sim}
   sim: {data_source: mujoco_module_graph, mode: module_graph_simulation}
   sim_mujoco_live: {data_source: mujoco_fastlio2_live, mode: mujoco_raw_mid360_fastlio_live}
+  sim_mujoco_pct_live: {data_source: mujoco_fastlio2_live, mode: mujoco_raw_mid360_fastlio_pct_closed_loop}
   sim_gazebo: {data_source: gazebo_industrial, mode: gazebo_ros_native_simulation}
   sim_industrial: {data_source: gazebo_industrial, mode: gazebo_industrial_delivery_demo}
   sim_cmu_tare: {data_source: cmu_unity_external, mode: external_cmu_unity_tare_adapter}

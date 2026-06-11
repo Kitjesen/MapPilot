@@ -274,7 +274,7 @@ def full_stack_blueprint(
         planner_stack(llm, semantic_save_dir) if enable_semantic else Blueprint(),
         navigation(planner_backend, tomogram, enable_native, **config),
         exploration(**exploration_config),
-        safety(),
+        safety(cmd_vel_mux_source_timeout=config.get("cmd_vel_mux_source_timeout")),
         gateway(
             gateway_port,
             teleop_port=teleop_port,

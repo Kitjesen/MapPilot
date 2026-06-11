@@ -48,6 +48,30 @@ class _FlatZPlanner(_RecordingPlanner):
         ], 0.0
 
 
+class _IntermediatePathPlanner(_RecordingPlanner):
+    def plan(self, start: np.ndarray, goal: np.ndarray, **kwargs):
+        self.plan_calls += 1
+        self.safe_goal_tolerances.append(kwargs.get("safe_goal_tolerance"))
+        mid = np.array([
+            (float(start[0]) + float(goal[0])) * 0.5,
+            (float(start[1]) + float(goal[1])) * 0.5,
+            float(goal[2]),
+        ], dtype=float)
+        return [start.copy(), mid, goal.copy()], 0.0
+
+
+class _ProjectedStartPlanner(_RecordingPlanner):
+    def plan(self, start: np.ndarray, goal: np.ndarray, **kwargs):
+        self.plan_calls += 1
+        self.safe_goal_tolerances.append(kwargs.get("safe_goal_tolerance"))
+        projected_start = np.array([1.48, 0.0, 0.0], dtype=float)
+        return [
+            projected_start,
+            np.array([1.75, 0.0, 0.0], dtype=float),
+            np.array([float(goal[0]), float(goal[1]), 0.0], dtype=float),
+        ], 0.0
+
+
 class _PartialThenFullPlanner:
     is_ready = True
     has_map = True
@@ -323,6 +347,117 @@ def test_navigation_anchors_planner_start_height_to_current_odom():
     assert nav._tracker.wp_index == 1
     assert waypoints[-1].pose.position.x == 1.0
     assert waypoints[-1].pose.position.z == 0.55
+
+
+def test_navigation_inserts_robot_pose_before_projected_planner_start():
+    nav = NavigationModule(
+        enable_ros2_bridge=False,
+        waypoint_threshold=0.2,
+        final_waypoint_threshold=0.2,
+    )
+    nav._planner_svc = _ProjectedStartPlanner()
+    waypoints: list[PoseStamped] = []
+    paths: list[list[np.ndarray]] = []
+    nav.waypoint._add_callback(waypoints.append)
+    nav.global_path._add_callback(paths.append)
+
+    nav._on_odom(Odometry(
+        pose=Pose(position=Vector3(0.0, 0.0, 0.35), orientation=Quaternion()),
+        frame_id="map",
+    ))
+    nav._on_goal(PoseStamped(
+        pose=Pose(position=Vector3(2.0, 0.0, 0.35), orientation=Quaternion()),
+        frame_id="map",
+    ))
+
+    assert nav._state == "EXECUTING"
+    assert len(paths[-1]) == 4
+    np.testing.assert_allclose(paths[-1][0], np.array([0.0, 0.0, 0.35]))
+    np.testing.assert_allclose(paths[-1][1], np.array([1.48, 0.0, 0.35]))
+    assert nav._tracker.wp_index == 1
+    assert waypoints[-1].pose.position.x == 1.48
+    assert nav._path_start_anchor_status["mode"] == "insert"
+    assert nav._path_start_anchor_status["distance_m"] == 1.48
+
+
+def test_navigation_goal_proximity_completion_is_disabled_by_default():
+    nav = NavigationModule(
+        enable_ros2_bridge=False,
+        waypoint_threshold=0.2,
+        final_waypoint_threshold=0.2,
+    )
+    assert nav._complete_path_on_goal_proximity is False
+    nav._planner_svc = _IntermediatePathPlanner()
+    events: list[dict] = []
+    nav.adapter_status._add_callback(events.append)
+
+    nav._on_odom(Odometry(
+        pose=Pose(position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion()),
+        frame_id="map",
+    ))
+    nav._on_goal(PoseStamped(
+        pose=Pose(position=Vector3(2.0, 0.0, 0.0), orientation=Quaternion()),
+        frame_id="map",
+    ))
+    assert nav._state == "EXECUTING"
+    assert nav._tracker.wp_index == 1
+
+    nav._on_odom(Odometry(
+        pose=Pose(position=Vector3(1.95, 0.0, 0.0), orientation=Quaternion()),
+        frame_id="map",
+    ))
+
+    assert nav._state == "EXECUTING"
+    assert nav._tracker.wp_index == 1
+    assert not any(
+        event.get("event") == "goal_proximity_path_complete"
+        for event in events
+    )
+
+
+def test_navigation_goal_proximity_completion_advances_patrol_when_enabled():
+    nav = NavigationModule(
+        enable_ros2_bridge=False,
+        waypoint_threshold=0.2,
+        final_waypoint_threshold=0.2,
+        complete_path_on_goal_proximity=True,
+        goal_proximity_completion_threshold=0.25,
+    )
+    assert nav._complete_path_on_goal_proximity is True
+    assert nav._goal_proximity_completion_threshold == 0.25
+    planner = _IntermediatePathPlanner()
+    nav._planner_svc = planner
+    events: list[dict] = []
+    nav.adapter_status._add_callback(events.append)
+
+    nav._on_odom(Odometry(
+        pose=Pose(position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion()),
+        frame_id="map",
+    ))
+    nav._on_patrol_goals([
+        {"x": 2.0, "y": 0.0, "z": 0.0},
+        {"x": 4.0, "y": 0.0, "z": 0.0},
+    ])
+    assert nav._state == "PATROLLING"
+    assert nav._patrol_index == 0
+    assert nav._tracker.wp_index == 1
+
+    nav._on_odom(Odometry(
+        pose=Pose(position=Vector3(1.95, 0.0, 0.0), orientation=Quaternion()),
+        frame_id="map",
+    ))
+
+    assert nav._state == "PATROLLING"
+    assert nav._patrol_index == 1
+    assert np.allclose(nav._goal, np.array([4.0, 0.0, 0.0]))
+    assert planner.plan_calls == 2
+    proximity_events = [
+        event for event in events
+        if event.get("event") == "goal_proximity_path_complete"
+    ]
+    assert proximity_events
+    assert proximity_events[-1]["distance_to_goal_m"] == 0.05
+    assert proximity_events[-1]["waypoint_index"] == 1
 
 
 def test_navigation_accepts_map_frame_odometry_without_frame_mismatch_report():

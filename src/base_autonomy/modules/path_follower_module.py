@@ -71,6 +71,9 @@ class PathFollowerModule(Module, layer=2):
                  max_yaw_rate: float | None = None,
                  turn_speed_yaw_rate_start: float = 0.0,
                  turn_speed_min_scale: float = 1.0,
+                 yaw_rate_gain: float = 7.5,
+                 stop_yaw_rate_gain: float = 7.5,
+                 dir_diff_thre: float = 0.1,
                  **kw):
         super().__init__(**kw)
         require_backend("path_follower", backend, _AVAILABLE_PATH_FOLLOWER_BACKENDS)
@@ -83,6 +86,9 @@ class PathFollowerModule(Module, layer=2):
         self._max_yaw_rate = max_yaw_rate
         self._turn_speed_yaw_rate_start = max(0.0, float(turn_speed_yaw_rate_start or 0.0))
         self._turn_speed_min_scale = max(0.0, min(1.0, float(turn_speed_min_scale)))
+        self._yaw_rate_gain = max(0.0, float(yaw_rate_gain))
+        self._stop_yaw_rate_gain = max(0.0, float(stop_yaw_rate_gain))
+        self._dir_diff_thre = max(0.0, float(dir_diff_thre))
         self._two_way_drive = bool(kw.get("two_way_drive", True))
         self._node = None
 
@@ -202,8 +208,8 @@ class PathFollowerModule(Module, layer=2):
             params.min_look_ahead_dis = min_lookahead
             params.max_look_ahead_dis = max(min(self._lookahead, 2.0), min_lookahead)
             params.look_ahead_ratio = 0.5
-            params.yaw_rate_gain = 7.5
-            params.stop_yaw_rate_gain = 7.5
+            params.yaw_rate_gain = self._yaw_rate_gain
+            params.stop_yaw_rate_gain = self._stop_yaw_rate_gain
             params.max_yaw_rate = (
                 math.degrees(float(self._max_yaw_rate))
                 if self._max_yaw_rate is not None
@@ -215,7 +221,7 @@ class PathFollowerModule(Module, layer=2):
             if hasattr(params, "turn_speed_min_scale"):
                 params.turn_speed_min_scale = self._turn_speed_min_scale
             params.switch_time_thre = 1.0
-            params.dir_diff_thre = 0.1
+            params.dir_diff_thre = self._dir_diff_thre
             params.omni_dir_goal_thre = 1.0
             params.omni_dir_diff_thre = 1.5
             params.slow_dwn_dis_thre = 1.0
@@ -421,11 +427,13 @@ class PathFollowerModule(Module, layer=2):
             if len(pts) < 2:
                 self._reset_path_tracking(reset_nav_core_state=True)
                 return
+            self._reset_nav_core_state()
             self._nc_path = pts
             if self._last_odom_ts > 0:
                 self._nav_core_step(self._last_odom_ts)
-            # Note: do NOT reset nc_state here - compute_control needs
-            # continuous state to ramp up speed (vehicleSpeed persists)
+            # Each fresh local path has its own waypoint index and direction.
+            # Reusing the previous nav_core state can keep the follower pointed
+            # at a stale path point after a replan or patrol checkpoint switch.
 
         elif self._backend == "pid":
             pts = []
@@ -571,6 +579,9 @@ class PathFollowerModule(Module, layer=2):
             "max_yaw_rate": self._max_yaw_rate,
             "turn_speed_yaw_rate_start": self._turn_speed_yaw_rate_start,
             "turn_speed_min_scale": self._turn_speed_min_scale,
+            "yaw_rate_gain": self._yaw_rate_gain,
+            "stop_yaw_rate_gain": self._stop_yaw_rate_gain,
+            "dir_diff_thre": self._dir_diff_thre,
             "control_hint": {
                 "slow_down": self._control_slow_down,
                 "safety_stop": self._control_safety_stop,

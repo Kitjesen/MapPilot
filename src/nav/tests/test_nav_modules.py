@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import math
 import sys
+import tempfile
 import time
 import types
 import unittest
+from pathlib import Path as FilePath
 from unittest.mock import patch
 
 import numpy as np
@@ -155,6 +157,16 @@ class TestWaypointTracker(unittest.TestCase):
         self.assertIsNone(status.event)
         self.assertEqual(status.wp_total, 0)
 
+    def test_accepts_list_positions_from_runtime_status(self):
+        """Runtime status paths can carry plain list positions."""
+        tracker = WaypointTracker(threshold=0.1, stuck_dist=0.05)
+        tracker.reset([[1.0, 0.0, 0.0]], [0.0, 0.0, 0.0])
+
+        status = tracker.update([0.2, 0.0, 0.0])
+
+        self.assertIsNone(status.event)
+        self.assertEqual(status.wp_index, 0)
+
     def test_z_threshold_blocks_same_xy_different_floor(self):
         tracker = WaypointTracker(threshold=1.0, z_threshold=0.5)
         tracker.reset([np.array([5.0, 0.0, 3.0])], np.array([0.0, 0.0, 0.0]))
@@ -232,6 +244,76 @@ class TestGlobalPlannerService(unittest.TestCase):
         result = svc._find_safe_goal(np.array([0.0, 0.0, 0.0]))
         self.assertIsNone(result)
 
+    def test_pct_saved_map_artifact_gate_uses_configured_expected_frame(self):
+        from core.same_source_map_artifacts import (
+            build_saved_map_metadata,
+            sha256_file,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            artifact_dir = FilePath(temp_dir) / "same_source_map"
+            artifact_dir.mkdir()
+            map_pcd = artifact_dir / "map.pcd"
+            tomogram = artifact_dir / "tomogram.pickle"
+            map_pcd.write_text("VERSION 0.7\nDATA ascii\n", encoding="ascii")
+            tomogram.write_bytes(b"tomogram")
+            map_sha = sha256_file(map_pcd)
+            metadata = build_saved_map_metadata(
+                source_profile="mujoco_fastlio2_live_gate",
+                data_source="fastlio2",
+                slam_source="fastlio2",
+                localization_source="fastlio2",
+                mapping_source="/points_raw -> fastlio2 -> /nav/map_cloud",
+                frame_id="odom",
+                artifacts={
+                    "map_pcd": {
+                        "path": "map.pcd",
+                        "sha256": map_sha,
+                        "point_count": 1,
+                        "source_profile": "mujoco_fastlio2_live_gate",
+                        "data_source": "fastlio2",
+                        "slam_source": "fastlio2",
+                        "frame_id": "odom",
+                    },
+                    "tomogram": {
+                        "path": "tomogram.pickle",
+                        "sha256": sha256_file(tomogram),
+                        "source_map_sha256": map_sha,
+                        "source_profile": "mujoco_fastlio2_live_gate",
+                        "data_source": "fastlio2",
+                        "frame_id": "odom",
+                        "shape": [1, 1],
+                    },
+                },
+            )
+            (artifact_dir / "metadata.json").write_text(
+                json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            svc = GlobalPlannerService(
+                planner_name="pct",
+                tomogram=str(tomogram),
+                expected_saved_map_frame_id="odom",
+            )
+
+            gate = svc._validate_map_artifact_gate()
+
+            self.assertTrue(gate["ok"], gate["blockers"])
+            self.assertEqual(gate["expected_frame_id"], "odom")
+
+    def test_navigation_module_can_separate_planning_and_saved_map_frames(self):
+        from nav.navigation_module import NavigationModule
+
+        module = NavigationModule(
+            planner="pct",
+            planning_frame_id="odom",
+            expected_saved_map_frame_id="map",
+        )
+
+        self.assertEqual(module._planning_frame_id, "odom")
+        self.assertEqual(module._planner_svc._expected_saved_map_frame_id, "map")
+
     # -- _downsample ------------------------------------------------------------
 
     def test_downsample_preserves_goal(self):
@@ -300,6 +382,36 @@ class _FakeNavCore:
 
 
 class TestPathFollowerModule(unittest.TestCase):
+
+    def test_nav_core_uses_configured_control_gains(self):
+        from base_autonomy.modules import path_follower_module
+
+        class FakeNavCoreWithParams(_FakeNavCore):
+            class PathFollowerParams:
+                pass
+
+        original = path_follower_module.try_import_nav_core
+        try:
+            path_follower_module.try_import_nav_core = lambda *_args: FakeNavCoreWithParams
+            module = path_follower_module.PathFollowerModule(
+                backend="nav_core",
+                yaw_rate_gain=2.5,
+                stop_yaw_rate_gain=2.25,
+                dir_diff_thre=0.35,
+            )
+
+            module._setup_nav_core()
+        finally:
+            path_follower_module.try_import_nav_core = original
+
+        self.assertEqual(module._backend, "nav_core")
+        self.assertAlmostEqual(module._nc_params.yaw_rate_gain, 2.5)
+        self.assertAlmostEqual(module._nc_params.stop_yaw_rate_gain, 2.25)
+        self.assertAlmostEqual(module._nc_params.dir_diff_thre, 0.35)
+        health = module.health()["path_follower"]
+        self.assertAlmostEqual(health["yaw_rate_gain"], 2.5)
+        self.assertAlmostEqual(health["stop_yaw_rate_gain"], 2.25)
+        self.assertAlmostEqual(health["dir_diff_thre"], 0.35)
 
     def test_nav_core_keeps_fixed_frame_paths_in_world_reference(self):
         from base_autonomy.modules.path_follower_module import PathFollowerModule
@@ -470,6 +582,31 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._nc_state.vehicle_speed, 0.0)
         self.assertEqual(m._nc_state.nav_fwd, 0)
         self.assertEqual(m._nc_state.pathPointID, 0)
+
+    def test_nav_core_resets_follower_state_when_new_path_arrives(self):
+        from base_autonomy.modules.path_follower_module import PathFollowerModule
+
+        m = PathFollowerModule(backend="nav_core")
+        m._nc = _FakeNavCore
+        m._nc_params = object()
+        m._nc_state = _FakeNavCore.PathFollowerState()
+        m._nc_state.vehicle_speed = 1.7
+        m._nc_state.nav_fwd = 1
+        m._nc_state.pathPointID = 5
+
+        m._on_odom(Odometry(pose=Pose(position=Vector3(1.0, 0.0, 0.0)), ts=1.0))
+        m._on_path(Path(
+            poses=[
+                PoseStamped(pose=Pose(position=Vector3(1.0, 0.0, 0.0))),
+                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+            ],
+            frame_id="map",
+        ))
+
+        self.assertEqual(m._nc_state.vehicle_speed, 0.0)
+        self.assertEqual(m._nc_state.nav_fwd, 0)
+        self.assertEqual(m._nc_state.pathPointID, 0)
+        self.assertEqual(len(m._nc_path), 2)
 
     def test_nav_core_applies_local_planner_control_hint(self):
         from base_autonomy.modules.path_follower_module import PathFollowerModule
@@ -646,6 +783,22 @@ class TestOccupancyGridModule(unittest.TestCase):
         self.assertTrue(np.any(grid == 100), "Expected occupied cells in costmap")
         self.assertEqual(costmap["frame_id"], topic_default_frame_id(TOPICS.exploration_grid))
 
+    def test_projected_mode_accepts_default_robot_xy_before_odometry(self):
+        """Point-cloud updates may arrive before the first odometry sample."""
+        m = self._make_module()
+        pts = np.array([
+            [1.0, 0.0, 0.5],
+            [1.5, 0.5, 0.5],
+        ], dtype=np.float32)
+        cloud = PointCloud2.from_numpy(pts, frame_id="map")
+
+        results = []
+        m.costmap._add_callback(lambda msg: results.append(msg))
+        m.map_cloud._deliver(cloud)
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(np.any(results[0]["grid"] == 100))
+
     def test_height_filter(self):
         """Points outside z_min/z_max are ignored."""
         m = self._make_module(z_min=0.5, z_max=1.5)
@@ -753,6 +906,32 @@ class TestOccupancyGridModule(unittest.TestCase):
         self.assertEqual(emap["accumulation"], "rolling_local_window")
         self.assertEqual(emap["semantic"], "frontier_input_grid")
         self.assertEqual(costmaps[0]["unknown_as_obstacle"], True)
+
+    def test_raycast_mode_accepts_default_robot_xy_before_odometry(self):
+        """Raycast mode should also tolerate point clouds before odometry."""
+        m = self._make_module(
+            resolution=0.5,
+            map_radius=4.0,
+            robot_clear_radius=0.0,
+            inflation_radius=0.0,
+            raycast_free_space=True,
+            unknown_as_obstacle_for_costmap=True,
+            raycast_max_rays=100,
+        )
+        pts = np.array([
+            [2.0, 0.0, 0.6],
+            [2.0, 1.0, 0.6],
+            [1.5, -1.0, 0.6],
+        ], dtype=np.float32)
+        cloud = PointCloud2.from_numpy(pts, frame_id="map")
+
+        exploration = []
+        m.exploration_grid._add_callback(lambda msg: exploration.append(msg))
+        m.map_cloud._deliver(cloud)
+
+        self.assertEqual(len(exploration), 1)
+        self.assertGreater(exploration[0]["counts"]["free"], 0)
+        self.assertGreater(exploration[0]["counts"]["occupied"], 0)
 
     def test_raycast_free_inflation_widens_observed_free_corridors(self):
         def free_count(radius: float) -> int:

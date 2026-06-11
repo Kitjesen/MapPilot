@@ -913,8 +913,10 @@ def test_gazebo_bridge_config_exposes_lingtu_runtime_topics():
 
 def test_gazebo_launch_is_optional_but_ros_native():
     launch = _read("launch/gazebo_simulation.launch.py")
+    normalized_launch = launch.replace("\r\n", "\n")
 
     assert "lingtu_gazebo_demo_room.sdf" in launch
+    assert '"worlds",\n    "gazebo",' in normalized_launch
     assert "lingtu_gazebo_empty.sdf" not in launch
     assert "ros_gz_sim" in launch
     assert "ros_gz_bridge" in launch
@@ -941,8 +943,10 @@ def test_gazebo_launch_is_optional_but_ros_native():
 
 
 def test_gazebo_default_world_is_deliverable_demo_room():
+    gate = _read("sim/scripts/gazebo_runtime_gate.py")
     world = _read("sim/worlds/gazebo/lingtu_gazebo_demo_room.sdf")
 
+    assert '"worlds" / "gazebo" / "lingtu_gazebo_demo_room.sdf"' in gate
     assert '<world name="lingtu_gazebo_demo_room">' in world
     assert 'filename="gz-sim-physics-system"' in world
     assert 'filename="gz-sim-user-commands-system"' in world
@@ -1175,7 +1179,7 @@ def test_gazebo_runtime_adapter_point_transform_math():
 
 
 def test_tf_contract_smoke_is_read_only_and_checks_runtime_chain():
-    smoke = _read("tests/integration/tf_contract_smoke.py")
+    smoke = _read("sim/scripts/tf_contract_smoke.py")
 
     assert "map->odom->body" in smoke
     assert '"/nav/odometry"' in smoke
@@ -1197,7 +1201,7 @@ def test_tf_contract_smoke_is_read_only_and_checks_runtime_chain():
 
 
 def test_sim_navigation_launch_can_reuse_native_chain_with_gazebo_odometry():
-    launch = _read("tests/planning/sim_navigation.launch.py")
+    launch = _read("sim/planning/sim_navigation.launch.py")
 
     assert "use_sim_robot" in launch
     assert "use_terrain_passthrough" in launch
@@ -1218,6 +1222,8 @@ def test_sim_navigation_launch_can_reuse_native_chain_with_gazebo_odometry():
     assert "gazebo_line_require_grid_arg" in launch
     assert "require_occupancy_grid:=" in launch
     assert "flatten_path_z:=" in launch
+    assert "name='clear_path_latch'" in launch
+    assert "condition=UnlessCondition(use_gazebo_line_planner)" in launch
     assert "ParameterValue(goal_x, value_type=float)" in launch
     assert "ParameterValue(goal_y, value_type=float)" in launch
     assert "use_foxglove_arg" in launch
@@ -1226,11 +1232,11 @@ def test_sim_navigation_launch_can_reuse_native_chain_with_gazebo_odometry():
     assert "has not been installed into the active ROS workspace" in launch
     assert "except Exception:" in launch
     assert "source_global_planner_script" in launch
+    assert "legacy_global_planner_script" in launch
     assert "installed_global_planner_script" in launch
-    assert "'legacy'" in launch
     assert "'global_planner.py'" in launch
     global_planner = _read(
-        "src/global_planning/pct_planner/planner/scripts/legacy/global_planner.py"
+        "src/global_planning/pct_planner/planner/scripts/global_planner.py"
     )
     assert "prepare_pct_runtime" in global_planner
     assert "flatten_path_z" in global_planner
@@ -1238,7 +1244,7 @@ def test_sim_navigation_launch_can_reuse_native_chain_with_gazebo_odometry():
 
 
 def test_gazebo_line_global_planner_is_gazebo_only_and_read_only_control():
-    planner = _read("tests/planning/gazebo_line_global_planner.py")
+    planner = _read("sim/planning/gazebo_line_global_planner.py")
 
     assert "Gazebo grid global planner" in planner
     assert '"/nav/goal_pose"' in planner
@@ -1260,7 +1266,7 @@ def test_gazebo_line_global_planner_is_gazebo_only_and_read_only_control():
 
 
 def test_rviz_demo_defaults_to_filtered_product_view():
-    rviz = _read("tests/planning/sim_nav.rviz")
+    rviz = _read("sim/planning/sim_nav.rviz")
 
     assert "Name: LiveOdomCloud" in rviz
     assert "Name: ExplorationOccupancyGrid" in rviz
@@ -1284,10 +1290,10 @@ def test_rviz_demo_defaults_to_filtered_product_view():
 
 
 def test_gazebo_nav_loop_gate_publishes_only_goal_and_checks_motion():
-    smoke = _read("tests/integration/gazebo_nav_loop_smoke.py")
-    frontier_smoke = _read("tests/integration/gazebo_frontier_exploration_smoke.py")
+    smoke = _read("sim/scripts/gazebo_nav_loop_smoke.py")
+    frontier_smoke = _read("sim/scripts/gazebo_frontier_exploration_smoke.py")
     gate = _read("sim/scripts/gazebo_runtime_gate.py")
-    passthrough = _read("tests/planning/terrain_passthrough_node.py")
+    passthrough = _read("sim/planning/terrain_passthrough_node.py")
     runtime_adapter = _read("sim/engine/bridge/gazebo_runtime_adapter.py")
 
     assert '"lingtu.gazebo_nav_loop.v1"' in smoke

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -331,7 +332,13 @@ def _artifact_file_path(root: Path, name: str, entry: Mapping[str, Any]) -> Path
         path = Path(path_value)
         if path.is_absolute():
             return path
-        return root / path
+        root_relative = root / path
+        if root_relative.is_file():
+            return root_relative
+        cwd_relative = Path.cwd() / path
+        if cwd_relative.is_file():
+            return cwd_relative
+        return root_relative
     return root / ARTIFACT_FORMATS[name].path
 
 
@@ -428,6 +435,42 @@ def point_bounds(points: np.ndarray) -> dict[str, list[float]] | None:
     }
 
 
+def _tomography_script_dirs() -> list[Path]:
+    src_root = Path(__file__).resolve().parents[1]
+    return [
+        src_root / "global_planning" / "pct_planner" / "tomography" / "scripts",
+        src_root / "global_planning" / "PCT_planner" / "tomography" / "scripts",
+    ]
+
+
+def _load_build_tomogram_from_pcd() -> Any:
+    try:
+        from global_planning.pct_planner.tomography.scripts.build_tomogram import (
+            build_tomogram_from_pcd,
+        )
+
+        return build_tomogram_from_pcd
+    except ModuleNotFoundError as package_exc:
+        last_exc: Exception = package_exc
+        for scripts_dir in _tomography_script_dirs():
+            build_script = scripts_dir / "build_tomogram.py"
+            if not build_script.is_file():
+                continue
+            scripts_dir_text = str(scripts_dir)
+            if scripts_dir_text not in sys.path:
+                sys.path.insert(0, scripts_dir_text)
+            try:
+                from build_tomogram import build_tomogram_from_pcd  # type: ignore
+
+                return build_tomogram_from_pcd
+            except Exception as exc:  # pragma: no cover - reported by caller
+                last_exc = exc
+        raise ModuleNotFoundError(
+            "Unable to import PCT build_tomogram_from_pcd from "
+            "global_planning.pct_planner or PCT_planner tomography/scripts"
+        ) from last_exc
+
+
 def build_tomogram_artifact(
     *,
     pcd_path: Path,
@@ -439,9 +482,7 @@ def build_tomogram_artifact(
     # Lazy: global_planning is a nav/semantic-layer package.  This import is
     # inside the build_tomogram_artifact() function so core/ modules remain
     # importable without triggering global_planning dependencies at module level.
-    from global_planning.pct_planner.tomography.scripts.build_tomogram import (
-        build_tomogram_from_pcd,
-    )
+    build_tomogram_from_pcd = _load_build_tomogram_from_pcd()
 
     data = build_tomogram_from_pcd(
         str(pcd_path),

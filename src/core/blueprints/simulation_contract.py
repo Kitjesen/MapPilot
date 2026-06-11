@@ -461,8 +461,12 @@ def simulation_runtime_contract(name: str) -> SimulationRuntimeContract:
 
 
 def runtime_contracts_for_profile(profile: str) -> tuple[SimulationRuntimeContract, ...]:
+    from core.runtime_profiles import PROFILES
+
+    declared_contract = str(PROFILES.get(profile, {}).get("_runtime_contract") or "")
     return tuple(
         contract
         for contract in SIMULATION_RUNTIME_CONTRACTS.values()
         if contract.profile == profile
+        or (declared_contract and contract.name == declared_contract)
     )
