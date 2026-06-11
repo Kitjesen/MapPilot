@@ -36,7 +36,7 @@ python lingtu.py stop                     # stop running daemon
 from core.blueprint import autoconnect
 from core.blueprints.stacks import *
 system = autoconnect(
-    driver("thunder", host="192.168.66.190"),   # L1 Robot + camera bridge
+    driver("thunder", dog_host="192.168.66.190"),  # L1 Robot + camera bridge
     slam("localizer"),                           # L1 SLAM / localization
     maps(),                                      # L2 OccupancyGrid + ESDF + ElevationMap
     perception("bpu"),                           # L3 Detector + Encoder + Reconstruction

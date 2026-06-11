@@ -575,6 +575,7 @@ def run_global_planner(
     start: tuple[float, float, float],
     goal: tuple[float, float, float],
     downsample_dist: float,
+    safe_goal_tolerance: float = 0.0,
 ) -> dict[str, Any]:
     t0 = time.time()
     svc: GlobalPlannerService | None = None
@@ -592,7 +593,7 @@ def run_global_planner(
         path, plan_ms = svc.plan(
             np.asarray(start, dtype=float),
             np.asarray(goal, dtype=float),
-            safe_goal_tolerance=0.0,
+            safe_goal_tolerance=float(safe_goal_tolerance),
         )
         pts = _path_points(path)
         arr = np.asarray(pts, dtype=np.float64)
@@ -1711,6 +1712,10 @@ def _plan_to_frontier_goal(
                 start=start,
                 goal=goal,
                 downsample_dist=downsample_dist,
+                # Frontier centroids straddle known/unknown space by definition;
+                # let the planner project onto the nearest reachable free cell
+                # like production navigation does (_find_safe_goal BFS).
+                safe_goal_tolerance=0.6,
             )
         plan["frontier_goal"] = list(raw_goal)
         plan["navigation_goal"] = list(goal)

@@ -111,7 +111,7 @@ from core.blueprint import autoconnect
 from core.blueprints.stacks import *
 
 system = autoconnect(
-    driver("thunder", host="192.168.66.190"),
+    driver("thunder", dog_host="192.168.66.190"),
     slam("localizer"),
     maps(),
     perception("bpu"),

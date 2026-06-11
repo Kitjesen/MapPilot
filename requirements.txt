@@ -1,6 +1,9 @@
 # LingTu 核心依赖 (S100P aarch64)
-# 注意: numpy 限制 <2.0 以兼容 ele_planner.so (要求 numpy 1.x)
-numpy>=1.24,<2.0
+# 注意: numpy 仅在 aarch64 真机上限制 <2.0 以兼容 ele_planner.so (numpy 1.x ABI)。
+# 开发机 (Windows/x86, Python 3.13+) 没有 numpy 1.x 官方 wheel，必须用 2.x —
+# 不要在开发机上手装实验性 MINGW numpy 1.x 构建（import 即崩溃）。
+numpy>=1.24,<2.0; platform_machine == "aarch64"
+numpy>=1.24; platform_machine != "aarch64"
 opencv-python-headless>=4.5
 PyYAML>=6.0
 scipy>=1.10
