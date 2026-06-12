@@ -1,112 +1,90 @@
-# src/ — LingTu Navigation System
+# src/ - Module-First source map
 
-## Quick Start
+`src/` is organized as one first-level package per runtime layer. Keep it that
+way: normal Modules depend on `core/`, communicate through typed ports, and are
+assembled by Blueprints instead of importing each other across layer boundaries.
+
+## Primary entry points
+
+| Entry | Purpose |
+| --- | --- |
+| `core.blueprint.autoconnect()` | Compose stack Blueprints and infer safe port wiring. |
+| `core/blueprints/full_stack.py` | Production full-stack assembly plus explicit critical wires. |
+| `core/blueprints/stacks/` | Small stack factories: `driver`, `lidar`, `slam`, `maps`, `perception`, `memory`, `planner`, `navigation`, `exploration`, `safety`, `gateway`. |
+| `core.registry.get(...)` | Resolve pluggable backends by category and name. |
+
+Minimal composition shape:
 
 ```python
-from core import autoconnect
-from core.registry import get
-import drivers.real.thunder.han_dog_module
+from core.blueprint import autoconnect
+from core.blueprints.stacks import *
 
 system = autoconnect(
-    get("driver", "thunder").blueprint(dog_host="192.168.66.190"),
-    DetectorModule.blueprint(detector="bpu"),
-    EncoderModule.blueprint(encoder="mobileclip"),
-    SemanticPlannerModule.blueprint(),
-    LLMModule.blueprint(backend="kimi"),
-    NavigationModule.blueprint(planner="astar"),
-    SafetyRingModule.blueprint(),
-    GatewayModule.blueprint(port=5050),
-    MCPServerModule.blueprint(port=8090),
-    RerunModule.blueprint(web_port=9090),
+    driver("thunder", dog_host="192.168.66.190"),
+    lidar(enabled=True),
+    slam("bridge"),
+    maps(),
+    perception("bpu", "mobileclip"),
+    memory(),
+    planner("qwen"),
+    navigation("pct"),
+    exploration("none"),
+    safety(),
+    gateway(5050),
 ).build()
-
-system.start()
 ```
 
-## Directory Map (10 dirs)
+## Layer map
 
-```
-src/
-├── core/              Framework (Module/Blueprint/Transport/NativeModule)
-│   ├── msgs/          Message types (geometry, nav, sensor, semantic)
-│   ├── transport/     Backends (Local, DDS, SHM, Adapter)
-│   ├── blueprints/    System blueprints (full_stack, navigation, stub)
-│   ├── spec/          Protocol interfaces (16 specs)
-│   └── tests/         599+ tests
-│
-├── nav/               Navigation core
-│   ├── core/          C++ algorithm library (pybind11, zero ROS2 dep)
-│   ├── rings/         Safety ring (ROS2 legacy nodes)
-│   ├── services/      Map/patrol/geofence/task services
-│   ├── navigation_module.py   Unified planner+tracker+FSM
-│   └── safety_ring_module.py  Unified safety+eval+dialogue
-│
-├── semantic/          Semantic intelligence
-│   ├── common/        L0 utilities (validation, sanitize)
-│   ├── perception/    Perception (YOLO+CLIP+SceneGraph+Service)
-│   └── planner/       Planning (GoalResolver+Frontier+LLM+Service)
-│
-├── drivers/           Hardware
-│   ├── thunder/       ThunderDriver (gRPC → brainstem CMS)
-│   ├── sim/           Stub + MuJoCo simulation
-│   └── livox.../      LiDAR driver (C++)
-│
-├── gateway/           External interfaces
-│   ├── gateway_module.py  HTTP/WS/SSE gateway (FastAPI)
-│   └── mcp_server.py     MCP server (16 tools for AI agents)
-│
-├── base_autonomy/     C++ terrain + local planner
-│   └── autonomy_module.py  Unified 4-node manager
-│
-├── global_planning/   C++ PCT planner + Python adapters
-├── slam/              C++ SLAM (Fast-LIO2 + Point-LIO)
-├── memory/            Memory layer (spatial/knowledge/storage)
-└── reconstruction/    3D reconstruction
-```
+| Layer | Package | Runtime role |
+| --- | --- | --- |
+| L0 Safety | `nav/` | `SafetyRingModule`, geofence, `CmdVelMux`, plan safety checks. |
+| L1 Hardware | `drivers/`, `slam/` | Real/sim robot drivers, camera/LiDAR/GNSS bridges, SLAM/localization. |
+| L2 Maps | `nav/` | Occupancy, voxel, ESDF, elevation, traversability, map manager. |
+| L3 Perception | `semantic/perception/`, `memory/` | Detection, encoding, scene graph, semantic map and memories. |
+| L4 Decision | `semantic/planner/` | Goal resolution, LLM/tool loop, visual servo, semantic frontier scoring. |
+| L5 Planning | `nav/`, `global_planning/`, `base_autonomy/` | Navigation FSM, A*/PCT dispatch, terrain, local planner, path follower. |
+| L6 Interface | `gateway/`, `webrtc/` | REST/SSE/WS, MCP, teleop, optional WebRTC/Rerun. |
 
-## Pluggable Modules (10 big modules)
+## First-level packages
 
-| Module | Layer | Backends / Strategies |
-|--------|-------|----------------------|
-| ThunderDriver | L1 | thunder / stub / sim_mujoco |
-| AutonomyModule | L2 | manages 4 C++ NativeModule nodes |
-| DetectorModule | L3 | yoloe / yolo_world / bpu / grounding_dino |
-| EncoderModule | L3 | clip / mobileclip |
-| SemanticPlannerModule | L4 | resolver + frontier + decomposer + executor |
-| LLMModule | L4 | kimi / openai / claude / qwen / mock |
-| NavigationModule | L5 | astar / pct (planner) + tracker + FSM |
-| SafetyRingModule | L0 | reflex + evaluator + dialogue |
-| GatewayModule | L6 | HTTP + WebSocket + SSE |
-| MCPServerModule | L6 | 16 MCP tools for AI agent control |
-| RerunModule | L6 | 3D browser visualization |
+| Package | What belongs here | Notes |
+| --- | --- | --- |
+| `core/` | Module framework, streams, Blueprint, transports, registry, messages, devices, framework tests. | Shared dependency target for all Modules. |
+| `drivers/` | Replaceable robot/sensor backends. | Real Thunder code is under `drivers/real/thunder/`; sim backends stay under `drivers/sim/`. |
+| `slam/` | Managed SLAM modules, bridge modules, Fast-LIO2/Point-LIO/localizer integrations. | Real `nav` uses bridge mode so robot-side services own LiDAR. |
+| `nav/` | Navigation execution, map services, safety, frontier exploration, velocity arbitration. | Wavefront frontier lives here and is enabled by `navigation(enable_frontier=True)`. |
+| `global_planning/` | PCT planner tree and Python adapters. | Treat `pct_planner/` as third-party/native planner surface; do not casually reshuffle. |
+| `base_autonomy/` | C++/nanobind terrain, local planner, path follower hot paths. | Performance-sensitive aarch64 code. |
+| `semantic/` | Semantic perception, semantic planner, reconstruction. | `perception/`, `planner/`, and `reconstruction/` are subtrees here, not top-level `src/` packages. |
+| `memory/` | Semantic, episodic, tagged, vector, temporal and KG-backed memory modules. | Optional ChromaDB falls back to numpy search. |
+| `exploration/` | CMU TARE exploration stack. | TARE profile only; wavefront is not selected through this factory. |
+| `gateway/` | FastAPI gateway, MCP server, route/service helpers. | External interface layer. |
+| `webrtc/` | Optional H.264 WebRTC camera stream module. | Requires optional `aiortc`. |
+| `lingtu/` | Package-facing compatibility namespace. | Keep runtime ownership in the layer packages above. |
 
-## Backpressure Policies
+## Boundary rules
 
-```python
-self.imu.set_policy("all")                        # every message (default)
-self.image.set_policy("latest")                    # drop if busy
-self.lidar.set_policy("throttle", interval=0.1)   # max 10Hz
-self.scan.set_policy("sample", n=5)               # every 5th
-self.detections.set_policy("buffer", size=10)      # batch of 10
+```text
+All Modules -> core/ (Module, In/Out, Registry, utils, msgs)
+
+nav/       must not import semantic/, drivers/, gateway/
+semantic/  must not import nav/, drivers/, gateway/
+drivers/   must not import nav/, semantic/ except lazy blueprint registration
+gateway/   must not import nav/, semantic/, drivers/
 ```
 
-## Transport Decoupling
+Use registry lookups and Blueprint wiring for cross-layer behavior. Add explicit
+wires in `core/blueprints/full_stack.py` for critical fan-in/fan-out or
+ambiguous port names.
 
-```python
-bp.wire("Safety", "stop_cmd", "Driver", "stop_signal")                    # callback (0 latency)
-bp.wire("Perception", "scene_graph", "Planner", "scene_graph", transport="dds")  # decoupled
-bp.wire("SLAM", "cloud", "Terrain", "cloud", transport="shm")             # high bandwidth
-```
+## Tests
 
-## MCP for AI Agents
+| Location | Use |
+| --- | --- |
+| `core/tests/` | Framework and cross-package contract gates that do not need ROS 2. |
+| `<package>/tests/` | Unit tests owned by a package such as `nav`, `gateway`, `drivers`, or `semantic`. |
+| root `sim/tests/` | Simulation integration and validation gates. |
 
-```bash
-# Connect Claude Code to the robot
-claude mcp add --transport http lingtu http://192.168.66.190:8090/mcp
-
-# Then Claude can:
-# "Navigate to the kitchen"     → navigate_to_object tool
-# "What objects do you see?"    → get_scene_graph tool
-# "Stop!"                       → stop tool
-# "Tag this as charging_station" → tag_location tool
-```
+Run the narrowest relevant test first, then broaden only when the touched
+surface crosses package boundaries.

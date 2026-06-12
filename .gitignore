@@ -43,6 +43,12 @@ env/
 .tmp_gateway_tests/
 pytest_tmp/
 
+# Local agent/test caches and Windows native build outputs
+.omc/
+**/.pytest_cache/
+src/_nav_core*.pyd
+src/libc++.dll
+
 # 鈹€鈹€ C/C++ build artifacts 鈹€鈹€
 *.o
 *.so

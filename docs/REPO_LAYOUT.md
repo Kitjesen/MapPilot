@@ -41,7 +41,7 @@ brain/lingtu/
 │   │   ├── planner/       # AgentLoop, GoalResolver, VisualServo, tests/, resource/
 │   │   └── reconstruction/  # server/ + tests/
 │   ├── memory/            # SemanticMapper, EpisodicMemory, Tagged, VectorMemory, KG
-│   ├── drivers/           # thunder/ (gRPC), sim/ (stub, MuJoCo, ROS2), TeleopModule
+│   ├── drivers/           # real/thunder/ (gRPC), sim/ (stub, MuJoCo, ROS2), TeleopModule
 │   │   ├── real/          # Real-robot camera drivers
 │   │   ├── gnss/          # GNSS receiver driver
 │   │   ├── livox_ros_driver2/  # Livox MID-360 hardware driver
@@ -57,14 +57,12 @@ brain/lingtu/
 │   │   └── pct_planner_runnable/  # Run wrapper
 │   ├── slam/              # Fast-LIO2, Point-LIO, PGO, Localizer, GNSS bridge
 │   │   └── launch/        # Merged launchers: fastlio2, pointlio, localizer, pgo, hba, genz_icp
-│   ├── exploration/       # TARE exploration
+│   └── exploration/       # TARE exploration
 │   │   ├── tare_planner/          # C++ TARE submodule
 │   │   ├── tests/                 # test_exploration_modules.py
 │   │   ├── tare_explorer_module.py
 │   │   ├── tare_ros2_bridge_module.py  # ROS2 extraction
 │   │   └── exploration_supervisor_module.py
-│   ├── reconstruction/    # 3D reconstruction
-│   └── legacy/            # Consolidation of 5 legacy dirs (gateway, pct_planner, scripts, semantic, thunder)
 │
 ├── sim/                   # Simulation: engine, worlds, assets, robots, scripts, validation, evaluation
 │   ├── engine/            # Sim engine core
@@ -126,7 +124,10 @@ brain/lingtu/
 │   ├── e2e/               # End-to-end tests
 │   ├── integration/       # Integration tests
 │   └── scripts/           # Script-based tests
-├── tools/                 # Robot-side helpers (dashboards, BPU export, diagnostics)
+├── tools/                 # Dev / robot-side helpers (see tools/README.md)
+│   ├── validate/          # robot_config + topic_contract validators
+│   ├── evaluation/        # Degeneracy / dataset eval
+│   └── proto_gen/         # Generated protobuf stubs
 ├── scripts/               # Build helpers, deploy, ota, proto, lingtu CLI shell wrapper
 │   ├── build/             # ROS workspace build helpers, fetch_ortools, build_tare, …
 │   ├── deploy/            # Installers, systemd, OTA, monitoring
@@ -163,6 +164,8 @@ unit; SLAM and other C++ subsystems are managed via `NativeModule` (see
 | All cross-stack wires | `src/core/blueprints/full_stack.py` |
 | Which backends are registered for a category | `src/core/registry.py` plus the `@register(...)` calls in each Module file |
 | Simulation folder boundaries | `sim/README.md` (worlds, assets, robots, scripts, validation/evaluation — full details in engine/core bridge/sensors/datasets scenarios, mujoco/gazebo scenes, following/) |
+| L3 on-robot field-run notes | `docs/07-testing/field-runs/` |
+| Dev / validation CLI tools | `tools/README.md` |
 | Server-side simulation evidence | `artifacts/server_sim_closure/` generated reports plus `artifacts/server_sim_closure_summary_g4_current.json` |
 | Root Gazebo simulation scaffold | `launch/gazebo_simulation.launch.py` (kept at root because ROS-native launchers reference it directly) |
 | Robot physical parameters | `config/robot_config.yaml` (single source of truth) |

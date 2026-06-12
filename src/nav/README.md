@@ -1,43 +1,59 @@
-# Navigation — L5 全局规划与 L0 安全仲裁模块
+# Navigation - maps, safety, planning execution
 
-## 概述
+`src/nav/` owns the runtime navigation chain: map products, safety checks,
+global-plan dispatch, mission state, frontier exploration goals, tracking, and
+velocity arbitration. It should not import `semantic/`, `drivers/`, or
+`gateway/`; cross-layer behavior belongs in Blueprint wiring and typed ports.
 
-Navigation 模块负责全局路径规划、局部避障规划、路径跟踪、安全监控与速度仲裁，构成 LingTu 自主导航的核心执行链路。
+## Module map
 
-| 层级 | 模块 | 职责 |
-|------|------|------|
-| L5 | `navigation_module.py` | 全局规划（A*/PCT）+ WaypointTracker + mission FSM |
-| L5 | `global_planner_service.py` | A*/PCT 后端调度 + BFS 安全目标搜索 |
-| L5 | `waypoint_tracker.py` | 到达检测 + 卡死检测 |
-| L5 | `traversability_cost_module.py` | 可通行性代价计算 |
-| L2 | `occupancy_grid_module.py` | 占据栅格地图 |
-| L2 | `esdf_module.py` | 欧氏符号距离场 |
-| L2 | `elevation_map_module.py` | 高程地图 |
-| L2 | `voxel_grid_module.py` | 体素网格 |
-| L0 | `safety_ring_module.py` | 安全反射 + 评估器 + 对话 |
-| L0 | `cmd_vel_mux_module.py` | 优先级速度仲裁（Teleop > VisualServo > Recovery > PathFollower） |
-| L0 | `plan_safety.py` | 规划安全性校验 |
-| L2 | `frontier_explorer_module.py` | 前沿探索 |
-| L2 | `traversable_frontier_module.py` | 可通行前沿筛选 |
+| Area | Files | Responsibility |
+| --- | --- | --- |
+| Mission execution | `navigation_module.py`, `waypoint_tracker.py` | Goal handling, A*/PCT planning requests, waypoint tracking, recovery, mission FSM. |
+| Global planning dispatch | `global_planner_service.py` | Select A*/PCT backend, validate paths, find safe nearby goals. |
+| Maps | `occupancy_grid_module.py`, `voxel_grid_module.py`, `esdf_module.py`, `elevation_map_module.py`, `traversability_cost_module.py` | L2 map layers used by navigation, safety, gateway preview, and local autonomy. |
+| Safety | `safety_ring_module.py`, `plan_safety.py`, `cmd_vel_mux_module.py`, `services/geofence_manager_module.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
+| Frontier exploration | `frontier_explorer_module.py`, `traversable_frontier_module.py` | Wavefront frontier goals and traversability-enriched frontier previews. |
+| ROS 2 bridges | `ros2_waypoint_bridge_module.py`, `ros2_path_bridge_module.py`, `ros2_grid_bridge_module.py` | Bridge selected navigation products to ROS 2 topics when configured. |
+| Map lifecycle | `services/map_manager_module.py` | Save/use/build/delete maps, including PGO/DUFOMap save-time cleanup. |
 
-## services/
+## Exploration and planning boundaries
 
-- `map_manager_module.py` — 地图保存管线：PGO -> DUFOMap -> tomogram -> occupancy
-- `geofence_manager_module.py` — 电子围栏管理
-- `patrol_manager_module.py` — 巡逻任务管理
-- `task_scheduler_module.py` — 任务调度
-- `frame_contract.py` — 帧协议契约
+These modules sound similar but are separate on purpose. Do not merge or move
+them just to make the tree look tidier.
 
-## core/
+| Concept | Location | Used by | What it does | What it is not |
+| --- | --- | --- | --- | --- |
+| Wavefront frontier exploration | `nav/frontier_explorer_module.py` | `explore` profile through `navigation(enable_frontier=True)` | Finds free/unknown boundaries on the occupancy grid and publishes `exploration_goal` into `NavigationModule.goal_pose`. | Not selected by `exploration()` and not a semantic planner component. |
+| Traversable frontier preview | `nav/traversable_frontier_module.py` | Optional navigation stack preview/inspection | Enriches wavefront candidates with traversability and optional semantic evidence, publishes ranked candidate dictionaries. | Not the TARE planner. |
+| Semantic frontier scoring | `semantic/planner/frontier_scorer.py` | `SemanticPlannerModule` and goal-resolution logic | Scores frontier candidates using language, grounding, uncertainty, and semantic context. | Not a Module that drives navigation goals by itself. |
+| TARE exploration | `exploration/` | `tare_explore` profile through `exploration(backend="tare")` | Runs CMU TARE hierarchical exploration via native/ROS 2 integration. | Not the wavefront explorer and not enabled in the `explore` profile. |
+| A*/PCT global planning | `nav/global_planner_service.py` + `global_planning/` | `NavigationModule` | Python dispatch plus pure-Python A* and native PCT backends. | Not an exploration policy. |
 
-C++ `nav_core` 算法库（nanobind 绑定），包含 header-only 的 local_planner、path_follower、terrain 实现，通过 xsimd + OpenMP 加速。
+Profile split:
 
-## ROS2 Bridges
+| Profile | Exploration source | Stack settings |
+| --- | --- | --- |
+| `explore` | Wavefront frontier in `nav/` | `navigation(enable_frontier=True)`, `exploration_backend="none"`. |
+| `tare_explore` | TARE in `exploration/` | `navigation(enable_frontier=False)`, `exploration_backend="tare"`. |
+| `nav` | User/app/semantic goals | No autonomous exploration source by default. |
 
-- `ros2_path_bridge_module.py` — ROS2 路径话题桥接
-- `ros2_grid_bridge_module.py` — ROS2 栅格话题桥接
-- `ros2_waypoint_bridge_module.py` — ROS2 航点话题桥接
+## Velocity ownership
 
-## 依赖规则
+All motion commands go through `CmdVelMux`.
 
-`nav/` 不导入 `semantic/`、`drivers/`、`gateway/`。
+| Source | Priority | Timeout |
+| --- | ---: | ---: |
+| Teleop joystick | 100 | 0.5 s |
+| VisualServo PD tracking | 80 | 0.5 s |
+| Navigation recovery | 60 | 0.5 s |
+| PathFollower autonomy | 40 | 0.5 s |
+
+Highest-priority active source wins. New motion producers must publish through
+the mux instead of writing directly to a driver.
+
+## Tests
+
+Put package-owned unit tests under `src/nav/tests/`. Put cross-package contract
+tests in `src/core/tests/` only when the behavior spans Blueprint/profile/full
+stack wiring. Simulation gates belong under root `sim/tests/`.
