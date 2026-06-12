@@ -164,6 +164,7 @@ unit; SLAM and other C++ subsystems are managed via `NativeModule` (see
 | All cross-stack wires | `src/core/blueprints/full_stack.py` |
 | Which backends are registered for a category | `src/core/registry.py` plus the `@register(...)` calls in each Module file |
 | Simulation folder boundaries | `sim/README.md` (worlds, assets, robots, scripts, validation/evaluation — full details in engine/core bridge/sensors/datasets scenarios, mujoco/gazebo scenes, following/) |
+| Simulation script path contract | `sim/scripts/README.md` (stable roots: worlds, assets, robots, scripts, validation, tests; `sim/scripts/<name>` is a stable path contract; scripts are indexed by role instead of physically split) |
 | L3 on-robot field-run notes | `docs/07-testing/field-runs/` |
 | Dev / validation CLI tools | `tools/README.md` |
 | Server-side simulation evidence | `artifacts/server_sim_closure/` generated reports plus `artifacts/server_sim_closure_summary_g4_current.json` |

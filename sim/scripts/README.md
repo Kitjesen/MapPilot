@@ -4,6 +4,26 @@ This directory is a stable script contract, not a package boundary. Many
 profiles, tests, and evidence gates refer to `sim/scripts/<name>` directly, so
 scripts stay in place and are grouped by naming convention.
 
+## Public Entrypoints
+
+These paths are part of the current repository contract. Do not move them for
+cosmetic grouping without first adding compatibility wrappers, a deprecation
+window, and a full path-contract audit:
+
+| Entrypoint | Role |
+| --- | --- |
+| `launch_mujoco_fastlio2_live.sh` | MuJoCo + Fast-LIO2 live simulation launcher |
+| `server_sim_closure.py` | Server-side simulation evidence aggregator |
+| `native_pct_mujoco_gate.py` | Native PCT + MuJoCo gate |
+| `pct_saved_map_navigation_gate.py` | Saved-map PCT navigation gate |
+| `saved_map_relocalize_runtime_gate.py` | Saved-map relocalization runtime gate |
+| `routecheck_preflight_gate.py` | Gateway route preflight gate |
+| `multifloor_nav_validation.py` | Multi-floor validation wrapper |
+| `policy_nav_smoke.py` | Policy-mode navigation smoke test |
+| `run_dimos_linux_closure.sh` | Target-host DimOS closure runner |
+| `launch_lingtu_gazebo_industrial_demo.sh` | Gazebo industrial simulation launcher |
+| `launch_cmu_unity_lingtu_runtime.sh` | CMU Unity LingTu runtime launcher |
+
 ## Safety Classes
 
 Use the safety class before running a script:

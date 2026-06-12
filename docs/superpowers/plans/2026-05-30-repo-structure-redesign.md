@@ -1,5 +1,16 @@
 # Plan: 仓库目录架构重构 — sim/real 可读化 (架构师方案)
 
+> Superseded note (2026-06-12): the physical split proposal for moving
+> `sim/scripts/*` into separate gate/demo directories is no longer current
+> guidance. The later 2026-05-31 modularization record and
+> `.omx/plans/ralplan-sim-directory-reorg-20260612T084832Z.md` preserve
+> `sim/scripts/<name>` as a stable public path contract and organize scripts
+> through indexes and tests instead.
+
+
+
+
+
 ## 1. 目标与成功标准
 
 **目标**：消除 sim/real 在目录层的晦涩与散落，建立 dimos 式「接口 + 可替换后端」

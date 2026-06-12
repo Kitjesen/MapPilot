@@ -6,6 +6,25 @@
 
 The simulation environment mirrors the real-world LingTu deployment stack while replacing hardware sensors and actuators with physics-accurate MuJoCo models. This enables rapid iteration on navigation algorithms, regression testing, and data collection for learning-based methods.
 
+### Stable Root Contract
+
+The root `sim/` tree is organized by stable runtime contracts, not by a new
+physical split of every script role. Keep these roots stable:
+
+| Root | Contract |
+|------|----------|
+| `worlds/` | Canonical MuJoCo XML and Gazebo SDF scenes. |
+| `assets/` | Thunder v3 assets, meshes, MJCF/URDF, and Livox scan-pattern assets. |
+| `robots/` | Compatibility robot models and fallback policy paths. |
+| `scripts/` | Public launcher, gate, validation, demo, and benchmark entrypoints. |
+| `validation/` | Importable full-system validation package used by wrappers and tests. |
+| `tests/` | Simulation integration and filesystem contract tests. |
+
+`sim/scripts/<name>` paths are public repository entrypoints used by profiles,
+tests, deploy scripts, and closure reports. Keep scripts in place and classify
+them through `sim/scripts/README.md` unless a future compatibility migration
+adds wrappers, a deprecation window, and a full path-contract audit.
+
 **Supported capabilities:**
 
 - Full 6-DOF rigid body dynamics with contact
@@ -1012,8 +1031,9 @@ messages in the bag.
 | `following/` | Person-following simulation (FSM, controllers, perception, metrics) |
 | `semantic/` | Legacy semantic simulation test residue |
 | `datasets/` | Offline LiDAR/IMU datasets |
-| `scripts/` | Stable launcher, gate, validation, demo, and benchmark script contract |
+| `scripts/` | Stable public launcher, gate, validation, demo, and benchmark entrypoint contract |
 | `validation/` | Full-system validation package used by scripts and tests |
+| `tests/` | Simulation integration and layout contract tests |
 | `evaluation/` | Offline SLAM evaluation manifests and dataset tooling |
 | `external_scenes/` | Optional external/license-constrained scene placeholders |
 | `meshes/` | Legacy mesh path; keep until references are fully audited |
