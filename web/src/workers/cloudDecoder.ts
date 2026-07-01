@@ -2,7 +2,7 @@
  * cloudDecoder — WebWorker that turns binary /ws/cloud frames into the
  * Float32 buffers Three.js consumes directly.
  *
- * Wire format mirrors src/core/utils/binary_codec.py:
+ * Wire format mirrors src/runtime/utils/binary_codec.py:
  *   <4s  magic = "PCLD">
  *   <u8  version = 1>
  *   <u8  flags  (bit0 = has_color)>

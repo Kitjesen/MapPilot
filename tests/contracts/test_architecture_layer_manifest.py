@@ -101,15 +101,12 @@ def test_architecture_layer_manifest_uses_most_specific_path_owner() -> None:
     assert architecture_layer_for_path(
         "src/nav/services/plan/local_planner/paths"
     )["id"] == "L5_algorithm_kernels"
-    assert architecture_layer_for_path("src/nav/local/legacy_ros/local_planner/src/localPlanner.cpp")[
-        "id"
-    ] == "L3_adapter_layer"
-    assert architecture_layer_for_path("src/nav/local/legacy_ros/terrain_analysis/src/terrainAnalysis.cpp")[
-        "id"
-    ] == "L3_adapter_layer"
-    assert architecture_layer_for_path("src/nav/local/legacy_ros/sensor_scan_generation/src/sensorScanGeneration.cpp")[
-        "id"
-    ] == "L3_adapter_layer"
+    assert architecture_layer_for_path(
+        "src/drivers/adapters/ros2/livox_driver.py"
+    )["id"] == "L3_adapter_layer"
+    assert architecture_layer_for_path(
+        "src/runtime/adapters/ros2/rerun_overlay.py"
+    )["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/nav/kernel/CMakeLists.txt")["id"] == (
         "L5_algorithm_kernels"
     )

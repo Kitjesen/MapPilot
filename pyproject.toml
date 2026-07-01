@@ -182,7 +182,7 @@ testpaths = [
     "src/runtime/tests",
     "src/nav/tests",
     "src/gateway/tests",
-    "src/drivers/tests",
+    "tests/drivers",
     "src/lingtu/tests",
     "src/lingtu/sdk/tests",
     "src/memory/tests",

@@ -82,4 +82,4 @@ FROM runtime AS test
 RUN pip install --no-cache-dir pytest pytest-asyncio pytest-mock pytest-benchmark
 
 # Run framework tests
-CMD ["python3", "-m", "pytest", "src/core/tests/", "-q", "-x", "--timeout=60"]
+CMD ["python3", "-m", "pytest", "src/runtime/tests/", "-q", "-x", "--timeout=60"]

@@ -55,7 +55,7 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Run framework tests
         run: |
-          python -m pytest src/runtime/tests/ src/drivers/tests/ src/gateway/tests/ \
+          python -m pytest src/runtime/tests/ tests/drivers/ src/gateway/tests/ \
             src/memory/tests/ src/nav/tests/ src/perception/tests/ \
             src/decision/tests/ src/localization/tests/ \
             -q --tb=short

@@ -155,6 +155,7 @@ SCAN_EXCLUDED_PARTS = {
     "build_nb",
     "build_nb_win",
     "_deps",
+    "OrbbecSDK_ROS2",
 }
 
 

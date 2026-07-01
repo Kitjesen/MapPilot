@@ -59,16 +59,14 @@ layers:
     intent: LCM, ROS2 compatibility, simulator, replay, runtime shims, and external protocol conversion.
     owns:
       - src/runtime/adapters/
+      - src/drivers/adapters/
       - src/nav/adapters/
       - src/localization/adapters/
       - src/perception/adapters/
-      - src/*/vendor/
-      - src/gateway/visualization/
       - src/lingtu/ros2_plugin_seed.py
       - src/lingtu/ros2_shutdown.py
       - src/localization/bridge.py
       - src/localization/relocalization.py
-      - src/nav/local/legacy_ros/
       - src/gateway/rerun_bridge_module.py
 
   - id: L4_capability_modules

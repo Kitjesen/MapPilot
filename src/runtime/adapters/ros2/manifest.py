@@ -36,6 +36,7 @@ ROS_IMPORT_ROOTS: frozenset[str] = frozenset(
 )
 
 ROS_SCAN_EXCLUDED_PREFIXES: tuple[str, ...] = (
+    "drivers/real/camera/OrbbecSDK_ROS2/",
     "nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/",
 )
 
@@ -54,9 +55,9 @@ class RosCompatBoundary:
 
 ROS_COMPAT_IMPORT_BOUNDARIES: tuple[RosCompatBoundary, ...] = (
     RosCompatBoundary(
-        "gateway/visualization/rerun_bridge.py",
-        "visualization_bridge",
-        "Optional visualization bridge for ROS message streams.",
+        "drivers/adapters/ros2/livox_driver.py",
+        "livox_driver_ros2_adapter",
+        "Legacy official Livox ROS2 driver process adapter.",
     ),
     RosCompatBoundary(
         "localization/adapters/ros2/relocalization_service.py",
@@ -107,6 +108,11 @@ ROS_COMPAT_IMPORT_BOUNDARIES: tuple[RosCompatBoundary, ...] = (
         "runtime/adapters/ros2/map_save.py",
         "map_save_ros2_adapter",
         "Legacy PGO SaveMaps service adapter kept outside navigation logic.",
+    ),
+    RosCompatBoundary(
+        "runtime/adapters/ros2/rerun_overlay.py",
+        "rerun_visualization_ros2_adapter",
+        "Optional Rerun visualization overlay for ROS message streams.",
     ),
 )
 

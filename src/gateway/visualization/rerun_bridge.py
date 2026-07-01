@@ -1,8 +1,8 @@
 ﻿"""RerunBridgeModule 鈥?on-demand Rerun visualization as a Module.
 
-Logs ModulePort data to the Rerun web viewer and can optionally subscribe to
-ROS2 topics for visualization-only overlays. It is not the product runtime
-communication boundary.
+Logs ModulePort data to the Rerun web viewer. Optional ROS2 visualization
+overlays are delegated to an explicit compatibility adapter. This module is not
+the product runtime communication boundary.
 
 Usage in blueprint:
     bp.add(RerunBridgeModule, web_port=9090, grpc_port=9877)
@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from importlib import import_module
 from typing import Any
 
 from runtime.module import Module, skill
@@ -38,8 +39,8 @@ _VOXEL_SIZE = 0.08
 class RerunBridgeModule(Module, layer=6):
     """On-demand Rerun visualization bridge.
 
-    Subscribes to Module ports (odometry, map_cloud) and optionally to ROS2
-    topics (TF, costmap, detections, camera) for visualization overlays.
+    Subscribes to Module ports (odometry, map_cloud). Optional ROS2 overlays
+    are delegated to ``runtime.adapters.ros2.rerun_overlay``.
     Runtime product dataflow remains Gateway + ModulePorts.
 
     The Rerun server is lazy 鈥?only started when start_rerun() is called.
@@ -77,9 +78,8 @@ class RerunBridgeModule(Module, layer=6):
         self._counts = {"odom": 0, "cloud": 0}
         self._last_odom_t = 0.0
 
-        # Optional visualization-only ROS2 node, created on start_rerun.
-        self._ros2_node = None
-        self._ros2_subs = []
+        # Optional visualization-only ROS2 adapter, created on start_rerun.
+        self._ros2_overlay = None
 
     def setup(self) -> None:
         self.odometry.subscribe(self._on_odom)
@@ -94,7 +94,7 @@ class RerunBridgeModule(Module, layer=6):
         self.stop_rerun()
         super().stop()
 
-    # 鈹€鈹€ Rerun lifecycle 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # Rerun lifecycle
 
     @skill
     def start_rerun(self) -> str:
@@ -115,7 +115,7 @@ class RerunBridgeModule(Module, layer=6):
             self._active = True
             self.rerun_active.publish(True)
 
-            # Start optional ROS2 subscriptions for camera/TF/costmap overlays.
+            # Start optional ROS2 overlay subscriptions.
             self._start_ros2_subs()
 
             url = f"http://localhost:{self._web_port}"
@@ -150,7 +150,7 @@ class RerunBridgeModule(Module, layer=6):
             "counts": dict(self._counts),
         })
 
-    # 鈹€鈹€ Module port callbacks 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # Module port callbacks
 
     def _on_odom(self, odom: Odometry) -> None:
         self._counts["odom"] += 1
@@ -261,54 +261,27 @@ class RerunBridgeModule(Module, layer=6):
         except Exception as e:
             logger.debug("rerun goal marker log failed: %s", e)
 
-    # 鈹€鈹€ Optional ROS2 visualization subscriptions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # Optional ROS2 visualization overlay
 
     def _start_ros2_subs(self) -> None:
-        """Subscribe to ROS2 topics for optional visualization overlays only."""
+        """Start optional ROS2 visualization overlays through the adapter layer."""
         try:
-            from runtime.adapters.ros2.context import ensure_rclpy, get_shared_executor
-            ensure_rclpy()
-            from nav_msgs.msg import OccupancyGrid, Path
-            from rclpy.node import Node
-            from rclpy.qos import QoSProfile, ReliabilityPolicy
-            from sensor_msgs.msg import Image
-            from tf2_msgs.msg import TFMessage
-            from visualization_msgs.msg import MarkerArray
-
-            qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=5)
-            qos_be = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, depth=5)
-
-            self._ros2_node = Node("rerun_bridge")
-            self._ros2_subs = [
-                self._ros2_node.create_subscription(Image, TOPICS.camera_color, self._on_ros2_color, qos),
-                self._ros2_node.create_subscription(Image, TOPICS.camera_depth, self._on_ros2_depth, qos),
-                self._ros2_node.create_subscription(TFMessage, "/tf", self._on_ros2_tf, qos_be),
-                self._ros2_node.create_subscription(TFMessage, "/tf_static", self._on_ros2_tf_static, qos_be),
-                self._ros2_node.create_subscription(
-                    OccupancyGrid, TOPICS.semantic_costmap,
-                    self._on_ros2_costmap, qos_be,
-                ),
-                self._ros2_node.create_subscription(
-                    MarkerArray, TOPICS.visualization_detections,
-                    self._on_ros2_detections, qos_be,
-                ),
-                self._ros2_node.create_subscription(Path, TOPICS.global_path, self._on_ros2_path, qos_be),
-            ]
-            get_shared_executor().add_node(self._ros2_node)
+            overlay_mod = import_module("runtime.adapters.ros2.rerun_overlay")
+            overlay_cls = overlay_mod.RerunRos2Overlay
+            self._ros2_overlay = overlay_cls(self, TOPICS)
+            self._ros2_overlay.start()
             logger.info("RerunBridge: ROS2 subscriptions active")
-
         except ImportError:
             logger.info("RerunBridge: rclpy not available, Module-only visualization")
         except Exception as e:
             logger.warning("RerunBridge: ROS2 setup failed: %s", e)
 
     def _stop_ros2_subs(self) -> None:
-        if self._ros2_node:
-            self._ros2_node.destroy_node()
-            self._ros2_node = None
-        self._ros2_subs.clear()
+        if self._ros2_overlay is not None:
+            self._ros2_overlay.stop()
+            self._ros2_overlay = None
 
-    # 鈹€鈹€ ROS2 camera callbacks 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # ROS2 camera overlay callbacks
 
     _color_count = 0
     _depth_count = 0
@@ -359,7 +332,7 @@ class RerunBridgeModule(Module, layer=6):
         except Exception as e:
             logger.debug("rerun depth frame log failed: %s", e)
 
-    # 鈹€鈹€ ROS2 TF callback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # ROS2 TF overlay callbacks
 
     def _on_ros2_tf(self, msg) -> None:
         if not self._active or self._rr is None:
@@ -393,7 +366,7 @@ class RerunBridgeModule(Module, layer=6):
         except Exception as e:
             logger.debug("rerun TF static log failed: %s", e)
 
-    # 鈹€鈹€ ROS2 costmap callback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # ROS2 costmap overlay callback
 
     _costmap_count = 0
 
@@ -432,7 +405,7 @@ class RerunBridgeModule(Module, layer=6):
         except Exception as e:
             logger.debug("rerun costmap log failed: %s", e)
 
-    # 鈹€鈹€ ROS2 detections callback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # ROS2 detection overlay callback
 
     def _on_ros2_detections(self, msg) -> None:
         if not self._active or self._rr is None:
@@ -459,7 +432,7 @@ class RerunBridgeModule(Module, layer=6):
         except Exception as e:
             logger.debug("rerun detections log failed: %s", e)
 
-    # 鈹€鈹€ ROS2 path callback 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    # ROS2 path overlay callback
 
     def _on_ros2_path(self, msg) -> None:
         if not self._active or self._rr is None:

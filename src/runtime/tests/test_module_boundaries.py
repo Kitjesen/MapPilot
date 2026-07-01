@@ -88,6 +88,7 @@ def test_architecture_layer_manifest_is_valid_and_drives_boundary_rules() -> Non
     assert "src/runtime/profiles/" in manifest["layers"][1]["owns"]
     assert "src/runtime/blueprints/" in manifest["layers"][2]["owns"]
     assert "src/runtime/adapters/" in manifest["layers"][3]["owns"]
+    assert "src/drivers/adapters/" in manifest["layers"][3]["owns"]
     assert "src/nav/adapters/" in manifest["layers"][3]["owns"]
     assert "src/nav/local/" in manifest["layers"][4]["owns"]
     assert "src/nav/kernel/" in manifest["layers"][5]["owns"]
@@ -108,12 +109,12 @@ def test_architecture_layer_lookup_uses_most_specific_path_owner() -> None:
     assert architecture_layer_for_path(
         "src/nav/services/plan/local_planner/paths"
     )["id"] == "L5_algorithm_kernels"
-    assert architecture_layer_for_path("src/nav/local/legacy_ros/local_planner/src/pathFollower.cpp")[
-        "id"
-    ] == "L3_adapter_layer"
-    assert architecture_layer_for_path("src/nav/local/legacy_ros/terrain_analysis_ext/src/terrainAnalysisExt.cpp")[
-        "id"
-    ] == "L3_adapter_layer"
+    assert architecture_layer_for_path(
+        "src/drivers/adapters/ros2/livox_driver.py"
+    )["id"] == "L3_adapter_layer"
+    assert architecture_layer_for_path(
+        "src/runtime/adapters/ros2/rerun_overlay.py"
+    )["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/nav/adapters/ros2/nav/map_out.py")["id"] == (
         "L3_adapter_layer"
     )
@@ -324,7 +325,7 @@ def test_runtime_top_level_api_does_not_export_native_module() -> None:
 
 
 def test_native_module_helpers_are_limited_to_ros2_compat_adapters() -> None:
-    allowed: set[str] = set()
+    allowed = {"src/drivers/adapters/ros2/livox_driver.py"}
     forbidden_imports = {"runtime.native_install", "runtime.native_module"}
     violations: list[str] = []
 
@@ -365,18 +366,13 @@ def test_ros_imports_are_explicit_compat_boundaries() -> None:
     assert classified > 0
     assert "slam_ros2_bridge" in categories
     assert "tare_ros2_bridge" in categories
-    assert "simulation_endpoint_adapter" in categories
+    assert "livox_driver_ros2_adapter" in categories
+    assert "rerun_visualization_ros2_adapter" in categories
     assert "map_save_ros2_adapter" in categories
     assert "relocalization_ros2_adapter" in categories
     assert "runtime/adapters/ros2/context.py" in allowed_prefixes
     assert "runtime/adapters/ros2/map_save.py" in allowed_prefixes
-    assert "drivers/adapters/ros2/camera_bridge.py" in allowed_prefixes
-    assert "drivers/adapters/ros2/camera_snapshot.py" in allowed_prefixes
     assert "drivers/adapters/ros2/livox_driver.py" in allowed_prefixes
-    assert "drivers/adapters/ros2/mujoco_ros2_bridge.py" in allowed_prefixes
-    assert "drivers/adapters/ros2/mujoco_viz_bridge.py" in allowed_prefixes
-    assert "drivers/adapters/ros2/nova_nav_bridge.py" in allowed_prefixes
-    assert "drivers/adapters/ros2/sim_driver.py" in allowed_prefixes
     assert "nav/adapters/ros2/nav/map_out.py" in allowed_prefixes
     assert "nav/adapters/ros2/nav/nav_out.py" in allowed_prefixes
     assert "nav/adapters/ros2/tare_bridge.py" in allowed_prefixes
@@ -384,12 +380,13 @@ def test_ros_imports_are_explicit_compat_boundaries() -> None:
     assert "perception/adapters/ros2/perception_publishers.py" in allowed_prefixes
     assert "localization/adapters/ros2/relocalization_service.py" in allowed_prefixes
     assert "localization/adapters/ros2/slam_bridge.py" in allowed_prefixes
-    assert "gateway/visualization/rerun_bridge.py" in allowed_prefixes
+    assert "runtime/adapters/ros2/rerun_overlay.py" in allowed_prefixes
     assert "drivers/sim/" not in allowed_prefixes
     assert "drivers/sim/mujoco_ros2_bridge.py" not in allowed_prefixes
     assert "drivers/sim/mujoco_viz_bridge.py" not in allowed_prefixes
     assert "drivers/sim/nova_nav_bridge.py" not in allowed_prefixes
     assert "drivers/sim/ros2_sim_driver.py" not in allowed_prefixes
+    assert "gateway/visualization/rerun_bridge.py" not in allowed_prefixes
     assert "drivers/real/thunder/camera_bridge_module.py" not in allowed_prefixes
     assert "exploration/module.py" not in allowed_prefixes
     assert "exploration/ros2_bridge.py" not in allowed_prefixes
