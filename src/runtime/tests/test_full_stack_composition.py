@@ -140,7 +140,8 @@ def test_compose_full_stack_modules_can_disable_local_lidar_driver() -> None:
 
     assert "LidarModule" not in names
     assert "ThunderDriver" not in names
-    assert "SlamBridgeModule" in names
+    assert "SlamAdapterModule" in names
+    assert "SlamBridgeModule" not in names
 
 
 def test_compose_full_stack_modules_keeps_lidar_driver_start_opt_in() -> None:

@@ -31,13 +31,13 @@ class TwistWithCovariance(IdlStruct, typename="lingtu::dds::TwistWithCovariance"
 
 
 @dataclass
-class PoseStamped(IdlStruct, typename="geometry_msgs::msg::dds_::PoseStamped_"):
+class PoseStamped(IdlStruct, typename="lingtu::dds::PoseStamped"):
     header: Header
     pose: Pose
 
 
 @dataclass
-class TwistStamped(IdlStruct, typename="geometry_msgs::msg::dds_::TwistStamped_"):
+class TwistStamped(IdlStruct, typename="lingtu::dds::TwistStamped"):
     header: Header
     twist: Twist
 

@@ -133,6 +133,8 @@ def _selected_slam_module(names: frozenset[str], *, slam_profile: str) -> str:
         return ""
     if "SlamModule" in names:
         return "SlamModule"
+    if "SlamAdapterModule" in names:
+        return "SlamAdapterModule"
     if "SlamBridgeModule" in names:
         return "SlamBridgeModule"
     return ""

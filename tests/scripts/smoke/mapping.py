@@ -19,9 +19,13 @@ bp = blueprint_for_resolved_profile("stub", dict(
 system = bp.build()
 print("Modules: %d" % len(system.modules))
 
-# Check SLAM module
-slam = system.modules.get("SlamBridgeModule")
-print("SlamBridgeModule: %s" % (slam is not None))
+# Check the product SLAM entry first; ROS2 bridge is compat-only.
+slam = (
+    system.modules.get("SlamAdapterModule")
+    or system.modules.get("SlamModule")
+    or system.modules.get("SlamBridgeModule")
+)
+print("SLAM module: %s" % (slam is not None))
 
 system.start()
 print("System started. Waiting for SLAM + LiDAR data...")

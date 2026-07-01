@@ -65,7 +65,7 @@ def test_thunder_product_configs_lock_core_runtime_modes():
 
     nav = thunder_nav_config()
     assert nav["slam_profile"] == "localizer"
-    assert nav["localization_adapter"] == "lcm_endpoint"
+    assert nav["localization_adapter"] == "dds_endpoint"
     assert "endpoint_contract" not in nav
     assert nav["planner"] == "octoplanner3d"
     assert nav["tomogram"] == _resolve_octoplanner3d_map()
@@ -120,7 +120,8 @@ def test_thunder_blueprint_accepts_resolved_config() -> None:
     names = _entry_names(bp)
 
     assert "ThunderDriver" in names
-    assert "SlamBridgeModule" in names
+    assert "SlamAdapterModule" in names
+    assert "SlamBridgeModule" not in names
     assert "GatewayModule" not in names
 
 
@@ -156,6 +157,7 @@ def test_thunder_lite_blueprint_is_minimal_no_ros_product_entrypoint() -> None:
     wires = _wire_set(bp)
 
     assert {"ThunderDriver", "nav.mission", "nav.safety", "nav.velocity_mux"} <= names
+    assert "SlamAdapterModule" not in names
     assert "SlamBridgeModule" not in names
     assert "SLAMModule" not in names
     assert "GnssModule" not in names

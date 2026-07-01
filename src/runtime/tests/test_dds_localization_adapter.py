@@ -197,7 +197,7 @@ def test_dds_localization_adapter_publishes_map_cloud() -> None:
 def test_slam_stack_can_select_dds_localization_adapter() -> None:
     bp = slam("bridge", enable_visual_backup=False, localization_adapter="dds_endpoint")
 
-    assert bp._entries[0].name == "SlamBridgeModule"
+    assert bp._entries[0].name == "SlamAdapterModule"
     assert bp._entries[0].module_cls is DDSLocalizationAdapterModule
 
 
@@ -205,7 +205,7 @@ def test_thunder_field_product_blueprints_use_dds_localization_adapter() -> None
     for profile in ("map", "nav", "explore", "tare_explore"):
         config = resolve_profile_config(profile)
         bp = blueprint_for_resolved_profile(profile, config)
-        slam_entry = next(entry for entry in bp._entries if entry.name == "SlamBridgeModule")
+        slam_entry = next(entry for entry in bp._entries if entry.name == "SlamAdapterModule")
 
         assert config["_runtime_endpoint"] == "thunder_field"
         assert config["_endpoint_transport"] == "dds"

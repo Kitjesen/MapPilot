@@ -248,7 +248,9 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     cmake = Path("src/localization/slam/cpp/CMakeLists.txt").read_text(encoding="utf-8")
     module = Path("src/localization/slam/module.py").read_text(encoding="utf-8")
     binding = Path("src/localization/slam/cpp/bind.cpp").read_text(encoding="utf-8")
-    ros2_dds_runtime = Path("src/localization/slam/cpp/ros2_dds_runtime.cpp").read_text(encoding="utf-8")
+    ros2_dds_runtime = Path(
+        "src/localization/adapters/ros2/cpp/ros2_dds_runtime.cpp"
+    ).read_text(encoding="utf-8")
     cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
     build_script = Path("scripts/build/build_slam_core.sh").read_text(encoding="utf-8")
 
@@ -257,7 +259,7 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in cmake
     assert "add_executable(lingtu_slam_dds_runtime cyclone_runtime.cpp)" in cmake
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" in cmake
-    assert "add_executable(lingtu_slam_ros2_dds_runtime ros2_dds_runtime.cpp)" in cmake
+    assert "../../adapters/ros2/cpp/ros2_dds_runtime.cpp" in cmake
     assert "find_package(iceoryx_binding_c QUIET)" in cmake
     assert "find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)" in cmake
     assert "CycloneDDS-CXX::idlcxx" in cmake
@@ -268,7 +270,8 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "NATIVE_SLAM_BINDING_SCHEMA" in module
     assert "NB_MODULE(_native, m)" in binding
     assert "SlamRunner" in binding
-    assert "create_subscription<lingtu::message::LivoxCustomMsg>" in ros2_dds_runtime
+    assert "#include <livox_ros_driver2/msg/custom_msg.hpp>" in ros2_dds_runtime
+    assert "create_subscription<livox_ros_driver2::msg::CustomMsg>" in ros2_dds_runtime
     assert "backend_->feedLidar" in ros2_dds_runtime
     assert "backend_->feedImu" in ros2_dds_runtime
     assert "#include \"dds/dds.hpp\"" in cyclone_runtime
@@ -278,6 +281,21 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "dds::sub::DataReader<lt::LivoxFrame>" in cyclone_runtime
     assert "backend->feedLidar" in cyclone_runtime
     assert "backend->feedImu" in cyclone_runtime
+
+
+def test_cpp_message_topic_contract_stays_ros_free() -> None:
+    header = Path("src/message/cpp/dds_topics.hpp").read_text(encoding="utf-8")
+
+    forbidden = (
+        "rclcpp",
+        "sensor_msgs",
+        "nav_msgs",
+        "geometry_msgs",
+        "std_msgs",
+        "livox_ros_driver2",
+    )
+    for marker in forbidden:
+        assert marker not in header
 
 
 def test_slam_loader_prefers_schema_checked_native_binding(monkeypatch) -> None:

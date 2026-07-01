@@ -1253,7 +1253,7 @@ def test_slam_stack_visual_backup_does_not_import_cv2_at_build_time():
         )
 
         assert "cv2" not in sys.modules
-        assert _entry_names(bp) == ["SlamBridgeModule", "DepthVisualOdomModule"]
+        assert _entry_names(bp) == ["SlamAdapterModule", "DepthVisualOdomModule"]
     finally:
         if had_cv2:
             sys.modules["cv2"] = cv2_before

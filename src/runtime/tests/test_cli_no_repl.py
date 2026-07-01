@@ -479,7 +479,7 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
     out = capsys.readouterr().out
     assert "Runtime:  endpoint=thunder_field data_source=thunder_field" in out
     assert (
-        "Topic frames: lidar_scan=lidar_link imu=lidar_link "
+        "Topic frames: raw_frame=lidar_link raw=lidar_link "
         "odometry=odom,map registered_cloud=body "
         "map_cloud=map global_path=map local_path=map,odom,body cmd_vel=body"
     ) in out
@@ -490,7 +490,7 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
     assert os.environ["LINGTU_ENDPOINT"] == "thunder_field"
     assert os.environ["LINGTU_DATA_SOURCE"] == "thunder_field"
     assert os.environ["LINGTU_MODULE_TRANSPORT"] == "local"
-    assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "lcm"
+    assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert os.environ["LINGTU_RUNTIME_CONTRACT"] == "thunder_field"
     assert os.environ["LINGTU_COMMAND_SINK"] == "hardware_driver_after_cmd_vel_mux"
     assert os.environ["LINGTU_SIMULATION_ONLY"] == "0"
@@ -498,7 +498,7 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
     assert saved_state["runtime"]["data_source"] == "thunder_field"
     assert saved_state["runtime"]["runtime_contract"] == "thunder_field"
     assert saved_state["runtime"]["module_transport"] == "local"
-    assert saved_state["runtime"]["endpoint_transport"] == "lcm"
+    assert saved_state["runtime"]["endpoint_transport"] == "dds"
     assert saved_state["runtime"]["command_sink"] == "hardware_driver_after_cmd_vel_mux"
     assert saved_state["runtime"]["validation"] == {
         "ok": True,
@@ -537,7 +537,7 @@ def test_thunder_nav_alias_runs_canonical_nav_profile(monkeypatch, tmp_path):
     assert os.environ["LINGTU_PROFILE"] == "nav"
     assert saved_state["profile"] == "nav"
     assert saved_state["runtime"]["endpoint"] == "thunder_field"
-    assert saved_state["runtime"]["endpoint_transport"] == "lcm"
+    assert saved_state["runtime"]["endpoint_transport"] == "dds"
     assert saved_state["cfg"]["robot"] == "thunder"
     assert len(calls["product"]) == 1
     assert calls["product"][0]["robot"] == "thunder"
@@ -575,7 +575,7 @@ def test_cli_module_transport_override_reaches_runtime_build(
     main_mod.main()
 
     assert os.environ["LINGTU_MODULE_TRANSPORT"] == "lcm"
-    assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "lcm"
+    assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert calls["product"][0]["module_transport"] == "lcm"
     assert system.build_transport is sentinel_transport
     assert system.started is True

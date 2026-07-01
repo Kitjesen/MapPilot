@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+from message.livox_frame import POINT_DTYPE, LivoxPointFrame
 from runtime.msgs.numpy_compat import np
 
 from ._base import IdlStruct, types

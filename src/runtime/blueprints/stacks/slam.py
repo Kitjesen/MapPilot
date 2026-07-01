@@ -51,7 +51,7 @@ def slam(
     try:
         if _uses_compat_adapter(localization_adapter):
             module_cls = _localization_adapter_module(localization_adapter)
-            module_alias = "SlamBridgeModule"
+            module_alias = slam_adapter_module_name(localization_adapter)
         else:
             from localization.slam.module import SlamModule as module_cls
 
@@ -97,6 +97,19 @@ def _localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
 def _uses_compat_adapter(adapter_name: str | None) -> bool:
     adapter = str(adapter_name or "").strip().lower()
     return bool(adapter and adapter not in {"native", "native_slam", "slam"})
+
+
+def slam_adapter_module_name(adapter_name: str | None) -> str:
+    """Return the graph alias for an explicit localization adapter.
+
+    Only the ROS2 adapter is a bridge. DDS/LCM endpoints are native transport
+    adapters and should not appear in product graphs as ``SlamBridgeModule``.
+    """
+
+    adapter = str(adapter_name or "").strip().lower()
+    if adapter in {"ros2", "ros2_slam_bridge"}:
+        return "SlamBridgeModule"
+    return "SlamAdapterModule"
 
 
 def normalize_slam_profile(profile: str) -> str:

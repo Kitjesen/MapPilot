@@ -54,8 +54,22 @@ RUNTIME_MODEL_OWNER_SOURCES = {
 ALGORITHM_KERNEL_SEAM_SOURCES = {
     "nav_kernel_package": SRC / "nav" / "kernel" / "__init__.py",
     "nav_kernel_paths": SRC / "nav" / "kernel" / "paths.py",
-    "nav_kernel_runtime": SRC / "nav" / "kernel" / "runtime.py",
     "nav_kernel_cmake": SRC / "nav" / "kernel" / "CMakeLists.txt",
+}
+
+LOCAL_PLANNER_SERVICE_SOURCES = {
+    "local_planner_runtime": SRC
+    / "nav"
+    / "services"
+    / "plan"
+    / "local_planner"
+    / "runtime.py",
+    "local_planner_service": SRC
+    / "nav"
+    / "services"
+    / "plan"
+    / "local_planner"
+    / "service.py",
 }
 
 LCM_EXTERNAL_ADAPTER_SOURCES = {
@@ -293,6 +307,13 @@ def test_directory_stage_keeps_nav_kernel_seam_under_nav_kernel() -> None:
     _assert_sources_exist_under_owner(
         ALGORITHM_KERNEL_SEAM_SOURCES,
         SRC / "nav" / "kernel",
+    )
+
+
+def test_directory_stage_keeps_local_planner_runtime_under_plan_service() -> None:
+    _assert_sources_exist_under_owner(
+        LOCAL_PLANNER_SERVICE_SOURCES,
+        SRC / "nav" / "services" / "plan" / "local_planner",
     )
 
 

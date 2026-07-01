@@ -34,7 +34,11 @@ bp = blueprint_for_resolved_profile(
 )
 system = bp.build()
 
-bridge = system.modules.get("SlamBridgeModule")
+slam = (
+    system.modules.get("SlamAdapterModule")
+    or system.modules.get("SlamModule")
+    or system.modules.get("SlamBridgeModule")
+)
 
 
 def on_cloud(cloud):
@@ -47,10 +51,10 @@ def on_odom(odom):
     rr.log("world/robot", rr.Points3D([pos], radii=0.15, colors=[[255, 0, 0]]))
 
 
-if bridge:
-    bridge.map_cloud._add_callback(on_cloud)
-    bridge.odometry._add_callback(on_odom)
-    print("Rerun callbacks hooked to SlamBridgeModule")
+if slam:
+    slam.map_cloud._add_callback(on_cloud)
+    slam.odometry._add_callback(on_odom)
+    print("Rerun callbacks hooked to SLAM module")
 
 system.start()
 print("System started. Ctrl+C to stop.")
@@ -58,9 +62,9 @@ print("System started. Ctrl+C to stop.")
 try:
     while True:
         time.sleep(1)
-        if bridge:
-            odom_count = bridge.odometry.msg_count
-            cloud_count = bridge.map_cloud.msg_count
+        if slam:
+            odom_count = slam.odometry.msg_count
+            cloud_count = slam.map_cloud.msg_count
             print("odom=%d cloud=%d" % (odom_count, cloud_count))
             if odom_count > 0 and cloud_count > 0:
                 print("DATA FLOWING; open http://localhost:9090")

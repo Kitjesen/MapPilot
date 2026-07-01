@@ -3,8 +3,14 @@
 
 #include <builtin_interfaces/msg/time.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <livox_ros_driver2/msg/custom_msg.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/float32.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -76,7 +82,7 @@ std::unique_ptr<ISlamBackend> createBackend(const std::string& backend) {
   return makeContractBackend(normalized);
 }
 
-LidarFrame toLidarFrame(const lingtu::message::LivoxCustomMsg& msg) {
+LidarFrame toLidarFrame(const livox_ros_driver2::msg::CustomMsg& msg) {
   LidarFrame frame;
   frame.stamp_s =
       msg.timebase > 0 ? static_cast<double>(msg.timebase) * 1e-9 : stampSeconds(msg.header.stamp);
@@ -96,7 +102,7 @@ LidarFrame toLidarFrame(const lingtu::message::LivoxCustomMsg& msg) {
   return frame;
 }
 
-ImuSample toImuSample(const lingtu::message::Imu& msg) {
+ImuSample toImuSample(const sensor_msgs::msg::Imu& msg) {
   ImuSample sample;
   sample.stamp_s = stampSeconds(msg.header.stamp);
   sample.qx = msg.orientation.x;
@@ -239,19 +245,19 @@ class SlamRos2DdsRuntime final : public rclcpp::Node {
       RCLCPP_WARN(get_logger(), "SLAM mode set returned: %s", status.message.c_str());
     }
 
-    lidar_sub_ = create_subscription<lingtu::message::LivoxCustomMsg>(
+    lidar_sub_ = create_subscription<livox_ros_driver2::msg::CustomMsg>(
         std::string(lingtu::message::kLidarRawFrame.topic),
         rclcpp::SensorDataQoS(),
-        [this](lingtu::message::LivoxCustomMsg::SharedPtr msg) {
+        [this](livox_ros_driver2::msg::CustomMsg::SharedPtr msg) {
           const Status s = backend_->feedLidar(toLidarFrame(*msg));
           if (!s.ok) {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "feedLidar: %s", s.message.c_str());
           }
         });
-    imu_sub_ = create_subscription<lingtu::message::Imu>(
+    imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
         std::string(lingtu::message::kImuRaw.topic),
         rclcpp::SensorDataQoS(),
-        [this](lingtu::message::Imu::SharedPtr msg) {
+        [this](sensor_msgs::msg::Imu::SharedPtr msg) {
           const Status s = backend_->feedImu(toImuSample(*msg));
           if (!s.ok) {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "feedImu: %s", s.message.c_str());
@@ -302,8 +308,8 @@ class SlamRos2DdsRuntime final : public rclcpp::Node {
 
   CliConfig cli_;
   std::unique_ptr<ISlamBackend> backend_;
-  rclcpp::Subscription<lingtu::message::LivoxCustomMsg>::SharedPtr lidar_sub_;
-  rclcpp::Subscription<lingtu::message::Imu>::SharedPtr imu_sub_;
+  rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr lidar_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr state_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr registered_pub_;

@@ -44,10 +44,10 @@ _TELEOP_CHAIN = frozenset({
 }) | _COMMAND_OUTPUT_CHAIN
 
 _MAP_CHAIN = frozenset({
-    "SlamBridgeModule.map_cloud->OccupancyGridModule.map_cloud@/slam/map_cloud",
-    "SlamBridgeModule.map_cloud->VoxelGridModule.map_cloud@/slam/map_cloud",
-    "SlamBridgeModule.map_cloud->ElevationMapModule.map_cloud@/slam/map_cloud",
-    "SlamBridgeModule.map_cloud->nav.maps.map_cloud@/slam/map_cloud",
+    "SlamAdapterModule.map_cloud->OccupancyGridModule.map_cloud@/slam/map_cloud",
+    "SlamAdapterModule.map_cloud->VoxelGridModule.map_cloud@/slam/map_cloud",
+    "SlamAdapterModule.map_cloud->ElevationMapModule.map_cloud@/slam/map_cloud",
+    "SlamAdapterModule.map_cloud->nav.maps.map_cloud@/slam/map_cloud",
     "OccupancyGridModule.costmap->TraversabilityCostModule.costmap",
     "ESDFModule.esdf->TraversabilityCostModule.esdf",
     "TraversabilityCostModule.fused_cost->GatewayModule.costmap",
@@ -102,6 +102,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "nav.local_planner",
             "nav.path_follower",
             "SlamModule",
+            "SlamAdapterModule",
             "SlamBridgeModule",
         }),
         required_wires=_TELEOP_CHAIN,
@@ -117,7 +118,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "nav.out",
             "nav.safety",
             "nav.velocity_mux",
-            "SlamBridgeModule",
+            "SlamAdapterModule",
             "OccupancyGridModule",
             "TraversabilityCostModule",
         }),
@@ -137,7 +138,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         required_modules=frozenset({
             "GatewayModule",
             "TeleopModule",
-            "SlamBridgeModule",
+            "SlamAdapterModule",
             "OccupancyGridModule",
             "TraversabilityCostModule",
             "nav.maps",
@@ -158,7 +159,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         product_mode="tracking",
         required_modules=frozenset({
             "GatewayModule",
-            "SlamBridgeModule",
+            "SlamAdapterModule",
             "nav.mission",
             "nav.local_planner",
             "nav.out",
@@ -176,7 +177,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         product_mode="navigation",
         required_modules=frozenset({
             "GatewayModule",
-            "SlamBridgeModule",
+            "SlamAdapterModule",
             "nav.mission",
             "nav.local_planner",
             "nav.out",
@@ -194,7 +195,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         product_mode="inspection",
         required_modules=frozenset({
             "GatewayModule",
-            "SlamBridgeModule",
+            "SlamAdapterModule",
             "nav.mission",
             "nav.local_planner",
             "nav.out",

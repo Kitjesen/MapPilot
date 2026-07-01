@@ -16,13 +16,13 @@ class Odometry(IdlStruct, typename="lingtu::dds::Odometry"):
 
 
 @dataclass
-class Path(IdlStruct, typename="nav_msgs::msg::dds_::Path_"):
+class Path(IdlStruct, typename="lingtu::dds::Path"):
     header: Header
     poses: types.sequence[PoseStamped]
 
 
 @dataclass
-class MapMetaData(IdlStruct, typename="nav_msgs::msg::dds_::MapMetaData_"):
+class MapMetaData(IdlStruct, typename="lingtu::dds::MapMetaData"):
     map_load_time: Time
     resolution: types.float32
     width: types.uint32
@@ -31,7 +31,7 @@ class MapMetaData(IdlStruct, typename="nav_msgs::msg::dds_::MapMetaData_"):
 
 
 @dataclass
-class OccupancyGrid(IdlStruct, typename="nav_msgs::msg::dds_::OccupancyGrid_"):
+class OccupancyGrid(IdlStruct, typename="lingtu::dds::OccupancyGrid"):
     header: Header
     info: MapMetaData
     data: types.sequence[types.int8]

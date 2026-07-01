@@ -1265,7 +1265,10 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
         "/nav/frontier_candidate",
         "/nav/global_path",
         "/nav/way_point",
+        "/nav/terrain_map",
+        "/nav/traversability",
         "/nav/local_path",
+        "/nav/local_planner/control_hint",
         "/nav/cmd_vel",
         "/nav/added_obstacles",
         "/nav/check_obstacle",
@@ -2782,7 +2785,7 @@ def test_runtime_dataflow_subscribe_route_returns_read_only_sse_plan(monkeypatch
     assert payload["selector"] == "odometry"
     assert payload["topic"] == TOPICS.odometry
     assert payload["event_types"] == ["odometry"]
-    assert payload["stream_url"] == "/api/v1/events?topic=%2Fnav%2Fodometry"
+    assert payload["stream_url"] == "/api/v1/events?topic=%2Fslam%2Fodometry"
     assert payload["stream_interfaces"] == [
         {
             "transport": "gateway_sse",

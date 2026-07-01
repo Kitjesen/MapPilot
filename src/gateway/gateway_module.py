@@ -130,7 +130,7 @@ _BACKEND_RECONFIGURE_TARGETS = {
     "local_planner": ("nav.local_planner",),
     "path_follower": ("nav.path_follower",),
     "terrain": ("nav.terrain",),
-    "slam": ("SlamBridgeModule", "SlamModule"),
+    "slam": ("SlamAdapterModule", "SlamModule", "SlamBridgeModule"),
 }
 
 
@@ -273,8 +273,8 @@ class GatewayModule(Module, layer=6):
     costmap:        In[dict]  # from TraversabilityCostModule -fused cost grid
     slope_grid:     In[dict]  # from TraversabilityCostModule -slope in degrees
     agent_message:  In[dict]  # from SemanticPlanner -chat-facing messages
-    gnss_fusion_health: In[dict]  # from SlamBridgeModule -GNSS/SLAM alignment diag
-    localization_status: In[dict] # from SlamBridgeModule -full SLAM health (cov_trace, iter_num, ...)
+    gnss_fusion_health: In[dict]  # from SLAM GNSS/alignment diagnostics
+    localization_status: In[dict] # from SLAM health (cov_trace, iter_num, ...)
     tare_stats:         In[dict]  # from TAREExplorerModule -exploration diag
     supervisor_state:   In[dict]  # from ExplorationSupervisorModule -watchdog
 
@@ -1044,8 +1044,9 @@ class GatewayModule(Module, layer=6):
             (
                 module
                 for name in (
-                    "SlamBridgeModule",
+                    "SlamAdapterModule",
                     "SlamModule",
+                    "SlamBridgeModule",
                 )
                 for module in (modules.get(name),)
                 if module is not None and _has_relocalization_capability(module)

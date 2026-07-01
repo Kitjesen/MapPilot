@@ -16,7 +16,7 @@ class Text(IdlStruct, typename="lingtu::dds::Text"):
 
 
 @dataclass
-class String(IdlStruct, typename="std_msgs::msg::dds_::String_"):
+class String(IdlStruct, typename="lingtu::dds::String"):
     data: str
 
 

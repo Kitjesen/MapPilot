@@ -50,7 +50,7 @@ _BACKEND_RECONFIGURE_TARGETS = {
     "local_planner": ("nav.local_planner",),
     "path_follower": ("nav.path_follower",),
     "terrain": ("nav.terrain",),
-    "slam": ("SlamBridgeModule", "SlamModule"),
+    "slam": ("SlamAdapterModule", "SlamModule", "SlamBridgeModule"),
 }
 
 

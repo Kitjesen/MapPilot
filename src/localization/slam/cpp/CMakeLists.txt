@@ -124,9 +124,12 @@ if(LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME)
   find_package(nav_msgs REQUIRED)
   find_package(std_msgs REQUIRED)
 
-  add_executable(lingtu_slam_ros2_dds_runtime ros2_dds_runtime.cpp)
+  add_executable(
+    lingtu_slam_ros2_dds_runtime
+    ../../adapters/ros2/cpp/ros2_dds_runtime.cpp)
   target_compile_features(lingtu_slam_ros2_dds_runtime PRIVATE cxx_std_17)
   target_include_directories(lingtu_slam_ros2_dds_runtime PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
   target_link_libraries(lingtu_slam_ros2_dds_runtime lingtu_slam_contract)
   ament_target_dependencies(lingtu_slam_ros2_dds_runtime

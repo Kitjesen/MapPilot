@@ -64,6 +64,11 @@ struct Pose {
   Quaternion orientation;
 };
 
+struct PoseStamped {
+  Header header;
+  Pose pose;
+};
+
 struct PoseWithCovariance {
   Pose pose;
   double covariance[36];
@@ -72,6 +77,11 @@ struct PoseWithCovariance {
 struct Twist {
   Vector3 linear;
   Vector3 angular;
+};
+
+struct TwistStamped {
+  Header header;
+  Twist twist;
 };
 
 struct TwistWithCovariance {
@@ -111,6 +121,29 @@ struct Float32 {
 
 struct Text {
   string data;
+};
+
+struct String {
+  string data;
+};
+
+struct Path {
+  Header header;
+  sequence<PoseStamped> poses;
+};
+
+struct MapMetaData {
+  Time map_load_time;
+  float resolution;
+  unsigned long width;
+  unsigned long height;
+  Pose origin;
+};
+
+struct OccupancyGrid {
+  Header header;
+  MapMetaData info;
+  sequence<octet> data;
 };
 
 };

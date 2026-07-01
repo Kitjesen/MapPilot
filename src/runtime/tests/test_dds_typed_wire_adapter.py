@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
-from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+from message.livox_frame import POINT_DTYPE, LivoxPointFrame
 from message.dds import from_dds_message, to_dds_message
 from runtime.msgs.numpy_compat import np
 from runtime.runtime_interface import TOPICS
@@ -130,3 +131,11 @@ def test_livox_raw_frame_round_trips_through_registered_dds_payload(monkeypatch)
     assert roundtrip.point_count == 1
     assert float(roundtrip.points["x"][0]) == 1.0
     assert int(roundtrip.points["offset_time_ns"][0]) == 123
+
+
+def test_livox_dds_contract_does_not_import_driver_layer() -> None:
+    import message.dds_types.livox as livox_contract
+
+    source = Path(livox_contract.__file__).read_text(encoding="utf-8")
+
+    assert "drivers.real" not in source

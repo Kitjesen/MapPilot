@@ -2,91 +2,12 @@
 
 #include <string_view>
 
-// Static native DDS topic/type contract plus optional ROS 2 adapter aliases.
+// Static native DDS topic/type contract.
 // Direct CycloneDDS C++ data readers/writers must use idlcxx-generated types
-// for the matching idl_type; the fallback structs below are contract tags only.
-
-#if __has_include(<livox_ros_driver2/msg/custom_msg.hpp>)
-#include <livox_ros_driver2/msg/custom_msg.hpp>
-#define LINGTU_MESSAGE_HAS_LIVOX_ROS_DRIVER2 1
-#else
-#define LINGTU_MESSAGE_HAS_LIVOX_ROS_DRIVER2 0
-#endif
-
-#if __has_include(<geometry_msgs/msg/pose_stamped.hpp>) && __has_include(<geometry_msgs/msg/twist_stamped.hpp>)
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <geometry_msgs/msg/twist_stamped.hpp>
-#define LINGTU_MESSAGE_HAS_GEOMETRY_MSGS 1
-#else
-#define LINGTU_MESSAGE_HAS_GEOMETRY_MSGS 0
-#endif
-
-#if __has_include(<nav_msgs/msg/odometry.hpp>) && __has_include(<nav_msgs/msg/path.hpp>) && __has_include(<nav_msgs/msg/occupancy_grid.hpp>)
-#include <nav_msgs/msg/occupancy_grid.hpp>
-#include <nav_msgs/msg/odometry.hpp>
-#include <nav_msgs/msg/path.hpp>
-#define LINGTU_MESSAGE_HAS_NAV_MSGS 1
-#else
-#define LINGTU_MESSAGE_HAS_NAV_MSGS 0
-#endif
-
-#if __has_include(<sensor_msgs/msg/imu.hpp>) && __has_include(<sensor_msgs/msg/point_cloud2.hpp>)
-#include <sensor_msgs/msg/imu.hpp>
-#include <sensor_msgs/msg/point_cloud2.hpp>
-#define LINGTU_MESSAGE_HAS_SENSOR_MSGS 1
-#else
-#define LINGTU_MESSAGE_HAS_SENSOR_MSGS 0
-#endif
-
-#if __has_include(<std_msgs/msg/float32.hpp>) && __has_include(<std_msgs/msg/string.hpp>)
-#include <std_msgs/msg/float32.hpp>
-#include <std_msgs/msg/string.hpp>
-#define LINGTU_MESSAGE_HAS_STD_MSGS 1
-#else
-#define LINGTU_MESSAGE_HAS_STD_MSGS 0
-#endif
+// for the matching idl_type. ROS 2 message aliases belong in compat/adapters,
+// never in this shared message contract.
 
 namespace lingtu::message {
-
-#if LINGTU_MESSAGE_HAS_LIVOX_ROS_DRIVER2
-using LivoxCustomMsg = livox_ros_driver2::msg::CustomMsg;
-#else
-struct LivoxCustomMsg {};
-#endif
-
-#if LINGTU_MESSAGE_HAS_SENSOR_MSGS
-using Imu = sensor_msgs::msg::Imu;
-using PointCloud2 = sensor_msgs::msg::PointCloud2;
-#else
-struct Imu {};
-struct PointCloud2 {};
-#endif
-
-#if LINGTU_MESSAGE_HAS_NAV_MSGS
-using Odometry = nav_msgs::msg::Odometry;
-using OccupancyGrid = nav_msgs::msg::OccupancyGrid;
-using Path = nav_msgs::msg::Path;
-#else
-struct Odometry {};
-struct OccupancyGrid {};
-struct Path {};
-#endif
-
-#if LINGTU_MESSAGE_HAS_GEOMETRY_MSGS
-using PoseStamped = geometry_msgs::msg::PoseStamped;
-using TwistStamped = geometry_msgs::msg::TwistStamped;
-#else
-struct PoseStamped {};
-struct TwistStamped {};
-#endif
-
-#if LINGTU_MESSAGE_HAS_STD_MSGS
-using Float32 = std_msgs::msg::Float32;
-using String = std_msgs::msg::String;
-#else
-struct Float32 {};
-struct String {};
-#endif
 
 struct TopicContract {
   std::string_view topic;
@@ -128,27 +49,27 @@ inline constexpr TopicContract kSlamLocalizationHealth{
     "lingtu.dds.Text", "lingtu::dds::Text"};
 inline constexpr TopicContract kNavGlobalPath{
     "/nav/global_path", "rt/nav/global_path",
-    "nav_msgs/msg/Path", "nav_msgs::msg::Path"};
+    "lingtu.dds.Path", "lingtu::dds::Path"};
 inline constexpr TopicContract kNavLocalPath{
     "/nav/local_path", "rt/nav/local_path",
-    "nav_msgs/msg/Path", "nav_msgs::msg::Path"};
+    "lingtu.dds.Path", "lingtu::dds::Path"};
 inline constexpr TopicContract kNavWayPoint{
     "/nav/way_point", "rt/nav/way_point",
-    "geometry_msgs/msg/PoseStamped", "geometry_msgs::msg::PoseStamped"};
+    "lingtu.dds.PoseStamped", "lingtu::dds::PoseStamped"};
 inline constexpr TopicContract kNavGoalPose{
     "/nav/goal_pose", "rt/nav/goal_pose",
-    "geometry_msgs/msg/PoseStamped", "geometry_msgs::msg::PoseStamped"};
+    "lingtu.dds.PoseStamped", "lingtu::dds::PoseStamped"};
 inline constexpr TopicContract kNavCancel{
-    "/nav/cancel", "rt/nav/cancel", "std_msgs/msg/String", "std_msgs::msg::String"};
+    "/nav/cancel", "rt/nav/cancel", "lingtu.dds.String", "lingtu::dds::String"};
 inline constexpr TopicContract kNavSemanticInstruction{
     "/nav/semantic/instruction", "rt/nav/semantic/instruction",
-    "std_msgs/msg/String", "std_msgs::msg::String"};
+    "lingtu.dds.String", "lingtu::dds::String"};
 inline constexpr TopicContract kNavCmdVel{
     "/nav/cmd_vel", "rt/nav/cmd_vel",
-    "geometry_msgs/msg/TwistStamped", "geometry_msgs::msg::TwistStamped"};
+    "lingtu.dds.TwistStamped", "lingtu::dds::TwistStamped"};
 inline constexpr TopicContract kNavExplorationGrid{
     "/nav/exploration_grid", "rt/nav/exploration_grid",
-    "nav_msgs/msg/OccupancyGrid", "nav_msgs::msg::OccupancyGrid"};
+    "lingtu.dds.OccupancyGrid", "lingtu::dds::OccupancyGrid"};
 
 inline constexpr TopicContract kTopicContracts[] = {
     kLidarRawFrame,

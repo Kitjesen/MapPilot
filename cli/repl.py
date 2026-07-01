@@ -29,13 +29,21 @@ class LingTuREPL(cmd.Cmd):
         except KeyError:
             if name == "SlamBridgeModule":
                 try:
+                    return self._system.get_module("SlamAdapterModule")
+                except KeyError:
+                    pass
+                try:
                     return self._system.get_module("SlamModule")
                 except KeyError:
                     return None
             return None
 
     def _get_slam_module(self):
-        return self._get_module("SlamModule") or self._get_module("SlamBridgeModule")
+        return (
+            self._get_module("SlamAdapterModule")
+            or self._get_module("SlamModule")
+            or self._get_module("SlamBridgeModule")
+        )
 
     def do_navigate(self, arg):
         """Send navigation goal: navigate <x> <y> [z]"""
@@ -1179,6 +1187,7 @@ class LingTuREPL(cmd.Cmd):
         print(f"\n  [{now}]  profile: {self._cfg.get('_desc', profile)}\n")
 
         # -鈧?鈧?Startup -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        n_mods = len(s.modules)
+        n_mods = len(s.modules)
         n_conn = len(s.connections)
         active = sum(
             1 for mod in s.modules.values()
@@ -1188,7 +1197,8 @@ class LingTuREPL(cmd.Cmd):
         print(f"  Startup    {n_mods} modules loaded, {n_conn} connections")
         print(f"             {active} modules have received/sent data")
 
-        # -鈧?鈧?SLAM / Localization -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        slam = self._get_module("SlamBridgeModule")
+        # SLAM / localization
+        slam = self._get_slam_module()
         if slam:
             odom_n  = slam.odometry.msg_count  if hasattr(slam, "odometry")  else 0
             cloud_n = slam.map_cloud.msg_count if hasattr(slam, "map_cloud") else 0
@@ -1201,6 +1211,7 @@ class LingTuREPL(cmd.Cmd):
             print(f"\n  SLAM       {T.dim('not in this profile')}")
 
         # -鈧?鈧?Robot position -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        nav = self._get_module("nav.mission")
+        nav = self._get_module("nav.mission")
         if nav and hasattr(nav, "_robot_pos"):
             x, y, z = nav._robot_pos
             state = getattr(nav, "_state", "?")
@@ -1210,6 +1221,7 @@ class LingTuREPL(cmd.Cmd):
             print(f"    state      {state_color(state)}")
 
         # -鈧?鈧?Map modules -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        occ = self._get_module("OccupancyGridModule")
+        occ = self._get_module("OccupancyGridModule")
         if occ:
             n = sum(p.msg_count for p in occ.ports_in.values())
             ok = T.green("building") if n > 0 else T.yellow("waiting for point cloud")
@@ -1223,6 +1235,7 @@ class LingTuREPL(cmd.Cmd):
             print(f"    elevation map   {ok}  ({n} updates)")
 
         # -鈧?鈧?C++ backends -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        terrain = self._get_module("nav.terrain")
+        terrain = self._get_module("nav.terrain")
         lp      = self._get_module("nav.local_planner")
         pf      = self._get_module("nav.path_follower")
         if terrain or lp or pf:
@@ -1241,11 +1254,13 @@ class LingTuREPL(cmd.Cmd):
                 print(f"    path follower  {ok}")
 
         # -鈧?鈧?Gateway -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        gw = self._get_module("GatewayModule")
+        gw = self._get_module("GatewayModule")
         if gw:
             port = getattr(gw, "_port", 5050)
             print(f"\n  Gateway    http://localhost:{port}  (accessible from LAN)")
 
         # -鈧?鈧?Teleop -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        tp = self._get_module("TeleopModule")
+        tp = self._get_module("TeleopModule")
         if tp:
             try:
                 st = tp.get_teleop_status()
@@ -1364,7 +1379,7 @@ class LingTuREPL(cmd.Cmd):
                 print(f"  {T.bold('POSE')}:  x={x:7.2f}  y={y:7.2f}  z={z:5.2f}  yaw={yaw_deg:6.1f} deg")
                 print()
 
-                slam = self._get_module("SlamBridgeModule")
+                slam = self._get_slam_module()
                 if slam:
                     odom = slam.odometry.msg_count if hasattr(slam, "odometry") else 0
                     cloud = slam.map_cloud.msg_count if hasattr(slam, "map_cloud") else 0

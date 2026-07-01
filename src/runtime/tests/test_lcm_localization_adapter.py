@@ -211,7 +211,7 @@ def test_slam_stack_can_select_lcm_localization_adapter() -> None:
         endpoint_contract=THUNDER_FIELD_LCM_CONTRACT_NAME,
     )
 
-    assert bp._entries[0].name == "SlamBridgeModule"
+    assert bp._entries[0].name == "SlamAdapterModule"
     assert bp._entries[0].module_cls is LCMLocalizationAdapterModule
     assert bp._entries[0].config["endpoint_contract"] == THUNDER_FIELD_LCM_CONTRACT_NAME
 
@@ -234,7 +234,7 @@ def test_thunder_field_product_blueprints_can_explicitly_use_lcm_localization_ad
         )
         bp = blueprint_for_resolved_profile(profile, config)
         slam_entry = next(
-            entry for entry in bp._entries if entry.name == "SlamBridgeModule"
+            entry for entry in bp._entries if entry.name == "SlamAdapterModule"
         )
 
         assert config["_runtime_endpoint"] == "thunder_field"
@@ -261,7 +261,7 @@ def test_thunder_field_product_blueprints_do_not_import_ros2_slam_bridge() -> No
             config = resolve_profile_config(profile)
             bp = blueprint_for_resolved_profile(profile, config)
             slam_entry = next(
-                entry for entry in bp._entries if entry.name == "SlamBridgeModule"
+                entry for entry in bp._entries if entry.name == "SlamAdapterModule"
             )
 
             assert not slam_entry.module_cls.__module__.startswith("runtime.adapters.ros2")

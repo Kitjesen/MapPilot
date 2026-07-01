@@ -26,7 +26,11 @@ from runtime.blueprints.wires.context import (
     NAV_IN,
     NAV_OUT,
 )
-from runtime.blueprints.stacks.slam import normalize_slam_profile, slam_module_name
+from runtime.blueprints.stacks.slam import (
+    normalize_slam_profile,
+    slam_adapter_module_name,
+    slam_module_name,
+)
 from runtime.blueprints.stacks.stack_config import needs_lidar_for_slam
 from runtime.profiles.binding_policy import (
     localization_adapter_for_config,
@@ -349,7 +353,7 @@ def _static_slam_module_name(config: Mapping[str, Any], slam_profile: str) -> st
         return ""
     adapter = str(localization_adapter_for_config(config) or "").strip().lower()
     if adapter and adapter not in {"native", "native_slam", "slam"}:
-        return "SlamBridgeModule"
+        return slam_adapter_module_name(adapter)
     return slam_module_name(slam_profile)
 
 
