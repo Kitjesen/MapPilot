@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Build every ROS 2 package discovered under src/ and verify that installed
@@ -12,8 +12,11 @@ ROS_DISTRO="${LINGTU_ROS_DISTRO:-humble}"
 INSTALL_SYSTEM_DEPS="${LINGTU_INSTALL_SYSTEM_DEPS:-1}"
 SKIP_APT="${LINGTU_SKIP_APT:-0}"
 SUDO_PASSWORD="${LINGTU_SUDO_PASSWORD:-}"
-BUILD_TARE="${LINGTU_BUILD_TARE:-1}"
+BUILD_LEGACY_PCT_ROS="${LINGTU_BUILD_LEGACY_PCT_ROS:-0}"
 BUILD_GNSS="${LINGTU_BUILD_GNSS:-1}"
+BUILD_VENDORED_GTSAM="${LINGTU_BUILD_VENDORED_GTSAM:-0}"
+BUILD_RUST_KERNELS="${LINGTU_BUILD_RUST_KERNELS:-1}"
+RUST_KERNEL_TARGETS="${LINGTU_RUST_KERNEL_TARGETS:-gpmp_trajectory_optimizer,camera_lidar_optimizer}"
 BUILD_TYPE="${LINGTU_BUILD_TYPE:-Release}"
 
 log() {
@@ -97,17 +100,16 @@ install_system_deps() {
 prepare_optional_packages() {
   local skip=()
 
-  if [[ "${BUILD_TARE}" == "1" && -d src/exploration/tare_planner ]]; then
-    if [[ ! -f src/exploration/tare_planner/or-tools/lib/libortools.so ]]; then
-      log "fetching OR-Tools for tare_planner"
-      bash scripts/build/fetch_ortools.sh
-    fi
-  else
-    skip+=(tare_planner)
+  if [[ "${BUILD_LEGACY_PCT_ROS}" != "1" ]]; then
+    skip+=(pct_planner pct_adapters)
   fi
 
   if [[ "${BUILD_GNSS}" != "1" ]]; then
     skip+=(wtrtk980_ros2_reader)
+  fi
+
+  if [[ "${BUILD_VENDORED_GTSAM}" != "1" ]]; then
+    skip+=(gtsam)
   fi
 
   if [[ "${#skip[@]}" -gt 0 ]]; then
@@ -115,19 +117,37 @@ prepare_optional_packages() {
   fi
 }
 
+build_rust_kernels() {
+  if [[ "${BUILD_RUST_KERNELS}" != "1" ]]; then
+    log "skipping Rust kernel build because LINGTU_BUILD_RUST_KERNELS=${BUILD_RUST_KERNELS}"
+    return
+  fi
+
+  if ! have python3; then
+    printf 'ERROR: python3 is required to build Rust kernels.\n' >&2
+    return 1
+  fi
+
+  local args=(--release)
+  local target
+  local targets="${RUST_KERNEL_TARGETS//,/ }"
+  for target in ${targets}; do
+    args+=(--target "${target}")
+  done
+
+  log "building Rust kernels: ${targets}"
+  python3 scripts/build/build_rust_kernels.py "${args[@]}"
+}
+
 build_workspace() {
   source_ros
   install_system_deps
+  build_rust_kernels
 
   local skip_packages=()
   mapfile -t skip_packages < <(prepare_optional_packages)
 
-  local gtsam_dir="${ROOT}/src/global_planning/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib/cmake/GTSAM"
   local cmake_args=(-DCMAKE_BUILD_TYPE="${BUILD_TYPE}")
-  if [[ -d "${gtsam_dir}" ]]; then
-    export CMAKE_PREFIX_PATH="${ROOT}/src/global_planning/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install:${CMAKE_PREFIX_PATH:-}"
-    cmake_args+=(-DGTSAM_DIR="${gtsam_dir}")
-  fi
 
   log "discovered ROS packages"
   colcon list --base-paths src

@@ -1,9 +1,9 @@
-﻿# Parameter Tuning Guide
+# Parameter Tuning Guide
 
 Detailed tuning notes for the four performance-critical layers. The runtime entry is
 `python lingtu.py <profile>` (managed by `lingtu.service`); all parameters are read from
 `config/robot_config.yaml` at module start. There are no per-launch XML files in the current
-codebase 鈥?restart the service to pick up changes.
+codebase 閳?restart the service to pick up changes.
 
 For a one-page cheat sheet see `docs/TUNING.md`. For symptom-based diagnostics see
 `TROUBLESHOOTING.md`.
@@ -12,8 +12,9 @@ For a one-page cheat sheet see `docs/TUNING.md`. For symptom-based diagnostics s
 
 ## 1. Path Follower (`local_planner.path_follower.*`)
 
-Implementation: `src/nav/core/include/nav_core/path_follower_core.hpp` (C++, called via
-`_nav_core` nanobind). Wired to `PathFollowerModule` in `src/base_autonomy/path_follower_module.py`.
+Implementation: `src/nav/kernel/include/nav_kernel/path_follower_core.hpp` (C++, called via
+the private `_nav_kernel` nanobind extension). Wired to `PathFollowerModule` in
+`src/nav/local/path_follower.py`.
 
 ### Speed and acceleration
 
@@ -57,9 +58,9 @@ Sluggish: 10-15. Oscillating: 5-7. `max_yaw_rate` is a clamp, not a gain.
 
 ## 2. Local Planner (`local_planner.*`)
 
-Implementation: `src/nav/core/include/nav_core/local_planner_full.hpp`. Module:
-`src/base_autonomy/local_planner_module.py`. Builds a CSR sparse candidate-path bank,
-scores 36 rotations in OpenMP, picks lowest-cost free path.
+Implementation: `src/nav/services/plan/local_planner/cpp/local_planner.hpp`. Module:
+`src/nav/services/plan/local_planner/service.py`. Builds a CSR sparse
+candidate-path bank, scores 36 rotations in OpenMP, picks lowest-cost free path.
 
 ### Obstacle handling
 
@@ -106,8 +107,8 @@ instead of assuming the YAML reached the active backend.
 
 ## 3. Terrain Analysis (`terrain.*`)
 
-Implementation: `src/nav/core/include/nav_core/terrain_core.hpp`. Module:
-`src/base_autonomy/terrain_module.py`. Maintains a rolling voxel grid centered on the robot.
+Implementation: `src/nav/kernel/include/nav_kernel/terrain_core.hpp`. Module:
+`src/nav/local/terrain.py`. Maintains a rolling voxel grid centered on the robot.
 
 ### Voxel configuration
 
@@ -139,14 +140,16 @@ terrain:
 
 ## 4. Global Planner
 
-Two backends registered in `core.registry` (`src/core/registry.py`):
+Primary backends registered in `runtime.registry` (`src/runtime/registry.py`):
 
-- **`astar`** 鈥?pure Python, `src/nav/global_planner_service.py`, default in
-  `stub`/`dev`/`s100p` profiles.
-- **`pct`** 鈥?C++ PCT planner (`ele_planner.so`), used by the `explore` profile and
-  selectable via `--planner pct`.
+- **`octoplanner3d`** - headless C++ 3D planner, default in product, simulation,
+  development, map, navigation, and exploration profiles.
+- **`pct`** - C++ PCT planner (`ele_planner.so`), selectable via `--planner pct`
+  for compatibility or experiments.
+- **`astar`** - legacy pure Python backend kept for deterministic unit tests and
+  old benchmark comparison only.
 
-PCT tuning: `src/global_planning/pct_planner/config/params.yaml`.
+PCT tuning: `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/config/params.yaml`.
 
 ```yaml
 w_traversability: 1.0
@@ -166,8 +169,8 @@ Off-road -> raise `w_traversability`. Smoother paths -> raise `w_smoothness`.
 ### Robot too slow
 
 1. Raise `path_follower.max_speed`.
-2. Verify `safety_ring_module` is not throttling 鈥?`lingtu log error | grep safety`.
-3. Check terrain analysis is publishing 鈥?`lingtu status` `[2] SLAM hz`.
+2. Verify `safety_ring` is not throttling -> `lingtu log error | grep safety`.
+3. Check terrain analysis is publishing 閳?`lingtu status` `[2] SLAM hz`.
 
 ### Robot cuts corners
 
@@ -185,16 +188,16 @@ Off-road -> raise `w_traversability`. Smoother paths -> raise `w_smoothness`.
 
 ### Global planner returns empty path
 
-1. Goal outside loaded map 鈥?check `lingtu status` `[1] Session map=`.
+1. Goal outside loaded map 閳?check `lingtu status` `[1] Session map=`.
 2. Drop `w_traversability` (too picky on cost).
-3. Rebuild tomogram (`lingtu map save <name>` then `build_tomogram` POST 鈥?see
+3. Rebuild tomogram (`lingtu map save <name>` then `build_tomogram` POST 閳?see
    `docs/04-deployment/lingtu_cli.md`).
 
 ---
 
 ## Verifying live values
 
-The `_nav_core` C++ modules don't expose ROS2 parameters. Inspect via the Gateway:
+The `_nav_kernel` C++ modules don't expose ROS2 parameters. Inspect via the Gateway:
 
 ```bash
 curl http://192.168.66.190:5050/api/v1/config | jq '.local_planner'
@@ -228,7 +231,7 @@ Start conservative; relax once odometry health is verified for the environment.
 
 ## Stuck Detection (`waypoint_tracker.py`)
 
-Implementation: `src/nav/waypoint_tracker.py`. Periodic check of robot displacement
+Implementation: `src/nav/mission/tracking/waypoint_tracker.py`. Periodic check of robot displacement
 inside a sliding window.
 
 | Key                       | Default | Indoor | Outdoor |
@@ -247,6 +250,6 @@ Behavior:
 
 ## Related
 
-- `docs/TUNING.md` 鈥?one-page cheat sheet
-- `docs/03-development/TROUBLESHOOTING.md` 鈥?diagnostics
-- `docs/04-deployment/lingtu_cli.md` 鈥?`lingtu` operations CLI
+- `docs/TUNING.md` 閳?one-page cheat sheet
+- `docs/03-development/TROUBLESHOOTING.md` 閳?diagnostics
+- `docs/04-deployment/lingtu_cli.md` 閳?`lingtu` operations CLI

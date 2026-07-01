@@ -20,7 +20,7 @@ Usage:
   sudo python3 ble_peripheral.py
 
 systemd service:
-  sudo cp ble_peripheral.service /etc/systemd/system/
+  sudo cp scripts/gateway/ble_peripheral.service /etc/systemd/system/
   sudo systemctl enable --now ble_peripheral
 """
 

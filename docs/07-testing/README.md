@@ -1,6 +1,7 @@
 # LingTu Regression Suite
 
-Four layers, from local commit to simulation closure to S100P field run.
+Current layers, from local commit to server/simulation closure. Hardware P0
+scripts are retained as optional legacy procedures, not the current target.
 
 Commit and push acceptance criteria live in
 [`COMMIT_PUSH_POLICY.md`](COMMIT_PUSH_POLICY.md). The short version is:
@@ -18,10 +19,10 @@ LingTu absorbs simulator topic contracts, not simulator product profiles.
 
 | Layer | Trigger | Content | Time | Required |
 |---|---|---|---|---|
-| L1 pre-commit hook | `git commit` | `pytest src/core/tests/ -q` must pass | ~90 s | Yes |
+| L1 pre-commit hook | `git commit` | `pytest src/runtime/tests/ -q` must pass | ~90 s | Yes |
 | L2 pre-push hook | `git push` | L1 plus `stub` profile build/start smoke | ~30 s extra | Yes |
-| L2.5 server simulation closure | Before field claims or navigation demos | `server_sim_closure.py` strict summary over the relevant simulation gates | Host-dependent | Yes for simulation-backed navigation claims |
-| L3 S100P weekly | Friday afternoon, manual | Run the P0 field scripts and capture video | ~30 min | Yes |
+| L2.5 server simulation closure | Before navigation demos or simulation-backed claims | `server_sim_closure.py` strict summary over the relevant simulation gates | Host-dependent | Yes for simulation-backed navigation claims |
+| L3 hardware P0 | Explicit hardware campaign only | Run the P0 scripts and capture video | ~30 min | No for current server/sim work |
 
 ---
 
@@ -33,7 +34,7 @@ bash docs/07-testing/install_hooks.sh
 ```
 
 After install:
-- `git commit` runs `pytest src/core/tests/ -q`; the commit aborts on failure.
+- `git commit` runs `pytest src/runtime/tests/ -q`; the commit aborts on failure.
 - `git push` runs pytest plus a stub `full_stack_blueprint(...).build()` graph smoke and a minimal offline stub `build().start()` lifecycle smoke.
 
 Bypass (emergencies only):
@@ -79,9 +80,9 @@ simulation evidence.
 
 The full gate set is designed to cover:
 
-- multi-floor exploration, LiDAR localization contract, native PCT, local planning, and nav_core tracking;
+- multi-floor exploration, LiDAR localization contract, native PCT, local planning, and nav_kernel tracking;
 - large-terrain global planning and path-safety checks;
-- native PCT through ROS2 local planner/path follower into MuJoCo motion;
+- native PCT through in-process local planner/path follower into MuJoCo motion;
 - dynamic-obstacle local planner replanning;
 - live MuJoCo LiDAR/IMU through Fast-LIO2 and SlamBridge;
 - ONNX policy navigation dataflow;
@@ -116,7 +117,10 @@ visible without parsing the nested summary.
 
 ---
 
-## L3 P0 scripts on the robot
+## Optional Hardware P0 Scripts
+
+These scripts are not part of the current server/simulation target. Use them
+only when a real hardware campaign is explicitly scheduled.
 
 Field-run session notes (bugs, bag paths, BACKLOG links) live in
 [`field-runs/`](field-runs/README.md) — one `YYYY-MM-DD.md` per on-robot session.
@@ -132,7 +136,7 @@ Each P0 script is self-contained, uses `set -e`, and writes its log to `~/data/n
 | `p0_estop.sh` | Gateway stop reflex | Operator starts non-zero robot motion, then presses Enter in the script | `POST /api/v1/stop` succeeds and `/api/v1/state` reports navigation speed below `0.01 m/s` for 3 consecutive ticks within 2 seconds |
 | `p0_explore.sh` | Exploration start/stop | `explore` or `tare_explore` profile in a safe open area | `/api/v1/explore/status` is ready, `/api/v1/explore/start` reports active exploration, and `/api/v1/explore/stop` leaves `exploring=false` |
 
-### Run on Sunrise (S100P)
+### Legacy Hardware Procedure
 
 ```bash
 ssh sunrise@192.168.66.190
@@ -169,7 +173,7 @@ After the run:
 ## Simulation-only policy soak on Sunrise
 
 Use Sunrise as a compute host for MuJoCo policy validation only. This gate must
-not start robot services, publish real robot commands, or run the field
+not start robot services, publish real hardware commands, or run the hardware
 `scripts/lingtu map|nav` commands.
 
 Run it after changing MuJoCo assets, ONNX policy loading, `PolicyRunner`,

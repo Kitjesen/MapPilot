@@ -12,7 +12,7 @@ import logging
 import time
 from typing import Any
 
-from core.runtime_policy import (
+from runtime.runtime_policy import (
     is_supported_slam_profile,
     normalize_slam_profile,
     slam_switch_plan,
@@ -488,7 +488,7 @@ def register_operation_routes(app, gw) -> None:
     )
     async def slam_status():
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
 
             svc = get_service_manager()
             services = svc.status(*_SLAM_STATUS_SERVICES)
@@ -536,7 +536,7 @@ def register_operation_routes(app, gw) -> None:
                 status_code=400,
             )
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
 
             svc = get_service_manager()
             plan = slam_switch_plan(profile)

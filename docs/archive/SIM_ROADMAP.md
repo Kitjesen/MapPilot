@@ -22,7 +22,7 @@ MuJoCo physics ─→ ROS2 topics ─→ ROS2SimDriverModule ─→ Module graph
 | Bridge node | `sim/bridge/mujoco_ros2_bridge.py` | Publishes `/nav/odometry`, `/nav/map_cloud`, TF (`map`→`odom`→`body`); subscribes `/nav/cmd_vel`. Runs at 50 Hz. |
 | Bridge node (legacy/no-ROS) | `sim/bridge/nova_nav_bridge.py` | Same idea but feeds the Python LingTu modules in-process. |
 | Driver backend | `src/drivers/sim/ros2_sim_driver.py` (`@register("driver", "sim_ros2")`) | Subscribes the bridge topics; emits `Odometry` + `PointCloud` on Module ports. |
-| In-process variant | `src/drivers/sim/mujoco_driver_module.py` (`@register("driver", "sim_mujoco")`) | MuJoCo runs inside the Lingtu process; no ROS2. |
+| In-process variant | `src/drivers/sim/mujoco/driver.py` (`@register("driver", "sim_mujoco")`) | MuJoCo runs inside the Lingtu process; no ROS2. |
 
 The `_apply_cmd()` qvel injection that older planning notes flagged as a TODO
 is implemented at `sim/bridge/mujoco_ros2_bridge.py:220-244` (and the same

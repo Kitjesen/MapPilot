@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from core.tests.numpy_guard import import_numpy_or_skip
+from runtime.tests.numpy_guard import import_numpy_or_skip
 
 np = import_numpy_or_skip()
 
@@ -42,7 +42,7 @@ def test_repo_mid360_pattern_asset_is_official_converted_scan_mode() -> None:
 
 
 def test_mujoco_gates_default_to_forced_mid360_pattern() -> None:
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser as build_fastlio_parser
+    from sim.scripts.mujoco_live_gate import _build_parser as build_fastlio_parser
     from sim.scripts.native_pct_mujoco_gate import _build_parser as build_pct_parser
 
     fastlio_args = build_fastlio_parser().parse_args([])
@@ -63,6 +63,72 @@ def test_mujoco_gates_default_to_forced_mid360_pattern() -> None:
     assert fastlio_args.scan_time_profile == "physical_rolling"
     assert not fastlio_args.no_save_map_artifacts
     assert not fastlio_args.build_tomogram
+
+
+def test_fastlio_live_gate_defaults_to_mature_mujoco_lidar_backend() -> None:
+    from sim.scripts.mujoco_live_gate import _build_parser
+
+    args = _build_parser().parse_args([])
+
+    assert args.lidar_backend == "mujoco_lidar"
+    assert args.mujoco_lidar_backend == "cpu"
+    assert args.allow_legacy_lidar_fallback is False
+    assert args.localization_backend == ""
+
+
+def test_fastlio_live_gate_removes_portable_lio_backend() -> None:
+    from sim.scripts.mujoco_live_gate import _build_parser
+
+    choices = _build_parser()._option_string_actions["--localization-backend"].choices
+    script = Path("sim/scripts/mujoco_live_gate.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert choices is None
+    assert "from runtime.adapters.ros2.fastlio2_live_bridge import" not in script
+    assert "FastLio2Process(" not in script
+
+
+def test_fastlio_live_gate_reports_mature_lidar_backend_contract() -> None:
+    script = Path("sim/scripts/mujoco_live_gate.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"lidar_backend": lidar_backend_report' in script
+    assert '"mature_lidar_backend_verified": mature_lidar_backend_verified' in script
+    assert '"mature_mujoco_lidar_backend": mature_lidar_backend_verified' in script
+    assert "require_mature_lidar_backend=True" in script
+    assert "_RosLike" not in script
+    assert "_load_portable_ros_like_modules" not in script
+    assert "_PortableFastLio2Process" not in script
+    assert '"lio_odometry"' in script
+    assert '"lio_cloud_registered"' in script
+    assert '"lio_cloud_map"' in script
+    assert '"uses_ros_message_shim": False' in script
+
+
+def test_fastlio_live_gate_exception_report_keeps_mature_lidar_contract() -> None:
+    from sim.scripts.mujoco_live_gate import (
+        _build_parser,
+        _gate_exception_report,
+    )
+
+    args = _build_parser().parse_args([])
+    report = _gate_exception_report(args, RuntimeError("probe"))
+
+    assert report["schema_version"] == "lingtu.mujoco_fastlio2_live_gate.v2"
+    assert report["algorithm"] == "removed"
+    assert report["localization_backend"] == "removed"
+    assert report["localization_runtime"]["requires_ros2"] is False
+    assert report["localization_runtime"]["requires_fastlio2_package"] is False
+    assert report["localization_runtime"]["requires_std_msgs"] is False
+    assert report["localization_runtime"]["uses_ros_message_shim"] is False
+    assert report["lidar_backend"]["backend"] == "uninitialized"
+    assert report["lidar_backend"]["requested_backend"] == "mujoco_lidar"
+    assert report["lidar_backend"]["mujoco_lidar_backend"] == "cpu"
+    assert report["mature_lidar_backend_verified"] is False
+    assert report["deliverable_contract"]["checks"]["mature_mujoco_lidar_backend"] is False
+    assert report["deliverable_contract"]["remaining_gaps"] == report["remaining_gaps"]
 
 
 def test_saved_map_relocalize_discovers_tare_same_source_map(
@@ -173,7 +239,7 @@ def test_pct_saved_map_navigation_passes_short_route_progress_threshold() -> Non
 
 
 def test_fastlio_live_gate_reports_exploration_coverage_growth() -> None:
-    from sim.scripts.mujoco_fastlio2_live_gate import _coverage_growth
+    from sim.scripts.mujoco_live_gate import _coverage_growth
 
     growth = _coverage_growth([
         {"known_m2": 1.0, "unknown_m2": 9.0},
@@ -189,17 +255,17 @@ def test_fastlio_live_gate_reports_exploration_coverage_growth() -> None:
     assert growth["last_known_m2"] == 4.0
 
 
-def test_fastlio_live_gate_shutdown_is_idempotent() -> None:
-    source = (ROOT / "sim/scripts/mujoco_fastlio2_live_gate.py").read_text(
+def test_fastlio_live_gate_has_no_ros_shutdown_path() -> None:
+    source = (ROOT / "sim/scripts/mujoco_live_gate.py").read_text(
         encoding="utf-8"
     )
 
-    assert "if rclpy.ok():" in source
-    assert "rclpy.shutdown()" in source
+    assert "rclpy.ok()" not in source
+    assert "rclpy.shutdown()" not in source
 
 
 def test_fastlio_live_gate_writes_same_source_map_artifacts(tmp_path) -> None:
-    from core.same_source_map_artifacts import (
+    from runtime.same_source_map_artifacts import (
         validate_same_source_map_metadata,
         write_same_source_map_artifacts,
     )
@@ -250,7 +316,7 @@ def test_fastlio_live_gate_writes_same_source_map_artifacts(tmp_path) -> None:
 
 
 def test_same_source_map_metadata_rejects_derived_artifact_sha_drift() -> None:
-    from core.same_source_map_artifacts import (
+    from runtime.same_source_map_artifacts import (
         validate_same_source_map_metadata,
     )
 
@@ -294,7 +360,7 @@ def test_same_source_map_metadata_rejects_derived_artifact_sha_drift() -> None:
 
 
 def test_fastlio_live_gate_rejects_diverged_map_before_tomogram(tmp_path) -> None:
-    from core.same_source_map_artifacts import (
+    from runtime.same_source_map_artifacts import (
         write_same_source_map_artifacts,
     )
 
@@ -319,7 +385,7 @@ def test_fastlio_live_gate_rejects_diverged_map_before_tomogram(tmp_path) -> Non
 
 
 def test_fastlio_live_gate_uses_trackable_path_defaults_for_live_explore() -> None:
-    stack = Path("src/drivers/sim/mujoco_lingtu_stack.py")
+    stack = Path("src/drivers/sim/mujoco/stack.py")
     text = stack.read_text(encoding="utf-8")
 
     assert "local_planner_direct_track_fallback_min_distance_m=0.3" in text
@@ -329,12 +395,12 @@ def test_fastlio_live_gate_uses_trackable_path_defaults_for_live_explore() -> No
 
 
 def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> None:
-    stack = Path("src/drivers/sim/mujoco_lingtu_stack.py")
+    stack = Path("src/drivers/sim/mujoco/stack.py")
     text = stack.read_text(encoding="utf-8")
-    endpoint_catalog = Path("src/core/blueprints/catalog/endpoints.py").read_text(
+    endpoint_catalog = Path("src/runtime/profiles/catalog/endpoints.py").read_text(
         encoding="utf-8"
     )
-    exploration_stack = Path("src/core/blueprints/stacks/exploration.py").read_text(
+    exploration_stack = Path("src/runtime/blueprints/stacks/exploration.py").read_text(
         encoding="utf-8"
     )
 
@@ -347,9 +413,9 @@ def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> Non
 
 
 def test_mujoco_inspection_stack_keeps_static_tomogram_saved_map_frame_contract() -> None:
-    stack = Path("src/drivers/sim/mujoco_lingtu_stack.py")
+    stack = Path("src/drivers/sim/mujoco/stack.py")
     text = stack.read_text(encoding="utf-8")
-    nav_stack = Path("src/core/blueprints/stacks/navigation.py").read_text(
+    nav_stack = Path("src/runtime/blueprints/stacks/navigation_runtime.py").read_text(
         encoding="utf-8"
     )
 
@@ -363,16 +429,16 @@ def test_mujoco_inspection_stack_keeps_static_tomogram_saved_map_frame_contract(
 
 
 def test_fastlio_live_gate_reports_sim_realtime_factor() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+    script = Path("sim/scripts/mujoco_live_gate.py")
     text = script.read_text(encoding="utf-8")
 
-    assert '"sim_time_s": round(sim_time_s, 3)' in text
-    assert '"sim_wall_time_s": round(sim_wall_time_s, 3)' in text
-    assert '"sim_realtime_factor": round(sim_realtime_factor, 4)' in text
+    assert '"elapsed_wall_s": round(float(sim_wall_time_s), 3)' in text
+    assert '"elapsed_sim_s": round(float(elapsed_sim_s), 3)' in text
+    assert '"sim_realtime_factor": (' in text
 
 
 def test_fastlio_live_gate_uses_simulator_world_frame_contract() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+    script = Path("sim/scripts/mujoco_live_gate.py")
     text = script.read_text(encoding="utf-8")
 
     assert "simulator_world_frame_id" in text
@@ -382,7 +448,7 @@ def test_fastlio_live_gate_uses_simulator_world_frame_contract() -> None:
 
 
 def test_fastlio_live_gate_can_run_duration_by_sim_time() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+    script = Path("sim/scripts/mujoco_live_gate.py")
     text = script.read_text(encoding="utf-8")
     launcher = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(
         encoding="utf-8"
@@ -399,7 +465,7 @@ def test_fastlio_live_gate_can_run_duration_by_sim_time() -> None:
 
 
 def test_mujoco_live_gate_defaults_to_finite_difference_imu() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+    script = Path("sim/scripts/mujoco_live_gate.py")
     text = script.read_text(encoding="utf-8")
     launcher = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(
         encoding="utf-8"
@@ -410,51 +476,36 @@ def test_mujoco_live_gate_defaults_to_finite_difference_imu() -> None:
     assert 'LINGTU_MUJOCO_LIVE_IMU_ACC_MODE:-finite_difference' in launcher
 
 
-def test_fastlio_live_gate_uses_src_mujoco_sensor_bridge() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+def test_fastlio_live_gate_uses_src_mujoco_sensors() -> None:
+    script = Path("sim/scripts/mujoco_live/sensors.py")
     text = script.read_text(encoding="utf-8")
 
-    assert "from drivers.sim import mujoco_sensor_bridge" in text
-    assert "_MUJOCO_SENSOR_BRIDGE" in text
-    assert "return _mujoco_sensor_bridge().make_imu_msg" in text
-    assert "return _mujoco_sensor_bridge().make_pointcloud2" in text
-    assert "return _mujoco_sensor_bridge().world_xyzi_to_sensor_xyzi" in text
-    assert "return _mujoco_sensor_bridge().make_livox_custom_msg" in text
+    assert "from drivers.sim.mujoco import sensors" in text
+    assert "_MUJOCO_SENSORS" in text
+    assert "return _mujoco_sensors().angle_delta_rad" in text
+    assert "return _mujoco_sensors().specific_force_body" in text
+    assert "return _mujoco_sensors().world_xyzi_to_sensor_xyzi" in text
 
 
-def test_fastlio_live_gate_uses_src_fastlio2_bridge_service() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
-    text = script.read_text(encoding="utf-8")
+def test_fastlio_live_gate_uses_core_msg_outputs_without_ros_bridge() -> None:
+    gate = Path("sim/scripts/mujoco_live_gate.py").read_text(encoding="utf-8")
+    report = Path("sim/scripts/mujoco_live/report.py").read_text(encoding="utf-8")
+    text = gate + report
 
-    assert "from slam.fastlio2_live_bridge import" in text
-    assert "FastLio2Process(" in text
-    assert "subprocess.Popen(" not in text
-    assert "os.killpg(" not in text
-
-
-def test_fastlio_live_gate_uses_src_fastlio2_nav_bridge_service() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
-    text = script.read_text(encoding="utf-8")
-    bridge = Path("src/slam/fastlio2_nav_bridge.py").read_text(encoding="utf-8")
-
-    assert "from slam.fastlio2_nav_bridge import FastLio2NavBridgeRuntime" in text
-    assert "FastLio2NavBridgeRuntime(" in text
+    assert "FastLio2NavBridgeRuntime" not in text
     assert 'node.create_subscription(Odometry, "/Odometry"' not in text
     assert 'node.create_subscription(PointCloud2, "/cloud_map"' not in text
-    assert "TOPICS.odometry" in bridge
-    assert "TOPICS.registered_cloud" in bridge
-    assert "TOPICS.map_cloud" in bridge
-    assert "publish_tare_context_topics" in bridge
-    assert "TOPICS.state_estimation_at_scan" in bridge
-    assert "TOPICS.terrain_map" in bridge
-    assert "TOPICS.terrain_map_ext" in bridge
+    assert "canonical_nav_outputs_verified" in text
+    assert "TOPICS.odometry" in text
+    assert "TOPICS.registered_cloud" in text
+    assert "TOPICS.map_cloud" in text
 
 
-def test_fastlio_live_gate_uses_src_mujoco_live_runtime() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+def test_fastlio_live_gate_uses_src_mujoco_runtime() -> None:
+    script = Path("sim/scripts/mujoco_live_gate.py")
     text = script.read_text(encoding="utf-8")
 
-    assert "from drivers.sim.mujoco_live_runtime import" in text
+    assert "from drivers.sim.mujoco.runtime import" in text
     assert "def _resolve_world(" not in text
     assert "def _scene_start(" not in text
     assert "def _parse_start(" not in text
@@ -462,33 +513,37 @@ def test_fastlio_live_gate_uses_src_mujoco_live_runtime() -> None:
     assert "def _build_engine(" not in text
 
 
-def test_fastlio_live_gate_uses_src_lingtu_stack_builder() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+def test_fastlio_live_gate_does_not_import_unused_stack_builders() -> None:
+    script = Path("sim/scripts/mujoco_live_gate.py")
     text = script.read_text(encoding="utf-8")
-    stack = Path("src/drivers/sim/mujoco_lingtu_stack.py").read_text(
+    stack = Path("src/drivers/sim/mujoco/stack.py").read_text(
         encoding="utf-8"
     )
 
-    assert "from drivers.sim.mujoco_lingtu_stack import" in text
-    assert "build_fastlio2_frontier_stack(" in text
-    assert "build_fastlio2_tare_stack(" in text
+    assert "from drivers.sim.mujoco.stack import" not in text
+    assert "build_fastlio2_inspection_stack" not in text
+    assert "build_fastlio2_frontier_stack(" not in text
+    assert "build_fastlio2_tare_stack(" not in text
     assert "full_stack_blueprint(" not in text
     assert "full_stack_blueprint(" not in stack
     assert "build_system_for_profile" in stack
     assert "occupancy_raycast_free_space=True" in stack
+    assert 'robot="sim_endpoint"' in stack
+    assert 'robot="sim_ros2"' not in stack
+    assert "enable_nav_out=False" in stack
+    assert "enable_ros2_path_bridge=True" not in stack
     assert 'exploration_backend="tare"' in stack
     assert "plan_safety_policy=\"reject\"" in stack
 
 
 def test_fastlio_live_gate_reports_motion_path_length_and_command_integrals() -> None:
-    script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
+    script = Path("sim/scripts/mujoco_live_gate.py")
     text = script.read_text(encoding="utf-8")
 
     assert '"sim_path_length_m": round(float(sim_path_length_m), 4)' in text
-    assert '"fastlio2_path_length_m": round(float(odom_path_length_m), 4)' in text
-    assert '"linear_distance_integral_m": round(' in text
-    assert '"angular_signed_integral_rad": round(' in text
-    assert '"angular_abs_integral_rad": round(' in text
+    assert '"localization_path_length_m": round(float(odom_path_length_m), 4)' in text
+    assert '"odom_path_length_m": round(float(odom_path_length_m), 4)' in text
+    assert '"applied_command": dict(applied_cmd_stats)' in text
 
 
 def test_load_mid360_csv_pattern_converts_zenith_to_elevation(tmp_path) -> None:

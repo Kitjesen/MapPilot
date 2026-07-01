@@ -1,21 +1,236 @@
 #include <vlcal/preprocess/dynamic_point_cloud_integrator.hpp>
 
-#include <gtsam/slam/BetweenFactor.h>
-#include <gtsam/nonlinear/Values.h>
-#include <gtsam/nonlinear/NonlinearFactorGraph.h>
-#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#ifdef LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER
+#include <vlcal/common/rust_camera_lidar_optimizer.hpp>
+#endif
 
 #include <vlcal/common/ivox.hpp>
 #include <vlcal/common/kdtree2.hpp>
 #include <vlcal/common/frame_cpu.hpp>
-#include <vlcal/common/integrated_ct_gicp_factor.hpp>
 #include <vlcal/common/vector3i_hash.hpp>
 
 #include <vlcal/common/cloud_covariance_estimation.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+
 #include <glk/pointcloud_buffer.hpp>
 #include <glk/primitives/primitives.hpp>
 #include <guik/viewer/light_viewer.hpp>
+
+#include <sophus/se3.hpp>
+
+namespace {
+using Vector6d = Eigen::Matrix<double, 6, 1>;
+
+Eigen::Isometry3d from_sophus_pose(const Sophus::SE3d& pose) {
+  Eigen::Isometry3d output = Eigen::Isometry3d::Identity();
+  output.matrix() = pose.matrix();
+  return output;
+}
+
+Eigen::Isometry3d interpolate_rt(const Eigen::Isometry3d& begin, const Eigen::Isometry3d& end, double t) {
+  Eigen::Isometry3d output = Eigen::Isometry3d::Identity();
+  Eigen::Quaterniond q_begin(begin.linear());
+  Eigen::Quaterniond q_end(end.linear());
+  q_begin.normalize();
+  q_end.normalize();
+  output.linear() = q_begin.slerp(t, q_end).normalized().toRotationMatrix();
+  output.translation() = (1.0 - t) * begin.translation() + t * end.translation();
+  return output;
+}
+
+std::vector<double> normalized_time_table(const vlcal::Frame& source, std::vector<int>* time_indices) {
+  if (!source.has_times()) {
+    throw std::runtime_error("dynamic point cloud integration requires per-point LiDAR timestamps.");
+  }
+  if (source.size() == 0) {
+    throw std::runtime_error("dynamic point cloud integration requires a non-empty LiDAR frame.");
+  }
+  if (time_indices == nullptr) {
+    throw std::invalid_argument("time_indices output must not be null.");
+  }
+
+  std::vector<double> time_table;
+  time_table.reserve(std::max<size_t>(1, source.size() / 10));
+  time_indices->clear();
+  time_indices->reserve(source.size());
+
+  const double time_eps = 1e-3;
+  for (size_t i = 0; i < source.size(); i++) {
+    const double t = source.times[i];
+    if (time_table.empty() || t - time_table.back() > time_eps) {
+      time_table.push_back(t);
+    }
+    time_indices->push_back(static_cast<int>(time_table.size() - 1));
+  }
+
+  const double max_time = std::max(1e-9, time_table.back());
+  for (auto& t : time_table) {
+    t /= max_time;
+  }
+  return time_table;
+}
+
+std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>> source_pose_table(
+  const Eigen::Isometry3d& begin,
+  const Eigen::Isometry3d& end,
+  const std::vector<double>& time_table) {
+  const Sophus::SE3d T_begin(begin.matrix());
+  const Sophus::SE3d T_end(end.matrix());
+  const Vector6d velocity = (T_begin.inverse() * T_end).log();
+
+  std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>> poses;
+  poses.reserve(time_table.size());
+  for (const double t : time_table) {
+    poses.push_back(from_sophus_pose(T_begin * Sophus::SE3d::exp(t * velocity)));
+  }
+  return poses;
+}
+
+std::vector<Eigen::Vector4d, Eigen::aligned_allocator<Eigen::Vector4d>> deskew_points(
+  const vlcal::Frame& source,
+  const Eigen::Isometry3d& begin,
+  const Eigen::Isometry3d& end) {
+  std::vector<int> time_indices;
+  const auto time_table = normalized_time_table(source, &time_indices);
+  const auto poses = source_pose_table(begin, end, time_table);
+
+  std::vector<Eigen::Vector4d, Eigen::aligned_allocator<Eigen::Vector4d>> deskewed(source.size());
+  for (size_t i = 0; i < source.size(); i++) {
+    deskewed[i] = poses[time_indices[i]].matrix() * source.points[i];
+  }
+  return deskewed;
+}
+
+#ifdef LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER
+LingtuCameraLidarPose3 to_ffi_pose(const Eigen::Isometry3d& pose) {
+  Eigen::Quaterniond q(pose.linear());
+  q.normalize();
+  const Eigen::Vector3d t = pose.translation();
+  return LingtuCameraLidarPose3{{t.x(), t.y(), t.z()}, {q.w(), q.x(), q.y(), q.z()}};
+}
+
+Eigen::Isometry3d from_ffi_pose(const LingtuCameraLidarPose3& pose) {
+  Eigen::Isometry3d output = Eigen::Isometry3d::Identity();
+  Eigen::Quaterniond q(pose.q_wxyz[0], pose.q_wxyz[1], pose.q_wxyz[2], pose.q_wxyz[3]);
+  q.normalize();
+  output.linear() = q.toRotationMatrix();
+  output.translation() << pose.t_xyz[0], pose.t_xyz[1], pose.t_xyz[2];
+  return output;
+}
+
+std::vector<LingtuCameraLidarCtGicpSourcePoint> build_rust_source_points(const vlcal::Frame& source) {
+  if (!source.has_points() || !source.has_covs() || !source.has_times()) {
+    return {};
+  }
+
+  std::vector<int> time_indices;
+  const auto time_table = normalized_time_table(source, &time_indices);
+
+  std::vector<LingtuCameraLidarCtGicpSourcePoint> sources;
+  sources.reserve(source.size());
+  for (size_t i = 0; i < source.size(); i++) {
+    const auto& source_pt = source.points[i];
+    const auto& source_cov = source.covs[i];
+
+    LingtuCameraLidarCtGicpSourcePoint point{};
+    point.time = time_table[time_indices[i]];
+    for (int axis = 0; axis < 3; axis++) {
+      point.xyz[axis] = source_pt[axis];
+    }
+    vlcal::rust_camera_lidar_optimizer::copy_covariance3_row_major(source_cov, point.cov_row_major);
+    sources.push_back(point);
+  }
+  return sources;
+}
+
+std::vector<LingtuCameraLidarCtGicpTargetPoint> build_rust_target_points(const std::shared_ptr<vlcal::iVox>& target_ivox) {
+  if (!target_ivox || !target_ivox->has_points() || !target_ivox->has_covs()) {
+    return {};
+  }
+
+  const auto target_points = target_ivox->voxel_points();
+  const auto target_covs = target_ivox->voxel_covs();
+  if (target_points.empty() || target_points.size() != target_covs.size()) {
+    return {};
+  }
+
+  std::vector<LingtuCameraLidarCtGicpTargetPoint> targets;
+  targets.reserve(target_points.size());
+  for (size_t i = 0; i < target_points.size(); i++) {
+    LingtuCameraLidarCtGicpTargetPoint point{};
+    for (int axis = 0; axis < 3; axis++) {
+      point.xyz[axis] = target_points[i][axis];
+    }
+    vlcal::rust_camera_lidar_optimizer::copy_covariance3_row_major(target_covs[i], point.cov_row_major);
+    targets.push_back(point);
+  }
+  return targets;
+}
+
+bool optimize_dynamic_ct_gicp_with_rust(
+  const std::shared_ptr<vlcal::iVox>& target_ivox,
+  const vlcal::Frame& source,
+  const Eigen::Isometry3d& prior_begin,
+  Eigen::Isometry3d* optimized_begin,
+  Eigen::Isometry3d* optimized_end,
+  int num_threads) {
+  if (optimized_begin == nullptr || optimized_end == nullptr) {
+    return false;
+  }
+  if (!vlcal::rust_camera_lidar_optimizer::abi_compatible()) {
+    return false;
+  }
+
+  (void)num_threads;
+  const auto rust_sources = build_rust_source_points(source);
+  const auto rust_targets = build_rust_target_points(target_ivox);
+  if (rust_sources.empty() || rust_targets.empty()) {
+    return false;
+  }
+
+  const auto prior_pose = to_ffi_pose(prior_begin);
+  const auto between_measurement = to_ffi_pose(Eigen::Isometry3d::Identity());
+  const LingtuCameraLidarTwoPoseOptimizerConfig config{
+    static_cast<std::uint32_t>(10),
+    vlcal::rust_camera_lidar_optimizer::kDefaultDerivativeEps,
+    vlcal::rust_camera_lidar_optimizer::kDefaultInitialLambda,
+    vlcal::rust_camera_lidar_optimizer::kDefaultLambdaFactor,
+    vlcal::rust_camera_lidar_optimizer::kDefaultStepTolerance,
+    vlcal::rust_camera_lidar_optimizer::kDefaultRelativeCostTolerance,
+    1e3,
+    1e5};
+
+  const auto initial_begin = to_ffi_pose(*optimized_begin);
+  const auto initial_end = to_ffi_pose(*optimized_end);
+  LingtuCameraLidarTwoPoseOptimizationResult result{};
+  const int rust_status = lingtu_camera_lidar_optimizer_optimize_ct_gicp_dynamic_two_pose(
+    &initial_begin,
+    &initial_end,
+    &prior_pose,
+    &between_measurement,
+    rust_sources.data(),
+    rust_sources.size(),
+    rust_targets.data(),
+    rust_targets.size(),
+    1.0,
+    static_cast<std::uint32_t>(3),
+    &config,
+    &result);
+  if (rust_status != vlcal::rust_camera_lidar_optimizer::kOk || result.used_correspondences == 0) {
+    return false;
+  }
+
+  *optimized_begin = from_ffi_pose(result.pose0);
+  *optimized_end = from_ffi_pose(result.pose1);
+  return true;
+}
+#endif
+}  // namespace
 
 namespace vlcal {
 
@@ -32,8 +247,8 @@ DynamicPointCloudIntegratorParams::DynamicPointCloudIntegratorParams() {
 DynamicPointCloudIntegratorParams::~DynamicPointCloudIntegratorParams() {}
 
 DynamicPointCloudIntegrator::DynamicPointCloudIntegrator(const DynamicPointCloudIntegratorParams& params) : params(params) {
-  last_T_odom_lidar_begin = gtsam::Pose3();
-  last_T_odom_lidar_end = gtsam::Pose3();
+  last_T_odom_lidar_begin = Eigen::Isometry3d::Identity();
+  last_T_odom_lidar_end = Eigen::Isometry3d::Identity();
 
   target_ivox.reset(new iVox(1.0, 0.05, 100));
 
@@ -70,46 +285,47 @@ void DynamicPointCloudIntegrator::insert_points(const Frame::ConstPtr& raw_point
   if (!target_ivox->has_points()) {
     // Handling the first frame
     target_ivox->insert(*points);
-    alignment_results.push(std::make_tuple(raw_points, gtsam::Pose3(), gtsam::Pose3()));
+    alignment_results.push(std::make_tuple(raw_points, Eigen::Isometry3d::Identity(), Eigen::Isometry3d::Identity()));
     return;
   }
 
   const double scan_duration = raw_points->times[raw_points->size() - 1];
-  const gtsam::Vector6 pred_v_odom_lidar = gtsam::Pose3::Logmap(last_T_odom_lidar_begin.between(last_T_odom_lidar_end)) / scan_duration;
-  const gtsam::Pose3 pred_T_odom_lidar_begin = last_T_odom_lidar_end;
-  const gtsam::Pose3 pred_T_odom_lidar_end = last_T_odom_lidar_end * gtsam::Pose3::Expmap(0.75 * pred_v_odom_lidar * scan_duration);
+  const Sophus::SE3d last_T_begin(last_T_odom_lidar_begin.matrix());
+  const Sophus::SE3d last_T_end(last_T_odom_lidar_end.matrix());
+  const Vector6d pred_v_odom_lidar = (last_T_begin.inverse() * last_T_end).log() / scan_duration;
+  const Eigen::Isometry3d pred_T_odom_lidar_begin = last_T_odom_lidar_end;
+  const Eigen::Isometry3d pred_T_odom_lidar_end = from_sophus_pose(last_T_end * Sophus::SE3d::exp(0.75 * pred_v_odom_lidar * scan_duration));
 
-  gtsam::Values values;
-  values.insert(0, pred_T_odom_lidar_begin);
-  values.insert(1, pred_T_odom_lidar_end);
+  Eigen::Isometry3d optimized_T_odom_lidar_begin = pred_T_odom_lidar_begin;
+  Eigen::Isometry3d optimized_T_odom_lidar_end = pred_T_odom_lidar_end;
 
-  gtsam::NonlinearFactorGraph graph;
-  auto factor = boost::make_shared<IntegratedCT_GICPFactor_<iVox, Frame>>(0, 1, target_ivox, points, target_ivox);
-  factor->set_num_threads(params.num_threads);
-  graph.add(factor);
+  bool optimized_with_rust = false;
+#ifdef LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER
+  optimized_with_rust = optimize_dynamic_ct_gicp_with_rust(
+    target_ivox,
+    *points,
+    pred_T_odom_lidar_begin,
+    &optimized_T_odom_lidar_begin,
+    &optimized_T_odom_lidar_end,
+    params.num_threads);
+#endif
 
-  graph.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(0, gtsam::Pose3(pred_T_odom_lidar_begin), gtsam::noiseModel::Isotropic::Precision(6, 1e3));
-  graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(0, 1, gtsam::Pose3(), gtsam::noiseModel::Isotropic::Precision(6, 1e5));
-
-  gtsam::LevenbergMarquardtParams lm_params;
-  lm_params.setMaxIterations(10);
-  if (params.verbose) {
-    lm_params.setVerbosityLM("SUMMARY");
+  if (!optimized_with_rust) {
+    throw std::runtime_error(
+      "Dynamic point cloud integration requires the Rust CT-GICP optimizer, but it "
+      "did not return a valid begin/end pose update.");
   }
 
-  for (int i = 0; i < 3; i++) {
-    values = gtsam::LevenbergMarquardtOptimizer(graph, values, lm_params).optimize();
-  }
+  last_T_odom_lidar_begin = optimized_T_odom_lidar_begin;
+  last_T_odom_lidar_end = optimized_T_odom_lidar_end;
 
-  last_T_odom_lidar_begin = values.at<gtsam::Pose3>(0);
-  last_T_odom_lidar_end = values.at<gtsam::Pose3>(1);
-
-  auto deskewed = std::make_shared<FrameCPU>(factor->deskewed_source_points(values));
+  auto deskewed = std::make_shared<FrameCPU>(
+    deskew_points(*points, optimized_T_odom_lidar_begin, optimized_T_odom_lidar_end));
   deskewed->add_covs(covariance_estimation.estimate(deskewed->points_storage, neighbors));
   deskewed->add_intensities(points->intensities, points->size());
   target_ivox->insert(*deskewed);
 
-  alignment_results.push(std::make_tuple(raw_points, values.at<gtsam::Pose3>(0), values.at<gtsam::Pose3>(1)));
+  alignment_results.push(std::make_tuple(raw_points, optimized_T_odom_lidar_begin, optimized_T_odom_lidar_end));
 
   if (params.visualize) {
     auto viewer = guik::LightViewer::instance();
@@ -133,7 +349,7 @@ void DynamicPointCloudIntegrator::voxelgrid_task() {
     const double max_timestamp = raw_points->times[raw_points->size() - 1];
 
     double last_t = -1.0;
-    gtsam::Pose3 T_odom_lidar = T_odom_lidar_begin;
+    Eigen::Isometry3d T_odom_lidar = T_odom_lidar_begin;
 
     const double time_eps = 1e-4;
     for (int i = 0; i < raw_points->size(); i++) {
@@ -141,7 +357,7 @@ void DynamicPointCloudIntegrator::voxelgrid_task() {
 
       if (t - last_t > time_eps) {
         last_t = t;
-        T_odom_lidar = T_odom_lidar_begin.interpolateRt(T_odom_lidar_end, t);
+        T_odom_lidar = interpolate_rt(T_odom_lidar_begin, T_odom_lidar_end, t);
       }
 
       const Eigen::Vector4d pt = T_odom_lidar.matrix() * raw_points->points[i];

@@ -46,13 +46,13 @@ Recent commits:
 Validated locally:
 
 ```bash
-python -m pytest src/core/tests/test_server_setup_contract.py -q --tb=short
+python -m pytest src/runtime/tests/test_server_setup_contract.py -q --tb=short
 bash -n docs/07-testing/l25_fresh_closure.sh
 bash -n docs/07-testing/p0_all.sh docs/07-testing/p0_goto.sh docs/07-testing/p0_estop.sh docs/07-testing/p0_route_safety.sh docs/07-testing/p0_mapping.sh docs/07-testing/p0_explore.sh docs/07-testing/p0_cold_boot.sh
 git diff --check
 ```
 
-The L1 pre-commit hook also passed full `python -m pytest src/core/tests/ -q`
+The L1 pre-commit hook also passed full `python -m pytest src/runtime/tests/ -q`
 for the two most recent commits. The hook prints known nanobind leak diagnostics
 but exits with `[L1 pre-commit] OK`.
 

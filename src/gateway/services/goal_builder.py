@@ -8,8 +8,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from core.runtime_interface import map_frame_id
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+from runtime.runtime_interface import map_frame_id
 from gateway.schemas import PlanPreviewRequest
 
 

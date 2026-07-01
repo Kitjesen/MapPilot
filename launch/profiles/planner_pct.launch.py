@@ -86,7 +86,7 @@ def generate_launch_description():
         remappings=[
             # 输入: 从标准接口读取
             ("/pct_path",   "/nav/global_path"),
-            ("/Odometry",   "/nav/odometry"),
+            ("/Odometry",   "/slam/odometry"),
             # 输出: remap 到标准接口
             ("/planner_waypoint", "/nav/way_point"),   # 修正：与 autonomy.launch.py 订阅名一致
         ],

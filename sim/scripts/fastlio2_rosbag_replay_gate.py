@@ -174,7 +174,7 @@ def run_gate(
         raise FileNotFoundError(str(bag))
 
     rclpy, rosbag2_py, deserialize_message, get_message, Odometry, PointCloud2 = _load_ros_modules()
-    from slam.slam_bridge_module import SlamBridgeModule
+    from localization.bridge import SlamBridgeModule
 
     reader = rosbag2_py.SequentialReader()
     reader.open(
@@ -374,8 +374,8 @@ def run_gate(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bag", required=True)
-    parser.add_argument("--imu-topic", default="/imu_raw")
-    parser.add_argument("--lidar-topic", default="/points_raw")
+    parser.add_argument("--imu-topic", default="/imu/raw")
+    parser.add_argument("--lidar-topic", default="/lidar/raw_frame")
     parser.add_argument("--max-imu", type=int, default=3000)
     parser.add_argument("--max-cloud", type=int, default=30)
     parser.add_argument("--max-bag-seconds", type=float, default=8.0)

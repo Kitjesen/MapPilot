@@ -11,7 +11,7 @@
 #   ./scripts/ota/push_to_robot.sh sunrise@192.168.1.100
 #   ./scripts/ota/push_to_robot.sh sunrise@192.168.1.100 --build    # 先编译再推送
 #   ./scripts/ota/push_to_robot.sh sunrise@192.168.1.100 --restart   # 推送后重启服务
-#   ./scripts/ota/push_to_robot.sh sunrise@192.168.1.100 --packages-select fastlio2 local_planner
+#   ./scripts/ota/push_to_robot.sh sunrise@192.168.1.100 --packages-select fastlio2 nav_kernel
 #
 # 前置条件:
 #   - SSH 免密登录已配置 (ssh-copy-id)
@@ -71,7 +71,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "示例:"
             echo "  $0 sunrise@192.168.1.100 --build --restart"
-            echo "  $0 sunrise@192.168.1.100 --packages-select local_planner --restart"
+            echo "  $0 sunrise@192.168.1.100 --packages-select fastlio2 nav_kernel --restart"
             echo "  $0 sunrise@192.168.1.100 --sync-only"
             exit 0
             ;;

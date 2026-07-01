@@ -8,10 +8,10 @@ CMU 自主导航栈的 FAR Planner，基于动态可视图的全局路径规划�
 论文: FAR Planner: Fast, Attemptable Route Planner (IROS 2022)
 
 话题映射到标准接口 (/nav/*):
-  /odom_world          ← /nav/odometry
+  /odom_world          ← /slam/odometry
   /terrain_cloud       ← /nav/terrain_map_ext
   /scan_cloud          ← /nav/terrain_map
-  /terrain_local_cloud ← /nav/registered_cloud
+  /terrain_local_cloud ← /slam/registered_cloud
   /goal_point          ← /nav/goal_point        (PointStamped 目标输入)
   /way_point           → /nav/way_point          (规划输出航点)
   /navigation_boundary → /nav/navigation_boundary
@@ -66,10 +66,10 @@ def generate_launch_description():
         ],
         remappings=[
             # ── 输入: 标准接口 → FAR 内部话题 ──
-            ("/odom_world",          "/nav/odometry"),
+            ("/odom_world",          "/slam/odometry"),
             ("/terrain_cloud",       "/nav/terrain_map_ext"),
             ("/scan_cloud",          "/nav/terrain_map"),
-            ("/terrain_local_cloud", "/nav/registered_cloud"),
+            ("/terrain_local_cloud", "/slam/registered_cloud"),
             ("/goal_point",          "/nav/goal_point"),
             # ── 输出: FAR 内部话题 → 标准接口 ──
             ("/way_point",              "/nav/way_point"),

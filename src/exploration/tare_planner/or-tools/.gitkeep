@@ -1,2 +1,0 @@
-OR-Tools is fetched at build time — see ../README.md and
-scripts/build/fetch_ortools.sh. Do not commit the binary here.

@@ -1363,6 +1363,21 @@ export interface SavedMapEvent {
   count: number
 }
 
+export interface MapLifecycleEvent {
+  type: 'map_event'
+  data: {
+    schema_version: 'map.event'
+    event: string
+    action?: string
+    map_id?: string
+    success?: boolean
+    message?: string
+    record_version?: string
+    timestamp?: string
+    [key: string]: unknown
+  }
+}
+
 export interface SessionEvent {
   type: 'session'
   data: {
@@ -1513,6 +1528,7 @@ export type SSEEvent = SSEEnvelopeFields & (
   | GlobalPathEvent
   | MapCloudEvent
   | SavedMapEvent
+  | MapLifecycleEvent
   | SessionEvent
   | CostmapEvent
   | SlopeGridEvent
@@ -1531,6 +1547,7 @@ export interface SSEState {
   localPath: LocalPathEvent | null
   mapCloud: MapCloudEvent | null
   savedMap: SavedMapEvent | null
+  mapEvent: MapLifecycleEvent['data'] | null
   session: SessionEvent['data'] | null
   navigationStatus: NavigationStatusResponse | null
   lease: LeaseResponse | Record<string, unknown> | null
@@ -1569,7 +1586,7 @@ export interface Toast {
   kind: ToastKind
 }
 
-export type Tab = 'console' | 'scene' | 'map' | 'slam' | 'dataflow' | 'inspection'
+export type Tab = 'console' | 'scene' | 'map' | 'slam'
 
 export type SlamProfile = 'fastlio2' | 'localizer' | 'super_lio' | 'super_lio_relocation' | 'stop'
 

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from core.runtime_interface import map_frame_id
+from runtime.runtime_interface import map_frame_id
 
 
 GATEWAY_MAP_FRAME_ID = map_frame_id()
@@ -550,6 +550,7 @@ class RuntimeContractManifest(GatewayResponseModel):
         default_factory=dict
     )
     topic_formats: dict[str, list[str]] = Field(default_factory=dict)
+    topic_ros_types: dict[str, list[str]] = Field(default_factory=dict)
     artifact_formats: dict[str, RuntimeArtifactFormatSummary] = Field(
         default_factory=dict
     )

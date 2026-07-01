@@ -1,43 +1,48 @@
-# LingTu — Import-Ready API Wrapper
+# LingTu Local Facade
 
-> Files live under `src/lingtu/`
+`src/lingtu` is intentionally small. It exposes one high-level facade,
+`Robot`, the direct runtime builder, the remote SDK, and the product plugin
+catalog used during startup.
 
-This package provides a high-level, import-ready Python API for the LingTu navigation system. It wraps the underlying Module-First framework into simple classes so that users can drive the robot without touching Blueprints, Modules, or ROS2 internals.
+Remote control of an already deployed robot belongs to `lingtu.sdk`, not this
+package.
 
 ## Quick Start
 
 ```python
-from lingtu import LiDAR, SLAM, Navigator, Camera, Detector, Robot
+from lingtu import Robot
 
-# Full robot (all-in-one, builds a real blueprint system)
 robot = Robot("sim").start()
-robot.go("体育馆")               # semantic navigation
-robot.follow("person in red")   # follow a described person
-robot.stop_follow()
+robot.go_to(5.0, 3.0, z=0.0)
+robot.go("go to the gym")
+robot.follow("person in red")
 robot.save_map("building_a")
 robot.shutdown()
 ```
 
-## API Classes
+## Public API
 
-| Class | File | Purpose |
+| Entry | File | Purpose |
 |-------|------|---------|
-| `LiDAR` | `lidar.py` | Livox MID-360 hardware driver wrapper |
-| `SLAM` | `slam.py` | SLAM lifecycle (start/stop/save_map) |
-| `Navigator` | `navigator.py` | High-level navigation commands |
-| `Camera` | `camera.py` | HAP camera stream access |
-| `Detector` | `detector.py` | Object detection wrapper |
-| `Robot` | `robot.py` | All-in-one robot controller |
+| `Robot` | `robot.py` | All-in-one local robot facade over the runtime profile builder |
+| `lingtu.runtime` | `runtime.py` | Resolve profiles and build Module-First systems directly |
+| `lingtu.plugin_seed` | `plugin_seed.py` | Product plugin catalog; imports built-in module groups so their `@register` decorators populate `runtime.registry` |
+| `lingtu.sdk` | `sdk/` | Remote client SDK for an already running robot or gateway |
+| `lingtu.ros2_plugin_seed` | `ros2_plugin_seed.py` | Optional ROS2 compatibility plugin groups; not a normal business-module entry |
 
-## Usage Profiles
+Standalone camera, LiDAR, SLAM, navigator, and detector wrappers were removed.
+Those capabilities live in the normal Blueprint stacks and module packages.
 
-The `Robot` class supports the same profiles as the CLI entry point:
+## Plugin Seed Boundary
 
-- `"sim"` — MuJoCo simulation (full stack)
-- `"nav"` — Navigate using saved map
-- `"explore"` — Exploration mode
-- `"map"` — Mapping mode (SLAM + save)
-- `"dev"` — Semantic pipeline, no C++ nodes
+`lingtu.plugin_seed` answers "which built-in LingTu modules are part of this
+product package?" It does not select the active profile and does not build a
+system. Runtime code calls `seed_builtin_plugins(groups=(...))` when it needs a
+category in the registry.
+
+The product global-planner category currently seeds only `octoplanner3d`.
+Legacy PCT/A*/direct planning code is kept outside the product backend catalog
+unless a dedicated compatibility entry explicitly opts into it.
 
 ## Testing
 

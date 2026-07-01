@@ -1,21 +1,26 @@
-# Services — Business Logic Behind the REST API
+# Gateway Services
 
-This package implements the business logic layer that powers the Gateway's REST endpoints. Each service module encapsulates a cohesive set of operations, keeping route handlers thin.
+Service files hold small helpers used by Gateway routes. They should convert
+Gateway-facing requests/status into module-facing data, not own navigation or
+SLAM behavior.
 
-## Files
+| File | Role |
+| --- | --- |
+| `app_bootstrap.py` | Startup payloads and frontend bootstrap state |
+| `commands.py` | Command dispatch helpers |
+| `control_commands.py` | Teleop/control command helpers |
+| `goal_builder.py` | Goal request to typed pose/message conversion |
+| `map_paths.py` | Map path resolution |
+| `map_safety.py` | Gateway-side map input validation |
+| `media_status.py` | Camera/media status helpers |
+| `readiness.py` | Readiness summaries |
+| `runtime_dataflow.py` | Runtime dataflow status summaries |
+| `runtime_status.py` | Module/runtime status aggregation |
+| `runtime_switch_plan.py` | Safe runtime switch preview |
+| `safety_status.py` | Safety status aggregation |
+| `state_snapshot.py` | Diagnostic state snapshot |
+| `telemetry_normalizers.py` | Telemetry shape/unit normalization |
+| `traffic.py` | SSE/cloud traffic accounting |
 
-- **`app_bootstrap.py`** — Application bootstrap: service initialization order, dependency resolution, and startup validation.
-- **`commands.py`** — Command dispatch service: routes REST commands to appropriate module ports with validation.
-- **`control_commands.py`** — Control commands: speed override, mode switch, and emergency stop execution.
-- **`goal_builder.py`** — Goal construction: converts text/fuzzy targets into typed Goal messages via the resolution chain.
-- **`map_paths.py`** — Map path resolution: translates map names to filesystem paths and validates map directory structure.
-- **`map_safety.py`** — Map safety checks: validates map integrity, occupancy grid bounds, and navigation feasibility.
-- **`media_status.py`** — Media status: camera stream health, recording state, and storage capacity reporting.
-- **`readiness.py`** — System readiness: pre-flight checks for all subsystems before mission start.
-- **`runtime_dataflow.py`** — Runtime data flow: coordinates data movement between modules at runtime.
-- **`runtime_status.py`** — Runtime status aggregation: collects module states into a unified status report.
-- **`runtime_switch_plan.py`** — Runtime switch plan: coordinates safe mode transitions (mapping↔navigation).
-- **`safety_status.py`** — Safety status: aggregates SafetyRing, Geofence, and CmdVelMux states into a single report.
-- **`state_snapshot.py`** — Full system snapshot: captures all module states for diagnostics and debugging.
-- **`telemetry_normalizers.py`** — Telemetry normalization: converts raw sensor values to standard units and coordinate frames.
-- **`traffic.py`** — Traffic management: rate-limiting, request queuing, and concurrent access control.
+Map save/build execution belongs in `nav.services.maps`; Gateway should expose
+it, not become a second map owner.

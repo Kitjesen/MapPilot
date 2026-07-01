@@ -1,19 +1,35 @@
-# Real — Hardware Drivers for Physical Robots
+# Real Hardware Drivers
 
-This package provides drivers for real robot hardware. Each sub-package encapsulates a complete hardware interface stack, from low-level communication to high-level Module ports.
+This package holds physical robot and sensor drivers. Normal business modules
+should consume their Module ports, not ROS topics or vendor SDK APIs directly.
 
-## `thunder/` — Thunder Robot (gRPC via Brainstem)
+## `thunder/` - Thunder Robot
 
-- **`__init__.py`** — Package init; exports the Thunder driver and connection surfaces.
-- **`blueprints.py`** — Legacy compatibility shim; product blueprints live under `core.blueprints.products.thunder`.
-- **`connection.py`** — Connection management: gRPC channel lifecycle, retry, and reconnection to brainstem control service.
-- **`han_dog_module.py`** — HanDog hardware module: low-level joint command interface for the Han robot variant.
+- `connection.py` - gRPC channel lifecycle to the Brainstem control service.
+- `han_dog_module.py` - quadruped motion driver Module.
 
-Camera bridge adapters live under `src/compat/ros2/camera_bridge.py` and are composed by the product/perception stack when camera input is enabled. The Thunder hardware package should not import ROS compatibility modules directly.
+## `camera/` - Orbbec RGB-D Camera
 
-## `lidar/` — Livox MID-360 LiDAR Driver
+- `native/capture_process.cpp` - no-ROS Orbbec SDK capture process.
+- `native_camera_module.py` - converts native C++ records into LingTu
+  `color_image`, `depth_image`, and `camera_info` streams.
+- `OrbbecSDK_ROS2/` - local Orbbec SDK/ROS2 source used by the native build
+  and kept beside the camera driver instead of under `third_party/`.
 
-- **`__init__.py`** — Package init; exports `LidarModule`.
-- **`lidar.py`** — LiDAR configuration and utilities: IP, port, scan pattern parameters for Livox MID-360.
-- **`lidar_module.py`** — LidarModule: hardware driver for Livox MID-360; publishes PointCloud2 via UDP packet capture.
-- **`_dds.py`** — DDS integration: publishes lidar data over CycloneDDS for cross-process consumption.
+The ROS2 `orbbec_camera` launch remains a compatibility path. Product dataflow
+should prefer the native module when `build/orbbec_native/orbbec_capture` is
+available. The C++ process uses stdout as a local IPC boundary; LingTu dataflow
+starts at the Python Module ports.
+
+## `lidar/` - Livox MID-360 LiDAR
+
+- `lidar.py` - configuration and scan-pattern utilities.
+- `lidar_module.py` - LiDAR Module.
+- `_dds.py` - DDS publishing helper for cross-process consumers.
+- `Livox-SDK2/` - official Livox SDK2 source.
+- `livox_ros_driver2/` - official ROS2 driver compatibility package.
+
+## `gnss/` - GNSS ROS2 Compatibility
+
+- `wtrtk980_ros2_reader/` - GNSS reader package kept with real hardware
+  sources.

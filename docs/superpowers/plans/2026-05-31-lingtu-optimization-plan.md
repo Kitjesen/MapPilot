@@ -1,310 +1,310 @@
-# LingTu 全面优化计划 — 解耦 · 模块化 · 规范化
+# LingTu 鍏ㄩ潰浼樺寲璁″垝 �?瑙ｈ�?�?妯″潡�?�?瑙勮寖鍖?
 
-> **审计日期**：2026-05-31
-> **审计方式**：5 个并行 Agent（导入边界 / 文件组织 / 测试覆盖 / 代码质量 / 架构模式）+ 综合 Synthesis Agent
-> **前序计划**：[2026-05-30 解耦执行计划](./2026-05-30-module-decoupling-execution.md)（Tasks 1-2 已完成）
+> **瀹¤鏃ユ�?*�?026-05-31
+> **瀹¤鏂瑰�?*�? 涓苟琛?Agent锛堝鍏ヨ竟�?/ 鏂囦欢缁勭粐 / 娴嬭瘯瑕嗙洊 / 浠ｇ爜璐ㄩ噺 / 鏋舵瀯妯″紡�? 缁煎�?Synthesis Agent
+> **鍓嶅簭璁″垝**锛歔2026-05-30 瑙ｈ€︽墽琛岃鍒抅(./2026-05-30-module-decoupling-execution.md)锛圱asks 1-2 宸插畬鎴愶級
 
 ---
 
-## 一、现状总评
+## 涓€銆佺幇鐘舵€昏瘎
 
-### 🟢 健康部分
+### 馃煝 鍋ュ悍閮ㄥ垎
 
-| 维度 | 评估 |
+| 缁村�?| 璇勪�?|
 |------|------|
-| **导入边界** | gateway → nav/semantic/drivers 零违规，边界测试通过 ✅ |
-| **Core 框架** | module.py / stream.py / registry.py / blueprint.py 结构清晰，零循环引用 ✅ |
-| **Module-First 规范** | 所有 Module 使用 In[T]/Out[T] 类型端口、@register、@skill 装饰器，模式统一 ✅ |
-| **Shim 兼容层** | 3 个 `sys.modules` swap shim 正确工作，旧导入路径透明重定向 ✅ |
-| **语义层隔离** | semantic/ → nav/drivers/gateway 零导入 ✅ |
+| **瀵煎叆杈圭晫** | gateway �?nav/semantic/drivers 闆惰繚瑙勶紝杈圭晫娴嬭瘯閫氳�?�?|
+| **Core 妗嗘�?* | module.py / stream.py / registry.py / blueprint.py 缁撴瀯娓呮櫚锛岄浂寰幆寮曠�?�?|
+| **Module-First 瑙勮�?* | 鎵€�?Module 浣跨�?In[T]/Out[T] 绫诲瀷绔彛銆丂register銆丂skill 瑁呴グ鍣紝妯″紡缁熶�?�?|
+| **Shim 鍏煎灞?* | 3 �?`sys.modules` swap shim 姝ｇ‘宸ヤ綔锛屾棫瀵煎叆璺緞閫忔槑閲嶅畾�?�?|
+| **璇箟灞傞殧�?* | semantic/ �?nav/drivers/gateway 闆跺鍏?�?|
 
-### 🔴 需立即关注的（按严重度排序）
+### 馃敶 闇€绔嬪嵆鍏虫敞鐨勶紙鎸変弗閲嶅害鎺掑簭�?
 
-| # | 严重度 | 问题 | 位置 |
+| # | 涓ラ噸搴?| 闂�?| 浣嶇�?|
 |---|--------|------|------|
-| 1 | P0 | **`tests/` 目录被 pytest 排除** — 26 个 ROS2 集成测试对 `python -m pytest` 不可见 | `pyproject.toml` |
-| 2 | P0 | **5 / 9 模块没有独立 test 目录** — 137 个测试平铺在 `src/core/tests/` | nav/gateway/drivers/memory/slam |
-| 3 | P1 | **死代码** — `gateway_module.py:161-195` 函数定义后立即被覆盖 | `src/gateway/gateway_module.py` |
-| 4 | P1 | **缺少 `__init__.py`** — `src/nav/services/` 是隐式命名空间包，脆弱 | `src/nav/services/` |
-| 5 | P1 | **孤儿 `.pyc` 目录** — `src/semantic/common/semantic_common/` 只有 `.pyc` 无 `.py` | `src/semantic/common/` |
-| 6 | P1 | **绕过 core.yaml_helpers** — `map_manager_module.py:967` 直接 `import yaml` 无回退 | `src/nav/services/map_manager_module.py` |
+| 1 | P0 | **`tests/` 鐩綍琚?pytest 鎺掗�?* �?26 �?ROS2 闆嗘垚娴嬭瘯�?`python -m pytest` 涓嶅彲瑙?| `pyproject.toml` |
+| 2 | P0 | **5 / 9 妯″潡娌℃湁鐙珛 test 鐩�?* �?137 涓祴璇曞钩閾哄�?`src/runtime/tests/` | nav/gateway/drivers/memory/slam |
+| 3 | P1 | **姝讳唬鐮?* �?`gateway_module.py:161-195` 鍑芥暟瀹氫箟鍚庣珛鍗宠瑕嗙洊 | `src/gateway/gateway_module.py` |
+| 4 | P1 | **缂哄�?`__init__.py`** �?`src/nav/services/` 鏄殣寮忓懡鍚嶇┖闂村寘锛岃剢寮?| `src/nav/services/` |
+| 5 | P1 | **瀛ゅ�?`.pyc` 鐩�?* �?`src/semantic/common/semantic_common/` 鍙�?`.pyc` �?`.py` | `src/semantic/common/` |
+| 6 | P1 | **缁曡�?runtime.yaml_helpers** �?`maps.py:967` 鐩存�?`import yaml` 鏃犲洖閫�?| `src/nav/services/maps.py` |
 
 ---
 
-## 二、前序计划剩余任务（Tasks 4-7 评估）
+## 浜屻€佸墠搴忚鍒掑墿浣欎换鍔★紙Tasks 4-7 璇勪及锛?
 
-| 计划任务 | 状态 | 建议 |
+| 璁″垝浠诲�?| 鐘舵�?| 寤鸿�?|
 |----------|------|------|
-| **Task 4**: 提取 NavigationModule ROS2 发布到 Bridge 层 | ❌ 未开始 | **降优先级**。`navigation_module.py` 的 rclpy 导入已是条件门控（`enable_ros2_bridge`），当前方案务实可行。仅在 ROS2-free 部署成为硬需求时执行。 |
-| **Task 5**: 仿真证据 Freshness Gate | ❌ 未开始 | **中等优先级**。`sim/scripts/server_sim_closure.py` 已修改但未完成。下次 S100P 仿真活动前完成。 |
-| **Task 6**: 真实 Planner Benchmark | ❌ 未开始 | **中等优先级**。当前 `benchmark_planner.sh` 只有 sleep 占位。声明 planner 性能改进前必须完成。 |
-| **Task 7**: 导航链效率证据 | ❌ 未开始 | **低-中优先级**。结构良好但非阻塞，下次导航调试时顺手实现。 |
+| **Task 4**: 鎻愬�?NavigationModule ROS2 鍙戝竷鍒?Bridge �?| �?鏈紑濮?| **闄嶄紭鍏堢骇**銆俙navigation_module.py` �?rclpy 瀵煎叆宸叉槸鏉′欢闂ㄦ帶锛坄enable_ros2_bridge`锛夛紝褰撳墠鏂规鍔″疄鍙銆備粎�?ROS2-free 閮ㄧ讲鎴愪负纭渶姹傛椂鎵ц�?|
+| **Task 5**: 浠跨湡璇佹嵁 Freshness Gate | �?鏈紑濮?| **涓瓑浼樺厛�?*銆俙sim/scripts/server_sim_closure.py` 宸蹭慨鏀逛絾鏈畬鎴愩€備笅�?S100P 浠跨湡娲诲姩鍓嶅畬鎴愩€?|
+| **Task 6**: 鐪熷�?Planner Benchmark | �?鏈紑濮?| **涓瓑浼樺厛�?*銆傚綋鍓?`benchmark_planner.sh` 鍙�?sleep 鍗犱綅銆傚０�?planner 鎬ц兘鏀硅繘鍓嶅繀椤诲畬鎴愩€?|
+| **Task 7**: 瀵艰埅閾炬晥鐜囪瘉鎹?| �?鏈紑濮?| **�?涓紭鍏堢骇**銆傜粨鏋勮壇濂戒絾闈為樆濉烇紝涓嬫瀵艰埅璋冭瘯鏃堕『鎵嬪疄鐜般�?|
 
 ---
 
-## 三、新发现问题汇总
+## 涓夈€佹柊鍙戠幇闂姹囨€?
 
-### P0 — 立即修复
+### P0 �?绔嬪嵆淇
 
-**1. 集成测试不可见**
-- **文件**：`pyproject.toml` lines 88-98
-- **问题**：`testpaths` 只列了 `src/core/tests` 等 3 个目录，顶层的 `tests/`（26 个集成测试）被排除
-- **方案**（二选一）：
-  - (a) 加 `tests/` 到 testpaths，ROS2 测试加 `@pytest.mark.ros2` + skip-if-no-ros2 fixture
-  - (b) 创建 `scripts/run_integration_tests.sh` 文档化调用方式
+**1. 闆嗘垚娴嬭瘯涓嶅彲瑙?*
+- **鏂囦�?*锛歚pyproject.toml` lines 88-98
+- **闂�?*锛歚testpaths` 鍙垪浜?`src/runtime/tests` �?3 涓洰褰曪紝椤跺眰鐨?`tests/`�?6 涓泦鎴愭祴璇曪級琚帓�?
+- **鏂规�?*锛堜簩閫変竴锛夛�?
+  - (a) �?`tests/` �?testpaths锛孯OS2 娴嬭瘯鍔?`@pytest.mark.ros2` + skip-if-no-ros2 fixture
+  - (b) 鍒涘�?`scripts/run_integration_tests.sh` 鏂囨。鍖栬皟鐢ㄦ柟寮?
 
-**2. 死代码 — gateway_module.py**
-- **文件**：`src/gateway/gateway_module.py` lines 161-195
-- **问题**：`_apply_dynamic_filter_step1half` 函数定义（30 行）+ 整个 body，紧接着 line 196 被覆盖为 `= _map_apply_dynamic_filter_step1half`。函数体永不可达。
-- **修复**：删除 lines 161-195（死定义），只保留 line 196（正确的引用赋值）
+**2. 姝讳唬鐮?�?gateway_module.py**
+- **鏂囦�?*锛歚src/gateway/gateway_module.py` lines 161-195
+- **闂�?*锛歚_apply_dynamic_filter_step1half` 鍑芥暟瀹氫箟锛?0 琛岋�? 鏁翠�?body锛岀揣鎺ョ潃 line 196 琚鐩栦负 `= _map_apply_dynamic_filter_step1half`銆傚嚱鏁颁綋姘镐笉鍙揪�?
+- **淇�?*锛氬垹闄?lines 161-195锛堟瀹氫箟锛夛紝鍙繚鐣?line 196锛堟纭殑寮曠敤璧嬪€硷級
 
-### P1 — 应该修复
+### P1 �?搴旇淇
 
-**3. 缺少 `__init__.py`**
-- **文件**：新建 `src/nav/services/__init__.py`
-- **影响**：`nav.services` 成为 PEP 420 隐式命名空间包，任何 `services/` 目录都可能意外合并
+**3. 缂哄�?`__init__.py`**
+- **鏂囦�?*锛氭柊寤?`src/nav/services/__init__.py`
+- **褰卞�?*锛歚nav.services` 鎴愪�?PEP 420 闅愬紡鍛藉悕绌洪棿鍖咃紝浠讳�?`services/` 鐩綍閮藉彲鑳芥剰澶栧悎�?
 
-**4. 孤儿包目录**
-- **文件**：删除 `src/semantic/common/semantic_common/`
-- **内容**：仅含 `__pycache__/` 中的 `robustness.pyc`、`sanitize.pyc`、`validation.pyc`，对应 `.py` 源文件不存在
+**4. 瀛ゅ効鍖呯洰�?*
+- **鏂囦�?*锛氬垹闄?`src/semantic/common/semantic_common/`
+- **鍐呭�?*锛氫粎鍚?`__pycache__/` 涓�?`robustness.pyc`銆乣sanitize.pyc`銆乣validation.pyc`锛屽搴?`.py` 婧愭枃浠朵笉瀛樺�?
 
-**5. 绕过 core.yaml_helpers**
-- **文件**：`src/nav/services/map_manager_module.py:967`
-- **问题**：裸 `import yaml as _yaml` 没有 fallback，而 `core.yaml_helpers` 已提供无 yaml 时的 JSON 回退
-- **修复**：替换为 `from core.yaml_helpers import ...`
+**5. 缁曡�?runtime.yaml_helpers**
+- **鏂囦�?*锛歚src/nav/services/maps.py:967`
+- **闂�?*锛氳�?`import yaml as _yaml` 娌℃�?fallback锛岃�?`runtime.yaml_helpers` 宸叉彁渚涙棤 yaml 鏃剁�?JSON 鍥為€€
+- **淇�?*锛氭浛鎹负 `from runtime.yaml_helpers import ...`
 
-**6. 测试文件仍用旧 shim 路径**
-- **涉及文件**（6 个）：`test_dynamic_filter.py`、`test_map_occupancy.py`、`test_mujoco_mid360_pattern.py`、`test_nav_services.py`、`test_saved_map_artifact_gate.py`、`test_services_modules.py`
-- **问题**：从 `nav.services.nav_services.X` 导入而非 `core.X`
-- **修复**：更新导入为 `core.X`，然后删除 3 个 shim 文件
+**6. 娴嬭瘯鏂囦欢浠嶇敤鏃?shim 璺�?*
+- **娑夊強鏂囦欢**�? 涓級锛歚test_dynamic_filter.py`銆乣test_map_occupancy.py`銆乣test_mujoco_mid360_pattern.py`銆乣test_nav_services.py`銆乣test_saved_map_artifact_gate.py`銆乣test_services_modules.py`
+- **闂�?*锛氫�?`nav.services.nav_services.X` 瀵煎叆鑰岄潪 `runtime.X`
+- **淇�?*锛氭洿鏂板鍏ヤ�?`runtime.X`锛岀劧鍚庡垹�?3 �?shim 鏂囦�?
 
-### P2 — 改善
+### P2 �?鏀瑰杽
 
-**7. 8 个遗留 simplification wave 测试文件**
-- **文件**：`test_simplification_wave1.py`、`test_simplification_wave2_team{A,B,C,D}.py`、`test_simplification_wave3_team{E,F,G}.py`
-- **问题**：一次性代码简化项目的产物，增加 test 目录噪音
-- **修复**：逐一审计 → 有覆盖价值的合并，重复的删除
+**7. 8 涓仐鐣?simplification wave 娴嬭瘯鏂囦欢**
+- **鏂囦�?*锛歚test_simplification_wave1.py`銆乣test_simplification_wave2_team{A,B,C,D}.py`銆乣test_simplification_wave3_team{E,F,G}.py`
+- **闂�?*锛氫竴娆℃€т唬鐮佺畝鍖栭」鐩殑浜х墿锛屽鍔?test 鐩綍鍣煶
+- **淇�?*锛氶€愪竴瀹¤ �?鏈夎鐩栦环鍊肩殑鍚堝苟锛岄噸澶嶇殑鍒犻�?
 
-**8. 3 个未文档化的 stack factory**
-- **文件**：`src/core/blueprints/stacks/__init__.py` 导出 12 个，CLAUDE.md 只列了 9 个
-- **缺失**：`exploration`、`lidar`、`sim_lidar`
-- **修复**：补充 CLAUDE.md 文档
+**8. 3 涓湭鏂囨。鍖栫殑 stack factory**
+- **鏂囦�?*锛歚src/runtime/blueprints/stacks/__init__.py` 瀵煎�?12 涓紝CLAUDE.md 鍙垪浜?9 �?
+- **缂哄�?*锛歚exploration`銆乣lidar`銆乣sim_lidar`
+- **淇�?*锛氳ˉ�?CLAUDE.md 鏂囨�?
 
-**9. 5 个模块无独立 test 目录**
-- **缺失**：`src/nav/tests/`、`src/gateway/tests/`、`src/drivers/tests/`、`src/memory/tests/`、`src/slam/tests/`
-- **现状**：137 个测试平铺在 `src/core/tests/`
-- **修复**：创建 test 目录，迁移对应测试，更新 `pyproject.toml` testpaths
+**9. 5 涓ā鍧楁棤鐙珛 test 鐩�?*
+- **缂哄�?*锛歚src/nav/tests/`銆乣src/gateway/tests/`銆乣src/drivers/tests/`銆乣src/memory/tests/`銆乣src/localization/tests/`
+- **鐜扮�?*�?37 涓祴璇曞钩閾哄�?`src/runtime/tests/`
+- **淇�?*锛氬垱寤?test 鐩綍锛岃縼绉诲搴旀祴璇曪紝鏇存�?`pyproject.toml` testpaths
 
-**10. `.gitignore` 遗漏**
-- `build_nb_win/`、`*.egg-info/`、`*.pt` 模型文件未忽略
-- **修复**：补充 `.gitignore`
+**10. `.gitignore` 閬楁�?*
+- `build_nb_win/`銆乣*.egg-info/`銆乣*.pt` 妯″瀷鏂囦欢鏈拷鐣?
+- **淇�?*锛氳ˉ�?`.gitignore`
 
-### P3 — 锦上添花
+### P3 �?閿︿笂娣昏姳
 
-**11. 模型文件 `yoloe-26s-seg.pt` 在源码树中**
-**12. 3 个测试文件在非标准位置**
-**13. Registry 热路径可加 `lru_cache`**
-**14. `full_stack_wiring.py` 硬编码模块名字符串**
+**11. 妯″瀷鏂囦欢 `yoloe-26s-seg.pt` 鍦ㄦ簮鐮佹爲�?*
+**12. 3 涓祴璇曟枃浠跺湪闈炴爣鍑嗕綅缃?*
+**13. Registry 鐑矾寰勫彲�?`lru_cache`**
+**14. `full_stack_wiring.py` 纭紪鐮佹ā鍧楀悕瀛楃涓?*
 
 ---
 
-## 四、文件/文件夹规范化方案
+## 鍥涖€佹枃浠?鏂囦欢澶硅鑼冨寲鏂规
 
-### 4.1 目录重组
+### 4.1 鐩綍閲嶇粍
 
 ```
-Phase 1（低风险 · 立即可做）
-━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ 新建 src/nav/services/__init__.py
-✅ 新建 src/semantic/perception/tests/__init__.py
-✅ 删除 src/semantic/common/semantic_common/ （孤儿 .pyc）
-✅ 删除 src/gateway/gateway_module.py:161-195 （死代码）
+Phase 1锛堜綆椋庨櫓 �?绔嬪嵆鍙仛�?
+鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣�?
+�?鏂板�?src/nav/services/__init__.py
+�?鏂板�?src/perception/tests/__init__.py
+�?鍒犻�?src/semantic/common/semantic_common/ 锛堝鍎?.pyc�?
+�?鍒犻�?src/gateway/gateway_module.py:161-195 锛堟浠ｇ爜�?
 
-Phase 2（中风险 · 解耦收尾）
-━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ 6 个测试文件导入路径从 shim 改为 core.*
-✅ 删除 3 个 shim 文件（same_source_map_artifacts / dynamic_filter / yaml_helpers）
-✅ 修复 map_manager_module.py:967 裸 import yaml
-✅ 更新 .gitignore
+Phase 2锛堜腑椋庨櫓 �?瑙ｈ€︽敹灏撅級
+鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣�?
+�?6 涓祴璇曟枃浠跺鍏ヨ矾寰勪�?shim 鏀逛负 runtime.*
+�?鍒犻�?3 �?shim 鏂囦欢锛坰ame_source_map_artifacts / dynamic_filter / yaml_helpers�?
+�?淇�?maps.py:967 �?import yaml
+�?鏇存�?.gitignore
 
-Phase 3（高工作量 · 测试目录重组）
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ 创建 5 个模块独立 test 目录
-   src/nav/tests/          ← 7 个 test_nav_*.py
-   src/gateway/tests/      ← 12 个 test_gateway_*.py
-   src/drivers/tests/      ← test_driver_spec.py
-   src/memory/tests/       ← 2 个 test_memory_*.py
-   src/slam/tests/         ← 5 个 test_slam_*.py
-✅ 迁移 3 个非标准位置测试文件
-✅ 审计并清理 8 个 simplification_wave 文件
-✅ 更新 pyproject.toml testpaths
+Phase 3锛堥珮宸ヤ綔�?�?娴嬭瘯鐩綍閲嶇粍锛?
+鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+�?鍒涘�?5 涓ā鍧楃嫭绔?test 鐩�?
+   src/nav/tests/          �?7 �?test_nav_*.py
+   src/gateway/tests/      �?12 �?test_gateway_*.py
+   src/drivers/tests/      �?test_driver_spec.py
+   src/memory/tests/       �?2 �?test_memory_*.py
+   src/localization/tests/         �?5 �?test_slam_*.py
+�?杩佺Щ 3 涓潪鏍囧噯浣嶇疆娴嬭瘯鏂囦�?
+�?瀹¤骞舵竻鐞?8 �?simplification_wave 鏂囦�?
+�?鏇存�?pyproject.toml testpaths
 
-Phase 4（架构优化 · 可选）
-━━━━━━━━━━━━━━━━━━━━━━━━━
-🔵 nav/services/nav_services/ → nav/services/ （扁平化嵌套）
-🔵 合并 semantic_exploration.yaml / far_planner.yaml 到 robot_config.yaml
-🔵 full_stack_wiring.py 常量化模块名
-🔵 Registry 热路径加 lru_cache
+Phase 4锛堟灦鏋勪紭�?�?鍙€夛�?
+鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣�?
+馃數 nav/services/nav_services/ �?nav/services/ 锛堟墎骞冲寲宓屽锛?
+馃數 鍚堝�?semantic_exploration.yaml / far_planner.yaml �?robot_config.yaml
+馃數 full_stack_wiring.py 甯搁噺鍖栨ā鍧楀�?
+馃數 Registry 鐑矾寰勫姞 lru_cache
 ```
 
-### 4.2 命名约定
+### 4.2 鍛藉悕绾﹀�?
 
-| 规范 | 当前 | 目标 |
+| 瑙勮�?| 褰撳�?| 鐩�?|
 |------|------|------|
-| 所有 package 有 `__init__.py` | `nav/services/` 缺 | 补全 |
-| test 目录有 `__init__.py` | `perception/tests/` 缺 | 补全 |
-| 二进制文件不入源码树 | `yoloe-26s-seg.pt` 在 `src/` | 移入 `models/` 或用 git-lfs |
-| 构建产物不入仓库 | `build_nb_win/`、`.egg-info/` 存在 | `.gitignore` 排除 |
-| 测试从规范路径导入 | 6 个文件用 shim 路径 | 改为 `core.*` |
-| 统一配置格式 | `dufomap.toml` 是唯一的 TOML | 改为 YAML 或保留（标注例外原因） |
+| 鎵€�?package �?`__init__.py` | `nav/services/` �?| 琛ュ�?|
+| test 鐩綍鏈?`__init__.py` | `perception/tests/` �?| 琛ュ�?|
+| 浜岃繘鍒舵枃浠朵笉鍏ユ簮鐮佹�?| `yoloe-26s-seg.pt` �?`src/` | 绉诲�?`models/` 鎴栫�?git-lfs |
+| 鏋勫缓浜х墿涓嶅叆浠撳�?| `build_nb_win/`銆乣.egg-info/` 瀛樺�?| `.gitignore` 鎺掗�?|
+| 娴嬭瘯浠庤鑼冭矾寰勫�?| 6 涓枃浠剁敤 shim 璺�?| 鏀逛负 `runtime.*` |
+| 缁熶竴閰嶇疆鏍煎�?| `dufomap.toml` 鏄敮涓€鐨?TOML | 鏀逛负 YAML 鎴栦繚鐣欙紙鏍囨敞渚嬪鍘熷洜锛?|
 
-### 4.3 目标目录结构
+### 4.3 鐩爣鐩綍缁撴�?
 
 ```
 src/
-├── core/                     # 框架内核 + 共享契约（不变）
-│   ├── blueprints/           # Blueprint 组装（不变）
-│   │   ├── full_stack.py
-│   │   ├── full_stack_wiring.py
-│   │   └── stacks/           # 12 个 factory（文档补齐到 12）
-│   ├── tests/                # 核心框架测试（保留，逐步瘦身）
-│   ├── same_source_map_artifacts.py  # 共享契约 ✅
-│   ├── dynamic_filter.py             # 共享契约 ✅
-│   ├── yaml_helpers.py               # 共享契约 ✅
-│   └── ...
-├── nav/
-│   ├── services/             # nav_services 扁平化 → services
-│   │   ├── __init__.py       # 🆕 显式 package
-│   │   ├── geofence_manager_module.py
-│   │   ├── map_manager_module.py
-│   │   ├── patrol_manager_module.py
-│   │   └── task_scheduler_module.py
-│   ├── tests/                # 🆕 独立 test 目录
-│   │   ├── __init__.py
-│   │   ├── test_nav_modules.py         # ← 从 core/tests/
-│   │   ├── test_nav_services.py        # ← 从 core/tests/
-│   │   └── ...
-│   └── ...
-├── gateway/
-│   ├── tests/                # 🆕 独立 test 目录
-│   │   ├── __init__.py
-│   │   ├── test_gateway_runtime_status.py
-│   │   └── ...
-│   └── ...
-├── drivers/
-│   ├── tests/                # 🆕 独立 test 目录
-│   └── ...
-├── memory/
-│   ├── tests/                # 🆕 独立 test 目录
-│   └── ...
-├── slam/
-│   ├── tests/                # 🆕 独立 test 目录
-│   └── ...
-└── semantic/                 # 清理 orphan common/ 目录
-    ├── common/               # 保留（如实际有内容）
-    │   └── (删除空的 semantic_common/)
-    └── ...
+鈹溾攢鈹�?core/                     # 妗嗘灦鍐呮牳 + 鍏变韩濂戠害锛堜笉鍙橈級
+�?  鈹溾攢鈹�?blueprints/           # Blueprint 缁勮锛堜笉鍙橈�?
+�?  �?  鈹溾攢鈹�?full_stack.py
+�?  �?  鈹溾攢鈹�?full_stack_wiring.py
+�?  �?  鈹斺攢鈹�?stacks/           # 12 �?factory锛堟枃妗ｈˉ榻愬埌 12�?
+�?  鈹溾攢鈹�?tests/                # 鏍稿績妗嗘灦娴嬭瘯锛堜繚鐣欙紝閫愭鐦﹁韩锛?
+�?  鈹溾攢鈹�?same_source_map_artifacts.py  # 鍏变韩濂戠害 �?
+�?  鈹溾攢鈹�?dynamic_filter.py             # 鍏变韩濂戠害 �?
+�?  鈹溾攢鈹�?yaml_helpers.py               # 鍏变韩濂戠害 �?
+�?  鈹斺攢鈹�?...
+鈹溾攢鈹�?nav/
+�?  鈹溾攢鈹�?services/             # nav_services 鎵佸钩鍖?�?services
+�?  �?  鈹溾攢鈹�?__init__.py       # 馃啎 鏄惧�?package
+�?  �?  鈹溾攢鈹�?geofence.py
+�?  �?  鈹溾攢鈹�?maps.py
+�?  �?  鈹溾攢鈹�?patrol.py
+�?  �?  鈹斺攢鈹�?scheduler.py
+�?  鈹溾攢鈹�?tests/                # 馃啎 鐙�?test 鐩�?
+�?  �?  鈹溾攢鈹�?__init__.py
+�?  �?  鈹溾攢鈹�?test_nav_modules.py         # �?�?core/tests/
+�?  �?  鈹溾攢鈹�?test_nav_services.py        # �?�?core/tests/
+�?  �?  鈹斺攢鈹�?...
+�?  鈹斺攢鈹�?...
+鈹溾攢鈹�?gateway/
+�?  鈹溾攢鈹�?tests/                # 馃啎 鐙�?test 鐩�?
+�?  �?  鈹溾攢鈹�?__init__.py
+�?  �?  鈹溾攢鈹�?test_gateway_runtime_status.py
+�?  �?  鈹斺攢鈹�?...
+�?  鈹斺攢鈹�?...
+鈹溾攢鈹�?drivers/
+�?  鈹溾攢鈹�?tests/                # 馃啎 鐙�?test 鐩�?
+�?  鈹斺攢鈹�?...
+鈹溾攢鈹�?memory/
+�?  鈹溾攢鈹�?tests/                # 馃啎 鐙�?test 鐩�?
+�?  鈹斺攢鈹�?...
+鈹溾攢鈹�?slam/
+�?  鈹溾攢鈹�?tests/                # 馃啎 鐙�?test 鐩�?
+�?  鈹斺攢鈹�?...
+鈹斺攢鈹�?semantic/                 # 娓呯�?orphan common/ 鐩�?
+    鈹溾攢鈹�?common/               # 淇濈暀锛堝瀹為檯鏈夊唴瀹癸�?
+    �?  鈹斺攢鈹�?(鍒犻櫎绌虹殑 semantic_common/)
+    鈹斺攢鈹�?...
 ```
 
 ---
 
-## 五、优先级执行清单（排序）
+## 浜斻€佷紭鍏堢骇鎵ц娓呭崟锛堟帓搴忥�?
 
-### 🔴 Sprint 1：立即修复（预估 2-3 小时）
+### 馃敶 Sprint 1锛氱珛鍗充慨澶嶏紙棰勪及 2-3 灏忔椂锛?
 
-| # | 行动 | 工作量 | 文件数 |
+| # | 琛屽�?| 宸ヤ綔閲?| 鏂囦欢鏁?|
 |---|------|--------|--------|
-| S1-1 | 删除 `gateway_module.py` 死代码（lines 161-195） | S | 1 |
-| S1-2 | 新建 `src/nav/services/__init__.py` | S | 1 |
-| S1-3 | 删除 `src/semantic/common/semantic_common/` 孤儿目录 | S | 1 |
-| S1-4 | 修复 `map_manager_module.py:967` 裸 `import yaml` → `core.yaml_helpers` | S | 1 |
-| S1-5 | 补充 `.gitignore`（build/egg/pt） | S | 1 |
-| S1-6 | 文档化集成测试运行方式（方案 a 或 b） | S | 1-2 |
-| S1-7 | 运行全部 core tests 确认零回归 | S | - |
+| S1-1 | 鍒犻�?`gateway_module.py` 姝讳唬鐮侊紙lines 161-195�?| S | 1 |
+| S1-2 | 鏂板�?`src/nav/services/__init__.py` | S | 1 |
+| S1-3 | 鍒犻�?`src/semantic/common/semantic_common/` 瀛ゅ効鐩綍 | S | 1 |
+| S1-4 | 淇�?`maps.py:967` �?`import yaml` �?`runtime.yaml_helpers` | S | 1 |
+| S1-5 | 琛ュ�?`.gitignore`锛坆uild/egg/pt�?| S | 1 |
+| S1-6 | 鏂囨。鍖栭泦鎴愭祴璇曡繍琛屾柟寮忥紙鏂规�?a �?b�?| S | 1-2 |
+| S1-7 | 杩愯鍏ㄩ儴 core tests 纭闆跺洖�?| S | - |
 
-### 🟡 Sprint 2：解耦收尾（预估 4-5 小时）
+### 馃煛 Sprint 2锛氳В鑰︽敹灏撅紙棰勪�?4-5 灏忔椂锛?
 
-| # | 行动 | 工作量 | 文件数 |
+| # | 琛屽�?| 宸ヤ綔閲?| 鏂囦欢鏁?|
 |---|------|--------|--------|
-| S2-1 | 6 个测试文件导入路径：`nav.services.nav_services.X` → `core.X` | M | 6 |
-| S2-2 | 删除 3 个 shim 文件 | S | 3 |
-| S2-3 | 确认边界测试通过 + 全量测试通过 | S | - |
-| S2-4 | 新建 `src/semantic/perception/tests/__init__.py` | S | 1 |
-| S2-5 | CLAUDE.md 补充 3 个 factory（exploration/lidar/sim_lidar） | S | 1 |
-| S2-6 | 审计 8 个 simplification_wave 文件，决定去留 | M | 8 |
+| S2-1 | 6 涓祴璇曟枃浠跺鍏ヨ矾寰勶細`nav.services.nav_services.X` �?`runtime.X` | M | 6 |
+| S2-2 | 鍒犻�?3 �?shim 鏂囦�?| S | 3 |
+| S2-3 | 纭杈圭晫娴嬭瘯閫氳繃 + 鍏ㄩ噺娴嬭瘯閫氳�?| S | - |
+| S2-4 | 鏂板�?`src/perception/tests/__init__.py` | S | 1 |
+| S2-5 | CLAUDE.md 琛ュ�?3 �?factory锛坋xploration/lidar/sim_lidar�?| S | 1 |
+| S2-6 | 瀹¤ 8 �?simplification_wave 鏂囦欢锛屽喅瀹氬幓鐣?| M | 8 |
 
-### 🟠 Sprint 3：测试目录重组（预估 6-8 小时）
+### 馃煚 Sprint 3锛氭祴璇曠洰褰曢噸缁勶紙棰勪�?6-8 灏忔椂锛?
 
-| # | 行动 | 工作量 | 文件数 |
+| # | 琛屽�?| 宸ヤ綔閲?| 鏂囦欢鏁?|
 |---|------|--------|--------|
-| S3-1 | 创建 `src/nav/tests/` + 迁移 7 个测试 | M | 7+ |
-| S3-2 | 创建 `src/gateway/tests/` + 迁移 12 个测试 | M | 12+ |
-| S3-3 | 创建 `src/drivers/tests/` + 迁移测试 | M | 3+ |
-| S3-4 | 创建 `src/memory/tests/` + 迁移 2 个测试 | S | 2+ |
-| S3-5 | 创建 `src/slam/tests/` + 迁移 5 个测试 | M | 5+ |
-| S3-6 | 迁移 3 个非标准位置测试文件 | M | 3 |
-| S3-7 | 更新 `pyproject.toml` testpaths | S | 1 |
-| S3-8 | 全量测试 + 修复导入路径 | M | - |
+| S3-1 | 鍒涘�?`src/nav/tests/` + 杩佺Щ 7 涓祴璇?| M | 7+ |
+| S3-2 | 鍒涘�?`src/gateway/tests/` + 杩佺Щ 12 涓祴璇?| M | 12+ |
+| S3-3 | 鍒涘�?`src/drivers/tests/` + 杩佺Щ娴嬭�?| M | 3+ |
+| S3-4 | 鍒涘�?`src/memory/tests/` + 杩佺Щ 2 涓祴璇?| S | 2+ |
+| S3-5 | 鍒涘�?`src/localization/tests/` + 杩佺Щ 5 涓祴璇?| M | 5+ |
+| S3-6 | 杩佺Щ 3 涓潪鏍囧噯浣嶇疆娴嬭瘯鏂囦�?| M | 3 |
+| S3-7 | 鏇存�?`pyproject.toml` testpaths | S | 1 |
+| S3-8 | 鍏ㄩ噺娴嬭瘯 + 淇瀵煎叆璺緞 | M | - |
 
-### 🔵 Sprint 4：深度优化 + 前序计划收尾（按需）
+### 馃數 Sprint 4锛氭繁搴︿紭�?+ 鍓嶅簭璁″垝鏀跺熬锛堟寜闇€锛?
 
-| # | 行动 | 工作量 | 说明 |
+| # | 琛屽�?| 宸ヤ綔閲?| 璇存�?|
 |---|------|--------|------|
-| S4-1 | `nav/services/nav_services/` → `nav/services/` 扁平化 | L | 影响导入路径，需全局更新 |
-| S4-2 | Planner benchmark 真实化（Plan Task 6） | M | 替换 sleep → A*/PCT 实测 |
-| S4-3 | 仿真 Freshness Gate（Plan Task 5） | M | 结构化 JSON + scenario 补齐 |
-| S4-4 | 导航链效率证据（Plan Task 7） | M | 链级遥测 JSON artifact |
-| S4-5 | ROS2 提取到 Bridge 层（Plan Task 4） | L | 仅 ROS2-free 部署需求时 |
-| S4-6 | Registry 热路径 `lru_cache` | S | 性能微优化 |
-| S4-7 | `full_stack_wiring.py` 常量化模块名 | M | 维护性改善 |
-| S4-8 | 合并 config 到 `robot_config.yaml` | S | 减少配置碎片 |
+| S4-1 | `nav/services/nav_services/` �?`nav/services/` 鎵佸钩鍖?| L | 褰卞搷瀵煎叆璺緞锛岄渶鍏ㄥ眬鏇存�?|
+| S4-2 | Planner benchmark 鐪熷疄鍖栵紙Plan Task 6�?| M | 鏇挎�?sleep �?A*/PCT 瀹炴�?|
+| S4-3 | 浠跨�?Freshness Gate锛圥lan Task 5�?| M | 缁撴瀯鍖?JSON + scenario 琛ラ�?|
+| S4-4 | 瀵艰埅閾炬晥鐜囪瘉鎹紙Plan Task 7�?| M | 閾剧骇閬ユ祴 JSON artifact |
+| S4-5 | ROS2 鎻愬彇鍒?Bridge 灞傦紙Plan Task 4�?| L | �?ROS2-free 閮ㄧ讲闇€姹傛椂 |
+| S4-6 | Registry 鐑矾寰?`lru_cache` | S | 鎬ц兘寰紭鍖?|
+| S4-7 | `full_stack_wiring.py` 甯搁噺鍖栨ā鍧楀�?| M | 缁存姢鎬ф敼鍠?|
+| S4-8 | 鍚堝�?config �?`robot_config.yaml` | S | 鍑忓皯閰嶇疆纰庣�?|
 
 ---
 
-## 六、不做的
+## 鍏€佷笉鍋氱殑
 
-| 事项 | 理由 |
+| 浜嬮�?| 鐞嗙�?|
 |------|------|
-| `nav/services/nav_services/` 重命名 | 工作量太大（影响几十个导入路径），Phase 4 可选做 |
-| ROS2 完全从 NavigationModule 移除（Task 4） | 当前条件导入方案已足够务实，无 ROS2-free 部署需求 |
-| 重写 agent_loop.py 工具调用 | 已通过 test_agent_loop_tool_schema.py 测试，当前实现稳定 |
-| 迁移到 `src/` 以外的测试框架 | 当前 pytest + conftest.py 模式工作良好，不需要引入新工具 |
+| `nav/services/nav_services/` 閲嶅懡鍚?| 宸ヤ綔閲忓お澶э紙褰卞搷鍑犲崄涓鍏ヨ矾寰勶級锛孭hase 4 鍙€夊�?|
+| ROS2 瀹屽叏浠?NavigationModule 绉婚櫎锛圱ask 4�?| 褰撳墠鏉′欢瀵煎叆鏂规宸茶冻澶熷姟瀹烇紝鏃?ROS2-free 閮ㄧ讲闇€姹?|
+| 閲嶅�?agent_loop.py 宸ュ叿璋冪敤 | 宸查€氳�?test_agent_loop_tool_schema.py 娴嬭瘯锛屽綋鍓嶅疄鐜扮ǔ�?|
+| 杩佺Щ�?`src/` 浠ュ鐨勬祴璇曟鏋?| 褰撳�?pytest + conftest.py 妯″紡宸ヤ綔鑹ソ锛屼笉闇€瑕佸紩鍏ユ柊宸ュ叿 |
 
 ---
 
-## 七、验收标准
+## 涓冦€侀獙鏀舵爣�?
 
-每个 Sprint 完成后执行：
+姣忎�?Sprint 瀹屾垚鍚庢墽琛岋�?
 
 ```bash
-# 边界测试（必须 0 失败）
-python -m pytest src/core/tests/test_module_boundaries.py -v
+# 杈圭晫娴嬭瘯锛堝繀�?0 澶辫触锛?
+python -m pytest src/runtime/tests/test_module_boundaries.py -v
 
-# 核心框架测试（必须全绿，当前基线 ~1226 tests）
-python -m pytest src/core/tests/ -q
+# 鏍稿績妗嗘灦娴嬭瘯锛堝繀椤诲叏缁匡紝褰撳墠鍩虹嚎 ~1226 tests�?
+python -m pytest src/runtime/tests/ -q
 
-# 导入无循环
-python -c "from core.module import Module; from core.blueprint import Blueprint; print('OK')"
+# 瀵煎叆鏃犲惊�?
+python -c "from runtime.module import Module; from runtime.blueprint import Blueprint; print('OK')"
 
-# Lint 零新增问题
+# Lint 闆舵柊澧為棶�?
 ruff check src/ --statistics
 ```
 
 ---
 
-## 附录：文件索引
+## 闄勫綍锛氭枃浠剁储寮?
 
-| 文件 | 审计发现 |
+| 鏂囦�?| 瀹¤鍙戠�?|
 |------|----------|
-| `src/gateway/gateway_module.py` | lines 161-195 死代码 |
-| `src/nav/services/` | 缺 `__init__.py` |
-| `src/semantic/common/semantic_common/` | 孤儿 `.pyc`，应删除 |
-| `src/nav/services/map_manager_module.py:967` | 裸 `import yaml` |
-| `src/nav/services/same_source_map_artifacts.py` | shim，Sprint 2 后删除 |
-| `src/nav/services/dynamic_filter.py` | shim，Sprint 2 后删除 |
-| `src/nav/services/yaml_helpers.py` | shim，Sprint 2 后删除 |
-| `pyproject.toml` | testpaths 需扩展 |
-| `.gitignore` | 缺 build_nb_win / *.egg-info / *.pt |
-| `CLAUDE.md` | 缺 3 个 factory 文档 |
-| `tests/benchmark/benchmark_planner.sh` | sleep 占位，需真实化 |
-| `sim/scripts/server_sim_closure.py` | 已修改但未完成 gate |
+| `src/gateway/gateway_module.py` | lines 161-195 姝讳唬鐮?|
+| `src/nav/services/` | �?`__init__.py` |
+| `src/semantic/common/semantic_common/` | 瀛ゅ�?`.pyc`锛屽簲鍒犻櫎 |
+| `src/nav/services/maps.py:967` | �?`import yaml` |
+| `src/nav/services/same_source_map_artifacts.py` | shim锛孲print 2 鍚庡垹闄?|
+| `src/nav/services/dynamic_filter.py` | shim锛孲print 2 鍚庡垹闄?|
+| `src/nav/services/yaml_helpers.py` | shim锛孲print 2 鍚庡垹闄?|
+| `pyproject.toml` | testpaths 闇€鎵╁�?|
+| `.gitignore` | �?build_nb_win / *.egg-info / *.pt |
+| `CLAUDE.md` | �?3 �?factory 鏂囨�?|
+| `tests/benchmark/benchmark_planner.sh` | sleep 鍗犱綅锛岄渶鐪熷疄鍖?|
+| `sim/scripts/server_sim_closure.py` | 宸蹭慨鏀逛絾鏈畬鎴?gate |

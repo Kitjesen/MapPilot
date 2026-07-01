@@ -6,8 +6,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <gtsam/geometry/Pose3.h>
-
 #include <dfo/nelder_mead.hpp>
 #include <dfo/directional_direct_search.hpp>
 

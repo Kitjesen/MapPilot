@@ -27,7 +27,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/PointCloud2
       Name: LingTu Map Cloud
       Enabled: true
-      Topic: /nav/map_cloud
+      Topic: /slam/map_cloud
       Alpha: 0.55
       Autocompute Intensity Bounds: true
       Color Transformer: FlatColor
@@ -43,7 +43,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/PointCloud2
       Name: LingTu Local Obstacle Cloud
       Enabled: true
-      Topic: /nav/registered_cloud
+      Topic: /slam/registered_cloud
       Alpha: 0.80
       Autocompute Intensity Bounds: true
       Color Transformer: FlatColor
@@ -106,7 +106,7 @@ Visualization Manager:
       Name: Robot Odometry
       Enabled: true
       Topic:
-        Value: /nav/odometry
+        Value: /slam/odometry
         Depth: 10
       Shape: Arrow
       Color: 255; 80; 60

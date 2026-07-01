@@ -21,7 +21,7 @@ SUMMARY_FILENAME = "THUNDER_LITE_PACKAGE.json"
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from tools.validate import validate_thunder_lite_package as contract  # noqa: E402
+from tools.validate import validate_thunder_lite_package as contract
 
 
 class PackageBuildError(RuntimeError):
@@ -105,6 +105,7 @@ def build_package(
         summary,
         output_dir=output_dir,
         exclude_paths=exclude_paths,
+        omit_patterns=omit_patterns,
         forbidden_markers=tuple(str(item) for item in package_cfg.get("forbidden_markers") or ()),
         dry_run=dry_run,
     )
@@ -151,7 +152,24 @@ def _copy_file(source: Path, destination: Path) -> None:
 
 def _is_excluded(rel_path: str, exclude_paths: tuple[str, ...]) -> bool:
     rel_path = contract._normalize_manifest_path(rel_path)
-    return any(rel_path == item or rel_path.startswith(f"{item}/") for item in exclude_paths)
+    candidates = [rel_path]
+    candidates.extend(
+        contract._normalize_manifest_path(parent)
+        for parent in PurePosixPath(rel_path).parents
+        if str(parent) != "."
+    )
+    for item in exclude_paths:
+        item = contract._normalize_manifest_path(item)
+        if not item:
+            continue
+        has_glob = any(char in item for char in "*?[")
+        if has_glob:
+            if any(PurePosixPath(candidate).match(item) for candidate in candidates):
+                return True
+            continue
+        if any(candidate == item or candidate.startswith(f"{item}/") for candidate in candidates):
+            return True
+    return False
 
 
 def _is_omitted(rel_path: str, omit_patterns: tuple[str, ...]) -> bool:
@@ -180,6 +198,7 @@ def _audit_package_summary(
     *,
     output_dir: Path,
     exclude_paths: tuple[str, ...],
+    omit_patterns: tuple[str, ...],
     forbidden_markers: tuple[str, ...],
     dry_run: bool,
 ) -> list[str]:
@@ -188,15 +207,23 @@ def _audit_package_summary(
     for rel_file in copied_files:
         if _is_excluded(rel_file, exclude_paths):
             blockers.append(f"excluded path copied into package: {rel_file}")
-
-    if dry_run:
-        return blockers
+        if _is_omitted(rel_file, omit_patterns):
+            blockers.append(f"omitted path copied into package: {rel_file}")
 
     forbidden_import_roots = _forbidden_import_roots(forbidden_markers)
+    if dry_run:
+        for rel_file in copied_files:
+            source_path = ROOT_DIR / rel_file
+            if source_path.suffix == ".py":
+                blockers.extend(_python_import_blockers(source_path, rel_file, forbidden_import_roots))
+        return blockers
+
     for file_path in sorted(path for path in output_dir.rglob("*") if path.is_file()):
         rel_file = contract._normalize_manifest_path(file_path.relative_to(output_dir))
         if _is_excluded(rel_file, exclude_paths):
             blockers.append(f"excluded path exists in output: {rel_file}")
+        if _is_omitted(rel_file, omit_patterns):
+            blockers.append(f"omitted path exists in output: {rel_file}")
         if file_path.suffix == ".py":
             blockers.extend(_python_import_blockers(file_path, rel_file, forbidden_import_roots))
         if file_path.suffix in {".sh", ".service"}:
@@ -261,6 +288,8 @@ def _write_summary(path: Path, summary: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the Thunder Lite package builder CLI."""
+
     parser = argparse.ArgumentParser(description="Build a Thunder Lite runtime package")
     parser.add_argument(
         "--manifest",

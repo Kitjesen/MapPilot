@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that all /nav/* topic names are defined in topic_contract.yaml.
+"""Validate that runtime topic names are defined in topic_contract.yaml.
 
 Usage:
     python tools/validate/validate_topics.py
@@ -41,10 +41,9 @@ CONFIG_DIR = os.path.join(ROOT_DIR, "config")
 SOURCE_SCAN_PATHS = (
     os.path.join(ROOT_DIR, "sim", "engine", "bridge"),
     os.path.join(ROOT_DIR, "sim", "scripts"),
-    os.path.join(ROOT_DIR, "src", "compat", "ros2", "rerun_bridge.py"),
+    os.path.join(ROOT_DIR, "src", "adapters", "ros2", "rerun_bridge.py"),
     os.path.join(ROOT_DIR, "src", "slam", "native_factories.py"),
-    os.path.join(ROOT_DIR, "src", "exploration", "native_factories.py"),
-    os.path.join(ROOT_DIR, "src", "base_autonomy", "native_factories.py"),
+    os.path.join(ROOT_DIR, "src", "nav", "local", "legacy_ros"),
     os.path.join(ROOT_DIR, "sim", "scripts", "gazebo_frontier_exploration_smoke.py"),
     os.path.join(ROOT_DIR, "sim", "planning"),
     os.path.join(ROOT_DIR, "tests", "integration", "test_semantic_planner_live.py"),
@@ -55,7 +54,12 @@ CONFIG_SCAN_EXTENSIONS = (".yaml", ".yml")
 CONFIG_SCAN_EXCLUDES = {"topic_contract.yaml"}
 
 VERBOSE = "--verbose" in sys.argv
-NAV_TOPIC_RE = re.compile(r"['\"](/nav/[A-Za-z0-9_/\-]+)['\"]")
+RUNTIME_TOPIC_VALUE_RE = re.compile(
+    r"/(?:nav|slam|lidar|imu|camera|exploration)/[A-Za-z0-9_/\-]+"
+)
+RUNTIME_TOPIC_LITERAL_RE = re.compile(
+    r"['\"](/(?:nav|slam|lidar|imu|camera|exploration)/[A-Za-z0-9_/\-]+)['\"]"
+)
 
 
 def info(msg: str) -> None:
@@ -69,7 +73,7 @@ def load_contract(path: str) -> dict[str, Any]:
 
 
 def load_contract_topics(data: dict[str, Any]) -> set[str]:
-    """Extract all /nav/* topic names from topic_contract.yaml."""
+    """Extract runtime topic names from topic_contract.yaml."""
 
     topics: set[str] = set()
 
@@ -78,11 +82,13 @@ def load_contract_topics(data: dict[str, Any]) -> set[str]:
             for key, value in obj.items():
                 if key == "tf":
                     continue
+                if isinstance(key, str) and RUNTIME_TOPIC_VALUE_RE.fullmatch(key):
+                    topics.add(key)
                 _walk(value)
         elif isinstance(obj, list):
             for item in obj:
                 _walk(item)
-        elif isinstance(obj, str) and obj.startswith("/nav/"):
+        elif isinstance(obj, str) and RUNTIME_TOPIC_VALUE_RE.fullmatch(obj):
             topics.add(obj)
 
     _walk(data)
@@ -90,11 +96,13 @@ def load_contract_topics(data: dict[str, Any]) -> set[str]:
 
 
 def load_required_nav_topics(data: dict[str, Any], contract_topics: set[str]) -> tuple[set[str], list[str]]:
-    """Return P0 /nav/* topics that must be referenced by product paths."""
+    """Return P0 runtime topics that must be referenced by product paths."""
 
     required = {
         str(topic)
-        for topic in data.get("required_nav_topics") or ()
+        for topic in data.get("required_runtime_topics")
+        or data.get("required_nav_topics")
+        or ()
         if isinstance(topic, str)
     }
     if not required:
@@ -103,7 +111,7 @@ def load_required_nav_topics(data: dict[str, Any], contract_topics: set[str]) ->
             for path in (ROOT_DIR, root_src):
                 if path not in sys.path:
                     sys.path.insert(0, path)
-            from core.runtime_interface import CORE_REQUIRED_TOPICS
+            from runtime.runtime_interface import CORE_REQUIRED_TOPICS
 
             required = set(CORE_REQUIRED_TOPICS)
         except Exception:
@@ -111,10 +119,10 @@ def load_required_nav_topics(data: dict[str, Any], contract_topics: set[str]) ->
 
     errors: list[str] = []
     for topic in sorted(required):
-        if not topic.startswith("/nav/"):
-            errors.append(f"  ERROR: required_nav_topics entry is not /nav/*: {topic}")
+        if not RUNTIME_TOPIC_VALUE_RE.fullmatch(topic):
+            errors.append(f"  ERROR: required_runtime_topics entry is not a runtime topic: {topic}")
         elif topic not in contract_topics:
-            errors.append(f"  ERROR: required_nav_topics entry {topic} is not in contract")
+            errors.append(f"  ERROR: required_runtime_topics entry {topic} is not in contract")
     return required, errors
 
 
@@ -164,16 +172,19 @@ def validate_gazebo_bridge_contract(contract_topics: set[str]) -> tuple[list[str
     used: set[str] = set()
     cfg = GazeboBridgeConfig()
     for name, topic in sorted(cfg.required_lingtu_topics().items()):
-        if topic.startswith("/nav/"):
+        if RUNTIME_TOPIC_VALUE_RE.fullmatch(topic):
             used.add(topic)
             if topic not in contract_topics:
                 errors.append(f"  ERROR: Gazebo bridge topic {name}={topic} not in contract")
-        elif not topic.startswith("/camera/") and not topic.startswith("/lingtu/gazebo/"):
+        elif not topic.startswith("/lingtu/gazebo/"):
             errors.append(f"  ERROR: Gazebo bridge topic {name}={topic} has unexpected namespace")
 
     for name, topic in sorted(cfg.raw_ros_topics().items()):
-        if topic.startswith("/nav/"):
-            errors.append(f"  ERROR: raw Gazebo topic {name} must not publish directly into /nav: {topic}")
+        if topic.startswith(("/nav/", "/slam/")):
+            errors.append(
+                f"  ERROR: raw Gazebo topic {name} must not publish directly into "
+                f"runtime namespaces: {topic}"
+            )
     return errors, used
 
 
@@ -181,8 +192,23 @@ def _format_is_declared(format_name: str, declared_formats: set[str]) -> bool:
     return (
         format_name in declared_formats
         or format_name == "service"
+        or format_name == "application/json"
         or "/msg/" in format_name
     )
+
+
+def _ros_types_for_formats(
+    formats: list[Any],
+    data_formats: dict[str, Any],
+) -> list[str]:
+    resolved: list[str] = []
+    for item in formats:
+        format_name = str(item)
+        spec = data_formats.get(format_name)
+        ros_type = str((spec or {}).get("ros_type") or format_name)
+        if ros_type not in resolved:
+            resolved.append(ros_type)
+    return resolved
 
 
 def validate_topic_format_contract(data: dict[str, Any]) -> list[str]:
@@ -192,9 +218,12 @@ def validate_topic_format_contract(data: dict[str, Any]) -> list[str]:
     data_formats = data.get("data_formats") or {}
     declared_formats = set(data_formats)
     topic_formats = data.get("topic_formats") or {}
+    topic_ros_types = data.get("topic_ros_types") or {}
 
     if not topic_formats:
         return ["  ERROR: topic_formats must declare topic -> payload format mappings"]
+    if not topic_ros_types:
+        return ["  ERROR: topic_ros_types must declare topic -> ROS payload mappings"]
 
     for format_name, spec in data_formats.items():
         topic = (spec or {}).get("topic")
@@ -248,11 +277,22 @@ def validate_topic_format_contract(data: dict[str, Any]) -> list[str]:
                 errors.append(
                     f"  ERROR: topic_formats.{topic} references unknown format {format_name!r}"
                 )
+
+        expected_ros_types = _ros_types_for_formats(formats, data_formats)
+        actual_ros_types = [str(item) for item in topic_ros_types.get(topic) or ()]
+        if actual_ros_types != expected_ros_types:
+            errors.append(
+                f"  ERROR: topic_ros_types.{topic} must be {expected_ros_types}, "
+                f"got {actual_ros_types or '<missing>'}"
+            )
+
+    for topic in sorted(set(topic_ros_types) - set(topic_formats)):
+        errors.append(f"  ERROR: topic_ros_types.{topic} has no topic_formats entry")
     return errors
 
 
 def extract_nav_topics_from_yaml(path: str) -> dict[str, list[str]]:
-    """Extract all string values starting with /nav/ from a YAML file."""
+    """Extract runtime topic strings from a YAML file."""
 
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -266,7 +306,7 @@ def extract_nav_topics_from_yaml(path: str) -> dict[str, list[str]]:
         elif isinstance(obj, list):
             for index, item in enumerate(obj):
                 _walk(item, f"{prefix}[{index}]")
-        elif isinstance(obj, str) and obj.startswith("/nav/"):
+        elif isinstance(obj, str) and RUNTIME_TOPIC_VALUE_RE.fullmatch(obj):
             found.setdefault(obj, []).append(prefix)
 
     _walk(data)
@@ -289,26 +329,26 @@ def _candidate_source_files(paths: tuple[str, ...]) -> list[str]:
 
 
 def extract_nav_topics_from_sources(paths: tuple[str, ...]) -> dict[str, list[tuple[str, int]]]:
-    """Extract /nav/* string literals from runtime sources."""
+    """Extract runtime topic string literals from runtime sources."""
 
     found: dict[str, list[tuple[str, int]]] = {}
     for fpath in _candidate_source_files(paths):
         rel_path = os.path.relpath(fpath, ROOT_DIR)
         with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
             for line_no, line in enumerate(f, 1):
-                for match in NAV_TOPIC_RE.finditer(line):
+                for match in RUNTIME_TOPIC_LITERAL_RE.finditer(line):
                     found.setdefault(match.group(1), []).append((rel_path, line_no))
     return found
 
 
 def extract_nav_topics_from_launch(directory: str) -> dict[str, list[tuple[str, int]]]:
-    """Extract /nav/* strings from launch files."""
+    """Extract runtime topic strings from launch files."""
 
     return extract_nav_topics_from_sources((directory,))
 
 
 def extract_nav_topics_from_config(directory: str) -> dict[str, list[tuple[str, int]]]:
-    """Extract /nav/* strings from non-contract YAML configuration files."""
+    """Extract runtime topic strings from non-contract YAML configuration files."""
 
     found: dict[str, list[tuple[str, int]]] = {}
     if not os.path.isdir(directory):
@@ -321,7 +361,7 @@ def extract_nav_topics_from_config(directory: str) -> dict[str, list[tuple[str, 
             rel_path = os.path.relpath(fpath, ROOT_DIR)
             with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                 for line_no, line in enumerate(f, 1):
-                    for match in NAV_TOPIC_RE.finditer(line):
+                    for match in RUNTIME_TOPIC_LITERAL_RE.finditer(line):
                         found.setdefault(match.group(1), []).append((rel_path, line_no))
     return found
 
@@ -355,14 +395,14 @@ def main() -> int:
 
     contract = load_contract(CONTRACT_PATH)
     contract_topics = load_contract_topics(contract)
-    print(f"Contract: {len(contract_topics)} standard /nav/* topics defined")
+    print(f"Contract: {len(contract_topics)} runtime topics defined")
     for topic in sorted(contract_topics):
         info(f"  {topic}")
 
     required_topics, required_errors = load_required_nav_topics(contract, contract_topics)
     errors.extend(required_errors)
     if required_topics:
-        info(f"  Required P0 /nav/* topics: {len(required_topics)}")
+        info(f"  Required P0 runtime topics: {len(required_topics)}")
 
     used_topics: set[str] = set()
 
@@ -392,7 +432,7 @@ def main() -> int:
         for err in gazebo_errors:
             print(err)
     else:
-        info(f"  OK: {len(gazebo_topics)} Gazebo /nav/* topics are in contract")
+        info(f"  OK: {len(gazebo_topics)} Gazebo runtime topics are in contract")
 
     print("\nChecking: grpc_gateway.yaml")
     if os.path.exists(GATEWAY_PATH):
@@ -460,7 +500,7 @@ def main() -> int:
     if errors:
         print(f"\nFAILED: {len(errors)} topic(s) not in contract")
         return 1
-    print("\nPASSED: All /nav/* topics are valid")
+    print("\nPASSED: All runtime topics are valid")
     return 0
 
 

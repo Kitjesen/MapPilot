@@ -1,9 +1,9 @@
 # Semantic scoring weights — tunable without code changes.
 #
 # These values are loaded at runtime by three modules:
-#   sgnav_heuristic  -> src/semantic/planner/semantic_planner/sgnav_reasoner.py
-#   fast_path_fusion -> src/semantic/planner/semantic_planner/fast_path.py
-#   frontier_scorer  -> src/semantic/planner/semantic_planner/frontier_scorer.py
+#   sgnav_heuristic  -> src/decision/goal_resolution/sgnav_reasoner.py
+#   fast_path_fusion -> src/decision/goal_resolution/fast_path.py
+#   frontier_scorer  -> src/decision/exploration/frontier_scorer.py
 #
 # If a section is missing the module falls back to the hardcoded defaults
 # and logs an INFO message pointing here.

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -11,7 +11,7 @@ pytestmark = [pytest.mark.sim]
 
 import yaml
 
-from core.runtime_interface import (
+from runtime.runtime_interface import (
     ADAPTER_TOPIC_ALIASES,
     ALGORITHM_INTERFACES,
     ARTIFACT_FORMATS,
@@ -142,7 +142,7 @@ def test_topic_contract_keeps_canonical_tf_frame_names():
 
 
 def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algorithms():
-    from core.config import LidarConfig
+    from runtime.config import LidarConfig
 
     assert (
         runtime_data_flow_topics.__doc__
@@ -217,8 +217,9 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     ].required_fields
     global_stage = next(stage for stage in RUNTIME_DATA_FLOW if stage.name == "global_planning")
     assert global_stage.map_dependency == (
-        "pct_uses_same_source_saved_tomogram;"
-        "astar_or_frontier_may_use_live_occupancy_grid"
+        "octoplanner3d_uses_headless_octomap_or_point_cloud;"
+        "astar_fallback_or_frontier_may_use_live_occupancy_grid;"
+        "pct_compat_uses_same_source_tomogram"
     )
     assert ARTIFACT_FORMATS["map_pcd"].path == "map.pcd"
     assert ARTIFACT_FORMATS["tomogram"].required_metadata
@@ -520,8 +521,8 @@ def test_travexplorer_adoption_doc_preserves_module_first_boundary():
     assert "not a directly integrable ROS2 package" in doc
     assert "Module-first" in doc
     assert "TravExplorerBridgeModule" in doc
-    assert "CmdVelMux" in doc
-    assert "SafetyRing" in doc
+    assert "nav.velocity_mux" in doc
+    assert "nav.safety" in doc
     assert "TraversableFrontierModule" in doc
     assert "ROS2 topic-only" not in doc
 
@@ -691,7 +692,7 @@ def test_lidar_extrinsic_preserves_body_axis_direction_contract():
 def test_sim_ros2_bridge_publishes_canonical_tf_and_cloud_frames():
     bridge = _read("sim/engine/bridge/ros2_bridge.py")
 
-    assert "from core.runtime_interface import FRAMES, TOPICS" in bridge
+    assert "from runtime.runtime_interface import FRAMES, TOPICS" in bridge
     assert "Odometry, TOPICS.odometry" in bridge
     assert "PointCloud2, TOPICS.map_cloud" in bridge
     assert "PointCloud2, TOPICS.registered_cloud" in bridge
@@ -709,12 +710,12 @@ def test_lidar_module_uses_runtime_frame_contract():
     module_source = _read("src/drivers/real/lidar/lidar_module.py")
     driver_source = _read("src/drivers/real/lidar/lidar.py")
 
-    assert "from core.runtime_interface import TOPICS, real_lidar_frame_id" in module_source
+    assert "from runtime.runtime_interface import TOPICS, real_lidar_frame_id" in module_source
     assert "LIDAR_RAW_FRAME_ID = real_lidar_frame_id()" in module_source
     assert "scan_topic: str = TOPICS.lidar_scan" in module_source
     assert "imu_topic: str = TOPICS.imu" in module_source
     assert "frame_id=LIDAR_RAW_FRAME_ID" in module_source
-    assert "from core.runtime_interface import TOPICS" in driver_source
+    assert "from runtime.runtime_interface import TOPICS" in driver_source
     assert "scan_topic: str = TOPICS.lidar_scan" in driver_source
     assert "imu_topic: str = TOPICS.imu" in driver_source
 
@@ -723,7 +724,7 @@ def test_thunder_driver_uses_runtime_frame_contract():
     source = _read("src/drivers/real/thunder/han_dog_module.py")
     legacy_source = _read("src/drivers/real/thunder/connection.py")
 
-    assert "from core.runtime_interface import body_frame_id, odom_frame_id" in source
+    assert "from runtime.runtime_interface import body_frame_id, odom_frame_id" in source
     assert "THUNDER_ODOM_FRAME_ID = odom_frame_id()" in source
     assert "THUNDER_BODY_FRAME_ID = body_frame_id()" in source
     assert "frame_id=THUNDER_ODOM_FRAME_ID" in source
@@ -731,7 +732,7 @@ def test_thunder_driver_uses_runtime_frame_contract():
     assert 'frame_id="odom"' not in source
     assert 'child_frame_id="body"' not in source
 
-    assert "from core.runtime_interface import body_frame_id, odom_frame_id" in legacy_source
+    assert "from runtime.runtime_interface import body_frame_id, odom_frame_id" in legacy_source
     assert "NOVA_DOG_ODOM_FRAME_ID = odom_frame_id()" in legacy_source
     assert "NOVA_DOG_BODY_FRAME_ID = body_frame_id()" in legacy_source
     assert "frame_id=NOVA_DOG_ODOM_FRAME_ID" in legacy_source
@@ -740,11 +741,12 @@ def test_thunder_driver_uses_runtime_frame_contract():
     assert 'child_frame_id="body"' not in legacy_source
 
 
-def test_slam_bridge_and_native_factories_use_runtime_contract_topics():
-    slam_bridge = _read("src/slam/slam_bridge_module.py")
-    native_factories = _read("src/slam/native_factories.py")
+def test_slam_bridge_and_endpoint_adapters_use_runtime_contract_topics():
+    slam_bridge = _read("src/localization/bridge.py")
+    lcm_adapter = _read("src/runtime/adapters/lcm/localization_adapter.py")
+    portable_adapter = _read("src/localization/adapters/portable/localization_adapter.py")
 
-    assert "from core.runtime_interface import (" in slam_bridge
+    assert "from runtime.runtime_interface import (" in slam_bridge
     for symbol in ("TOPICS", "normalize_frame_id", "topic_default_frame_id"):
         assert symbol in slam_bridge
     assert "cloud_topic: str = TOPICS.map_cloud" in slam_bridge
@@ -753,13 +755,12 @@ def test_slam_bridge_and_native_factories_use_runtime_contract_topics():
     assert "node, String, TOPICS.localization_health" in slam_bridge
     assert "ros2 service call {TOPICS.relocalize_service}" in slam_bridge
 
-    assert "from core.runtime_interface import TOPICS, adapter_remappings, topic_default_frame_id" in native_factories
-    assert "GENZ_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in native_factories
-    assert "GENZ_BASE_FRAME_ID = topic_default_frame_id(TOPICS.cmd_vel)" in native_factories
-    assert 'adapter_remappings("livox_driver")' in native_factories
-    assert 'adapter_remappings("fastlio2")' in native_factories
-    assert 'adapter_remappings("localizer")' in native_factories
-    assert 'adapter_remappings("pointlio")' in native_factories
+    assert not (REPO_ROOT / "src/localization/native_factories.py").exists()
+    assert "TOPICS.lidar_scan" in lcm_adapter
+    assert "TOPICS.map_cloud" in lcm_adapter
+    assert "TOPICS.odometry" in lcm_adapter
+    assert "TOPICS.localization_health" in lcm_adapter
+    assert "requires_ros2" in portable_adapter
     assert adapter_remappings("fastlio2")["/cloud_registered"] == TOPICS.registered_cloud
     assert adapter_remappings("fastlio2")["/cloud_map"] == TOPICS.map_cloud
     assert adapter_remappings("fastlio2")["/Odometry"] == TOPICS.odometry
@@ -769,25 +770,12 @@ def test_slam_bridge_and_native_factories_use_runtime_contract_topics():
     assert ADAPTER_TOPIC_ALIASES["tare"][0].target == TOPICS.map_cloud
 
 
-def test_genz_icp_native_factory_uses_runtime_default_frames():
-    from core.config import RobotConfig
-    from slam.native_factories import slam_genz_icp
-
-    module = slam_genz_icp(RobotConfig(raw={"nav_install": "C:/tmp/lingtu-nav"}))
-    params = module._native_config.parameters
-
-    assert params["odom_frame"] == topic_default_frame_id(TOPICS.odometry)
-    assert params["base_frame"] == topic_default_frame_id(TOPICS.cmd_vel)
+def test_slam_runtime_defaults_keep_genz_frame_contract_available():
+    assert topic_default_frame_id(TOPICS.odometry) == "odom"
+    assert topic_default_frame_id(TOPICS.cmd_vel) == "body"
 
 
-def test_base_autonomy_native_factories_use_runtime_contract_topics():
-    native_factories = _read("src/base_autonomy/native_factories.py")
-
-    assert "from core.runtime_interface import adapter_remappings" in native_factories
-    assert 'adapter_remappings("terrain_analysis")' in native_factories
-    assert 'adapter_remappings("terrain_analysis_ext")' in native_factories
-    assert 'adapter_remappings("local_planner")' in native_factories
-    assert 'adapter_remappings("path_follower")' in native_factories
+def test_base_autonomy_legacy_remaps_still_match_runtime_contract_topics():
     assert adapter_remappings("terrain_analysis")["/Odometry"] == TOPICS.odometry
     assert adapter_remappings("terrain_analysis")["/cloud_map"] == TOPICS.map_cloud
     assert adapter_remappings("terrain_analysis_ext")["/terrain_map_ext"] == TOPICS.terrain_map_ext
@@ -797,7 +785,7 @@ def test_base_autonomy_native_factories_use_runtime_contract_topics():
 
 
 def test_path_follower_uses_runtime_default_frame_helpers():
-    source = _read("src/base_autonomy/modules/path_follower_module.py")
+    source = _read("src/nav/local/path_follower.py")
 
     assert "map_frame_id" in source
     assert "self._odom_frame_id = map_frame_id()" in source
@@ -808,7 +796,7 @@ def test_legacy_sim_launch_keeps_map_cloud_out_of_registered_scan_path():
     launch = _read("sim/launch/sim.launch.py")
 
     assert launch.isascii()
-    assert "from core.runtime_interface import FRAMES, TOPICS" in launch
+    assert "from runtime.runtime_interface import FRAMES, TOPICS" in launch
     assert '("/cloud_map", TOPICS.map_cloud)' in launch
     assert '("/cloud_map", TOPICS.registered_cloud)' not in launch
     assert '"/nav/registered_cloud"' not in launch
@@ -816,23 +804,12 @@ def test_legacy_sim_launch_keeps_map_cloud_out_of_registered_scan_path():
     assert "FRAMES.odom" in launch
 
 
-def test_legacy_mujoco_ros2_bridge_separates_registered_and_map_cloud_frames():
-    source = _read("src/compat/ros2/mujoco_ros2_bridge.py")
-
-    assert "from core.runtime_interface import FRAMES, TOPICS" in source
-    assert "registered_cloud = pack_pointcloud2(pts, FRAMES.body, stamp)" in source
-    assert "pts_world = pts @ rmat.T + pos" in source
-    assert "map_cloud = pack_pointcloud2(pts_world, FRAMES.odom, stamp)" in source
-    assert "self.pub_map_cloud.publish(map_cloud)" in source
-
-
 def test_src_mujoco_bridges_use_runtime_contract_frames():
-    sensor_bridge = _read("src/drivers/sim/mujoco_sensor_bridge.py")
-    stack = _read("src/drivers/sim/mujoco_lingtu_stack.py")
-    driver = _read("src/drivers/sim/mujoco_driver_module.py")
-    ros2_driver = _read("src/compat/ros2/sim_driver.py")
+    sensor_bridge = _read("src/drivers/sim/mujoco/sensors.py")
+    stack = _read("src/drivers/sim/mujoco/stack.py")
+    driver = _read("src/drivers/sim/mujoco/driver.py")
 
-    assert "from core.runtime_interface import FRAME_LINKS, TOPICS, topic_default_frame_id" in sensor_bridge
+    assert "from runtime.runtime_interface import FRAME_LINKS, TOPICS, topic_default_frame_id" in sensor_bridge
     assert "MUJOCO_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in sensor_bridge
     assert 'MUJOCO_BODY_FRAME_ID = FRAME_LINKS["odom_to_body"].child' in sensor_bridge
     assert "msg.header.frame_id = MUJOCO_ODOM_FRAME_ID" in sensor_bridge
@@ -842,7 +819,7 @@ def test_src_mujoco_bridges_use_runtime_contract_frames():
     assert "FRAMES.odom" not in sensor_bridge
     assert "FRAMES.body" not in sensor_bridge
 
-    assert "from core.runtime_interface import TOPICS, topic_default_frame_id" in stack
+    assert "from runtime.runtime_interface import TOPICS, topic_default_frame_id" in stack
     assert "MUJOCO_LIVE_PLANNING_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in stack
     assert "planning_frame_id=MUJOCO_LIVE_PLANNING_FRAME_ID" in stack
     assert "occupancy_frame_id=MUJOCO_LIVE_OCCUPANCY_FRAME_ID" in stack
@@ -857,21 +834,6 @@ def test_src_mujoco_bridges_use_runtime_contract_frames():
     assert "frame_id=MUJOCO_MODULE_CAMERA_FRAME_ID" in driver
     assert "FRAMES.odom" not in driver
     assert "FRAMES.body" not in driver
-
-    assert "ROS2_SIM_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in ros2_driver
-    assert (
-        "ROS2_SIM_REGISTERED_CLOUD_FRAME_ID = topic_default_frame_id(TOPICS.registered_cloud)"
-        in ros2_driver
-    )
-    assert "ROS2_SIM_LIVE_MAP_CLOUD_FRAME_ID = ROS2_SIM_ODOM_FRAME_ID" in ros2_driver
-    assert "ROS2_SIM_CMD_VEL_FRAME_ID = topic_default_frame_id(TOPICS.cmd_vel)" in ros2_driver
-    assert "node, ROS2PoseStamped, TOPICS.goal_pose" in ros2_driver
-    assert "default_frame=ROS2_SIM_REGISTERED_CLOUD_FRAME_ID" in ros2_driver
-    assert "default_frame=ROS2_SIM_LIVE_MAP_CLOUD_FRAME_ID" in ros2_driver
-    assert "msg.header.frame_id = ROS2_SIM_CMD_VEL_FRAME_ID" in ros2_driver
-    assert "FRAMES.odom" not in ros2_driver
-    assert "FRAMES.body" not in ros2_driver
-
 
 def test_gazebo_bridge_config_exposes_lingtu_runtime_topics():
     cfg = GazeboBridgeConfig(world_name="test_world", robot_name="thunder")
@@ -1236,7 +1198,7 @@ def test_sim_navigation_launch_can_reuse_native_chain_with_gazebo_odometry():
     assert "installed_global_planner_script" in launch
     assert "'global_planner.py'" in launch
     global_planner = _read(
-        "src/global_planning/pct_planner/planner/scripts/global_planner.py"
+        "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/global_planner.py"
     )
     assert "prepare_pct_runtime" in global_planner
     assert "flatten_path_z" in global_planner
@@ -1362,6 +1324,17 @@ def test_gazebo_nav_loop_gate_publishes_only_goal_and_checks_motion():
     assert "CoverageGrid" not in frontier_smoke
     assert "costmap_source" in frontier_smoke
     assert "gazebo_lidar_derived" in frontier_smoke
+
+
+def test_gazebo_industrial_demo_uses_lingtu_module_stack_navigation():
+    demo = _read("sim/scripts/launch_lingtu_gazebo_industrial_demo.sh")
+
+    assert "gazebo_lingtu_stack.py" in demo
+    assert "--profile \"$LINGTU_PROFILE\"" in demo
+    assert "sim_navigation.launch.py" not in demo.split("start_demo() {", 1)[1].split(
+        "stop_demo() {",
+        1,
+    )[0]
     assert "mapping_source" in frontier_smoke
     assert "sensor_map_area_delta_m2" in frontier_smoke
     assert "lidar_map_updates" in frontier_smoke

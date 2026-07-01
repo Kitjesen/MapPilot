@@ -3,13 +3,13 @@
 #   python tests/scripts/smoke/mapping.py
 import sys, os, time
 sys.path.insert(0, "src")
-for d in ["src/semantic/perception", "src/semantic/planner", "src/semantic/common"]:
+for d in ["src/perception", "src/decision"]:
     if os.path.isdir(d):
         sys.path.insert(0, d)
 import logging
 logging.basicConfig(level=logging.INFO)
 
-from core.blueprints.profile_builder import blueprint_for_resolved_profile
+from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 
 print("=== Starting mapping mode ===")
 bp = blueprint_for_resolved_profile("stub", dict(
@@ -20,8 +20,8 @@ system = bp.build()
 print("Modules: %d" % len(system.modules))
 
 # Check SLAM module
-slam = system.modules.get("SLAMModule")
-print("SLAMModule: %s" % (slam is not None))
+slam = system.modules.get("SlamBridgeModule")
+print("SlamBridgeModule: %s" % (slam is not None))
 
 system.start()
 print("System started. Waiting for SLAM + LiDAR data...")

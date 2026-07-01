@@ -1,0 +1,2 @@
+"""Runtime adapter namespace."""
+

@@ -1353,7 +1353,7 @@ def test_evaluate_report_rejects_gateway_navigation_failure():
             "data": {
                 "state": "FAILED",
                 "reason_codes": ["mission_failed"],
-                "failure_reason": "GlobalPlannerService: planner returned empty path",
+                "failure_reason": "GlobalPlanner: planner returned empty path",
                 "diagnostics": {
                     "last_plan_report": {
                         "primary_planner": "astar",
@@ -1395,7 +1395,7 @@ def test_evaluate_report_records_direct_goal_fallback_from_gateway():
                     "raw": {
                         "direct_goal_fallback": {
                             "used": True,
-                            "reason": "GlobalPlannerService: planner returned empty path",
+                            "reason": "GlobalPlanner: planner returned empty path",
                             "goal": [4.0, 1.0, 0.75],
                         }
                     }

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core.runtime_policy import (
+from runtime.runtime_policy import (
     backend_capability_defaults,
     default_slam_profile_for_mode,
     session_transition_plan,
@@ -25,7 +25,7 @@ def _bool(value: Any) -> bool:
 
 
 def _collect_bridge_status(profile: str) -> dict[str, Any]:
-    from slam.slam_bridge_module import SlamBridgeModule
+    from localization.bridge import SlamBridgeModule
 
     module = SlamBridgeModule(
         backend_profile=profile,
@@ -74,10 +74,10 @@ def run_gate() -> dict[str, Any]:
     super_lio_status = _collect_bridge_status("super_lio")
 
     launch_services = {
-        "/nav/relocalize": "/nav/relocalize" in launch_text,
-        "/nav/relocalize_check": "/nav/relocalize_check" in launch_text,
-        "/nav/global_relocalize": "/nav/global_relocalize" in launch_text,
-        "/nav/saved_map_cloud": "/nav/saved_map_cloud" in launch_text,
+        "/slam/relocalize": "/slam/relocalize" in launch_text,
+        "/slam/relocalize_check": "/slam/relocalize_check" in launch_text,
+        "/slam/global_relocalize": "/slam/global_relocalize" in launch_text,
+        "/slam/saved_map_cloud": "/slam/saved_map_cloud" in launch_text,
     }
     unsupported_backends_block_saved_map_relocalize = all(
         not _bool(contracts[name]["saved_map_relocalization_supported"])

@@ -26,8 +26,9 @@ for candidate in (ROOT / "src", ROOT):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from exploration.native_factories import TARE_REMAPS
-from core.runtime_interface import TOPICS
+from cli.profiles_data import PROFILES
+from nav.exploration.tare.topics import TARE_REMAPS
+from runtime.runtime_interface import TOPICS
 from sim.engine.bridge.cmu_unity_lingtu_adapter import required_relay_contract
 
 SCHEMA_VERSION = "lingtu.cmu_unity_sim_gate.v1"
@@ -99,10 +100,11 @@ LINGTU_ADAPTER_SAFETY_TOKENS: tuple[str, ...] = (
 )
 
 LINGTU_CMU_STACK_TOKENS: tuple[str, ...] = (
-    "robot=\"sim_ros2\"",
+    "robot=\"sim_endpoint\"",
     "slam_profile=\"none\"",
-    "enable_ros2_bridge=True",
-    "enable_ros2_path_bridge=True",
+    "CMUUnityEndpointRuntime",
+    "enable_endpoint_waypoint_bridge=False",
+    "enable_nav_out=False",
     "enable_frontier=args.enable_frontier",
     "allow_direct_goal_fallback=not args.disable_direct_goal_fallback",
     "direct_goal_fallback_on_planner_failure=not args.disable_direct_goal_fallback",
@@ -305,24 +307,25 @@ def _check_cmu_workspace(
 
 def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     checks: list[dict[str, Any]] = []
-    native_factories = ROOT / "src/exploration/native_factories.py"
+    tare_topics = ROOT / "src/nav/exploration/tare/topics.py"
     profiles = ROOT / "cli/profiles_data.py"
     adapter_path = ROOT / "sim/engine/bridge/cmu_unity_lingtu_adapter.py"
     adapter_launch = ROOT / "launch/profiles/cmu_unity_lingtu_adapter.launch.py"
     stack_script = ROOT / "sim/scripts/cmu_unity_lingtu_stack.py"
-    native_text = _read_text(native_factories)
-    profile_text = _read_text(profiles)
+    topic_text = _read_text(tare_topics)
+    tare_profile = PROFILES.get("tare_explore", {})
+    cmu_profile = PROFILES.get("sim_cmu_tare", {})
     adapter_text = _read_text(adapter_path)
     launch_text = _read_text(adapter_launch)
     stack_text = _read_text(stack_script)
 
-    uses_adapter_alias_contract = 'adapter_remappings("tare")' in native_text
+    uses_adapter_alias_contract = 'adapter_remappings("tare")' in topic_text
     remap_presence = {
         f"{src}->{dst}": (
             TARE_REMAPS.get(src) == dst
             and (
                 uses_adapter_alias_contract
-                or (src in native_text and _topic_contract_token_present(dst, native_text))
+                or (src in topic_text and _topic_contract_token_present(dst, topic_text))
             )
         )
         for src, dst in TARE_REMAPS.items()
@@ -332,17 +335,22 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "lingtu_tare_remap_contract",
         all(remap_presence.values()),
         detail={
-            "file": str(native_factories),
+            "file": str(tare_topics),
             "uses_adapter_alias_contract": uses_adapter_alias_contract,
             "remaps": remap_presence,
         },
     )
 
     profile_required_tokens = {
-        "tare_explore": '"tare_explore"' in profile_text,
-        "enable_frontier_false": "enable_frontier=False" in profile_text,
-        "exploration_backend_tare": 'exploration_backend="tare"' in profile_text,
-        "planner_pct": 'planner="pct"' in profile_text,
+        "tare_explore": "tare_explore" in PROFILES,
+        "wavefront_frontier_disabled": tare_profile.get("enable_frontier") is False,
+        "traversable_frontier_disabled": (
+            tare_profile.get("enable_traversable_frontier") is False
+        ),
+        "exploration_backend_tare": (
+            tare_profile.get("exploration_backend") == "tare"
+        ),
+        "planner_octoplanner3d": tare_profile.get("planner") == "octoplanner3d",
     }
     _add_check(
         checks,
@@ -351,14 +359,23 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         detail={"file": str(profiles), "tokens": profile_required_tokens},
     )
     cmu_profile_required_tokens = {
-        "sim_cmu_tare": '"sim_cmu_tare"' in profile_text,
-        "runtime_contract": '"cmu_unity_external"' in profile_text,
-        "external_launcher": '"sim/scripts/launch_cmu_unity_lingtu_runtime.sh"' in profile_text,
-        "robot_sim_ros2": '"sim_gazebo"' in profile_text,
-        "slam_none": 'slam_profile="none"' in profile_text,
-        "exploration_backend_tare_external": 'exploration_backend="tare_external"' in profile_text,
-        "ros2_bridge": "enable_ros2_bridge=True" in profile_text,
-        "ros2_path_bridge": "enable_ros2_path_bridge=True" in profile_text,
+        "sim_cmu_tare": "sim_cmu_tare" in PROFILES,
+        "runtime_contract": cmu_profile.get("_runtime_contract") == "cmu_unity_external",
+        "external_launcher": (
+            cmu_profile.get("_external_launcher")
+            == "sim/scripts/launch_cmu_unity_lingtu_runtime.sh"
+        ),
+        "robot_sim_endpoint": cmu_profile.get("_default_robot") == "sim_endpoint",
+        "slam_none": cmu_profile.get("slam_profile") == "none",
+        "exploration_backend_tare_external": (
+            cmu_profile.get("exploration_backend") == "tare_external"
+        ),
+        "endpoint_waypoint_bridge_disabled": (
+            cmu_profile.get("enable_endpoint_waypoint_bridge") is False
+        ),
+        "nav_out_disabled": (
+            cmu_profile.get("enable_nav_out") is False
+        ),
     }
     _add_check(
         checks,
@@ -434,7 +451,7 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
     return (
         {
-            "native_factories": str(native_factories),
+            "tare_topics": str(tare_topics),
             "profiles": str(profiles),
             "adapter": str(adapter_path),
             "adapter_launch": str(adapter_launch),

@@ -47,16 +47,17 @@ def generate_launch_description():
         ],
         remappings=[
             # Inputs from Fast-LIO2 and the standard LingTu topic contract.
-            ("/cloud_registered", "/nav/registered_cloud"),
-            ("/Odometry", "/nav/odometry"),
+            ("/cloud_registered", "/slam/registered_cloud"),
+            ("/Odometry", "/slam/odometry"),
             # The localizer map_cloud is the static saved map. Live SLAM clouds
-            # stay on /nav/map_cloud for mapping/traversability consumers.
-            ("map_cloud", "/nav/saved_map_cloud"),
-            ("/localization_quality", "/nav/localization_quality"),
+            # stay on /slam/map_cloud for mapping/traversability consumers.
+            ("map_cloud", "/slam/saved_map_cloud"),
+            ("/localization_quality", "/slam/localization_quality"),
             # Services exposed through the standard LingTu topic contract.
-            ("relocalize", "/nav/relocalize"),
-            ("relocalize_check", "/nav/relocalize_check"),
-            ("global_relocalize", "/nav/global_relocalize"),
+            ("relocalize", "/slam/relocalize"),
+            ("relocalize_check", "/slam/relocalize_check"),
+            ("global_relocalize", "/slam/global_relocalize"),
+            ("global_relocalize_status", "/slam/global_relocalize_status"),
         ],
     )
 

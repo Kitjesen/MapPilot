@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # ============================================================
 # lingtu.sh 鈥?MapPilot 缁熶竴鍚姩鍏ュ彛
 #
@@ -19,8 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINGTU_PYTHON="${LINGTU_PYTHON:-python3}"
 LINGTU_CLI="$WORKSPACE_DIR/lingtu.py"
-TOMOGRAM_DIR="$WORKSPACE_DIR/src/global_planning/pct_planner/rsc/tomogram"
-PCD_DIR="$WORKSPACE_DIR/src/global_planning/pct_planner/rsc/pcd"
+TOMOGRAM_DIR="$WORKSPACE_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/tomogram"
+PCD_DIR="$WORKSPACE_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/pcd"
 MAP_DIR="$WORKSPACE_DIR/maps"
 
 _run_lingtu() {
@@ -111,7 +111,7 @@ cmd_save() {
 
     # Step 3: 鐢熸垚 Tomogram
     echo -e "${GREEN}[3/3] 鐢熸垚 PCT Tomogram锛?~5 鍒嗛挓锛?..${NC}"
-    cd "$WORKSPACE_DIR/src/global_planning/pct_planner/tomography/scripts"
+    cd "$WORKSPACE_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/tomography/scripts"
     if python3 tomography.py --scene "$MAP_NAME"; then
         ln -sf "$TOMOGRAM_DIR/${MAP_NAME}.pickle" "$TOMOGRAM_DIR/latest.pickle"
         echo ""

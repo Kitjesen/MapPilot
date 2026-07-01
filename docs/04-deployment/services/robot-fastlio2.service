@@ -14,13 +14,13 @@ ExecStart=/bin/bash -c '\
   exec /opt/lingtu/current/install/fastlio2/lib/fastlio2/lio_node \
     --ros-args \
     -p config_path:=/opt/lingtu/current/install/fastlio2/share/fastlio2/config/lio_s100p.yaml \
-    -r /cloud_registered:=/nav/registered_cloud \
-    -r /cloud_map:=/nav/map_cloud \
-    -r /Odometry:=/nav/odometry \
+    -r /cloud_registered:=/slam/registered_cloud \
+    -r /cloud_map:=/slam/map_cloud \
+    -r /Odometry:=/slam/odometry \
     -r /path:=/lio_path \
-    -r /imu/data:=/nav/imu \
-    -r /lidar/scan:=/nav/lidar_scan \
-    -r save_map:=/nav/save_map'
+    -r /imu/data:=/imu/raw \
+    -r /lidar/scan:=/lidar/raw_frame \
+    -r save_map:=/slam/save_map'
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=30s

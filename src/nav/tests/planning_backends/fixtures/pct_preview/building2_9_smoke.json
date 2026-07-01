@@ -1,0 +1,60 @@
+{
+  "schema": "lingtu.pct.preview.golden.v1",
+  "case": "building2_9_smoke",
+  "source": "src/nav/services/plan/global_planner/algorithm/pct/runtime/README.md known-good validation",
+  "actual_schema": "lingtu.pct.preview.actual.v2",
+  "input": {
+    "tomogram": "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/tomogram/building2_9.pickle",
+    "tomogram_sha256": "cd75fdf87120f7a9da4a8208687473199702e6871d9e5f225f6ba6784f5637ee",
+    "tomogram_size_bytes": 638628,
+    "tomogram_data_shape": [5, 7, 97, 94],
+    "tomogram_data_dtype": "float16",
+    "start": [2.0, 3.0, 0.0],
+    "goal": [18.0, 11.0, 0.0],
+    "obstacle_thr": 49.9
+  },
+  "expected": {
+    "ok": true,
+    "planner": "pct",
+    "path_count": {
+      "nominal": 55,
+      "min": 45,
+      "max": 70
+    },
+    "path_distance_m": {
+      "target": 17.78,
+      "abs_tol": 2.0
+    },
+    "goal_error_m": {
+      "target": 0.11,
+      "max": 0.35
+    },
+    "path": {
+      "finite": true,
+      "min_columns": 3,
+      "count_matches_path_count": true
+    }
+  },
+  "required_fields": [
+    "runtime",
+    "first",
+    "last",
+    "path",
+    "path_samples",
+    "diagnostics"
+  ],
+  "required_diagnostics": [
+    "last_path_mode",
+    "last_optimizer_enabled",
+    "last_optimizer_attempted"
+  ],
+  "tolerances": {
+    "point_abs_tol": 1e-6,
+    "sample_point_abs_tol": 0.5
+  },
+  "notes": [
+    "This fixture validates input tomogram provenance, aggregate metrics, and presence of v2 path samples and diagnostics.",
+    "Add concrete index/arclength sample expectations after a Linux/S100P native run exports sampled path points.",
+    "It is used to test the comparison contract on Windows without loading PCT Linux ELF modules."
+  ]
+}

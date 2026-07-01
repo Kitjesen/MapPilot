@@ -17,9 +17,9 @@ if str(SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from core.dimos_gap import build_dimos_gap_report
-from core.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
+from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+from runtime.dimos_gap import build_dimos_gap_report
+from runtime.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
 from sim.scripts import server_sim_closure
 
 DEFAULT_HOST_PREFLIGHT_MAX_AGE_S = 86_400.0

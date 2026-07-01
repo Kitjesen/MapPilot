@@ -20,7 +20,7 @@ mkdir -p "$RESULTS_DIR"
 # 激活评测环境 (bsrl GPU 服务器: venv at /home/bsrl/hongsenpang/habitat/conda_env)
 BASE=/home/bsrl/hongsenpang/habitat/navimind_eval
 PY=/home/bsrl/hongsenpang/habitat/conda_env/bin/python
-export PYTHONPATH=$BASE:$BASE/semantic_common:$BASE/semantic_perception_pkg:$BASE/semantic_planner_pkg
+export PYTHONPATH=$BASE:$BASE/src
 
 # SeetaCloud 回退 (root/miniconda)
 if [ ! -f "$PY" ]; then

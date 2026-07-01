@@ -193,6 +193,23 @@ print(json.dumps({"x": x, "y": y, "z": 0.0, "yaw": yaw}, separators=(",", ":")))
 PY
 }
 
+format_nav_relocalize_payload() {
+    python3 - "$1" "$2" "$3" "$4" <<'PY'
+import json
+import math
+import sys
+
+map_name = sys.argv[1]
+try:
+    x, y, yaw = (float(v) for v in sys.argv[2:5])
+except Exception:
+    sys.exit(1)
+if not map_name or not all(math.isfinite(v) for v in (x, y, yaw)):
+    sys.exit(1)
+print(json.dumps({"map_name": map_name, "x": x, "y": y, "yaw": yaw}, separators=(",", ":")))
+PY
+}
+
 format_nav_session_payload() {
     python3 - "$1" "$2" <<'PY'
 import json
@@ -460,6 +477,14 @@ cmd_nav() {
                 "$GW/api/v1/session/start" | python3 -m json.tool ;;
         stop|end)
             curl -s -X POST "$GW/api/v1/session/end" | python3 -m json.tool ;;
+        relocalize|init-pose|initial-pose)
+            local map="${2:-}"; local x="${3:-0}"; local y="${4:-0}"; local yaw="${5:-0}"
+            local payload
+            [ -z "$map" ] && { echo "Usage: lingtu nav relocalize <map> [X Y YAW]"; exit 1; }
+            payload=$(format_nav_relocalize_payload "$map" "$x" "$y" "$yaw") || { echo "initial pose must be numeric X Y YAW"; exit 1; }
+            curl -s -X POST -H "Content-Type: application/json" \
+                -d "$payload" \
+                "$GW/api/v1/slam/relocalize" | python3 -m json.tool ;;
         goal)
             local x="${2:-}"; local y="${3:-}"; local yaw="${4:-0}"
             local payload
@@ -469,7 +494,7 @@ cmd_nav() {
             curl -s -X POST -H "Content-Type: application/json" \
                 -d "$payload" \
                 "$GW/api/v1/goal" | python3 -m json.tool ;;
-        *) echo "Usage: lingtu nav [start <map>|stop|goal X Y [YAW]]"; exit 1 ;;
+        *) echo "Usage: lingtu nav [start <map>|stop|relocalize <map> [X Y YAW]|goal X Y [YAW]]"; exit 1 ;;
     esac
 }
 
@@ -588,7 +613,7 @@ svc_wait_gateway_ready() {
 svc_restart_lidar_chain() {
     svc_force_stop_unit robot-lidar.service
     svc_start_unit robot-lidar.service
-    if svc_wait_topic_publishers /nav/lidar_scan 1 20 && svc_wait_topic_publishers /nav/imu 1 10; then
+    if svc_wait_topic_publishers /lidar/raw_frame 1 20 && svc_wait_topic_publishers /imu/raw 1 10; then
         echo "robot-lidar.service restarted; LiDAR and IMU publishers are present"
         return 0
     fi
@@ -604,16 +629,16 @@ svc_restart_localization_chain() {
 
     echo "Starting Fast-LIO2..."
     svc_start_unit robot-fastlio2.service
-    if ! svc_wait_topic_publishers /nav/odometry 1 30; then
-        echo "robot-fastlio2.service did not publish /nav/odometry in time" >&2
+    if ! svc_wait_topic_publishers /slam/odometry 1 30; then
+        echo "robot-fastlio2.service did not publish /slam/odometry in time" >&2
         journalctl -u robot-fastlio2.service -n 40 --no-pager >&2 || true
         return 1
     fi
 
     echo "Starting localizer..."
     svc_start_unit robot-localizer.service
-    if ! svc_wait_topic_publishers /nav/localization_health 1 30; then
-        echo "robot-localizer.service did not publish /nav/localization_health in time" >&2
+    if ! svc_wait_topic_publishers /slam/localization_health 1 30; then
+        echo "robot-localizer.service did not publish /slam/localization_health in time" >&2
         journalctl -u robot-localizer.service -n 40 --no-pager >&2 || true
         return 1
     fi
@@ -644,16 +669,16 @@ svc_restart_robot_stack() {
 
     echo "Starting Fast-LIO2..."
     svc_start_unit robot-fastlio2.service
-    if ! svc_wait_topic_publishers /nav/odometry 1 30; then
-        echo "robot-fastlio2.service did not publish /nav/odometry in time" >&2
+    if ! svc_wait_topic_publishers /slam/odometry 1 30; then
+        echo "robot-fastlio2.service did not publish /slam/odometry in time" >&2
         journalctl -u robot-fastlio2.service -n 40 --no-pager >&2 || true
         return 1
     fi
 
     echo "Starting localizer..."
     svc_start_unit robot-localizer.service
-    if ! svc_wait_topic_publishers /nav/localization_health 1 30; then
-        echo "robot-localizer.service did not publish /nav/localization_health in time" >&2
+    if ! svc_wait_topic_publishers /slam/localization_health 1 30; then
+        echo "robot-localizer.service did not publish /slam/localization_health in time" >&2
         journalctl -u robot-localizer.service -n 40 --no-pager >&2 || true
         return 1
     fi
@@ -711,7 +736,7 @@ cmd_svc() {
 
 # ── Subcommand: log ──
 doctor_usage() {
-    echo "Usage: lingtu doctor [--non-motion] [--json] [--strict] [--realtime] [--require-camera]"
+    echo "Usage: lingtu doctor [--non-motion] [--json] [--strict] [--realtime] [--require-camera] [--ros2]"
 }
 
 source_robot_env() {
@@ -722,8 +747,8 @@ source_robot_env() {
 }
 
 cmd_doctor_json() {
-    local strict="${1:-0}" non_motion="${2:-0}" realtime="${3:-0}" require_camera="${4:-0}"
-    python3 - "$GW" "$strict" "$non_motion" "$realtime" "$require_camera" <<'PY'
+    local strict="${1:-0}" non_motion="${2:-0}" realtime="${3:-0}" require_camera="${4:-0}" ros2="${5:-0}"
+    python3 - "$GW" "$strict" "$non_motion" "$realtime" "$require_camera" "$ros2" <<'PY'
 import asyncio
 import glob
 import json
@@ -741,6 +766,7 @@ strict = sys.argv[2] == "1"
 non_motion = sys.argv[3] == "1"
 realtime = sys.argv[4] == "1"
 require_camera = sys.argv[5] == "1"
+ros2_enabled = sys.argv[6] == "1"
 checks = []
 
 
@@ -1192,86 +1218,95 @@ elif livox_event == "fail":
 else:
     add("livox.sdk_init", "warn", "p1", "could not find a recent Livox SDK init event", livox_evidence)
 
-rc, nodes_out, nodes_err = run(["ros2", "node", "list"], timeout=5)
-if rc == 127:
-    add("ros.nodes", "fail", "p0", "ros2 CLI not found", {"stderr": nodes_err})
-else:
-    nodes = [line.strip() for line in nodes_out.splitlines() if line.strip()]
-    critical = {
-        "/livox_driver_node",
-        "/lio_node",
-        "/super_lio_node",
-        "/relocation_node",
-        "/localizer_node",
-        "/camera/camera",
-        "/camera/camera_container",
-    }
-    counts = Counter(nodes)
-    dup = sorted(node for node, count in counts.items() if count > 1 and node in critical)
-    if dup:
-        add("ros.duplicate_nodes", "fail", "p0", "duplicate critical ROS nodes detected", {"duplicates": dup})
+if ros2_enabled:
+    rc, nodes_out, nodes_err = run(["ros2", "node", "list"], timeout=5)
+    if rc == 127:
+        add("ros.nodes", "fail", "p0", "ros2 CLI not found", {"stderr": nodes_err})
     else:
+        nodes = [line.strip() for line in nodes_out.splitlines() if line.strip()]
+        critical = {
+            "/livox_driver_node",
+            "/lio_node",
+            "/super_lio_node",
+            "/relocation_node",
+            "/localizer_node",
+            "/camera/camera",
+            "/camera/camera_container",
+        }
+        counts = Counter(nodes)
+        dup = sorted(node for node, count in counts.items() if count > 1 and node in critical)
+        if dup:
+            add("ros.duplicate_nodes", "fail", "p0", "duplicate critical ROS nodes detected", {"duplicates": dup})
+        else:
+            add(
+                "ros.duplicate_nodes",
+                "pass",
+                "p0",
+                "no duplicate critical ROS node names; camera component/container pair is expected",
+                {"count": len(nodes)},
+            )
+
+    required_topics = ["/lidar/raw_frame", "/imu/raw", "/slam/odometry", "/slam/localization_health"]
+    for topic in required_topics:
+        pubs, subs, err = topic_counts(topic)
+        if err == "ros2 not found":
+            add(f"topic.{topic}", "fail", "p0", "ros2 CLI not found", {"topic": topic})
+            continue
+        if pubs is None:
+            add(f"topic.{topic}", "fail", "p0", f"could not inspect {topic}", {"error": err})
+        elif pubs == 0:
+            add(f"topic.{topic}", "fail", "p0", f"{topic} has no publishers", {"publishers": pubs, "subscribers": subs, "error": err})
+        elif topic in {"/lidar/raw_frame", "/imu/raw", "/slam/odometry"} and pubs > 1:
+            add(f"topic.{topic}", "fail", "p0", f"{topic} has duplicate publishers", {"publishers": pubs, "subscribers": subs})
+        else:
+            add(f"topic.{topic}", "pass", "p0", f"{topic} has publishers", {"publishers": pubs, "subscribers": subs})
+
+    for topic in ["/slam/map_cloud", "/slam/saved_map_cloud"]:
+        pubs, subs, err = topic_counts(topic)
+        if pubs is None:
+            add(f"topic.{topic}", "warn", "p1", f"could not inspect {topic}", {"error": err})
+        elif pubs == 0:
+            add(f"topic.{topic}", "warn", "p1", f"{topic} has no publishers", {"publishers": pubs, "subscribers": subs})
+        else:
+            add(f"topic.{topic}", "pass", "p1", f"{topic} has publishers", {"publishers": pubs, "subscribers": subs})
+
+    quality_pubs, quality_subs, quality_err = topic_counts("/slam/localization_quality")
+    if quality_pubs is None:
+        add("topic./slam/localization_quality", "warn", "p1", "could not inspect /slam/localization_quality", {"error": quality_err})
+    elif quality_pubs > 0:
         add(
-            "ros.duplicate_nodes",
+            "topic./slam/localization_quality",
             "pass",
-            "p0",
-            "no duplicate critical ROS node names; camera component/container pair is expected",
-            {"count": len(nodes)},
+            "p1",
+            "/slam/localization_quality has publishers",
+            {"publishers": quality_pubs, "subscribers": quality_subs},
         )
-
-required_topics = ["/nav/lidar_scan", "/nav/imu", "/nav/odometry", "/nav/localization_health"]
-for topic in required_topics:
-    pubs, subs, err = topic_counts(topic)
-    if err == "ros2 not found":
-        add(f"topic.{topic}", "fail", "p0", "ros2 CLI not found", {"topic": topic})
-        continue
-    if pubs is None:
-        add(f"topic.{topic}", "fail", "p0", f"could not inspect {topic}", {"error": err})
-    elif pubs == 0:
-        add(f"topic.{topic}", "fail", "p0", f"{topic} has no publishers", {"publishers": pubs, "subscribers": subs, "error": err})
-    elif topic in {"/nav/lidar_scan", "/nav/imu", "/nav/odometry"} and pubs > 1:
-        add(f"topic.{topic}", "fail", "p0", f"{topic} has duplicate publishers", {"publishers": pubs, "subscribers": subs})
     else:
-        add(f"topic.{topic}", "pass", "p0", f"{topic} has publishers", {"publishers": pubs, "subscribers": subs})
-
-for topic in ["/nav/map_cloud", "/nav/saved_map_cloud"]:
-    pubs, subs, err = topic_counts(topic)
-    if pubs is None:
-        add(f"topic.{topic}", "warn", "p1", f"could not inspect {topic}", {"error": err})
-    elif pubs == 0:
-        add(f"topic.{topic}", "warn", "p1", f"{topic} has no publishers", {"publishers": pubs, "subscribers": subs})
-    else:
-        add(f"topic.{topic}", "pass", "p1", f"{topic} has publishers", {"publishers": pubs, "subscribers": subs})
-
-quality_pubs, quality_subs, quality_err = topic_counts("/nav/localization_quality")
-if quality_pubs is None:
-    add("topic./nav/localization_quality", "warn", "p1", "could not inspect /nav/localization_quality", {"error": quality_err})
-elif quality_pubs > 0:
-    add(
-        "topic./nav/localization_quality",
-        "pass",
-        "p1",
-        "/nav/localization_quality has publishers",
-        {"publishers": quality_pubs, "subscribers": quality_subs},
-    )
+        legacy_pubs, legacy_subs, legacy_err = topic_counts("/localization_quality")
+        if legacy_pubs and legacy_pubs > 0:
+            add(
+                "topic./slam/localization_quality",
+                "warn",
+                "p1",
+                "legacy /localization_quality is publishing; remap to /slam/localization_quality",
+                {"publishers": 0, "subscribers": quality_subs, "legacy_publishers": legacy_pubs, "legacy_subscribers": legacy_subs},
+            )
+        else:
+            add(
+                "topic./slam/localization_quality",
+                "warn",
+                "p1",
+                "/slam/localization_quality has no publishers",
+                {"publishers": quality_pubs, "subscribers": quality_subs, "legacy_error": legacy_err},
+            )
 else:
-    legacy_pubs, legacy_subs, legacy_err = topic_counts("/localization_quality")
-    if legacy_pubs and legacy_pubs > 0:
-        add(
-            "topic./nav/localization_quality",
-            "warn",
-            "p1",
-            "legacy /localization_quality is publishing; remap to /nav/localization_quality",
-            {"publishers": 0, "subscribers": quality_subs, "legacy_publishers": legacy_pubs, "legacy_subscribers": legacy_subs},
-        )
-    else:
-        add(
-            "topic./nav/localization_quality",
-            "warn",
-            "p1",
-            "/nav/localization_quality has no publishers",
-            {"publishers": quality_pubs, "subscribers": quality_subs, "legacy_error": legacy_err},
-        )
+    add(
+        "ros.compat_skipped",
+        "pass",
+        "p2",
+        "ROS2 compatibility graph checks skipped; use --ros2 to inspect legacy topics and nodes",
+        {"ros2_enabled": False},
+    )
 
 ready_code, ready, ready_err = http_json("/ready", timeout=3)
 if ready_err or not isinstance(ready, dict):
@@ -1653,90 +1688,133 @@ add(
     "camera USB device is enumerated" if camera_usb else "camera USB device is not enumerated",
     {"matched": camera_usb, "required": require_camera},
 )
-camera_topic_counts = {}
-for topic in ["/camera/color/image_raw", "/camera/depth/image_raw"]:
-    pubs, subs, err = topic_counts(topic)
-    camera_topic_counts[topic] = {"publishers": pubs, "subscribers": subs, "error": err}
-    if pubs is None:
-        add(f"camera.topic.{topic}", camera_check_status(False), camera_check_level(), f"could not inspect {topic}", {"error": err, "required": require_camera})
-    elif pubs == 0:
-        add(f"camera.topic.{topic}", camera_check_status(False), camera_check_level(), f"{topic} has no publishers", {"publishers": pubs, "subscribers": subs, "required": require_camera})
-    else:
-        add(f"camera.topic.{topic}", "pass", camera_check_level(), f"{topic} has publishers", {"publishers": pubs, "subscribers": subs, "required": require_camera})
-camera_topics_ready = all((camera_topic_counts.get(topic, {}).get("publishers") or 0) > 0 for topic in ["/camera/color/image_raw", "/camera/depth/image_raw"])
-camera_info_topics = [
-    "/camera/color/camera_info",
-    "/camera/depth/camera_info",
-    "/camera/camera_info",
-]
-camera_info_counts = {}
-for topic in camera_info_topics:
-    pubs, subs, err = topic_counts(topic)
-    camera_info_counts[topic] = {"publishers": pubs, "subscribers": subs, "error": err}
-camera_info_ready = any(
-    (counts.get("publishers") or 0) > 0
-    for counts in camera_info_counts.values()
-)
+
+camera_snapshot_ok = False
+camera_snapshot_evidence = {"required": require_camera}
+try:
+    req = urllib.request.Request(
+        f"{gw}/api/v1/camera/snapshot",
+        headers={"Accept": "image/jpeg"},
+    )
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        head = resp.read(3)
+        content_type = resp.headers.get("content-type", "")
+        camera_snapshot_ok = resp.getcode() == 200 and head.startswith(b"\xff\xd8")
+        camera_snapshot_evidence.update(
+            {
+                "http_status": resp.getcode(),
+                "content_type": content_type,
+                "jpeg_prefix": head.hex(),
+            }
+        )
+except urllib.error.HTTPError as exc:
+    camera_snapshot_evidence.update({"http_status": exc.code, "error": exc.reason})
+except Exception as exc:
+    camera_snapshot_evidence.update({"error": repr(exc)})
 add(
-    "camera.camera_info",
-    camera_check_status(camera_info_ready),
+    "camera.gateway_snapshot",
+    camera_check_status(camera_snapshot_ok),
     camera_check_level(),
-    "camera intrinsics topic has publishers"
-    if camera_info_ready
-    else "camera intrinsics topic has no publishers",
-    {"topics": camera_info_counts, "required": require_camera},
+    "Gateway camera snapshot endpoint returned JPEG"
+    if camera_snapshot_ok
+    else "Gateway camera snapshot endpoint did not return JPEG",
+    camera_snapshot_evidence,
 )
-device_status_pubs, device_status_subs, device_status_err = topic_counts("/camera/device_status")
-if device_status_pubs is None:
-    add(
-        "camera.device_status",
-        camera_check_status(False),
-        camera_check_level(),
-        "could not inspect /camera/device_status",
-        {"error": device_status_err, "required": require_camera},
+
+camera_topics_ready = False
+if ros2_enabled:
+    camera_topic_counts = {}
+    for topic in ["/camera/color/image_raw", "/camera/depth/image_raw"]:
+        pubs, subs, err = topic_counts(topic)
+        camera_topic_counts[topic] = {"publishers": pubs, "subscribers": subs, "error": err}
+        if pubs is None:
+            add(f"camera.topic.{topic}", camera_check_status(False), camera_check_level(), f"could not inspect {topic}", {"error": err, "required": require_camera})
+        elif pubs == 0:
+            add(f"camera.topic.{topic}", camera_check_status(False), camera_check_level(), f"{topic} has no publishers", {"publishers": pubs, "subscribers": subs, "required": require_camera})
+        else:
+            add(f"camera.topic.{topic}", "pass", camera_check_level(), f"{topic} has publishers", {"publishers": pubs, "subscribers": subs, "required": require_camera})
+    camera_topics_ready = all((camera_topic_counts.get(topic, {}).get("publishers") or 0) > 0 for topic in ["/camera/color/image_raw", "/camera/depth/image_raw"])
+    camera_info_topics = [
+        "/camera/color/camera_info",
+        "/camera/depth/camera_info",
+        "/camera/camera_info",
+    ]
+    camera_info_counts = {}
+    for topic in camera_info_topics:
+        pubs, subs, err = topic_counts(topic)
+        camera_info_counts[topic] = {"publishers": pubs, "subscribers": subs, "error": err}
+    camera_info_ready = any(
+        (counts.get("publishers") or 0) > 0
+        for counts in camera_info_counts.values()
     )
-elif device_status_pubs == 0:
     add(
-        "camera.device_status",
-        camera_check_status(False),
+        "camera.camera_info",
+        camera_check_status(camera_info_ready),
         camera_check_level(),
-        "/camera/device_status has no publishers",
-        {"publishers": device_status_pubs, "subscribers": device_status_subs, "error": device_status_err, "required": require_camera},
+        "camera intrinsics topic has publishers"
+        if camera_info_ready
+        else "camera intrinsics topic has no publishers",
+        {"topics": camera_info_counts, "required": require_camera},
     )
-else:
-    device_status, device_status_err = camera_device_status_once()
-    if device_status is None:
+    device_status_pubs, device_status_subs, device_status_err = topic_counts("/camera/device_status")
+    if device_status_pubs is None:
         add(
             "camera.device_status",
             camera_check_status(False),
             camera_check_level(),
-            "could not read /camera/device_status sample",
+            "could not inspect /camera/device_status",
+            {"error": device_status_err, "required": require_camera},
+        )
+    elif device_status_pubs == 0:
+        add(
+            "camera.device_status",
+            camera_check_status(False),
+            camera_check_level(),
+            "/camera/device_status has no publishers",
             {"publishers": device_status_pubs, "subscribers": device_status_subs, "error": device_status_err, "required": require_camera},
         )
-    elif device_status.get("device_online") is True:
-        add(
-            "camera.device_status",
-            "pass",
-            camera_check_level(),
-            "camera device_status reports online",
-            {"publishers": device_status_pubs, "subscribers": device_status_subs, "required": require_camera, **device_status},
-        )
-    elif device_status.get("device_online") is False:
-        add(
-            "camera.device_status",
-            camera_check_status(False),
-            camera_check_level(),
-            "camera driver is alive but /camera/device_status reports device_online=false",
-            {"publishers": device_status_pubs, "subscribers": device_status_subs, "required": require_camera, **device_status},
-        )
     else:
-        add(
-            "camera.device_status",
-            camera_check_status(False),
-            camera_check_level(),
-            "camera device_status sample did not include device_online",
-            {"publishers": device_status_pubs, "subscribers": device_status_subs, "required": require_camera, **device_status},
-        )
+        device_status, device_status_err = camera_device_status_once()
+        if device_status is None:
+            add(
+                "camera.device_status",
+                camera_check_status(False),
+                camera_check_level(),
+                "could not read /camera/device_status sample",
+                {"publishers": device_status_pubs, "subscribers": device_status_subs, "error": device_status_err, "required": require_camera},
+            )
+        elif device_status.get("device_online") is True:
+            add(
+                "camera.device_status",
+                "pass",
+                camera_check_level(),
+                "camera device_status reports online",
+                {"publishers": device_status_pubs, "subscribers": device_status_subs, "required": require_camera, **device_status},
+            )
+        elif device_status.get("device_online") is False:
+            add(
+                "camera.device_status",
+                camera_check_status(False),
+                camera_check_level(),
+                "camera driver is alive but /camera/device_status reports device_online=false",
+                {"publishers": device_status_pubs, "subscribers": device_status_subs, "required": require_camera, **device_status},
+            )
+        else:
+            add(
+                "camera.device_status",
+                camera_check_status(False),
+                camera_check_level(),
+                "camera device_status sample did not include device_online",
+                {"publishers": device_status_pubs, "subscribers": device_status_subs, "required": require_camera, **device_status},
+            )
+else:
+    add(
+        "camera.ros2_topics_skipped",
+        "pass",
+        "p2",
+        "ROS2 camera topic checks skipped; use --ros2 for legacy camera topic inspection",
+        {"ros2_enabled": False},
+    )
 video_nodes = sorted(glob.glob("/dev/video*") + glob.glob("/dev/v4l/by-id/*"))
 if video_nodes:
     add("camera.video_nodes", "pass", camera_check_level(), "video devices exist", {"nodes": video_nodes[:8], "required": require_camera})
@@ -1807,7 +1885,7 @@ PY
 
 # -- Subcommand: doctor --
 cmd_doctor() {
-    local json=0 strict=0 non_motion=0 realtime=0 require_camera=0
+    local json=0 strict=0 non_motion=0 realtime=0 require_camera=0 ros2=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --json) json=1 ;;
@@ -1815,22 +1893,24 @@ cmd_doctor() {
             --non-motion|--no-motion) non_motion=1 ;;
             --realtime) realtime=1 ;;
             --require-camera) require_camera=1 ;;
+            --ros2) ros2=1 ;;
             -h|--help) doctor_usage; return 0 ;;
             *) doctor_usage; return 1 ;;
         esac
         shift
     done
 
-    source_robot_env
+    [ "$ros2" = "1" ] && source_robot_env
 
     if [ "$json" = "1" ]; then
-        cmd_doctor_json "$strict" "$non_motion" "$realtime" "$require_camera"
+        cmd_doctor_json "$strict" "$non_motion" "$realtime" "$require_camera" "$ros2"
         return $?
     fi
 
     echo -e "${B}=== Lingtu Doctor @ $(date '+%H:%M:%S') ===${N}"
     [ "$non_motion" = "1" ] && echo "Mode: non-motion read-only verification"
     [ "$require_camera" = "1" ] && echo "Mode: camera required for full App/Web visual readiness"
+    [ "$ros2" = "1" ] && echo "Mode: ROS2 compatibility graph inspection enabled"
     echo -e "${B}[1] Services${N}"
     cmd_svc status
 
@@ -1849,7 +1929,7 @@ cmd_doctor() {
     fi
 
     echo -e "${B}[3] ROS duplicate nodes${N}"
-    if command -v ros2 >/dev/null 2>&1; then
+    if [ "$ros2" = "1" ] && command -v ros2 >/dev/null 2>&1; then
         local dup
         dup=$(ros2 node list 2>/dev/null | sort | uniq -d | grep -e livox_driver_node -e lio_node -e super_lio_node -e relocation_node -e localizer_node -e '^/camera/camera$' -e '^/camera/camera_container$' || true)
         if [ -n "$dup" ]; then
@@ -1858,14 +1938,33 @@ cmd_doctor() {
         else
             echo "  ok: no duplicate critical ROS node names; camera component/container pair is expected"
         fi
-    else
+    elif [ "$ros2" = "1" ]; then
         echo "  ros2 not found"
+    else
+        echo "  skipped: use --ros2 to inspect legacy ROS graph"
     fi
 
-    echo -e "${B}[4] Localization topics${N}"
-    if command -v ros2 >/dev/null 2>&1; then
+    echo -e "${B}[4] Runtime dataflow${N}"
+    curl -s --max-time 2 "$GW/api/v1/runtime/dataflow" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    print("  dataflow: unavailable")
+    raise SystemExit(0)
+summary=d.get("summary") or {}
+topics=d.get("topics") or {}
+stages=d.get("runtime_stages") or d.get("stages") or {}
+blockers=summary.get("blockers") or summary.get("data_blockers") or []
+print("  ok={} topics={} stages={} blockers={}".format(d.get("ok", "?"), len(topics) if isinstance(topics, dict) else "?", len(stages) if isinstance(stages, dict) else "?", ",".join(map(str, blockers)) if blockers else "-"))
+' || true
+
+    if [ "$ros2" = "1" ]; then
+        echo -e "${B}[4b] ROS localization topics${N}"
+    fi
+    if [ "$ros2" = "1" ] && command -v ros2 >/dev/null 2>&1; then
         local topic pubs subs
-        for topic in /nav/lidar_scan /nav/imu /nav/odometry /nav/map_cloud /nav/saved_map_cloud /nav/localization_health; do
+        for topic in /lidar/raw_frame /imu/raw /slam/odometry /slam/map_cloud /slam/saved_map_cloud /slam/localization_health; do
             pubs=$(ros2 topic info "$topic" 2>/dev/null | awk '/Publisher count:/ {print $3}' | tail -1)
             subs=$(ros2 topic info "$topic" 2>/dev/null | awk '/Subscription count:/ {print $3}' | tail -1)
             pubs="${pubs:-0}"
@@ -1877,23 +1976,25 @@ cmd_doctor() {
             fi
         done
         local quality_pubs quality_subs legacy_quality_pubs legacy_quality_subs
-        quality_pubs=$(ros2 topic info /nav/localization_quality 2>/dev/null | awk '/Publisher count:/ {print $3}' | tail -1)
-        quality_subs=$(ros2 topic info /nav/localization_quality 2>/dev/null | awk '/Subscription count:/ {print $3}' | tail -1)
+        quality_pubs=$(ros2 topic info /slam/localization_quality 2>/dev/null | awk '/Publisher count:/ {print $3}' | tail -1)
+        quality_subs=$(ros2 topic info /slam/localization_quality 2>/dev/null | awk '/Subscription count:/ {print $3}' | tail -1)
         quality_pubs="${quality_pubs:-0}"
         quality_subs="${quality_subs:-0}"
         if [ "$quality_pubs" != "0" ]; then
-            printf "  ${G}%-24s publishers=%s subscribers=%s${N}\n" "/nav/localization_quality" "$quality_pubs" "$quality_subs"
+            printf "  ${G}%-24s publishers=%s subscribers=%s${N}\n" "/slam/localization_quality" "$quality_pubs" "$quality_subs"
         else
             legacy_quality_pubs=$(ros2 topic info /localization_quality 2>/dev/null | awk '/Publisher count:/ {print $3}' | tail -1)
             legacy_quality_subs=$(ros2 topic info /localization_quality 2>/dev/null | awk '/Subscription count:/ {print $3}' | tail -1)
             legacy_quality_pubs="${legacy_quality_pubs:-0}"
             legacy_quality_subs="${legacy_quality_subs:-0}"
             if [ "$legacy_quality_pubs" != "0" ]; then
-                printf "  ${Y}%-24s publishers=%s subscribers=%s (legacy; remap to /nav/localization_quality)${N}\n" "/localization_quality" "$legacy_quality_pubs" "$legacy_quality_subs"
+                printf "  ${Y}%-24s publishers=%s subscribers=%s (legacy; remap to /slam/localization_quality)${N}\n" "/localization_quality" "$legacy_quality_pubs" "$legacy_quality_subs"
             else
-                printf "  ${R}%-24s publishers=%s subscribers=%s${N}\n" "/nav/localization_quality" "$quality_pubs" "$quality_subs"
+                printf "  ${R}%-24s publishers=%s subscribers=%s${N}\n" "/slam/localization_quality" "$quality_pubs" "$quality_subs"
             fi
         fi
+    elif [ "$ros2" = "1" ]; then
+        echo "  ros2 not found"
     fi
 
     echo -e "${B}[5] Gateway${N}"
@@ -2051,13 +2152,21 @@ PY
         cam_missing_label="FAIL"
         cam_missing_color="$R"
     fi
+    local cam_snapshot_code
+    cam_snapshot_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$GW/api/v1/camera/snapshot" 2>/dev/null || true)
+    cam_snapshot_code="${cam_snapshot_code:-000}"
+    if [ "$cam_snapshot_code" = "200" ]; then
+        echo "  ok: Gateway camera snapshot endpoint returned image/jpeg"
+    else
+        printf "  ${cam_missing_color}%s${N}: Gateway camera snapshot unavailable (http=%s)\n" "$cam_missing_label" "$cam_snapshot_code"
+    fi
     if command -v lsusb >/dev/null 2>&1 && lsusb | grep -Eiq 'orbbec|gemini|astra|2bc5'; then
         echo "  ok: camera USB device is enumerated"
     else
         printf "  ${cam_missing_color}%s${N}: camera USB device is not enumerated\n" "$cam_missing_label"
     fi
     local cam_color_pubs=0 cam_color_subs=0 cam_depth_pubs=0 cam_depth_subs=0
-    if command -v ros2 >/dev/null 2>&1; then
+    if [ "$ros2" = "1" ] && command -v ros2 >/dev/null 2>&1; then
         cam_color_pubs=$(ros2 topic info /camera/color/image_raw 2>/dev/null | awk '/Publisher count:/ {print $3}' | tail -1)
         cam_color_subs=$(ros2 topic info /camera/color/image_raw 2>/dev/null | awk '/Subscription count:/ {print $3}' | tail -1)
         cam_depth_pubs=$(ros2 topic info /camera/depth/image_raw 2>/dev/null | awk '/Publisher count:/ {print $3}' | tail -1)
@@ -2074,7 +2183,7 @@ PY
     else
         printf "  ${cam_missing_color}%s${N}: no /dev/video or /dev/v4l/by-id device nodes found\n" "$cam_missing_label"
     fi
-    if command -v ros2 >/dev/null 2>&1; then
+    if [ "$ros2" = "1" ] && command -v ros2 >/dev/null 2>&1; then
         local cam_topic cam_pubs cam_subs
         for cam_topic in /camera/color/image_raw /camera/depth/image_raw /camera/device_status; do
             case "$cam_topic" in
@@ -2117,7 +2226,7 @@ PY
     fi
 
     if [ "$strict" = "1" ]; then
-        cmd_doctor_json "$strict" "$non_motion" "$realtime" "$require_camera" >/dev/null
+        cmd_doctor_json "$strict" "$non_motion" "$realtime" "$require_camera" "$ros2" >/dev/null
         return $?
     fi
 }
@@ -2826,7 +2935,7 @@ PY
 # -- Subcommand: plan-preview --
 plan_preview_usage() {
     echo "Usage: lingtu plan-preview [--tomogram PATH] [--map-root DIR] [--start X Y [Z]] [--goal X Y [Z]] [--internal-only] [--strict]"
-    echo "Runs an offline NavigationModule.preview_plan() against a tomogram. No services, Gateway calls, goals, or cmd_vel are used."
+    echo "Runs an offline Navigation.preview_plan() against a tomogram. No services, Gateway calls, goals, or cmd_vel are used."
 }
 
 cmd_plan_preview() {
@@ -3914,7 +4023,7 @@ cmd_saved_map_artifact_gate() {
 cmd_evidence_usage() {
     echo "Usage: lingtu evidence [--duration SEC] [--min-motion-m M] [--min-cmd-vel-norm V] [--json] [--json-out PATH] [--expected-command-subscriber NAME] [--no-validate]"
     echo "Collect read-only Thunder field runtime evidence for topics, frames, data flow, and command boundary."
-    echo "Requires an active real run publishing /nav/odometry, /nav/map_cloud, /nav/localization_health, and /nav/localization_quality."
+    echo "Requires an active real run publishing /slam/odometry, /slam/map_cloud, /slam/localization_health, and /slam/localization_quality."
 }
 
 cmd_evidence() {

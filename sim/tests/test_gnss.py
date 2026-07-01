@@ -19,13 +19,13 @@ if str(_SRC) not in sys.path:
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from core.msgs.gnss import (
+from runtime.msgs.gnss import (
     GnssFix,
     GnssFixType,
     GnssOdom,
     GnssStatus,
 )
-from slam.gnss_module import (
+from localization.gnss_module import (
     GnssModule,
     MapOrigin,
     QualityConfig,
@@ -34,9 +34,9 @@ from slam.gnss_module import (
     lla_to_enu,
 )
 
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 # GnssFixType enum
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class TestGnssFixType:
@@ -60,9 +60,9 @@ class TestGnssFixType:
         )
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 # GnssFix dataclass
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class TestGnssFix:
@@ -115,9 +115,9 @@ class TestGnssFix:
         assert d["is_rtk"] is True
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 # GnssStatus
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class TestGnssStatus:
@@ -150,9 +150,9 @@ class TestGnssStatus:
         assert not bad.is_healthy
 
 
-# ═══════════════════════════════════════════════════════════════════
-# LLA ↔ ENU math
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+# LLA 鈫?ENU math
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class TestCoordTransforms:
@@ -160,7 +160,7 @@ class TestCoordTransforms:
         # Shanghai
         x, y, z = lla_to_ecef(31.2304, 121.4737, 10.0)
         assert x == pytest.approx(-2851000, rel=0.001)  # rough ECEF
-        # Magnitude check — should be near Earth radius
+        # Magnitude check 鈥?should be near Earth radius
         r = (x * x + y * y + z * z) ** 0.5
         assert 6.3e6 < r < 6.4e6
 
@@ -174,7 +174,7 @@ class TestCoordTransforms:
         assert abs(u) < 1e-6
 
     def test_enu_east_delta(self):
-        # 0.0001° longitude at Shanghai ≈ 9.5 m East
+        # 0.0001掳 longitude at Shanghai 鈮?9.5 m East
         e, n, u = lla_to_enu(
             31.2304, 121.4738, 10.0,
             31.2304, 121.4737, 10.0,
@@ -184,7 +184,7 @@ class TestCoordTransforms:
         assert abs(u) < 0.01
 
     def test_enu_north_delta(self):
-        # 0.0001° latitude ≈ 11.1 m North
+        # 0.0001掳 latitude 鈮?11.1 m North
         e, n, u = lla_to_enu(
             31.2305, 121.4737, 10.0,
             31.2304, 121.4737, 10.0,
@@ -203,9 +203,9 @@ class TestCoordTransforms:
         assert u == pytest.approx(5.0, abs=0.01)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 # Quality filter
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class TestQualityFilter:
@@ -245,7 +245,7 @@ class TestQualityFilter:
         w = fix_weight(
             self._good_fix(fix_type=GnssFixType.SINGLE,
                           covariance=(1, 0, 0, 0, 1, 0, 0, 0, 4)),
-            self._cfg(max_hdop=10),  # SINGLE has high hdop — let it pass
+            self._cfg(max_hdop=10),  # SINGLE has high hdop 鈥?let it pass
         )
         assert w == 0.05
 
@@ -266,9 +266,9 @@ class TestQualityFilter:
         ) == 0.0
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 # MapOrigin
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class TestMapOrigin:
@@ -289,9 +289,9 @@ class TestMapOrigin:
         assert o.as_tuple() == (31.0, 121.0, 10.0)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 # GnssModule
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class _FakePort:
@@ -349,7 +349,7 @@ class TestGnssModule:
         assert len(gnss_mod.gnss_odom.items) == 0
 
     def test_enu_east_motion(self, gnss_mod):
-        gnss_mod.inject_fix(_fix(lon=121.4738))  # 0.0001° east
+        gnss_mod.inject_fix(_fix(lon=121.4738))  # 0.0001掳 east
         odom = gnss_mod.gnss_odom.items[0]
         assert 9.0 < odom.east < 10.0
 
@@ -372,7 +372,7 @@ class TestGnssModule:
         m.alive = _FakePort()
         m.inject_fix(_fix())
         assert len(m.gnss_fix.items) == 1
-        assert len(m.gnss_odom.items) == 0  # no origin → no odom
+        assert len(m.gnss_odom.items) == 0  # no origin 鈫?no odom
 
     def test_float_cov_scaled_up(self, gnss_mod):
         fix = _fix(fix_type=GnssFixType.RTK_FLOAT)
@@ -385,17 +385,17 @@ class TestGnssModule:
         )
         gnss_mod.inject_fix(fix)
         odom = gnss_mod.gnss_odom.items[0]
-        # weight=0.3 → cov / 0.3 = 3.33x
+        # weight=0.3 鈫?cov / 0.3 = 3.33x
         assert odom.cov_e == pytest.approx(0.01 / 0.3, rel=0.01)
 
 
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 # WTRTK-980 simulator
-# ═══════════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 
 class TestWtrtkSim:
-    """Full-stack sim → GnssModule → odom output."""
+    """Full-stack sim 鈫?GnssModule 鈫?odom output."""
 
     def _build_chain(self, noise_sigma=0.01, fix_type=GnssFixType.RTK_FIXED,
                      loss_windows=None):

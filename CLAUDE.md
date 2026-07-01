@@ -1,21 +1,21 @@
-﻿# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-LingTu (灵途) is an autonomous navigation system for quadruped robots in outdoor/off-road environments.
+LingTu (灵�? is an autonomous navigation system for quadruped robots in outdoor/off-road environments.
 
 - **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64) | ROS2 Humble | Ubuntu 22.04
 - **Languages**: Python (framework + semantic modules), C++ (SLAM/terrain/planner)
-- **Architecture**: Module-First — Module is the only runtime unit, Blueprint is the only orchestration
-- **Guideline**: `docs/archive/MODULE_FIRST_GUIDELINE.md` — 8 rules for how code should be structured
+- **Architecture**: Module-First �?Module is the only runtime unit, Blueprint is the only orchestration
+- **Guideline**: `docs/archive/MODULE_FIRST_GUIDELINE.md` �?8 rules for how code should be structured
 
 ## Quick Start
 
 ```bash
 # Framework tests (no ROS2 needed, runs on any machine)
-python -m pytest src/core/tests/ -q       # 1226 tests
+python -m pytest src/runtime/tests/ -q       # 1226 tests
 
 # CLI with interactive REPL (profile-based, recommended)
 python lingtu.py                          # interactive profile selector
@@ -33,8 +33,8 @@ python lingtu.py nav --daemon             # background daemon (S100P navigation)
 python lingtu.py stop                     # stop running daemon
 
 # Composable factory API (each line = one functional stack)
-from core.blueprint import autoconnect
-from core.blueprints.stacks import *
+from runtime.blueprint import autoconnect
+from runtime.blueprints.stacks import *
 system = autoconnect(
     driver("thunder", host="192.168.66.190"),   # L1 Robot + camera bridge
     slam("localizer"),                           # L1 SLAM / localization
@@ -56,18 +56,18 @@ Module is the only runtime unit. Blueprint composes Modules. Factory functions b
 ### Layer Hierarchy
 
 ```
-L0  Safety    — SafetyRingModule + GeofenceManagerModule + CmdVelMux
-L1  Hardware  — Driver + CameraBridge + SLAM (managed/bridge/localizer)
-L2  Maps      — OccupancyGrid + ESDF + ElevationMap + Terrain + LocalPlanner + PathFollower
-L3  Perception — Detector + Encoder + Reconstruction + SemanticMapper + Episodic + Tagged + VectorMemory
-L4  Decision  — SemanticPlanner + LLM + VisualServo (bbox tracking + person following)
-L5  Planning  — NavigationModule (A*/PCT + WaypointTracker + mission FSM + goal safety)
-L6  Interface — Gateway + MCP + Teleop
+L0  Safety    �?SafetyRingModule + GeofenceManagerModule + CmdVelMux
+L1  Hardware  �?Driver + CameraBridge + SLAM (managed/bridge/localizer)
+L2  Maps      �?OccupancyGrid + ESDF + ElevationMap + Terrain + LocalPlanner + PathFollower
+L3  Perception �?Detector + Encoder + Reconstruction + SemanticMapper + Episodic + Tagged + VectorMemory
+L4  Decision  �?SemanticPlanner + LLM + VisualServo (bbox tracking + person following)
+L5  Planning  �?NavigationModule (A*/PCT + WaypointTracker + mission FSM + goal safety)
+L6  Interface �?Gateway + MCP + Teleop
 ```
 
-High layers → low layers only. L5→L2 (waypoint→PathFollower) is command dispatch, not dependency.
+High layers �?low layers only. L5→L2 (waypoint→PathFollower) is command dispatch, not dependency.
 
-### Composable Stack Factories (`src/core/blueprints/stacks/`)
+### Composable Stack Factories (`src/runtime/blueprints/stacks/`)
 
 | Factory | Returns | Modules |
 |---------|---------|---------|
@@ -94,9 +94,9 @@ High layers → low layers only. L5→L2 (waypoint→PathFollower) is command di
 | Encoder | `clip` (ViT-B/32), `mobileclip` (edge) |
 | LLM | `kimi`, `openai`, `claude`, `qwen`, `mock` |
 | Planner | `astar` (pure Python), `pct` (C++ ele_planner.so) |
-| PathFollower | `nav_core` (C++ nanobind), `pure_pursuit`, `pid` |
+| PathFollower | `nav_kernel` (C++ nanobind), `pure_pursuit`, `pid` |
 
-All backends registered via `@register("category", "name")` in `core.registry`. Zero if/else.
+All backends registered via `@register("category", "name")` in `runtime.registry`. Zero if/else.
 
 ### Profiles
 
@@ -140,16 +140,16 @@ bp.wire("SLAM", "cloud", "Terrain", "cloud", transport="shm")                   
 
 | Directory | Role |
 |-----------|------|
-| `core/` | Framework: Module, Blueprint, Transport, NativeModule, Registry, stacks/, utils, msgs, tests (948) |
+| `core/` | Framework: Module, Blueprint, Transport, Registry, stacks/, utils, msgs, tests (948) |
 | `nav/` | NavigationModule, SafetyRing, CmdVelMux, GlobalPlannerService, WaypointTracker, OccupancyGrid, ESDF, ElevationMap |
-| `semantic/` | perception/ (Detector+Encoder), planner/ (SemanticPlanner+LLM+VisualServo+AgentLoop), reconstruction/ (flattened — one-level subdirs, no nested modules/) |
+| `semantic/` | perception/ (Detector+Encoder), planner/ (SemanticPlanner+LLM+VisualServo+AgentLoop), reconstruction/ (flattened �?one-level subdirs, no nested modules/) |
 | `memory/` | SemanticMapper, EpisodicMemory, TaggedLocations, VectorMemory, RoomObjectKG, TopologySemGraph |
 | `drivers/` | thunder/ (ThunderDriver + CameraBridge), sim/ (stub, MuJoCo, ROS2), TeleopModule |
 | `gateway/` | GatewayModule (FastAPI HTTP/WS/SSE), MCPServerModule (MCP tools) |
-| `base_autonomy/` | TerrainModule + LocalPlannerModule + PathFollowerModule (C++ nanobind backends) |
+| `nav/local/` + `nav/kernel/` | Terrain + LocalPlanner + PathFollower Modules (Python), backed by `nav_kernel` (nanobind C++) and `nav/services/plan/local_planner/cpp` (standalone C++); `base_autonomy/` no longer exists as a path, and the historical ROS2 shells under `nav/local/legacy_ros/` were retired (see `docs/architecture/ROS2_DECOUPLING_MIGRATION_PLAN.md`) |
 | `slam/` | SLAMModule (Fast-LIO2/Point-LIO/Localizer), SlamBridgeModule, C++ SLAM nodes |
 | `global_planning/` | pct_planner (C++ ele_planner.so) + _AStarBackend / _PCTBackend (via Registry) |
-| `exploration/` | TARE exploration (ExplorationSupervisorModule, TareExplorerModule, ROS2 bridge) |
+| `exploration/` | TARE exploration (ExplorationSupervisorModule, TareExplorerModule, compatibility shim) |
 | `webrtc/` | WebRTC video streaming (WebRTCStreamModule) |
 | `legacy/` | Retired code from pre-v1.7 refactor: old gateway, thunder driver, pct_planner, semantic, scripts |
 
@@ -161,26 +161,26 @@ Note: `calibration/` and `sim/` live at repo root (not under `src/`). See [Senso
 |------|---------|
 | `docs/REPO_LAYOUT.md` | Top-level directory map (where `src/`, `scripts/`, `tools/`, —live) |
 | `lingtu.py` | CLI entry point —profiles + REPL (`main_nav.py` kept as alias) |
-| `src/core/blueprints/full_stack.py` | Top-level blueprint (~60 lines, calls 9 stack factories) |
-| `src/core/blueprints/stacks/` | 9 composable factory functions |
-| `src/core/module.py` | Module base class (In/Out, @skill, @rpc, layer tags) |
-| `src/core/stream.py` | Out[T]/In[T] ports (5 backpressure policies, thread-safe) |
-| `src/core/blueprint.py` | Blueprint builder (autoconnect, per-wire transport, auto_wire) |
-| `src/core/registry.py` | Plugin registry (@register decorator) |
-| `src/nav/navigation_module.py` | Global planner + WaypointTracker + mission FSM |
-| `src/nav/global_planner_service.py` | A*/PCT backend + _find_safe_goal BFS |
-| `src/nav/waypoint_tracker.py` | Arrival + stuck detection |
-| `src/nav/safety_ring_module.py` | Safety reflex + evaluator + dialogue |
-| `src/nav/cmd_vel_mux_module.py` | Priority-based cmd_vel arbitration (L0) |
-| `src/semantic/planner/.../semantic_planner_module.py` | 5-level fallback + multi-turn AgentLoop |
-| `src/semantic/planner/.../goal_resolver.py` | Fast-Slow dual-process + KG hot-reload |
-| `src/semantic/planner/.../visual_servo_module.py` | BBoxNavigator + PersonTracker (dual channel) |
-| `src/semantic/planner/.../agent_loop.py` | Multi-turn LLM tool calling (7 tools) |
+| `src/runtime/blueprints/full_stack.py` | Top-level blueprint (~60 lines, calls 9 stack factories) |
+| `src/runtime/blueprints/stacks/` | 9 composable factory functions |
+| `src/runtime/module.py` | Module base class (In/Out, @skill, @rpc, layer tags) |
+| `src/runtime/stream.py` | Out[T]/In[T] ports (5 backpressure policies, thread-safe) |
+| `src/runtime/blueprint.py` | Blueprint builder (autoconnect, per-wire transport, auto_wire) |
+| `src/runtime/registry.py` | Plugin registry (@register decorator) |
+| `src/nav/mission/navigation.py` | Global planner + WaypointTracker + mission FSM |
+| `src/nav/planning/global_planner.py` | A*/PCT backend + safe-goal search |
+| `src/nav/mission/waypoint_tracker.py` | Arrival + stuck detection |
+| `src/nav/safety/safety_ring.py` | Safety reflex + evaluator + dialogue |
+| `src/nav/safety/velocity_mux.py` | Priority-based cmd_vel arbitration (L0) |
+| `src/decision/semantic_planner_module.py` | 5-level fallback + multi-turn AgentLoop |
+| `src/decision/goal_resolver.py` | Fast-Slow dual-process + KG hot-reload |
+| `src/decision/visual_servo_module.py` | BBoxNavigator + PersonTracker (dual channel) |
+| `src/decision/agent_loop.py` | Multi-turn LLM tool calling (7 tools) |
 | `src/memory/modules/semantic_mapper_module.py` | SceneGraph →RoomObjectKG + TopologySemGraph |
 | `src/memory/modules/vector_memory_module.py` | CLIP + ChromaDB vector search |
 | `src/drivers/teleop_module.py` | WebSocket joystick + camera stream |
-| `src/slam/slam_module.py` | SLAM managed mode (fastlio2/pointlio/localizer) |
-| `src/slam/slam_bridge_module.py` | ROS2 SLAM bridge mode (map鈫抩dom TF transform point) |
+| `src/localization/slam_module.py` | SLAM managed mode (fastlio2/pointlio/localizer) |
+| `src/localization/bridge.py` | ROS2 SLAM bridge mode (map鈫抩dom TF transform point) |
 | `src/gateway/gateway_module.py` | FastAPI HTTP/WS/SSE + drift watchdog + save hooks |
 | `src/nav/services/dynamic_filter.py` | DUFOMap wrapper (subprocess repack/run/backup) |
 | `src/nav/services/map_manager_module.py` | Save pipeline: PGO →DUFOMap →tomogram →occupancy |
@@ -199,69 +199,72 @@ Note: `calibration/` and `sim/` live at repo root (not under `src/`). See [Senso
 
 ```bash
 # Framework tests (primary, no ROS2 needed)
-python -m pytest src/core/tests/ -q                    # 1226 tests, ~5s
+python -m pytest src/runtime/tests/ -q                    # 1226 tests, ~5s
 
-# Fast tests (no ROS2, no sim, no slow — skip heavy markers)
-python -m pytest src/core/tests/ src/nav/tests/ src/gateway/tests/ src/memory/tests/ -q -m "not slow and not ros2 and not sim"
+# Fast tests (no ROS2, no sim, no slow �?skip heavy markers)
+python -m pytest src/runtime/tests/ src/nav/tests/ src/gateway/tests/ src/memory/tests/ -q -m "not slow and not ros2 and not sim"
 
 # Simulation tests (MuJoCo/Gazebo contract validation, no robot needed)
 python -m pytest sim/tests/ -q                         # 509 scenario-level tests
 
-# C++ nav_core tests (standalone, no ROS2)
-cd src/nav/core && mkdir -p build && cd build
+# C++ nav_kernel tests (standalone, no ROS2)
+cd src/nav/kernel && mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
 ./test_benchmark                                       # 12 benchmarks
-./test_local_planner_core                              # 30 tests
 ./test_path_follower_core                              # 15 tests
-# ... 7 test suites, 96 tests total
+
+# C++ local planner tests (standalone, no ROS2)
+cd ../../services/plan/local_planner/cpp
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
+cmake --build build -j$(nproc)
+./build/test_local_planner_core                        # 30 tests
 
 # ROS2 build (for C++ nodes on S100P only)
 source /opt/ros/humble/setup.bash
 make build                                              # colcon release build
 ```
 
-## C++ Performance (nav_core)
+## C++ Performance (nav_kernel)
 
-`src/nav/core/` is a header-only C++ algorithm library, exposed to Python via nanobind. Performance-critical for aarch64 deployment.
+`src/nav/kernel/` is a header-only C++ algorithm library, exposed to Python via nanobind. Performance-critical for aarch64 deployment.
 
 ### Acceleration Libraries
 
 | Library | Version | Purpose |
 |---------|---------|---------|
-| xsimd | 13.0.0 | Portable SIMD (ARM NEON / x86 AVX auto-switch) |
-| taskflow | 3.8.0 | Task parallelism (standby, currently using OpenMP) |
-| OpenMP | — | Parallel for (terrain + scoring) |
+| taskflow | 3.8.0 | Benchmark task parallelism support |
+| OpenMP | �?| Parallel for (terrain + scoring) |
 
 ### Key Optimizations
 
 | Optimization | File | Effect |
 |------|------|------|
-| SoA memory layout | local_planner_full.hpp | SIMD-friendly, eliminates stride-4 access |
-| CSR sparse format | local_planner_full.hpp | Cache-contiguous, eliminates pointer chasing |
-| scorePathFast LUT | local_planner_core.hpp | **2.08x** (pow025 table replaces sqrt(sqrt)) |
-| OpenMP parallel scoring | local_planner_full.hpp | 36 rotation directions in parallel |
-| terrain parallelization | terrain_core.hpp | 2601 voxel nth_element parallel |
-| SIMD batch rotation | simd_accel.hpp | rotateCloud + distSqBatch |
-| LTO + fast-math | CMakeLists.txt | Cross-function inlining + relaxed floating-point |
+| SoA memory layout | local_planner.hpp | Cache-friendly point/path storage |
+| CSR sparse format | local_planner.hpp | Cache-contiguous, eliminates pointer chasing |
+| scorePathFast LUT | local_planner_scoring.hpp | pow025 table replaces sqrt(sqrt) |
+| OpenMP parallel scoring | local_planner.hpp | 36 rotation directions in parallel |
+| terrain parallelization | terrain_runtime.hpp | 2601 voxel nth_element parallel |
+| LTO | CMakeLists.txt | Cross-function inlining |
 
-CMakeLists.txt ensures both ROS2 ament_cmake and standalone paths enable xsimd + OpenMP + LTO.
+CMakeLists.txt supports both ROS2 ament_cmake and standalone paths. OpenMP is
+optional; relaxed floating-point math is not enabled globally.
 
 ## Critical Files —Do Not Break
 
-- `src/core/module.py` —Module base class (all modules depend on it)
-- `src/core/blueprint.py` —Blueprint + autoconnect (system assembly)
-- `src/core/stream.py` —In[T]/Out[T] ports (data flow backbone)
-- `src/core/registry.py` —Plugin registry (all backends depend on it)
-- `src/core/utils/` —Cross-layer utilities (18+ files import from here)
+- `src/runtime/module.py` —Module base class (all modules depend on it)
+- `src/runtime/blueprint.py` —Blueprint + autoconnect (system assembly)
+- `src/runtime/stream.py` —In[T]/Out[T] ports (data flow backbone)
+- `src/runtime/registry.py` —Plugin registry (all backends depend on it)
+- `src/runtime/utils/` —Cross-layer utilities (18+ files import from here)
 - `src/semantic/perception/.../instance_tracker.py` —Scene graph builder
-- `src/semantic/planner/.../goal_resolver.py` —5-level resolution chain
+- `src/semantic/planner/.../goal_resolver.py` �?-level resolution chain
 - `config/robot_config.yaml` —Robot physical parameters
 
 ## Module Dependency Rules
 
 ```
-All Modules ──→ core/ (Module, In/Out, Registry, utils, msgs)
-                 ↑ only legal dependency direction
+All Modules ──�?core/ (Module, In/Out, Registry, utils, msgs)
+                 �?only legal dependency direction
 
 nav/          does NOT import semantic/, drivers/, gateway/
 semantic/     does NOT import nav/, drivers/, gateway/
@@ -269,16 +272,15 @@ drivers/      does NOT import nav/, semantic/ (lazy import in blueprints only)
 gateway/      does NOT import nav/, semantic/, drivers/
 ```
 
-Planner backends resolved via `core.registry.get("planner_backend", name)`, not direct import.
+Planner backends resolved via `runtime.registry.get("planner_backend", name)`, not direct import.
 
 ## Semantic Navigation
 
 ### 5-Level Goal Resolution Chain
 
 ```
-Instruction: "去上次放背包的地方"
-  →
-1. Tag Lookup     —exact/fuzzy match in TaggedLocationStore     →goal_pose
+Instruction: "去上次放背包的地�?
+  �?1. Tag Lookup     —exact/fuzzy match in TaggedLocationStore     →goal_pose
 2. Fast Path      —scene graph keyword + CLIP matching (<200ms) →goal_pose
 3. Vector Memory  —CLIP embedding search in ChromaDB            →goal_pose
 4. Frontier       —topology graph information gain exploration   →goal_pose
@@ -428,67 +430,63 @@ bp.wire("TeleopModule", "teleop_active", "NavigationModule", "teleop_active")
 
 ## Operations CLI (`scripts/lingtu`)
 
-单一入口 CLI 取代多个零散脚本和 curl / systemctl。建议本地 `alias`:
+单一入口 CLI 取代多个零散脚本�?curl / systemctl。建议本�?`alias`:
 
 ```bash
 alias lingtu='ssh sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu"'
 alias lingwatch='ssh -t sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
 ```
 
-| 子命令 | 用途 |
+| 子命�?| 用�?|
 |---|---|
-| `lingtu status` | 一屏 8 区状态 (session / SLAM / robot / mission / path / ctrl / map / log) |
-| `lingtu watch` | `watch -c -n 1` 持续刷新 — 建图/导航时副屏开这个 |
+| `lingtu status` | 一�?8 区状�?(session / SLAM / robot / mission / path / ctrl / map / log) |
+| `lingtu watch` | `watch -c -n 1` 持续刷新 �?建图/导航时副屏开这个 |
 | `lingtu map start\|save <name>\|end\|list` | 建图 session 生命周期 |
-| `lingtu nav start <map>\|stop\|goal X Y [YAW]` | 导航 session + 发目标 |
+| `lingtu nav start <map>\|stop\|goal X Y [YAW]` | 导航 session + 发目�?|
 | `lingtu svc status\|restart [slam\|lingtu\|all]` | systemctl wrapper |
-| `lingtu log drift\|dufomap\|error\|tail\|all` | journalctl 过滤器 |
+| `lingtu log drift\|dufomap\|error\|tail\|all` | journalctl 过滤�?|
 | `lingtu health` | REST `/api/v1/health` 原样 dump |
 
 ## Dynamic Obstacle Removal (Phase 1 + 2)
 
-建图过程 + 保存时双重过滤,消除人/物走过留下的拖尾。
-
+建图过程 + 保存时双重过�?消除�?物走过留下的拖尾�?
 - **Phase 1** `voxel hit-count voting` (`gateway_module.py:_on_map_cloud` mapping 分支)
-  - 每帧 map_cloud 来, 每个 voxel hit_count +1
-  - 发 SSE 前过滤 `hit < LINGTU_MAP_MIN_HITS` (默认 3) 的 voxel
-  - **只影响 Web 实时视图**
+  - 每帧 map_cloud �? 每个 voxel hit_count +1
+  - �?SSE 前过�?`hit < LINGTU_MAP_MIN_HITS` (默认 3) �?voxel
+  - **只影�?Web 实时视图**
 - **Phase 2** `DUFOMap (ray-casting + void detection)`
-  - 保存地图时在 PGO 之后 tomogram 之前跑一次 offline filter
-  - 读 `<map>/patches/*.pcd` + `poses.txt`, 写回干净 `map.pcd`, 备份为 `map.pcd.predufo`
-  - **影响磁盘 PCD** → 导航时加载就是干净底图
-  - 跑的是 C++ binary `~/src/dufomap/build/dufomap_run` + `config/dufomap.toml` (Lingtu 调参)
+  - 保存地图时在 PGO 之后 tomogram 之前跑一�?offline filter
+  - �?`<map>/patches/*.pcd` + `poses.txt`, 写回干净 `map.pcd`, 备份�?`map.pcd.predufo`
+  - **影响磁盘 PCD** �?导航时加载就是干净底图
+  - 跑的�?C++ binary `~/src/dufomap/build/dufomap_run` + `config/dufomap.toml` (Lingtu 调参)
   - env `LINGTU_SAVE_DYNAMIC_FILTER=0` 关闭
 
-详见 `docs/05-specialized/dynamic_obstacle_removal.md`。
-
+详见 `docs/05-specialized/dynamic_obstacle_removal.md`�?
 ## SLAM Drift Watchdog
 
-Fast-LIO2 IEKF 长时间静置会协方差发散,xy 飘到 10^12 米。Gateway 后台线程
-(`_drift_watchdog_loop`) 每 60s 检查 odom,超阈值自动:
+Fast-LIO2 IEKF 长时间静置会协方差发�?xy 飘到 10^12 米。Gateway 后台线程
+(`_drift_watchdog_loop`) �?60s 检�?odom,超阈值自�?
 
-1. `svc.stop("slam","slam_pgo","localizer")` — 终结飞掉的 IEKF
-2. 清 `self._odom` 缓存
-3. SSE 推 `slam_drift` 事件
-4. 按当前 session mode `svc.ensure(...)` 重拉服务
+1. `svc.stop("slam","slam_pgo","localizer")` �?终结飞掉�?IEKF
+2. �?`self._odom` 缓存
+3. SSE �?`slam_drift` 事件
+4. 按当�?session mode `svc.ensure(...)` 重拉服务
 5. 300s 冷却防抖
 
-Env: `LINGTU_DRIFT_WATCHDOG=0` (关) / `_INTERVAL` / `_XY_LIMIT` / `_V_LIMIT` / `_COOLDOWN`。
-
+Env: `LINGTU_DRIFT_WATCHDOG=0` (�? / `_INTERVAL` / `_XY_LIMIT` / `_V_LIMIT` / `_COOLDOWN`�?
 ## Sensor Calibration (`calibration/`)
 
-出厂标定工具箱，覆盖 S100P 全部传感器。标定结果统一写入 `config/robot_config.yaml`。
-
+出厂标定工具箱，覆盖 S100P 全部传感器。标定结果统一写入 `config/robot_config.yaml`�?
 ### 标定流程 (SOP)
 
 | Step | 内容 | 工具 | 时间 |
 |------|------|------|------|
-| 1 | 相机内参 (棋盘格 9×6) | `calibration/camera/calibrate_intrinsic.py` (OpenCV) | ~5 min |
+| 1 | 相机内参 (棋盘�?9×6) | `calibration/camera/calibrate_intrinsic.py` (OpenCV) | ~5 min |
 | 2 | IMU 噪声 (Allan Variance) | `calibration/imu/allan_variance_ros2/` (Autoliv) | ~2-3 hr |
-| 3 | LiDAR-IMU 外参 (8 字运动) | `calibration/lidar_imu/LiDAR_IMU_Init/` (HKU-MARS) | ~2 min |
+| 3 | LiDAR-IMU 外参 (8 字运�? | `calibration/lidar_imu/LiDAR_IMU_Init/` (HKU-MARS) | ~2 min |
 | 4 | 相机-LiDAR 外参 (target-less) | `calibration/camera_lidar/direct_visual_lidar_calibration/` (koide3) | ~10 min |
-| 5 | 一键应用 | `calibration/apply_calibration.py` → robot_config.yaml + SLAM configs | 秒级 |
-| 6 | 一键验证 | `calibration/verify.py` (焦距/畸变/旋转/投影链 sanity check) | 秒级 |
+| 5 | 一键应�?| `calibration/apply_calibration.py` �?robot_config.yaml + SLAM configs | 秒级 |
+| 6 | 一键验�?| `calibration/verify.py` (焦距/畸变/旋转/投影�?sanity check) | 秒级 |
 
 ### 标定参数输出
 
@@ -505,37 +503,35 @@ lidar:
   roll, pitch, yaw            # Step 3 旋转 (r_il)
 ```
 
-`apply_calibration.py` 同时同步到 `src/slam/fastlio2/config/lio.yaml` 和 `config/pointlio.yaml` (na, ng, nba, nbg, r_il, t_il)。
-
-### 运行时校验
-
-`src/core/utils/calibration_check.py` 在 `full_stack_blueprint()` 启动时校验标定参数：
-- FAIL 级 (如焦距为 0、旋转矩阵非正交) → 阻止启动
-- WARN 级 (如畸变系数全零) → 日志警告，不阻断
+`apply_calibration.py` 同时同步�?`src/localization/fastlio2/config/lio.yaml` �?`config/pointlio.yaml` (na, ng, nba, nbg, r_il, t_il)�?
+### 运行时校�?
+`src/runtime/utils/calibration_check.py` �?`full_stack_blueprint()` 启动时校验标定参数：
+- FAIL �?(如焦距为 0、旋转矩阵非正交) �?阻止启动
+- WARN �?(如畸变系数全�? �?日志警告，不阻断
 
 ### 关键文件
 
 | File | Purpose |
 |------|---------|
 | `calibration/README.md` | 完整 SOP 文档 (含命令行示例) |
-| `calibration/apply_calibration.py` | 将 4 类标定结果写入 robot_config + SLAM 配置 |
-| `calibration/verify.py` | 一键验证: 参数范围 + 投影链 + 跨配置一致性 |
+| `calibration/apply_calibration.py` | �?4 类标定结果写�?robot_config + SLAM 配置 |
+| `calibration/verify.py` | 一键验�? 参数范围 + 投影�?+ 跨配置一致�?|
 | `calibration/camera/calibrate_intrinsic.py` | 相机内参 (capture/calibrate/verify 三合一) |
-| `calibration/lidar_imu/ros2_adapter/` | ROS2→ROS1 bridge 适配层 (rosbag 回放) |
-| `src/core/utils/calibration_check.py` | 运行时标定参数校验 (启动时调用) |
-| `config/robot_config.yaml` | 标定参数最终归宿 (single source of truth) |
+| `calibration/lidar_imu/ros2_adapter/` | ROS2→ROS1 bridge 适配�?(rosbag 回放) |
+| `src/runtime/utils/calibration_check.py` | 运行时标定参数校�?(启动时调�? |
+| `config/robot_config.yaml` | 标定参数最终归�?(single source of truth) |
 
 ## Code Style
 
 - **C++**: Google style (`.clang-format`, 2-space indent, 100 col)
 - **Python**: English comments in new code. Chinese comments exist in legacy code.
-- **Framework**: All Modules use `core.Module` base with In[T]/Out[T] type hints
-- **No ROS2 in Modules**: rclpy only in Bridge modules and C++ NativeModule launchers
+- **Framework**: All Modules use `runtime.Module` base with In[T]/Out[T] type hints
+- **No ROS2 in Modules**: rclpy only in explicit compat/bridge adapters; NativeModule is legacy ROS2 compatibility only
 
 ## Known Limitations
 
 - Fast Path uses rule-based matching (not learned policies)
-- S100P has no CUDA —Open3D GPU features unavailable, use C++ terrain_analysis instead
+- S100P has no CUDA �?Open3D GPU features unavailable; use CPU nav_kernel/nanobind terrain and local-planning kernels
 - Kimi API key may expire —Slow Path unavailable without valid LLM key
 - ChromaDB optional —VectorMemoryModule falls back to numpy brute-force search
 - Framework tests (1226) are mock-based —real hardware integration tests need S100P

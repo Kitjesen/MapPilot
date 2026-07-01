@@ -486,7 +486,7 @@ def _normalize_room_type_simple(name: str) -> str:
 def _infer_room_type_from_labels(labels: list[str]) -> str:
     """从物体标签推断房间类型 (与 instance_tracker.infer_room_type 类似)。"""
     try:
-        from core.msgs.scene import infer_room_type
+        from runtime.msgs.scene import infer_room_type
         return infer_room_type(labels)
     except ImportError:
         pass

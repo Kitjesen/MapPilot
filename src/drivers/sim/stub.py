@@ -1,6 +1,6 @@
-"""Legacy stub driver module — kept for backward compatibility.
+"""Legacy stub driver module kept for backward compatibility.
 
-DEPRECATED: Use StubDogModule from core/blueprints/stub.py instead.
+DEPRECATED: Use StubDogModule from runtime/blueprints/stub.py instead.
 StubDogModule is the canonical stub driver registered as (``driver``, ``stub``)
 in the registry, with periodic odom publishing and health reporting.
 
@@ -16,14 +16,14 @@ import math
 import time
 from typing import TYPE_CHECKING
 
-from core.module import Module
+from runtime.module import Module
 
 if TYPE_CHECKING:
-    from core.blueprint import Blueprint
-from core.msgs.geometry import Pose, Quaternion, Twist, Vector3
-from core.msgs.nav import Odometry
-from core.runtime_interface import TOPICS, topic_default_frame_id
-from core.stream import In, Out
+    from runtime.blueprint import Blueprint
+from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
+from runtime.msgs.nav import Odometry
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.stream import In, Out
 
 STUB_LEGACY_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.map_cloud)
 STUB_BODY_FRAME_ID = topic_default_frame_id(TOPICS.cmd_vel)
@@ -93,30 +93,30 @@ def stub_blueprint(**config) -> Blueprint:
     """Test blueprint -- StubConnection + new module architecture.
 
     NOTE: Blueprint factory -- cross-layer module resolution uses stack_module()
-    to avoid eager cross-package imports at module load time. NavigationModule
-    and SafetyRingModule (both from nav/) are resolved lazily via the registry
+    to avoid eager cross-package imports at module load time. Navigation
+    and SafetyRing (both from nav/) are resolved lazily via the registry
     helper when this factory function is called.
     """
-    from core.blueprint import Blueprint
-    from core.blueprints.stacks._registry import stack_module
+    from runtime.blueprint import Blueprint
+    from runtime.blueprints.stacks._registry import stack_module
 
-    NavigationModule = stack_module(
+    Navigation = stack_module(
         "navigation",
         "default",
         seed_group="navigation",
-        fallback="nav.navigation_module.NavigationModule",
+        fallback="nav.mission.navigation.Navigation",
     )
-    SafetyRingModule = stack_module(
+    SafetyRing = stack_module(
         "safety",
         "ring",
         seed_group="safety",
-        fallback="nav.safety_ring_module.SafetyRingModule",
+        fallback="nav.services.safety.safety_ring.SafetyRing",
     )
 
     bp = Blueprint()
     bp.add(StubConnection)
-    bp.add(NavigationModule, planner=config.get("planner_backend", "astar"))
-    bp.add(SafetyRingModule)
-    bp.wire("SafetyRingModule", "stop_cmd", "StubConnection", "stop_signal")
+    bp.add(Navigation, planner=config.get("planner_backend", "octoplanner3d"))
+    bp.add(SafetyRing)
+    bp.wire("nav.safety", "stop_cmd", "StubConnection", "stop_signal")
     bp.auto_wire()
     return bp

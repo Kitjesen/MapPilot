@@ -1,8 +1,0 @@
-# QueryScene.srv - 查询场景图服务
-# 请求: 可选的文本查询
-string query  # 空字符串表示返回完整场景图，否则返回匹配的物体
----
-# 响应: 场景图 JSON
-bool success
-string scene_graph  # JSON 格式的场景图或匹配结果
-string message      # 错误信息（如果 success=false）

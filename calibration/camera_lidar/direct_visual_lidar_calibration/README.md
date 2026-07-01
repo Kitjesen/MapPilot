@@ -22,10 +22,13 @@ This package provides a toolbox for LiDAR-camera calibration that is:
 - [ROS1/ROS2](https://www.ros.org/)
 - [PCL](https://pointclouds.org/)
 - [OpenCV](https://opencv.org/)
-- [GTSAM](https://gtsam.org/)
 - [Ceres](http://ceres-solver.org/)
+- Rust/Cargo for the LingTu CT-ICP/CT-GICP optimizer
 - [Iridescence](https://github.com/koide3/iridescence)
 - [SuperGlue](https://github.com/magicleap/SuperGluePretrainedNetwork) [optional]
+
+LingTu's fork uses `src/kernels/calibration/camera_lidar_optimizer` for the
+dynamic CT-GICP optimizer path. The default build no longer requires GTSAM.
 
 ## Getting started
 

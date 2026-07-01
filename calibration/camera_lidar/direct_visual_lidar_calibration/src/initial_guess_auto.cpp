@@ -1,13 +1,11 @@
 #include <fstream>
 #include <iostream>
-#include <opencv2/core.hpp>
+#include <opencv2/runtime.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
 #include <boost/program_options.hpp>
 
 #include <nlohmann/json.hpp>
-#include <gtsam/geometry/SO3.h>
-#include <gtsam/geometry/Pose3.h>
 
 #include <dfo/nelder_mead.hpp>
 #include <vlcal/common/console_colors.hpp>

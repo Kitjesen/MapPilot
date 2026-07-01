@@ -13,7 +13,7 @@ for path in (ROOT, SRC):
     if text not in sys.path:
         sys.path.insert(0, text)
 
-from core.runtime_interface import TOPICS
+from runtime.runtime_interface import TOPICS
 
 
 STATUS_TOPIC = TOPICS.semantic_status

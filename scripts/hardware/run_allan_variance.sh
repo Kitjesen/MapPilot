@@ -106,7 +106,7 @@ phase_apply() {
   [[ -f "$imu_yaml" ]] || fatal "imu yaml not found: $imu_yaml"
   log "Applying $imu_yaml → lio.yaml + pointlio.yaml (apply_calibration.py runs sanity checks)"
   python3 "$REPO_ROOT/calibration/apply_calibration.py" --imu "$imu_yaml"
-  log "Apply complete. Reminder: re-run python -m pytest src/core/tests/test_calibration_check.py"
+  log "Apply complete. Reminder: re-run python -m pytest src/runtime/tests/test_calibration_check.py"
 }
 
 main() {

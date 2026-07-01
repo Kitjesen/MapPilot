@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections.abc import Mapping
@@ -13,31 +14,30 @@ from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
-SERVICE_PATH = ROOT_DIR / "scripts" / "deploy" / "thunder" / "lingtu-thunder-lcm-endpoint.service"
+SERVICE_PATH = ROOT_DIR / "scripts" / "deploy" / "thunder" / "lingtu-thunder-dds-endpoint.service"
 DEPLOY_PATH = ROOT_DIR / "scripts" / "deploy" / "deploy_thunder.sh"
 RUNTIME_ENV_PATH = ROOT_DIR / "scripts" / "deploy" / "thunder" / "runtime-env.sh"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from compat.lcm.contracts import endpoint_contract  # noqa: E402
-from compat.lcm.endpoint_runner import _expand_source_specs  # noqa: E402
-from core.blueprints.profile_builder import blueprint_for_resolved_profile  # noqa: E402
-from core.blueprints.runtime_endpoint import resolve_runtime_run_spec  # noqa: E402
-from core.runtime.resolver import resolve_runtime_config  # noqa: E402
-from core.runtime_interface import THUNDER_FIELD_RUNTIME_CONTRACT, TOPICS  # noqa: E402
-from lingtu_runtime.plugin_seed import install_builtin_plugin_catalog  # noqa: E402
+from runtime.adapters.dds.contracts import endpoint_contract  # noqa: E402
+from runtime.blueprints.profile_builder import blueprint_for_resolved_profile  # noqa: E402
+from runtime.profiles.endpoints import resolve_runtime_run_spec  # noqa: E402
+from runtime.profiles.resolver import resolve_runtime_config  # noqa: E402
+from runtime.runtime_interface import THUNDER_FIELD_RUNTIME_CONTRACT, TOPICS  # noqa: E402
+from lingtu.plugin_seed import install_builtin_plugin_catalog  # noqa: E402
 
 install_builtin_plugin_catalog()
 
 EXPECTED_PROFILE = "thunder-nav"
 EXPECTED_CANONICAL_PROFILE = "nav"
 EXPECTED_ENDPOINT = "thunder_field"
-EXPECTED_CONTRACT = "thunder_field_lcm_v1"
-EXPECTED_HARDWARE_BOUNDARY = "lcm_endpoint_source"
+EXPECTED_CONTRACT = "thunder_field_dds_v1"
+EXPECTED_HARDWARE_BOUNDARY = "dds_endpoint_source"
 EXPECTED_COMMAND_MODE = "endpoint_only"
 FIELD_PRODUCT_GRAPH_PROFILES = ("thunder-map", "thunder-nav", "thunder-explore")
-FORBIDDEN_PRODUCT_MODULE_PREFIXES = ("compat.ros2",)
+FORBIDDEN_PRODUCT_MODULE_PREFIXES = ("runtime.adapters.ros2",)
 
 EXPECTED_SPEC = {
     "endpoint": EXPECTED_ENDPOINT,
@@ -45,9 +45,11 @@ EXPECTED_SPEC = {
     "runtime_contract": THUNDER_FIELD_RUNTIME_CONTRACT,
     "robot_preset": "thunder",
     "module_transport": "local",
-    "endpoint_transport": "lcm",
-    "endpoint_contract": EXPECTED_CONTRACT,
-    "localization_adapter": "lcm_endpoint",
+    "endpoint_transport": "dds",
+    "endpoint_contract": None,
+    "localization_adapter": "dds_endpoint",
+    "nav_in_adapter": "dds_nav_input",
+    "nav_out_adapter": "dds_nav_output",
     "simulation_only": False,
     "command_sink": "hardware_driver_after_cmd_vel_mux",
 }
@@ -56,44 +58,52 @@ EXPECTED_CONFIG = {
     "enable_robot_driver": False,
     "command_output_mode": EXPECTED_COMMAND_MODE,
     "hardware_control_boundary": EXPECTED_HARDWARE_BOUNDARY,
-    "localization_adapter": "lcm_endpoint",
-    "endpoint_ingress_adapter": "lcm_endpoint",
-    "endpoint_egress_adapter": "lcm_endpoint",
-    "enable_endpoint_command_bridge": True,
-    "enable_endpoint_path_bridge": True,
+    "localization_adapter": "dds_endpoint",
+    "nav_in_adapter": "dds_nav_input",
+    "nav_out_adapter": "dds_nav_output",
+    "enable_nav_in": True,
+    "enable_nav_out": True,
 }
 
 EXPECTED_SERVICE_ENV = {
     "LINGTU_PROFILE": EXPECTED_PROFILE,
     "LINGTU_MODULE_TRANSPORT": "local",
     "LINGTU_ENDPOINT": EXPECTED_ENDPOINT,
-    "LINGTU_ENDPOINT_TRANSPORT": "lcm",
+    "LINGTU_ENDPOINT_TRANSPORT": "dds",
     "LINGTU_ENDPOINT_CONTRACT": EXPECTED_CONTRACT,
     "LINGTU_ENDPOINT_SOURCES": "thunder_field",
+    "LINGTU_BRAINSTEM_HOST": "127.0.0.1",
+    "LINGTU_BRAINSTEM_PORT": "13145",
+    "LINGTU_BRAINSTEM_REQUIRE_SDK": "1",
+    "LINGTU_BRAINSTEM_AUTO_ENABLE": "0",
+    "LINGTU_BRAINSTEM_AUTO_STANDUP": "0",
+    "LINGTU_BRAINSTEM_SAFE_SITDOWN": "0",
+    "LINGTU_BRAINSTEM_SAFE_DISABLE": "0",
+    "LINGTU_BRAINSTEM_CMD_TIMEOUT_MS": "200",
     "LINGTU_ENABLE_ROBOT_DRIVER": "0",
     "LINGTU_COMMAND_OUTPUT_MODE": EXPECTED_COMMAND_MODE,
     "LINGTU_HARDWARE_CONTROL_BOUNDARY": EXPECTED_HARDWARE_BOUNDARY,
 }
 
 EXPECTED_ENTRY_CLASSES = {
-    "SlamBridgeModule": "LCMLocalizationAdapterModule",
-    "EndpointCommandBridgeModule": "LCMNavigationCommandBridgeModule",
-    "EndpointPathBridgeModule": "LCMPathCommandBridgeModule",
+    "SlamBridgeModule": "DDSLocalizationAdapterModule",
+    "nav.in": "DDSNavInModule",
+    "nav.out": "DDSNavOutModule",
 }
 
 REQUIRED_WIRES = {
-    "EndpointCommandBridgeModule.goal_pose->NavigationModule.goal_pose",
-    "EndpointCommandBridgeModule.cancel->NavigationModule.cancel",
-    "EndpointCommandBridgeModule.instruction->NavigationModule.instruction",
-    "NavigationModule.global_path->EndpointPathBridgeModule.global_path",
-    "LocalPlannerModule.local_path->EndpointPathBridgeModule.local_path",
-    "NavigationModule.waypoint->EndpointPathBridgeModule.waypoint",
-    "CmdVelMux.driver_cmd_vel->EndpointPathBridgeModule.cmd_vel",
+    "nav.in.goal_pose->nav.mission.goal_pose",
+    "nav.in.cancel->nav.mission.cancel",
+    "nav.in.instruction->nav.mission.instruction",
+    "nav.mission.global_path->nav.out.global_path",
+    "nav.local_planner.local_path->nav.out.local_path",
+    "nav.mission.waypoint->nav.out.waypoint",
+    "nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel",
 }
 
 FORBIDDEN_WIRES = {
-    "CmdVelMux.driver_cmd_vel->ThunderDriver.cmd_vel",
-    "SafetyRingModule.stop_cmd->ThunderDriver.stop_signal",
+    "nav.velocity_mux.driver_cmd_vel->ThunderDriver.cmd_vel",
+    "nav.safety.stop_cmd->ThunderDriver.stop_signal",
 }
 
 EXPECTED_BINDING_DIRECTIONS = {
@@ -118,10 +128,12 @@ def validate(profile: str = EXPECTED_PROFILE) -> dict[str, Any]:
     blockers: list[str] = []
     checked_graph_profiles: set[str] = set()
     checked_files = {
-        "src/core/blueprints/catalog/endpoints.py",
-        "src/core/blueprints/products/thunder.py",
-        "src/compat/lcm/contracts.py",
-        "src/compat/lcm/endpoint_runner.py",
+        "src/runtime/profiles/catalog/endpoints.py",
+        "src/runtime/blueprints/products/thunder.py",
+        "src/runtime/adapters/dds/contracts.py",
+        "src/runtime/adapters/dds/endpoint_runner.py",
+        "src/runtime/adapters/dds/endpoint_service.py",
+        "src/runtime/adapters/lcm/sources/brainstem.py",
     }
 
     resolved = resolve_runtime_config(
@@ -153,7 +165,8 @@ def validate(profile: str = EXPECTED_PROFILE) -> dict[str, Any]:
         "profile": profile,
         "canonical_profile": resolved.profile,
         "endpoint": spec.endpoint,
-        "contract": spec.endpoint_contract,
+        "contract": EXPECTED_CONTRACT,
+        "runtime_endpoint_contract": spec.endpoint_contract,
         "runtime_contract": spec.runtime_contract,
         "checked_graph_profiles": sorted(checked_graph_profiles),
         "blockers": blockers,
@@ -189,9 +202,10 @@ def _validate_runtime_layers(
         "LINGTU_DATA_SOURCE": THUNDER_FIELD_RUNTIME_CONTRACT,
         "LINGTU_RUNTIME_CONTRACT": THUNDER_FIELD_RUNTIME_CONTRACT,
         "LINGTU_MODULE_TRANSPORT": "local",
-        "LINGTU_ENDPOINT_TRANSPORT": "lcm",
-        "LINGTU_ENDPOINT_CONTRACT": EXPECTED_CONTRACT,
-        "LINGTU_LOCALIZATION_ADAPTER": "lcm_endpoint",
+        "LINGTU_ENDPOINT_TRANSPORT": "dds",
+        "LINGTU_LOCALIZATION_ADAPTER": "dds_endpoint",
+        "LINGTU_NAV_IN_ADAPTER": "dds_nav_input",
+        "LINGTU_NAV_OUT_ADAPTER": "dds_nav_output",
         "LINGTU_ENABLE_ROBOT_DRIVER": "0",
         "LINGTU_COMMAND_OUTPUT_MODE": EXPECTED_COMMAND_MODE,
         "LINGTU_HARDWARE_CONTROL_BOUNDARY": EXPECTED_HARDWARE_BOUNDARY,
@@ -200,6 +214,8 @@ def _validate_runtime_layers(
         actual = spec.env.get(key)
         if actual != expected:
             blockers.append(f"runtime env {key} expected {expected!r}, got {actual!r}")
+    if "LINGTU_ENDPOINT_CONTRACT" in spec.env:
+        blockers.append("runtime env LINGTU_ENDPOINT_CONTRACT must not be set for typed DDS profile")
 
 
 def _validate_endpoint_contract(blockers: list[str]) -> None:
@@ -209,8 +225,8 @@ def _validate_endpoint_contract(blockers: list[str]) -> None:
             f"endpoint contract runtime expected {THUNDER_FIELD_RUNTIME_CONTRACT!r}, "
             f"got {contract.runtime_contract!r}"
         )
-    if contract.transport != "lcm":
-        blockers.append(f"endpoint contract transport expected 'lcm', got {contract.transport!r}")
+    if contract.transport != "dds":
+        blockers.append(f"endpoint contract transport expected 'dds', got {contract.transport!r}")
 
     for topic, expected_direction in EXPECTED_BINDING_DIRECTIONS.items():
         try:
@@ -223,10 +239,13 @@ def _validate_endpoint_contract(blockers: list[str]) -> None:
                 f"endpoint contract {topic} direction expected {expected_direction!r}, "
                 f"got {binding.direction!r}"
             )
-        if binding.payload_format != "lingtu.transport.json.v1":
+        if binding.payload_format != "dds.idl.v1":
             blockers.append(
-                f"endpoint contract {topic} payload format must be "
-                "lingtu.transport.json.v1"
+                f"endpoint contract {topic} payload format must be dds.idl.v1"
+            )
+        if not binding.idl_type or not binding.cpp_type:
+            blockers.append(
+                f"endpoint contract {topic} must declare IDL and C++ message types"
             )
 
 
@@ -305,7 +324,7 @@ def _validate_blueprint_graph(
 
 
 def _validate_service_file(blockers: list[str], checked_files: set[str]) -> None:
-    rel_path = "scripts/deploy/thunder/lingtu-thunder-lcm-endpoint.service"
+    rel_path = "scripts/deploy/thunder/lingtu-thunder-dds-endpoint.service"
     checked_files.add(rel_path)
     if not SERVICE_PATH.is_file():
         blockers.append(f"{rel_path}: missing")
@@ -326,9 +345,9 @@ def _validate_service_file(blockers: list[str], checked_files: set[str]) -> None
     if "thunder_brainstem" not in expanded_sources:
         blockers.append(f"{rel_path}: thunder_field source group must include thunder_brainstem")
     if "ros2-env.sh" in text or "/opt/ros" in text:
-        blockers.append(f"{rel_path}: must not source ROS in the Thunder LCM endpoint service")
-    if "run_lcm_endpoint_service.py" not in text:
-        blockers.append(f"{rel_path}: must execute run_lcm_endpoint_service.py")
+        blockers.append(f"{rel_path}: must not source ROS in the Thunder DDS endpoint service")
+    if "run_dds_endpoint_service.py" not in text:
+        blockers.append(f"{rel_path}: must execute run_dds_endpoint_service.py")
     if "--contract" not in text or "--source" not in text:
         blockers.append(f"{rel_path}: must pass endpoint contract and sources to runner")
 
@@ -366,8 +385,7 @@ def _validate_deploy_script(blockers: list[str], checked_files: set[str]) -> Non
     required_markers = (
         "LINGTU_DEPLOY_PROFILE:-thunder-nav",
         "LINGTU_ENDPOINT:=thunder_field",
-        "LINGTU_ENDPOINT_TRANSPORT:=lcm",
-        "LINGTU_ENDPOINT_CONTRACT:=thunder_field_lcm_v1",
+        "LINGTU_ENDPOINT_TRANSPORT:=dds",
         "LINGTU_MODULE_TRANSPORT:=local",
         "SOURCE_ROS2=0",
         "ros2|sim_ros2|*-ros2|ros-compat|legacy",
@@ -392,6 +410,29 @@ def _parse_systemd_environment(text: str) -> dict[str, str]:
         if key:
             env[key] = value
     return env
+
+
+def _expand_source_specs(specs: list[str]) -> list[str]:
+    expanded: list[str] = []
+    for spec in specs:
+        if spec in {"field", "thunder_field", "builtin:thunder_field"}:
+            expanded.append("thunder_brainstem")
+            if _jsonl_source_configured():
+                expanded.append("jsonl")
+        else:
+            expanded.append(spec)
+    return expanded
+
+
+def _jsonl_source_configured() -> bool:
+    return any(
+        os.getenv(name) not in (None, "")
+        for name in (
+            "LINGTU_ENDPOINT_JSONL_PATH",
+            "LINGTU_THUNDER_JSONL_PATH",
+            "LINGTU_ENDPOINT_JSONL_COMMAND",
+        )
+    )
 
 
 def _parse_shell_default_env(text: str) -> dict[str, str]:

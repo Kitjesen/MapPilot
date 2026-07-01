@@ -3,7 +3,7 @@
 This contract is consumed by the **C++ ROS2 layer** (SLAM, terrain
 analysis, local planner, path follower) and by the algorithm-bridge
 launch files in `launch/profiles/`. The Module-First Python stack uses
-in-process Out/In ports and the transports defined in `core.transport.*`,
+in-process Out/In ports and the transports defined in `runtime.transport.*`,
 so most of these names appear only on the C++ side or when running
 SLAM as a systemd service.
 
@@ -36,8 +36,8 @@ launch/profiles/
   planner_stub.launch.py
 ```
 
-These are loaded by `slam.SLAMModule` / `slam.SlamBridgeModule` and the
-PCT adapter via `NativeModule`. They are not the system entry point â€”
+These are loaded by `localization.SLAMModule` / `localization.SlamBridgeModule` and the
+PCT adapter via `NativeModule`. They are not the system entry point â€?
 `lingtu.py` is.
 
 ## Standard topics
@@ -106,7 +106,7 @@ PCT adapter via `NativeModule`. They are not the system entry point â€”
 | `odom` | Odometry frame |
 | `body` | Robot body frame |
 
-TF chain: `map` â†’ `odom` (published by Localizer / PGO) â†’ `body`
+TF chain: `map` â†?`odom` (published by Localizer / PGO) â†?`body`
 (published by Fast-LIO2 / Point-LIO).
 
 ## Algorithm profiles
@@ -122,8 +122,8 @@ The algorithm-bridge launches are not used directly by the operator.
 `localizer`, `bridge`, `none`). Likewise the PCT planner adapter loads
 its own profile.
 
-If you do need to invoke them on their own â€” e.g. for a SLAM-only debug
-session â€” they accept the same launch arguments as before:
+If you do need to invoke them on their own â€?e.g. for a SLAM-only debug
+session â€?they accept the same launch arguments as before:
 
 ```bash
 ros2 launch launch/profiles/slam_fastlio2.launch.py
@@ -159,10 +159,10 @@ To add a SLAM backend, e.g. LIO-SAM:
    ```
 
 2. Register a backend factory under
-   `core.registry` so `slam("liosam")` resolves to a Module that
+   `runtime.registry` so `slam("liosam")` resolves to a Module that
    launches this profile via `NativeModule`.
 
-3. No other consumer file needs to change â€” they all read `/nav/*`.
+3. No other consumer file needs to change â€?they all read `/nav/*`.
 
 The same recipe applies to a new global planner: emit
 `/nav/global_path`, `/nav/planner_status`, and `/nav/way_point`, then

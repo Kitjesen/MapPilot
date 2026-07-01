@@ -1,12 +1,12 @@
-name: nav-core standalone tests
+name: nav-kernel standalone tests
 
 on:
   push:
     paths:
-      - 'src/nav/core/**'
+      - 'src/nav/kernel/**'
   pull_request:
     paths:
-      - 'src/nav/core/**'
+      - 'src/nav/kernel/**'
 
 jobs:
   test:
@@ -20,35 +20,35 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcovr
 
       - name: Configure (standalone mode, no ROS2, with coverage)
-        run: cmake -B src/nav/core/build -S src/nav/core -DSTANDALONE=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_C_FLAGS="--coverage"
+        run: cmake -B src/nav/kernel/build -S src/nav/kernel -DSTANDALONE=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_C_FLAGS="--coverage"
 
       - name: Build
-        run: cmake --build src/nav/core/build --parallel 4
+        run: cmake --build src/nav/kernel/build --parallel 4
 
       - name: Run tests
-        run: ctest --test-dir src/nav/core/build --output-on-failure
+        run: ctest --test-dir src/nav/kernel/build --output-on-failure
 
       - name: Generate coverage report
         run: |
-          gcovr --root src/nav/core \
-            --filter 'src/nav/core/include/' \
-            --filter 'src/nav/core/src/' \
+          gcovr --root src/nav/kernel \
+            --filter 'src/nav/kernel/include/' \
+            --filter 'src/nav/kernel/src/' \
             --exclude '.*test.*' \
             --print-summary \
-            --xml src/nav/core/build/coverage.xml
+            --xml src/nav/kernel/build/coverage.xml
           # Extract line coverage percentage for summary
-          LINE_COV=$(gcovr --root src/nav/core \
-            --filter 'src/nav/core/include/' \
-            --filter 'src/nav/core/src/' \
+          LINE_COV=$(gcovr --root src/nav/kernel \
+            --filter 'src/nav/kernel/include/' \
+            --filter 'src/nav/kernel/src/' \
             --exclude '.*test.*' \
             --print-summary 2>&1 | grep 'lines:' | awk '{print $2}')
-          echo "### nav-core Test Coverage: ${LINE_COV}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### nav-kernel Test Coverage: ${LINE_COV}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: nav-core-coverage
-          path: src/nav/core/build/coverage.xml
+          path: src/nav/kernel/build/coverage.xml
           retention-days: 14
 
   cross-compile-arm64:
@@ -66,10 +66,10 @@ jobs:
 
       - name: Configure (ARM64 cross-compile, standalone)
         run: |
-          cmake -B src/nav/core/build-arm64 -S src/nav/core \
+          cmake -B src/nav/kernel/build-arm64 -S src/nav/kernel \
             -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
             -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
             -DSTANDALONE=ON
 
       - name: Build (compile only, no tests)
-        run: cmake --build src/nav/core/build-arm64 --parallel $(nproc)
+        run: cmake --build src/nav/kernel/build-arm64 --parallel $(nproc)

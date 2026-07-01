@@ -8,11 +8,11 @@ import json
 import pickle
 import subprocess
 
-from core.tests.numpy_guard import import_numpy_or_skip
+from runtime.tests.numpy_guard import import_numpy_or_skip
 
 np = import_numpy_or_skip()
 
-from nav.global_planner_service import GlobalPlannerService
+from nav.services.plan.global_planner.service import GlobalPlanner
 from sim.engine.scenarios.large_terrain_assets import DEFAULT_START, build_large_terrain_assets
 from sim.scripts.large_terrain_nav_validation import run_validation
 
@@ -74,7 +74,7 @@ def test_large_terrain_assets_write_schema_and_route_catalog(tmp_path):
 
 
 def test_large_terrain_assets_publish_same_source_saved_map_metadata(tmp_path):
-    from core.same_source_map_artifacts import validate_saved_map_artifact_dir
+    from runtime.same_source_map_artifacts import validate_saved_map_artifact_dir
 
     assets = build_large_terrain_assets(tmp_path)
 
@@ -137,7 +137,7 @@ def test_large_terrain_astar_route_uses_central_gate(tmp_path):
     assets = build_large_terrain_assets(tmp_path)
     route = _route(assets, "terrain_long")
 
-    svc = GlobalPlannerService(
+    svc = GlobalPlanner(
         planner_name="astar",
         tomogram=str(assets.tomogram),
         downsample_dist=0.2,
@@ -169,7 +169,7 @@ def test_large_terrain_complex_slalom_has_safe_astar_route(tmp_path):
     assets = build_large_terrain_assets(tmp_path)
     route = _route(assets, "terrain_complex_slalom")
 
-    svc = GlobalPlannerService(
+    svc = GlobalPlanner(
         planner_name="astar",
         tomogram=str(assets.tomogram),
         downsample_dist=0.2,
@@ -230,9 +230,9 @@ def test_large_terrain_validation_records_blocked_pct_without_faking_success(tmp
             return None
 
         def plan(self, start, goal, safe_goal_tolerance=0.0):
-            raise RuntimeError("GlobalPlannerService: planner returned empty path")
+            raise RuntimeError("GlobalPlanner: planner returned empty path")
 
-    monkeypatch.setattr(mod, "GlobalPlannerService", BlockedService)
+    monkeypatch.setattr(mod, "GlobalPlanner", BlockedService)
     monkeypatch.setattr(
         mod,
         "_pct_runtime_evidence",
@@ -331,7 +331,7 @@ def test_large_terrain_validation_rejects_path_that_does_not_reach_goal(
                 [float(start[0]) + 0.6, float(start[1]), 0.0],
             ], 1.0
 
-    monkeypatch.setattr(mod, "GlobalPlannerService", PartialPathService)
+    monkeypatch.setattr(mod, "GlobalPlanner", PartialPathService)
 
     report = mod.run_validation(tmp_path, routes=("terrain_short",), planners=("astar",))
 
@@ -377,7 +377,7 @@ def test_large_terrain_validation_records_effective_global_planner_when_service_
                 [float(goal[0]), float(goal[1]), 0.0],
             ], 1.0
 
-    monkeypatch.setattr(mod, "GlobalPlannerService", FallbackService)
+    monkeypatch.setattr(mod, "GlobalPlanner", FallbackService)
     monkeypatch.setattr(mod, "_pct_runtime_evidence", lambda: {"ok": True, "missing": []})
 
     report = mod.run_validation(tmp_path, routes=("terrain_short",), planners=("pct",))
@@ -421,7 +421,7 @@ def test_large_terrain_pct_runtime_evidence_preserves_host_diagnostics(monkeypat
                 },
             ],
             "recommended_build_command": (
-                "bash src/global_planning/pct_planner_runnable/build_host_x86_64.sh"
+                "bash src/nav/services/plan/global_planner/algorithm/pct/runtime/build_legacy_native_x86_64.sh"
             ),
             "error": "No runnable PCT native modules",
         },
@@ -433,13 +433,13 @@ def test_large_terrain_pct_runtime_evidence_preserves_host_diagnostics(monkeypat
     assert evidence["host_platform_supported"] is False
     assert evidence["python_abi_matches_known_good"] is False
     assert evidence["candidate_diagnostics"][0]["has_current_abi_extensions"] is False
-    assert "build_host_x86_64.sh" in evidence["recommended_build_command"]
+    assert "build_legacy_native_x86_64.sh" in evidence["recommended_build_command"]
 
 
 def test_large_terrain_validation_records_safe_fallback_selection(tmp_path, monkeypatch):
     from sim.scripts import large_terrain_nav_validation as mod
 
-    RealService = mod.GlobalPlannerService
+    RealService = mod.GlobalPlanner
 
     class MixedService:
         def __init__(self, planner_name: str, tomogram: str, obstacle_thr: float, downsample_dist: float) -> None:
@@ -466,7 +466,7 @@ def test_large_terrain_validation_records_safe_fallback_selection(tmp_path, monk
                 return [[float(start[0]), float(start[1]), 0.0], [float(goal[0]), float(goal[1]), 0.0]], 1.0
             return self._inner.plan(start, goal, safe_goal_tolerance=safe_goal_tolerance)
 
-    monkeypatch.setattr(mod, "GlobalPlannerService", MixedService)
+    monkeypatch.setattr(mod, "GlobalPlanner", MixedService)
     monkeypatch.setattr(mod, "_pct_runtime_evidence", lambda: {"ok": True, "missing": []})
 
     report = mod.run_validation(tmp_path, routes=("terrain_long",), planners=("pct", "astar"))

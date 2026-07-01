@@ -11,8 +11,8 @@
 - [ROS1/ROS2](https://www.ros.org/)
 - [PCL](https://pointclouds.org/)
 - [OpenCV](https://opencv.org/)
-- [GTSAM](https://gtsam.org/)
 - [Ceres](http://ceres-solver.org/)
+- Rust/Cargo for the LingTu CT-ICP/CT-GICP optimizer
 - [Iridescence](https://github.com/koide3/iridescence)
 - [SuperGlue](https://github.com/magicleap/SuperGluePretrainedNetwork) [optional]
 
@@ -21,18 +21,6 @@
 ```bash
 # Install dependencies
 sudo apt install libomp-dev libboost-all-dev libglm-dev libglfw3-dev libpng-dev libjpeg-dev
-
-# Install GTSAM
-git clone https://github.com/borglab/gtsam
-cd gtsam && git checkout 4.2a9
-mkdir build && cd build
-# For Ubuntu 22.04, add -DGTSAM_USE_SYSTEM_EIGEN=ON
-cmake .. -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
-         -DGTSAM_BUILD_TESTS=OFF \
-         -DGTSAM_WITH_TBB=OFF \
-         -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF
-make -j$(nproc)
-sudo make install
 
 # Install Ceres
 git clone --recurse-submodules https://github.com/ceres-solver/ceres-solver

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.runtime_interface import FRAMES, TOPICS, RuntimeFrames
+from runtime.runtime_interface import FRAMES, TOPICS, RuntimeFrames
 
 
 FrameContract = RuntimeFrames

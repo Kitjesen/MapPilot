@@ -24,7 +24,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.msgs.numpy_compat import np
+from runtime.msgs.numpy_compat import np
+
+
+PRODUCTION_LOCAL_PLANNER_BACKEND = "nanobind"
+PRODUCTION_PATH_FOLLOWER_BACKEND = "nav_kernel"
+PRODUCTION_GLOBAL_PLANNER_BACKEND = "octoplanner3d"
 
 
 def _rpy_from_xyzw(q: Any) -> tuple[float, float, float]:
@@ -421,7 +426,7 @@ def run_direct_policy(
     direct_mode: str = "walk",
     policy_path: str = "",
 ) -> dict[str, Any]:
-    from drivers.sim.mujoco_driver_module import MujocoDriverModule
+    from drivers.sim.mujoco.driver import MujocoDriverModule
     from sim.engine.core.engine import VelocityCommand
 
     driver = MujocoDriverModule(
@@ -531,8 +536,9 @@ def run_full_stack_nav(
     duration: float,
     goal_distance: float,
     policy_path: str = "",
-    local_planner_backend: str = "simple",
-    path_follower_backend: str = "pid",
+    planner_backend: str = PRODUCTION_GLOBAL_PLANNER_BACKEND,
+    local_planner_backend: str = PRODUCTION_LOCAL_PLANNER_BACKEND,
+    path_follower_backend: str = PRODUCTION_PATH_FOLLOWER_BACKEND,
     nav_max_angular_z: float = 0.2,
     waypoint_threshold: float = 0.25,
     final_waypoint_threshold: float = 0.06,
@@ -547,8 +553,8 @@ def run_full_stack_nav(
     free_costmap_resolution: float = 0.10,
     free_costmap_margin: float = 3.0,
 ) -> dict[str, Any]:
-    from core.blueprints.profile_builder import build_system_for_profile
-    from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+    from runtime.blueprints.profile_builder import build_system_for_profile
+    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
     system = build_system_for_profile("sim", dict(
         robot="sim_mujoco",
@@ -556,6 +562,7 @@ def run_full_stack_nav(
         slam_profile="none",
         detector="sim_scene",
         llm="mock",
+        planner_backend=planner_backend,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
@@ -578,10 +585,10 @@ def run_full_stack_nav(
 
     driver = system.get_module("MujocoDriverModule")
     ogm = system.get_module("OccupancyGridModule")
-    nav = system.get_module("NavigationModule")
-    local_planner = system.get_module("LocalPlannerModule")
-    path_follower = system.get_module("PathFollowerModule")
-    mux = system.get_module("CmdVelMux")
+    nav = system.get_module("nav.mission")
+    local_planner = system.get_module("nav.local_planner")
+    path_follower = system.get_module("nav.path_follower")
+    mux = system.get_module("nav.velocity_mux")
 
     seen = {
         "costmap": 0,
@@ -742,6 +749,8 @@ def run_full_stack_nav(
             "duration_s": duration,
             "elapsed_s": time.time() - started_at,
             "goal_distance_m": goal_distance,
+            "global_planner_backend_requested": planner_backend,
+            "global_planner_backend_status": nav.planner_backend_status(),
             "local_planner_backend_requested": local_planner_backend,
             "local_planner_backend_actual": str(getattr(local_planner, "_backend", "")),
             "path_follower_backend_requested": path_follower_backend,
@@ -864,6 +873,8 @@ def _passes_direct(
 
 def _passes_nav(result: dict[str, Any], min_motion: float, max_dist_to_goal: float) -> bool:
     seen = result.get("seen", {})
+    planner_status = result.get("global_planner_backend_status") or {}
+    configured_planner = str(planner_status.get("configured_backend") or "")
     map_ready = int(seen.get("costmap", 0)) > 0 or bool(
         (result.get("costmap_readiness") or {}).get("planner_has_map")
     )
@@ -875,6 +886,9 @@ def _passes_nav(result: dict[str, Any], min_motion: float, max_dist_to_goal: flo
         result.get("drive_mode") == "policy"
         and bool(result.get("policy_loaded"))
         and bool(result.get("finite"))
+        and configured_planner == PRODUCTION_GLOBAL_PLANNER_BACKEND
+        and result.get("local_planner_backend_actual") == PRODUCTION_LOCAL_PLANNER_BACKEND
+        and result.get("path_follower_backend_actual") == PRODUCTION_PATH_FOLLOWER_BACKEND
         and map_ready
         and close_enough
         and int(seen.get("waypoints", 0)) > 0
@@ -913,14 +927,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Explicit ONNX policy path. If omitted, MujocoDriverModule searches its default candidates.",
     )
     parser.add_argument(
+        "--nav-planner-backend",
+        choices=("octoplanner3d", "pct", "astar"),
+        default=PRODUCTION_GLOBAL_PLANNER_BACKEND,
+    )
+    parser.add_argument(
         "--nav-local-planner-backend",
         choices=("simple", "nanobind", "cmu", "cmu_py"),
-        default="simple",
+        default=PRODUCTION_LOCAL_PLANNER_BACKEND,
     )
     parser.add_argument(
         "--nav-path-follower-backend",
-        choices=("pid", "nav_core", "pure_pursuit"),
-        default="pid",
+        choices=("pid", "nav_kernel", "pure_pursuit"),
+        default=PRODUCTION_PATH_FOLLOWER_BACKEND,
     )
     parser.add_argument(
         "--nav-max-angular-z",
@@ -940,7 +959,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--nav-costmap-wait",
         type=float,
         default=2.0,
-        help="Wait for NavigationModule planner map after odometry/costmap warmup",
+        help="Wait for Navigation planner map after odometry/costmap warmup",
     )
     parser.add_argument(
         "--no-nav-inject-free-costmap",
@@ -1008,6 +1027,7 @@ def main() -> int:
                 duration=args.nav_duration,
                 goal_distance=args.goal_distance,
                 policy_path=args.policy,
+                planner_backend=args.nav_planner_backend,
                 local_planner_backend=args.nav_local_planner_backend,
                 path_follower_backend=args.nav_path_follower_backend,
                 nav_max_angular_z=args.nav_max_angular_z,

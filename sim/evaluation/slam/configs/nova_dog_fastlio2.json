@@ -19,8 +19,8 @@
   "backend": {
     "name": "fastlio2",
     "profile": "fastlio2",
-    "odometry_topic": "/nav/odometry",
-    "map_topic": "/nav/map_cloud"
+    "odometry_topic": "/slam/odometry",
+    "map_topic": "/slam/map_cloud"
   },
   "duration_s": 120.0,
   "reference_source": "sim_ground_truth",

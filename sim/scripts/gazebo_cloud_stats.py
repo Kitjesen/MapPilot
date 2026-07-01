@@ -63,11 +63,11 @@ def main() -> int:
     node = Node("lingtu_gazebo_cloud_stats")
     topics = {
         "/lingtu/gazebo/raw/lidar_points": TopicStats(),
-        "/nav/registered_cloud": TopicStats(),
-        "/nav/map_cloud": TopicStats(),
+        "/slam/registered_cloud": TopicStats(),
+        "/slam/map_cloud": TopicStats(),
         "/nav/terrain_map": TopicStats(),
         "/nav/terrain_map_ext": TopicStats(),
-        "/nav/cumulative_map_cloud": TopicStats(),
+        "/slam/cumulative_map_cloud": TopicStats(),
     }
     odom = {
         "samples": 0,
@@ -144,7 +144,7 @@ def main() -> int:
 
         return on_cloud
 
-    node.create_subscription(Odometry, "/nav/odometry", on_odom, 10)
+    node.create_subscription(Odometry, "/slam/odometry", on_odom, 10)
     for topic in topics:
         node.create_subscription(PointCloud2, topic, make_cloud_cb(topic), 10)
 

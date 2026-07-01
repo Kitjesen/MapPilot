@@ -60,7 +60,7 @@ class _FakePort:
             callback(value)
 
 
-class _FakeCmdVelMux:
+class _FakeVelocityMux:
     def health(self) -> dict[str, Any]:
         return {"active_source": "none", "sources": {}}
 
@@ -107,11 +107,11 @@ class _FakeGateway:
         }
         self._command_journal = CommandJournal()
         self._lease = _FakeLease()
-        self._cmd_vel_mux = _FakeCmdVelMux()
-        self._navigation_module = nav
+        self._cmd_vel_mux = _FakeVelocityMux()
+        self._navigation = nav
         self._all_modules = {
-            "NavigationModule": nav,
-            "CmdVelMux": self._cmd_vel_mux,
+            "nav.mission": nav,
+            "nav.velocity_mux": self._cmd_vel_mux,
         }
         self.goal_pose = _FakePort()
         self.cmd_vel = _FakePort()

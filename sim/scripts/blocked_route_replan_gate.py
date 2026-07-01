@@ -291,7 +291,7 @@ def run_gate(
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakeBlockedRouteNav(planner=planner)
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway, map_name=map_name)
 
     sent_goals: list[Any] = []

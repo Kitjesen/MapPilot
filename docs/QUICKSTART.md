@@ -31,19 +31,18 @@ uv-managed environment and is equivalent to `uv run --locked python lingtu.py`.
 ## Robot environment (S100P)
 
 ```bash
-# Once per shell — usually added to ~/.bashrc
+# Once per shell; usually added to ~/.bashrc
 source /opt/ros/humble/setup.bash
 source ~/data/inovxio/lingtu/install/setup.bash   # only after `make build`
 ```
 
-Only ROS2 + the colcon overlay are sourced; LingTu does not require any
+Only ROS 2 + the colcon overlay are sourced; LingTu does not require any
 extra `setup.bash` or env script.
 
 ## Profiles
 
-The full table is in [`archive/AGENTS.md`](./archive/AGENTS.md) (section 3 "Profiles").
-The canonical source is `src/core/runtime_profiles.py`; `cli/profiles_data.py`
-keeps compatibility exports for CLI callers.
+The canonical profile source is `cli/profiles_data.py`.
+`uv run --locked lingtu --list` lists what is currently registered.
 
 | Command | Purpose | Hardware |
 |---------|---------|----------|
@@ -52,11 +51,9 @@ keeps compatibility exports for CLI callers.
 | `lingtu sim_nav` | pure-Python navigation sim | none |
 | `lingtu sim` | MuJoCo full stack | none (CPU MuJoCo) |
 | `lingtu map` | build a map with Fast-LIO2 + PGO | LiDAR + IMU |
-| `lingtu nav` | navigate using a saved map (PCT planner) | LiDAR + IMU + camera |
+| `lingtu nav` | navigate using a saved map (OctoPlanner3D planner) | LiDAR + IMU + camera |
 | `lingtu explore` | wavefront frontier exploration | LiDAR + IMU + camera |
-| `lingtu tare_explore` | CMU TARE hierarchical explorer | LiDAR + IMU + camera + built TARE binary |
-
-`uv run --locked lingtu --list` lists what is currently registered.
+| `lingtu tare_explore` | ROS-free traversable frontier exploration with OctoPlanner3D | LiDAR + IMU + camera |
 
 ## Typical session
 
@@ -74,8 +71,7 @@ Drive the robot manually around the area, then in the REPL:
 
 `MapManagerModule` writes `map.pcd`, an offline DUFOMap pass cleans dynamic
 obstacles, and the gateway publishes a `tomogram.pickle` and an
-`occupancy.npz` for the planner. Default location is `~/data/nova/maps/<name>/`
-(override with `NAV_MAP_DIR`).
+`occupancy.npz` for the planner. Override the map root with `NAV_MAP_DIR`.
 
 ### 2. Navigate
 
@@ -88,7 +84,7 @@ Then in the REPL:
 ```
 > map use building_a       # set the active tomogram
 > navigate 5 3             # x, y in map frame
-> go 体育馆                  # natural-language instruction (semantic planner)
+> go charging station      # natural-language instruction (semantic planner)
 > stop                     # zero cmd_vel + cancel mission
 > status                   # mission state, ports, hz
 > teleop status            # teleop client count + lease
@@ -136,7 +132,7 @@ lingtu status              External run state (add --json)
 lingtu show-config nav     Resolved config (add --json)
 lingtu log -f              Follow the run log
 lingtu doctor              scripts/diagnostics/doctor.py
-lingtu rerun               scripts/visualization/rerun_live.py
+lingtu rerun               scripts/visualization/rerun_gateway_live.py
 lingtu --list              List profiles
 lingtu --version           Print version
 ```
@@ -146,12 +142,11 @@ lingtu --version           Print version
 
 ## Overrides
 
-Any profile field can be overridden on the command line. The full set is
-listed in `archive/AGENTS.md` section 20. Common ones:
+Common command-line overrides:
 
 ```bash
 lingtu nav --llm mock              # bypass real LLM
-lingtu nav --planner astar         # force pure-Python A*
+lingtu nav --planner pct           # force legacy PCT experiment backend
 lingtu nav --detector yoloe        # alternative detector
 lingtu sim --no-native             # disable C++ autonomy stack
 lingtu nav --no-semantic           # geometric only
@@ -168,11 +163,11 @@ lingtu nav --no-semantic           # geometric only
 ## MCP
 
 ```bash
-claude mcp add --transport http lingtu http://192.168.66.190:8090/mcp
+codex mcp add --transport http lingtu http://192.168.66.190:8090/mcp
 ```
 
 `MCPServerModule` auto-discovers `@skill` methods from every module in
-`SystemHandle`. The current tool catalogue is in `archive/AGENTS.md` section 18.
+`SystemHandle`. The current API reference is `docs/api/mcp_tools.md`.
 
 ## Troubleshooting
 
@@ -183,4 +178,3 @@ claude mcp add --transport http lingtu http://192.168.66.190:8090/mcp
 | `No active map` | `lingtu map` first, then `map save <name>` and `map use <name>` |
 | Slow Path / LLM unavailable | Set `MOONSHOT_API_KEY` (Kimi), `DASHSCOPE_API_KEY` (Qwen), `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, or run with `--llm mock` |
 | SSH session drops | `lingtu nav --daemon`, then `lingtu log -f` and `lingtu stop` |
-| TARE binary missing | `scripts/build/fetch_ortools.sh && scripts/build/build_tare.sh` |

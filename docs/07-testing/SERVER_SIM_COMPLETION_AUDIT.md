@@ -42,9 +42,9 @@ core-algorithm recheck:
   `cmd_vel_sent_to_hardware=false` under the older gate set. This is not the
   current DimOS readiness result.
 - Server regression after the CMU runtime freshness and MuJoCo LiDAR fallback
-  fixes: `src/core/tests/test_server_sim_closure.py`,
-  `src/core/tests/test_sim_runtime_compat.py`, and
-  `src/core/tests/test_mujoco_mid360_pattern.py`: `88 passed`.
+  fixes: `src/runtime/tests/test_server_sim_closure.py`,
+  `src/runtime/tests/test_sim_runtime_adapters.py`, and
+  `src/runtime/tests/test_mujoco_mid360_pattern.py`: `88 passed`.
 - CMU Unity runtime freshness is now satisfied by the stricter current report
   `artifacts/server_sim_closure/cmu_unity_pct_strict/report_unique_waypoints.json`.
   That report is evaluated by both `cmu_unity_runtime` and
@@ -62,19 +62,19 @@ core-algorithm recheck:
   TARE supervisor, CMU Unity gates, Gazebo contracts, saved-map relocalize,
   server closure, and dynamic-obstacle local planner: `339 passed`.
 - Supplemental native/PCT/path-follower/MID-360 set:
-  `src/core/tests/test_native_build_contracts.py`,
-  `src/core/tests/test_mujoco_mid360_pattern.py`,
+  `src/runtime/tests/test_native_build_contracts.py`,
+  `src/runtime/tests/test_mujoco_mid360_pattern.py`,
   `sim/planning/test_path_follower_logic.py`, and
   `sim/planning/test_pct_adapter_logic.py`: `58 passed`.
 - Core map/localization/SLAM/relocalize subset:
-  `src/core/tests/test_algorithm_closure.py`,
-  `src/core/tests/test_navigation_frame_contract.py`,
-  `src/core/tests/test_map_occupancy.py`,
-  `src/core/tests/test_localization_health.py`,
-  `src/core/tests/test_slam_bridge_tf.py`,
-  `src/core/tests/test_slam_stack_services.py`,
-  `src/core/tests/test_saved_map_relocalize_contract_gate.py`, and
-  `src/core/tests/test_gateway_session_map_contract.py`: `184 passed`.
+  `src/runtime/tests/test_algorithm_closure.py`,
+  `src/runtime/tests/test_navigation_frame_contract.py`,
+  `src/runtime/tests/test_map_occupancy.py`,
+  `src/runtime/tests/test_localization_health.py`,
+  `src/runtime/tests/test_slam_bridge_tf.py`,
+  `src/runtime/tests/test_slam_stack_services.py`,
+  `src/runtime/tests/test_saved_map_relocalize_contract_gate.py`, and
+  `src/runtime/tests/test_gateway_session_map_contract.py`: `184 passed`.
 - Fresh CMU Unity TARE/PCT strict runtime with unique waypoint guard:
   `artifacts/server_sim_closure/cmu_unity_pct_strict/report_unique_waypoints.json`
   reports `ok=true`, `/nav/way_point` unique count `17`, `/nav/cmd_vel`
@@ -92,16 +92,16 @@ core-algorithm recheck:
 - All required gates report `simulation_only=true`, `real_robot_motion=false`,
   and `cmd_vel_sent_to_hardware=false`.
 - Core Python regression set:
-  `src/core/tests/test_native_build_contracts.py`,
+  `src/runtime/tests/test_native_build_contracts.py`,
   `test_planner_backends.py`, `test_pct_planner_package_manifest.py`,
   `test_native_pct_mujoco_gate.py`, `test_mujoco_mid360_pattern.py`,
   `test_dynamic_obstacle_local_planner_gate.py`,
   `test_terrain_local_planner_contract.py`,
   `sim/planning/test_path_follower_logic.py`, and
   `sim/planning/test_pct_adapter_logic.py`: `97 passed`.
-- `src/nav/core` C++ standalone tests:
+- `src/nav/kernel` C++ standalone tests:
   `2331/2331` passed with the default CMake configuration. The generated
-  `CMakeCache.txt` records `NAV_CORE_BUILD_PYTHON_BINDINGS:BOOL=OFF`.
+  `CMakeCache.txt` records `NAV_KERNEL_BUILD_PYTHON_BINDINGS:BOOL=OFF`.
 - Fresh core runtime gates:
   large terrain PCT/A*, dynamic-obstacle local planner, routecheck preflight,
   and native PCT MuJoCo all passed under
@@ -116,7 +116,7 @@ fresh reruns from this pass.
 
 | Surface | Fresh evidence | Result |
 | --- | --- | --- |
-| Native C++ local planning core | `artifacts/core_algorithm_recheck/nav_core_default_ctest_LastTest.log` | `2331/2331` CTest cases passed with default CMake. The previously failing NaN/Inf validation cases passed after removing global unsafe math optimization. |
+| Native C++ local planning core | `artifacts/core_algorithm_recheck/nav_kernel_default_ctest_LastTest.log` | `2331/2331` CTest cases passed with default CMake. The previously failing NaN/Inf validation cases passed after removing global unsafe math optimization. |
 | Python planner/contracts | Server pytest command covering native build contracts, planner backend dispatch, PCT package manifest, native PCT MuJoCo evaluator, MID-360 pattern, dynamic local planner evaluator, terrain local planner contract, path follower logic, and PCT adapter logic | `97 passed`. |
 | Large terrain global planning | `artifacts/core_algorithm_recheck/large_terrain/report.json` | Four routes passed with PCT primary and selected, `fallback_used=false`, `path_safety.ok=true`, and `blocked_sample_count=0`. Routes: `terrain_short`, `terrain_long`, `terrain_narrow_gap`, `terrain_slope_bypass`. |
 | Dynamic-obstacle local planner | `artifacts/core_algorithm_recheck/dynamic_obstacle_local_planner/report.json` | `ok=true`; backend `nanobind`; dynamic replan, obstacle response, and clear-path recovery all verified; minimum clearance `0.4223 m`. |
@@ -126,15 +126,15 @@ fresh reruns from this pass.
 
 Defect found and fixed during the recheck:
 
-- `src/nav/core/CMakeLists.txt` previously applied a global unsafe math
+- `src/nav/kernel/CMakeLists.txt` previously applied a global unsafe math
   optimization. On the server this caused six validation tests around NaN/Inf
   rejection to fail. The option was removed because safety validation must
   preserve `std::isfinite` semantics.
-- `src/nav/core/CMakeLists.txt` now defaults
-  `NAV_CORE_BUILD_PYTHON_BINDINGS=OFF` so standalone C++ algorithm tests do not
+- `src/nav/kernel/CMakeLists.txt` now defaults
+  `NAV_KERNEL_BUILD_PYTHON_BINDINGS=OFF` so standalone C++ algorithm tests do not
   depend on Python/nanobind headers. The dedicated Python extension path remains
-  `scripts/build/build_nav_core.sh`.
-- `scripts/build/build_nav_core.sh` was converted to ASCII-only output to avoid
+  `scripts/build/build_nav_kernel.sh`.
+- `scripts/build/build_nav_kernel.sh` was converted to ASCII-only output to avoid
   mojibake in server terminals.
 
 ## Prompt-To-Artifact Checklist

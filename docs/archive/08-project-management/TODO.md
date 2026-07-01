@@ -55,7 +55,7 @@ Status legend: `[x]` done, `[ ]` outstanding, `[~]` in progress.
 - `scripts/lingtu` operations CLI + dashboard bag UI.
 - TARE Supervisor + GNSS RTK fusion + NTRIP injection.
 - Module-First wave 1 / 2 / 3 — guardrails, precision, OSNet / PD / TSDF / Bayesian / config.
-- Composable stack factories under `src/core/blueprints/stacks/`.
+- Composable stack factories under `src/runtime/blueprints/stacks/`.
 
 ---
 

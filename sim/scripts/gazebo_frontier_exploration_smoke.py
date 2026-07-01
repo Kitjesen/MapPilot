@@ -1,8 +1,8 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """ROS 2 smoke test for Gazebo-backed frontier exploration.
 
 The script starts LingTu's in-process WavefrontFrontierExplorer, builds a
-2D occupancy grid by raytracing Gazebo LiDAR points from /nav/map_cloud,
+2D occupancy grid by raytracing Gazebo LiDAR points from /slam/map_cloud,
 forwards produced frontier goals to /nav/goal_pose, and verifies the ROS
 navigation stack reacts:
 
@@ -293,7 +293,7 @@ def _build_tomogram_from_pcd(
 ) -> dict[str, Any]:
     import numpy as np
 
-    from global_planning.pct_planner.tomography.scripts.build_tomogram import (
+    from nav.services.plan.global_planner.algorithm.pct.vendor.pct_planner.tomography.scripts.build_tomogram import (
         build_tomogram_from_pcd,
     )
 
@@ -329,7 +329,7 @@ class LidarOccupancyGrid:
     """Small server-side occupancy grid built only from Gazebo LiDAR hits.
 
     The room bounds are a simulation geofence. Inside those bounds, unknown/free
-    state comes from raytraced /nav/map_cloud points, not from odometry reveal.
+    state comes from raytraced /slam/map_cloud points, not from odometry reveal.
     """
 
     def __init__(
@@ -676,9 +676,9 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
     from sensor_msgs.msg import PointCloud2
     from sensor_msgs_py import point_cloud2
 
-    from core.msgs.geometry import Pose as CorePose
-    from core.msgs.nav import Odometry as CoreOdometry
-    from nav.frontier_explorer_module import WavefrontFrontierExplorer
+    from runtime.msgs.geometry import Pose as CorePose
+    from runtime.msgs.nav import Odometry as CoreOdometry
+    from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
 
     rclpy.init(args=None)
     node = Node("lingtu_gazebo_frontier_exploration_smoke")
@@ -1016,7 +1016,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             source_topic = "/nav/exploration_grid"
         else:
             points = list(map_artifact_points.values())
-            source_topic = "/nav/cumulative_map_cloud"
+            source_topic = "/slam/cumulative_map_cloud"
         artifacts: dict[str, Any] = {
             "source": args.map_artifact_source,
             "source_topic": source_topic,
@@ -1328,7 +1328,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
 
     def on_odom(msg: Odometry) -> None:
         nonlocal current_pose
-        _count(result.samples, "/nav/odometry")
+        _count(result.samples, "/slam/odometry")
         odom_stamps.append(_stamp_sec(msg.header.stamp))
         pose = msg.pose.pose
         x = float(pose.position.x)
@@ -1442,7 +1442,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         )
 
     def on_map_cloud(msg: PointCloud2) -> None:
-        _count(result.samples, "/nav/map_cloud")
+        _count(result.samples, "/slam/map_cloud")
         result.map_cloud_seen = True
         map_cloud_frames.add(str(msg.header.frame_id))
         stamp = _stamp_sec(msg.header.stamp)
@@ -1468,7 +1468,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         deliver_frontier_inputs()
 
     def on_registered_cloud(msg: PointCloud2) -> None:
-        _count(result.samples, "/nav/registered_cloud")
+        _count(result.samples, "/slam/registered_cloud")
         registered_cloud_frames.add(str(msg.header.frame_id))
         stamp = _stamp_sec(msg.header.stamp)
         if stamp > 0.0:
@@ -1496,7 +1496,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
 
     def on_cumulative_map_cloud(msg: PointCloud2) -> None:
         nonlocal cumulative_prev_voxels, cumulative_growth_steps, cumulative_step_count
-        _count(result.samples, "/nav/cumulative_map_cloud")
+        _count(result.samples, "/slam/cumulative_map_cloud")
         result.cumulative_map_cloud_seen = True
         cumulative_frames.add(str(msg.header.frame_id))
         cumulative_point_counts.append(int(msg.width) * int(msg.height))
@@ -1518,17 +1518,17 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             static_centroids[name].append(centroid)
         update_cumulative_report()
 
-    node.create_subscription(Odometry, "/nav/odometry", on_odom, 10)
+    node.create_subscription(Odometry, "/slam/odometry", on_odom, 10)
     node.create_subscription(ROSPath, "/nav/global_path", on_global_path, 10)
     node.create_subscription(ROSPath, "/nav/local_path", on_local_path, 10)
     node.create_subscription(TwistStamped, "/nav/cmd_vel", on_cmd_vel, 10)
-    node.create_subscription(PointCloud2, "/nav/map_cloud", on_map_cloud, 10)
-    node.create_subscription(PointCloud2, "/nav/registered_cloud", on_registered_cloud, 10)
+    node.create_subscription(PointCloud2, "/slam/map_cloud", on_map_cloud, 10)
+    node.create_subscription(PointCloud2, "/slam/registered_cloud", on_registered_cloud, 10)
     node.create_subscription(PointCloud2, "/nav/terrain_map", on_terrain_map, 10)
     node.create_subscription(PointCloud2, "/nav/terrain_map_ext", on_terrain_map_ext, 10)
     node.create_subscription(
         PointCloud2,
-        "/nav/cumulative_map_cloud",
+        "/slam/cumulative_map_cloud",
         on_cumulative_map_cloud,
         10,
     )
@@ -1634,9 +1634,9 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
     if not result.frontier_goal_published:
         result.errors.append("/nav/goal_pose was not published from frontier")
     if not result.odometry_seen:
-        result.errors.append("/nav/odometry was not observed")
+        result.errors.append("/slam/odometry was not observed")
     if not result.map_cloud_seen:
-        result.errors.append("/nav/map_cloud was not observed")
+        result.errors.append("/slam/map_cloud was not observed")
     if result.costmap_source != "gazebo_lidar_derived":
         result.errors.append(f"frontier costmap source is not Gazebo LiDAR: {result.costmap_source}")
     if result.lidar_map_updates < args.min_lidar_map_updates:
@@ -1680,14 +1680,14 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         registered = result.registered_cloud
         static = result.static_obstacles
         if not result.cumulative_map_cloud_seen:
-            result.errors.append("/nav/cumulative_map_cloud was not observed")
+            result.errors.append("/slam/cumulative_map_cloud was not observed")
         if int(stats.get("samples") or 0) < args.min_cumulative_samples:
             result.errors.append(
-                "/nav/cumulative_map_cloud samples "
+                "/slam/cumulative_map_cloud samples "
                 f"{int(stats.get('samples') or 0)} < {args.min_cumulative_samples}"
             )
         if "odom" not in set(stats.get("frame_ids") or []):
-            result.errors.append("/nav/cumulative_map_cloud frame_id did not include odom")
+            result.errors.append("/slam/cumulative_map_cloud frame_id did not include odom")
         point_delta = int(stats.get("point_count_delta") or 0)
         point_ratio = float(stats.get("point_growth_ratio") or 0.0)
         if (
@@ -1721,7 +1721,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
                 f"< {args.min_cumulative_retention_ratio:.3f}"
             )
         if int(registered.get("samples") or 0) <= 0:
-            result.errors.append("/nav/registered_cloud was not observed for negative control")
+            result.errors.append("/slam/registered_cloud was not observed for negative control")
         elif (
             float(registered.get("map_vs_registered_voxel_ratio") or 0.0)
             < args.min_map_vs_registered_voxel_ratio
@@ -1753,7 +1753,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         result.errors.append("/nav/cmd_vel never became non-zero")
     if result.odom_delta_m < args.min_odom_delta_m:
         result.errors.append(
-            f"/nav/odometry moved {result.odom_delta_m:.3f} m, "
+            f"/slam/odometry moved {result.odom_delta_m:.3f} m, "
             f"expected >= {args.min_odom_delta_m:.3f} m"
         )
     if result.explored_area_delta_m2 < args.min_explored_area_delta_m2:

@@ -2,6 +2,8 @@
 #
 # This is the no-ROS, no-Gateway, no-semantic-model install target for
 # `python lingtu.py thunder-lite` local smoke deployment.
+# It intentionally mirrors requirements-core-portable.txt while Thunder Lite
+# deployment docs are migrated to the generic portable core package.
 #
 # Real Thunder hardware control also needs:
 #   pip install -e '.[lite,thunder]'

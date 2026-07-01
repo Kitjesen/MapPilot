@@ -18,12 +18,17 @@ for target-less camera-LiDAR extrinsic calibration.
 ## Prerequisites
 
 ```bash
-# Build (requires PCL, OpenCV, GTSAM, Ceres)
+# Build from the repository root (default path requires PCL, OpenCV, Ceres, Rust/Cargo)
+python scripts/build/build_rust_kernels.py --target camera_lidar_optimizer --release
 cd calibration/camera_lidar/direct_visual_lidar_calibration
 source /opt/ros/humble/setup.bash
 colcon build --packages-select direct_visual_lidar_calibration
 source install/setup.bash
 ```
+
+The LingTu default build uses the Rust CT-ICP/CT-GICP optimizer and skips the
+legacy graph-optimizer dependency. For old comparison runs only, configure
+`-DLINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER=OFF`.
 
 ## Procedure
 

@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from core.runtime_interface import FRAMES, MESSAGE_FORMATS, TOPICS, adapter_relay_aliases
+from runtime.runtime_interface import FRAMES, MESSAGE_FORMATS, TOPICS, adapter_relay_aliases
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ CMU_TO_LINGTU_RELAY_TOPICS: tuple[RelaySpec, ...] = (
         "cmu_to_lingtu",
         note=(
             "Legacy full-cloud relay. The default runtime replaces this with "
-            "a robot-local body-frame crop on /nav/registered_cloud."
+            "a robot-local body-frame crop on /slam/registered_cloud."
         ),
     ),
     RelaySpec(
@@ -97,7 +97,7 @@ CMU_TO_LINGTU_RELAY_TOPICS: tuple[RelaySpec, ...] = (
     ),
     RelaySpec(
         "/path",
-        "/exploration/cmu_local_planner_path",
+        TOPICS.exploration_cmu_local_planner_path,
         "nav_msgs/msg/Path",
         "cmu_to_lingtu",
         required=False,
@@ -439,7 +439,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=True,
         help=(
-            "Publish the local registered scan crop to /nav/registered_cloud "
+            "Publish the local registered scan crop to /slam/registered_cloud "
             "instead of relaying the full CMU /registered_scan map."
         ),
     )
@@ -447,19 +447,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-local-registered-cloud",
         dest="local_registered_cloud",
         action="store_false",
-        help="Disable the local crop to /nav/registered_cloud for compatibility checks.",
+        help="Disable the local crop to /slam/registered_cloud for compatibility checks.",
     )
     parser.add_argument(
         "--nav-cloud-z-min",
         type=float,
         default=0.30,
-        help="Minimum z for the /nav/registered_cloud obstacle-height crop.",
+        help="Minimum z for the /slam/registered_cloud obstacle-height crop.",
     )
     parser.add_argument(
         "--nav-cloud-z-max",
         type=float,
         default=2.00,
-        help="Maximum z for the /nav/registered_cloud obstacle-height crop.",
+        help="Maximum z for the /slam/registered_cloud obstacle-height crop.",
     )
     return parser
 

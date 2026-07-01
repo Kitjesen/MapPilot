@@ -1,33 +1,59 @@
-FROM koide3/gtsam_docker:humble
+FROM ros:humble-ros-base
 
-RUN apt-fast update \
-  && apt-fast install -y --no-install-recommends \
-  libomp-dev libgoogle-glog-dev libgflags-dev libatlas-base-dev libsuitesparse-dev \
-  && apt-fast clean \
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    cargo \
+    cmake \
+    git \
+    libatlas-base-dev \
+    libboost-all-dev \
+    libeigen3-dev \
+    libgflags-dev \
+    libgl1-mesa-dev \
+    libglfw3-dev \
+    libglm-dev \
+    libgoogle-glog-dev \
+    libjpeg-dev \
+    libomp-dev \
+    libpng-dev \
+    libsuitesparse-dev \
+    pkg-config \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    rustc \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root
 RUN git clone https://github.com/ceres-solver/ceres-solver \
   && cd ceres-solver \
   && git checkout e47a42c2957951c9fafcca9995d9927e15557069 \
-  && mkdir build \
-  && cd build \
-  && cmake .. -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DUSE_CUDA=OFF \
-  && make -j$(nproc) \
-  && make install \
-  && rm -rf /root/ceres-solver
+  && cmake -S . -B build -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DUSE_CUDA=OFF \
+  && cmake --build build -j"$(nproc)" \
+  && cmake --install build \
+  && rm -rf /root/ceres-solver \
+  && ldconfig
 
+RUN git clone https://github.com/koide3/iridescence --recursive \
+  && cmake -S iridescence -B iridescence/build -DCMAKE_BUILD_TYPE=Release \
+  && cmake --build iridescence/build -j"$(nproc)" \
+  && cmake --install iridescence/build \
+  && rm -rf /root/iridescence \
+  && ldconfig
 
 COPY . /root/ros2_ws/src/direct_visual_lidar_calibration
 
 WORKDIR /root/ros2_ws
 
-RUN apt-fast update && \
-  rosdep install -i --from-paths src --simulate | \
-  sed '1d' | sed 's/apt-get install//' | sed 's/ //g' > /tmp/depends && \
-  xargs apt-fast install --no-install-recommends -y < /tmp/depends && \
-  apt-fast clean && \
-  rm -rf /var/lib/apt/lists/*
+RUN rosdep init || true \
+  && rosdep update \
+  && apt-get update \
+  && rosdep install -i --from-paths src --rosdistro humble -y \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN /bin/bash -c ". /opt/ros/humble/setup.bash; colcon build"
 
@@ -40,15 +66,18 @@ RUN echo "#!/bin/bash" >> /ros_entrypoint.sh \
 
 WORKDIR /root/ros2_ws/src/direct_visual_lidar_calibration
 
-RUN apt-fast update \
-  && apt-fast install -y --no-install-recommends \
-  python3-pip python3-numpy python3-torch python3-torchvision python3-matplotlib python3-opencv \
-  && apt-fast clean \
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3-matplotlib \
+    python3-numpy \
+    python3-opencv \
+    python3-pip \
+    python3-torch \
+    python3-torchvision \
   && rm -rf /var/lib/apt/lists/*
 
 RUN git clone https://github.com/magicleap/SuperGluePretrainedNetwork /root/SuperGlue
 ENV PYTHONPATH=$PYTHONPATH:/root/SuperGlue
-
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]

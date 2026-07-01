@@ -5,7 +5,7 @@ Publishes a map-frame goal and verifies the navigation chain reacts while
 Gazebo remains the odometry source:
 
     /nav/goal_pose -> /nav/global_path -> /nav/local_path -> /nav/cmd_vel
-    /nav/cmd_vel -> Gazebo diff drive -> /nav/odometry movement
+    /nav/cmd_vel -> Gazebo diff drive -> /slam/odometry movement
 
 The script publishes only /nav/goal_pose. It never publishes cmd_vel and is
 intended for simulation gates only.
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 
 NAV_TOPIC_PUBLISHER_ALLOWLIST: dict[str, set[str]] = {
-    "/nav/odometry": {
+    "/slam/odometry": {
         "lingtu_ros2_driver",
         "lingtu_gazebo_runtime_adapter",
         "sim_robot_node",
@@ -30,20 +30,19 @@ NAV_TOPIC_PUBLISHER_ALLOWLIST: dict[str, set[str]] = {
         "global_planner",
         "pct_path_adapter",
         "lingtu_gazebo_line_global_planner",
-        "NavigationModule",
-        "navigation_module",
+        "nav.mission",
+        "navigation",
     },
     "/nav/local_path": {
         "localPlanner",
         "local_planner",
-        "LocalPlannerModule",
-        "local_planner_module",
+        "nav.local_planner",
     },
     "/nav/cmd_vel": {
         "pathFollower",
         "path_follower",
-        "PathFollowerModule",
-        "path_follower_module",
+        "nav.path_follower",
+        "path_follower",
         "lingtu_ros2_driver",
     },
 }
@@ -150,7 +149,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboNavLoopResult:
     goal_pub = node.create_publisher(PoseStamped, "/nav/goal_pose", 10)
 
     def on_odom(msg: Odometry) -> None:
-        _count(result.samples, "/nav/odometry")
+        _count(result.samples, "/slam/odometry")
         x = float(msg.pose.pose.position.x)
         y = float(msg.pose.pose.position.y)
         if not result.odometry_seen:
@@ -190,7 +189,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboNavLoopResult:
         result.stop_last = value
         result.stop_max = value if result.stop_max is None else max(result.stop_max, value)
 
-    node.create_subscription(Odometry, "/nav/odometry", on_odom, 10)
+    node.create_subscription(Odometry, "/slam/odometry", on_odom, 10)
     node.create_subscription(Path, "/nav/global_path", on_global_path, 10)
     node.create_subscription(Path, "/nav/local_path", on_local_path, 10)
     node.create_subscription(TwistStamped, "/nav/cmd_vel", on_cmd_vel, 10)
@@ -237,7 +236,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboNavLoopResult:
     if not result.goal_published:
         result.errors.append("/nav/goal_pose was not published")
     if not result.odometry_seen:
-        result.errors.append("/nav/odometry was not observed")
+        result.errors.append("/slam/odometry was not observed")
     if not result.global_path_seen:
         result.errors.append("/nav/global_path with poses was not observed")
     if not result.local_path_seen:
@@ -248,7 +247,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboNavLoopResult:
         result.errors.append("/nav/cmd_vel never became non-zero")
     if result.odom_delta_m < args.min_odom_delta_m:
         result.errors.append(
-            f"/nav/odometry moved {result.odom_delta_m:.3f} m, "
+            f"/slam/odometry moved {result.odom_delta_m:.3f} m, "
             f"expected >= {args.min_odom_delta_m:.3f} m"
         )
     if args.require_forward_progress:

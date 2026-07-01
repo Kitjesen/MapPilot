@@ -18,150 +18,144 @@ import ast
 import sys
 from pathlib import Path
 
+import yaml
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
+ARCHITECTURE_LAYERS_PATH = ROOT_DIR / "config" / "architecture_layers.yaml"
+ARCHITECTURE_LAYER_SCHEMA_VERSION = "lingtu.architecture_layers.v1"
+ARCHITECTURE_LAYER_ORDER = (
+    "L0_core_contract",
+    "L1_runtime_model",
+    "L2_product_composition",
+    "L3_adapter_layer",
+    "L4_capability_modules",
+    "L5_algorithm_kernels",
+    "L6_cli_deploy",
+)
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from compat.ros2.manifest import (  # noqa: E402
+from runtime.adapters.ros2.manifest import (  # noqa: E402
     ROS_IMPORT_ROOTS,
     ROS_SCAN_EXCLUDED_PREFIXES,
     ros_compat_boundary_for,
 )
 
-BOUNDARY_RULES: dict[str, set[str]] = {
-    "gateway": {"nav", "semantic", "drivers", "slam"},
-    "nav": {"semantic", "drivers", "gateway"},
-    "semantic": {"nav", "drivers", "gateway"},
-    "drivers": {"nav", "semantic", "gateway"},
-    "core": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "slam",
-        "memory",
-        "base_autonomy",
-        "exploration",
-        "webrtc",
-        "global_planning",
-        "lingtu",
-    },
-    "slam": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "memory",
-        "base_autonomy",
-        "exploration",
-        "webrtc",
-        "global_planning",
-        "lingtu",
-    },
-    "memory": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "slam",
-        "base_autonomy",
-        "exploration",
-        "webrtc",
-        "global_planning",
-        "lingtu",
-    },
-    "base_autonomy": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "slam",
-        "memory",
-        "exploration",
-        "webrtc",
-        "global_planning",
-        "lingtu",
-    },
-    "exploration": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "slam",
-        "memory",
-        "base_autonomy",
-        "webrtc",
-        "global_planning",
-        "lingtu",
-    },
-    "webrtc": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "slam",
-        "memory",
-        "base_autonomy",
-        "exploration",
-        "global_planning",
-        "lingtu",
-    },
-    "global_planning": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "slam",
-        "memory",
-        "base_autonomy",
-        "exploration",
-        "webrtc",
-        "lingtu",
-    },
-    "lingtu": {
-        "nav",
-        "semantic",
-        "drivers",
-        "gateway",
-        "slam",
-        "memory",
-        "base_autonomy",
-        "exploration",
-        "webrtc",
-        "global_planning",
-    },
-}
+def load_architecture_layers(path: Path = ARCHITECTURE_LAYERS_PATH) -> dict:
+    """Load the repository architecture layer manifest."""
 
-COMPOSITION_EXCEPTIONS = {
-    # Blueprint/profile composition layers intentionally know multiple packages.
-    "core/blueprints/",
-    "core/blueprints/stacks/",
-    "core/blueprints/full_stack.py",
-    "core/blueprints/full_stack_wiring.py",
-    "core/blueprints/stub.py",
-    "drivers/sim/stub.py",
-    "drivers/sim/test_full_pipeline_s100p.py",
-    # Core glue/report files that aggregate contracts across packages.
-    "core/gateway_runtime_acceptance.py",
-    "core/product_field_check.py",
-    "core/msgs/scene.py",
-    "core/same_source_map_artifacts.py",
-    # Public facade intentionally wraps internal packages.
-    "lingtu/",
-    # Vendored/legacy launch surfaces are not production Module imports.
-    "global_planning/pct_planner/launch/",
-    "global_planning/pct_planner/planner/lib/3rdparty/",
-}
+    data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a YAML mapping")
+    return data
 
-HARDWARE_COMPAT_FORBIDDEN_IMPORT_ROOTS = {"compat.ros2"}
-HARDWARE_COMPAT_FORBIDDEN_DIRS = (
-    SRC_DIR / "drivers" / "real" / "thunder",
+
+def _normalize_manifest_path(value: object) -> str:
+    normalized = str(value).replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _canonical_manifest_path(value: object) -> str:
+    return _normalize_manifest_path(value).rstrip("/")
+
+
+def _repo_path_from_manifest(value: object) -> Path:
+    return ROOT_DIR / _canonical_manifest_path(value)
+
+
+def _architecture_import_boundaries(manifest: dict) -> dict:
+    boundaries = manifest.get("import_boundaries")
+    if not isinstance(boundaries, dict):
+        raise ValueError("config/architecture_layers.yaml: import_boundaries must be a mapping")
+    return boundaries
+
+
+def _architecture_string_list(manifest: dict, key: str) -> list[str]:
+    values = _architecture_import_boundaries(manifest).get(key)
+    if not isinstance(values, list):
+        raise ValueError(f"config/architecture_layers.yaml: import_boundaries.{key} must be a list")
+    normalized: list[str] = []
+    for index, value in enumerate(values):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                "config/architecture_layers.yaml: "
+                f"import_boundaries.{key}[{index}] must be a non-empty string"
+            )
+        normalized.append(_normalize_manifest_path(value))
+    return normalized
+
+
+def _architecture_package_rules(manifest: dict) -> dict[str, set[str]]:
+    rules = _architecture_import_boundaries(manifest).get("package_forbidden_roots")
+    if not isinstance(rules, dict):
+        raise ValueError(
+            "config/architecture_layers.yaml: "
+            "import_boundaries.package_forbidden_roots must be a mapping"
+        )
+    parsed: dict[str, set[str]] = {}
+    for package, roots in rules.items():
+        if not isinstance(package, str) or not package.strip():
+            raise ValueError(
+                "config/architecture_layers.yaml: "
+                "import_boundaries.package_forbidden_roots keys must be non-empty strings"
+            )
+        if not isinstance(roots, list):
+            raise ValueError(
+                "config/architecture_layers.yaml: "
+                f"import_boundaries.package_forbidden_roots.{package} must be a list"
+            )
+        parsed[package] = set()
+        for index, root in enumerate(roots):
+            if not isinstance(root, str) or not root.strip():
+                raise ValueError(
+                    "config/architecture_layers.yaml: "
+                    f"import_boundaries.package_forbidden_roots.{package}[{index}] "
+                    "must be a non-empty string"
+                )
+            parsed[package].add(root)
+    return parsed
+
+
+def _architecture_path_set(manifest: dict, key: str) -> set[str]:
+    return set(_architecture_string_list(manifest, key))
+
+
+def _architecture_path_tuple(manifest: dict, key: str) -> tuple[Path, ...]:
+    return tuple(_repo_path_from_manifest(value) for value in _architecture_string_list(manifest, key))
+
+
+_ARCHITECTURE_LAYERS = load_architecture_layers()
+BOUNDARY_RULES = _architecture_package_rules(_ARCHITECTURE_LAYERS)
+COMPOSITION_EXCEPTIONS = _architecture_path_set(
+    _ARCHITECTURE_LAYERS,
+    "composition_exceptions",
 )
-CORE_COMPAT_FORBIDDEN_IMPORT_ROOTS = {"compat.ros2"}
-CORE_COMPAT_FORBIDDEN_DIRS = (
-    SRC_DIR / "core",
+HARDWARE_COMPAT_FORBIDDEN_IMPORT_ROOTS = _architecture_path_set(
+    _ARCHITECTURE_LAYERS,
+    "hardware_compat_forbidden_import_roots",
 )
+HARDWARE_COMPAT_FORBIDDEN_DIRS = _architecture_path_tuple(
+    _ARCHITECTURE_LAYERS,
+    "hardware_compat_forbidden_dirs",
+)
+CORE_COMPAT_FORBIDDEN_IMPORT_ROOTS = _architecture_path_set(
+    _ARCHITECTURE_LAYERS,
+    "core_compat_forbidden_import_roots",
+)
+CORE_COMPAT_FORBIDDEN_DIRS = _architecture_path_tuple(
+    _ARCHITECTURE_LAYERS,
+    "core_compat_forbidden_dirs",
+)
+SCAN_EXCLUDED_PARTS = {
+    "__pycache__",
+    "build",
+    "build_nb",
+    "build_nb_win",
+    "_deps",
+}
 
 
 def _top_level(module: str) -> str:
@@ -176,6 +170,13 @@ def _is_test_or_example(path: Path) -> bool:
         or "examples" in parts
         or "example" in parts
         or path.name.startswith("test_")
+    )
+
+
+def _is_scan_excluded_path(path: Path) -> bool:
+    return any(
+        part in SCAN_EXCLUDED_PARTS or part.startswith(".")
+        for part in path.parts
     )
 
 
@@ -250,7 +251,7 @@ def _python_files(package: str) -> list[Path]:
     return sorted(
         path
         for path in package_dir.rglob("*.py")
-        if "__pycache__" not in path.parts and not any(part.startswith(".") for part in path.parts)
+        if not _is_scan_excluded_path(path)
     )
 
 
@@ -258,8 +259,187 @@ def _all_src_python_files() -> list[Path]:
     return sorted(
         path
         for path in SRC_DIR.rglob("*.py")
-        if "__pycache__" not in path.parts and not any(part.startswith(".") for part in path.parts)
+        if not _is_scan_excluded_path(path)
     )
+
+
+def _manifest_owned_paths(manifest: dict) -> list[tuple[str, str]]:
+    owned: list[tuple[str, str]] = []
+    for layer in manifest.get("layers") or ():
+        if not isinstance(layer, dict):
+            continue
+        layer_id = str(layer.get("id", ""))
+        for value in layer.get("owns") or ():
+            owned.append((layer_id, _normalize_manifest_path(value)))
+    return owned
+
+
+def _manifest_relpath(path: Path | str) -> str:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        try:
+            return candidate.relative_to(ROOT_DIR).as_posix()
+        except ValueError:
+            return candidate.as_posix()
+    return _normalize_manifest_path(path)
+
+
+def _owned_path_matches(relpath: str, owned_path: str) -> bool:
+    owned = owned_path.rstrip("/")
+    if relpath == owned:
+        return True
+    return owned_path.endswith("/") and relpath.startswith(owned_path)
+
+
+def architecture_layer_for_path(
+    path: Path | str,
+    manifest: dict | None = None,
+) -> dict | None:
+    """Return the most specific manifest layer owning a repository path."""
+
+    manifest = manifest or _ARCHITECTURE_LAYERS
+    relpath = _manifest_relpath(path)
+    layers_by_id = {
+        str(layer.get("id")): layer
+        for layer in manifest.get("layers") or ()
+        if isinstance(layer, dict)
+    }
+    matches = [
+        (owned_path.rstrip("/"), layer_id)
+        for layer_id, owned_path in _manifest_owned_paths(manifest)
+        if _owned_path_matches(relpath, owned_path)
+    ]
+    if not matches:
+        return None
+    _owned_path, layer_id = max(matches, key=lambda item: len(item[0]))
+    return layers_by_id.get(layer_id)
+
+
+def _src_root_is_claimed(src_root: Path, owned_paths: list[str]) -> bool:
+    rel = src_root.relative_to(ROOT_DIR).as_posix().rstrip("/") + "/"
+    return any(path == rel.rstrip("/") or path.startswith(rel) for path in owned_paths)
+
+
+def validate_architecture_layer_manifest(
+    path: Path = ARCHITECTURE_LAYERS_PATH,
+) -> tuple[list[str], dict]:
+    """Validate the L0-L6 folder/layer ownership manifest."""
+
+    violations: list[str] = []
+    manifest = load_architecture_layers(path)
+    if manifest.get("schema_version") != ARCHITECTURE_LAYER_SCHEMA_VERSION:
+        violations.append(
+            "config/architecture_layers.yaml: schema_version must be "
+            f"{ARCHITECTURE_LAYER_SCHEMA_VERSION!r}"
+        )
+
+    layers = manifest.get("layers")
+    if not isinstance(layers, list) or not layers:
+        violations.append("config/architecture_layers.yaml: layers must be a non-empty list")
+        layers = []
+    layer_ids = [
+        str(layer.get("id", ""))
+        for layer in layers
+        if isinstance(layer, dict)
+    ]
+    if tuple(layer_ids) != ARCHITECTURE_LAYER_ORDER:
+        violations.append(
+            "config/architecture_layers.yaml: layer ids must be ordered as "
+            + ", ".join(ARCHITECTURE_LAYER_ORDER)
+        )
+
+    seen_owned: dict[str, str] = {}
+    for layer in layers:
+        if not isinstance(layer, dict):
+            violations.append("config/architecture_layers.yaml: each layer must be a mapping")
+            continue
+        layer_id = str(layer.get("id", ""))
+        if not layer.get("title"):
+            violations.append(f"{layer_id}: title is required")
+        owns = layer.get("owns")
+        if not isinstance(owns, list) or not owns:
+            violations.append(f"{layer_id}: owns must be a non-empty list")
+            continue
+        for raw_path in owns:
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                violations.append(f"{layer_id}: owned paths must be non-empty strings")
+                continue
+            rel = _normalize_manifest_path(raw_path)
+            canonical_rel = _canonical_manifest_path(raw_path)
+            if canonical_rel in seen_owned:
+                violations.append(
+                    f"{layer_id}: owns duplicate path {rel!r}; already owned by "
+                    f"{seen_owned[canonical_rel]}"
+                )
+            seen_owned[canonical_rel] = layer_id
+            if not _repo_path_from_manifest(rel).exists():
+                violations.append(f"{layer_id}: owned path does not exist: {rel}")
+
+    owned_paths = [owned_path for _layer_id, owned_path in _manifest_owned_paths(manifest)]
+    for src_root in sorted(path for path in SRC_DIR.iterdir() if path.is_dir()):
+        if src_root.name == "__pycache__" or src_root.name.startswith("."):
+            continue
+        if not _src_root_is_claimed(src_root, owned_paths):
+            violations.append(
+                "config/architecture_layers.yaml: missing layer ownership for "
+                f"{src_root.relative_to(ROOT_DIR).as_posix()}/"
+            )
+    for source_path in _all_src_python_files():
+        if _is_test_or_example(source_path):
+            continue
+        if architecture_layer_for_path(source_path, manifest) is None:
+            violations.append(
+                "config/architecture_layers.yaml: missing layer ownership for "
+                f"{source_path.relative_to(ROOT_DIR).as_posix()}"
+            )
+
+    boundaries = manifest.get("import_boundaries")
+    if not isinstance(boundaries, dict):
+        violations.append("config/architecture_layers.yaml: import_boundaries is required")
+        boundaries = {}
+    try:
+        package_rules = _architecture_package_rules(manifest)
+    except ValueError as exc:
+        violations.append(str(exc))
+        package_rules = {}
+    if not package_rules:
+        violations.append(
+            "config/architecture_layers.yaml: import_boundaries.package_forbidden_roots "
+            "must not be empty"
+        )
+    try:
+        composition_exceptions = _architecture_path_set(manifest, "composition_exceptions")
+    except ValueError as exc:
+        violations.append(str(exc))
+        composition_exceptions = set()
+    if not composition_exceptions:
+        violations.append(
+            "config/architecture_layers.yaml: import_boundaries.composition_exceptions "
+            "must not be empty"
+        )
+    for key in (
+        "hardware_compat_forbidden_import_roots",
+        "core_compat_forbidden_import_roots",
+    ):
+        try:
+            _architecture_string_list(manifest, key)
+        except ValueError as exc:
+            violations.append(str(exc))
+    for key in (
+        "hardware_compat_forbidden_dirs",
+        "core_compat_forbidden_dirs",
+    ):
+        try:
+            boundary_paths = _architecture_string_list(manifest, key)
+        except ValueError as exc:
+            violations.append(str(exc))
+            boundary_paths = []
+        for raw_path in boundary_paths:
+            rel = _normalize_manifest_path(raw_path)
+            if not _repo_path_from_manifest(rel).exists():
+                violations.append(f"config/architecture_layers.yaml: missing {key} path {rel}")
+
+    return violations, manifest
 
 
 def _hardware_boundary_files() -> list[Path]:
@@ -270,7 +450,8 @@ def _hardware_boundary_files() -> list[Path]:
         files.update(
             path
             for path in package_dir.rglob("*.py")
-            if "__pycache__" not in path.parts and not any(part.startswith(".") for part in path.parts)
+            if not _is_scan_excluded_path(path)
+            and architecture_layer_for_path(path).get("id") != "L3_adapter_layer"
         )
     return sorted(files)
 
@@ -283,7 +464,8 @@ def _core_boundary_files() -> list[Path]:
         files.update(
             path
             for path in package_dir.rglob("*.py")
-            if "__pycache__" not in path.parts and not any(part.startswith(".") for part in path.parts)
+            if not _is_scan_excluded_path(path)
+            and architecture_layer_for_path(path).get("id") != "L3_adapter_layer"
         )
     return sorted(files)
 
@@ -380,6 +562,8 @@ def validate_core_compat_boundaries() -> tuple[list[str], int]:
 def validate(verbose: bool = False) -> tuple[list[str], int]:
     violations: list[str] = []
     scanned = 0
+    manifest_violations, _manifest = validate_architecture_layer_manifest()
+    violations.extend(manifest_violations)
     for package, forbidden in BOUNDARY_RULES.items():
         for path in _python_files(package):
             if _is_test_or_example(path) or _is_composition_exception(path):

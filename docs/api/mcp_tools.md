@@ -10,7 +10,7 @@ multi-turn LLM tool calling.
 ---
 
 ## src\drivers\teleop_module.py
-_TeleopModule — joystick remote control with live camera stream._
+_TeleopModule �?joystick remote control with live camera stream._
 
 ### `get_teleop_status`
 **Module:** `TeleopModule`
@@ -24,8 +24,8 @@ _TeleopModule — joystick remote control with live camera stream._
 **Return type:** `str`
 **Parameters:** None
 
-## src\exploration\exploration_supervisor_module.py
-_ExplorationSupervisorModule — cross-process watchdog for TARE exploration._
+## src\exploration\tare\supervisor.py
+_ExplorationSupervisorModule �?cross-process watchdog for TARE exploration._
 
 ### `get_exploration_supervisor`
 **Module:** `ExplorationSupervisorModule`
@@ -39,8 +39,8 @@ _ExplorationSupervisorModule — cross-process watchdog for TARE exploration._
 **Return type:** `str`
 **Parameters:** None
 
-## src\exploration\tare_explorer_module.py
-_TAREExplorerModule — bridges the TARE ROS2 node (CMU) into LingTu._
+## src\exploration\tare\module.py
+_TAREExplorerModule �?bridges the TARE ROS2 node (CMU) into LingTu._
 
 ### `start_tare_exploration`
 **Module:** `TAREExplorerModule`
@@ -61,7 +61,7 @@ _TAREExplorerModule — bridges the TARE ROS2 node (CMU) into LingTu._
 **Parameters:** None
 
 ## src\gateway\mcp_server.py
-_LingTu MCP Server — Model Context Protocol for AI agent control._
+_LingTu MCP Server �?Model Context Protocol for AI agent control._
 
 ### `get_health`
 **Module:** `MCPServerModule`
@@ -89,7 +89,7 @@ _LingTu MCP Server — Model Context Protocol for AI agent control._
 
 ### `get_scene_graph`
 **Module:** `MCPServerModule`
-**Description:** Return the current scene graph — detected objects with positions and labels.
+**Description:** Return the current scene graph �?detected objects with positions and labels.
 **Return type:** `str`
 **Parameters:** None
 
@@ -146,7 +146,7 @@ _LingTu MCP Server — Model Context Protocol for AI agent control._
 
 ### `emergency_stop`
 **Module:** `MCPServerModule`
-**Description:** Emergency stop — immediately halts all robot motion.
+**Description:** Emergency stop �?immediately halts all robot motion.
 **Return type:** `str`
 **Parameters:** None
 
@@ -171,7 +171,7 @@ _LingTu MCP Server — Model Context Protocol for AI agent control._
 | `config_json` | `str` |
 
 ## src\gateway\rerun_bridge_module.py
-_RerunBridgeModule — on-demand Rerun visualization as a Module._
+_RerunBridgeModule �?on-demand Rerun visualization as a Module._
 
 ### `start_rerun`
 **Module:** `RerunBridgeModule`
@@ -192,7 +192,7 @@ _RerunBridgeModule — on-demand Rerun visualization as a Module._
 **Parameters:** None
 
 ## src\memory\modules\episodic_module.py
-_EpisodicMemoryModule — 时空情节记忆模块 (Module 模式封装)。_
+_EpisodicMemoryModule �?时空情节记忆模块 (Module 模式封装)。_
 
 ### `get_recent_observations`
 **Module:** `EpisodicMemoryModule`
@@ -204,7 +204,7 @@ _EpisodicMemoryModule — 时空情节记忆模块 (Module 模式封装)。_
 | `count` | `int` |
 
 ## src\memory\modules\mission_logger_module.py
-_MissionLoggerModule — mission history recorder as a Module._
+_MissionLoggerModule �?mission history recorder as a Module._
 
 ### `list_missions`
 **Module:** `MissionLoggerModule`
@@ -222,7 +222,7 @@ _MissionLoggerModule — mission history recorder as a Module._
 **Parameters:** None
 
 ## src\memory\modules\semantic_mapper_module.py
-_SemanticMapperModule — drives RoomObjectKG + TopologySemGraph from live SceneGraph._
+_SemanticMapperModule �?drives RoomObjectKG + TopologySemGraph from live SceneGraph._
 
 ### `get_room_summary`
 **Module:** `SemanticMapperModule`
@@ -255,7 +255,7 @@ _SemanticMapperModule — drives RoomObjectKG + TopologySemGraph from live Scene
 **Parameters:** None
 
 ## src\memory\modules\tagged_locations_module.py
-_TaggedLocationsModule — 标签地点记忆模块 (Module 模式封装)。_
+_TaggedLocationsModule �?标签地点记忆模块 (Module 模式封装)。_
 
 ### `list_tags`
 **Module:** `TaggedLocationsModule`
@@ -273,7 +273,7 @@ _TaggedLocationsModule — 标签地点记忆模块 (Module 模式封装)。_
 | `name` | `str` |
 
 ## src\memory\modules\temporal_memory_module.py
-_TemporalMemoryModule — Time-indexed scene memory for temporal queries._
+_TemporalMemoryModule �?Time-indexed scene memory for temporal queries._
 
 ### `query_temporal`
 **Module:** `TemporalMemoryModule`
@@ -294,7 +294,7 @@ _TemporalMemoryModule — Time-indexed scene memory for temporal queries._
 | `label` | `str` |
 
 ## src\memory\modules\vector_memory_module.py
-_VectorMemoryModule — CLIP embedding + ChromaDB vector search for fuzzy spatial queries._
+_VectorMemoryModule �?CLIP embedding + ChromaDB vector search for fuzzy spatial queries._
 
 ### `query_location`
 **Module:** `VectorMemoryModule`
@@ -311,8 +311,8 @@ _VectorMemoryModule — CLIP embedding + ChromaDB vector search for fuzzy spatia
 **Return type:** `str`
 **Parameters:** None
 
-## src\nav\frontier_explorer_module.py
-_WavefrontFrontierExplorer — autonomous frontier-based exploration planner._
+## src\nav\exploration\frontier_explorer_module.py
+_WavefrontFrontierExplorer �?autonomous frontier-based exploration planner._
 
 ### `begin_exploration`
 **Module:** `WavefrontFrontierExplorer`
@@ -338,11 +338,11 @@ _WavefrontFrontierExplorer — autonomous frontier-based exploration planner._
 **Return type:** `str`
 **Parameters:** None
 
-## src\nav\navigation_module.py
-_NavigationModule — unified path planning + tracking + mission FSM._
+## src\nav\mission\navigation.py
+_Navigation �?unified path planning + tracking + mission FSM._
 
 ### `navigate_to`
-**Module:** `NavigationModule`
+**Module:** `Navigation`
 **Description:** Navigate to map coordinates.
 **Return type:** `str`
 **Parameters:**
@@ -354,13 +354,13 @@ _NavigationModule — unified path planning + tracking + mission FSM._
 | `z` | `float | None` |
 
 ### `stop_navigation`
-**Module:** `NavigationModule`
+**Module:** `Navigation`
 **Description:** Immediately stop all robot motion and cancel current mission.
 **Return type:** `str`
 **Parameters:** None
 
 ### `cancel_mission`
-**Module:** `NavigationModule`
+**Module:** `Navigation`
 **Description:** Cancel current navigation mission gracefully.
 **Return type:** `str`
 **Parameters:**
@@ -369,36 +369,36 @@ _NavigationModule — unified path planning + tracking + mission FSM._
 | `reason` | `str` |
 
 ### `get_navigation_status`
-**Module:** `NavigationModule`
+**Module:** `Navigation`
 **Description:** Get current navigation state, position, and mission progress.
 **Return type:** `str`
 **Parameters:** None
 
 ### `start_patrol`
-**Module:** `NavigationModule`
-**Description:** Start patrol mode — navigate a list of waypoints sequentially.
+**Module:** `Navigation`
+**Description:** Start patrol mode �?navigate a list of waypoints sequentially.
 **Return type:** `str`
 **Parameters:**
 | Parameter | Type |
 |-----------|------|
 | `waypoints_json` | `str` |
 
-## src\nav\safety_ring_module.py
-_SafetyRingModule — unified safety + evaluation + dialogue in one Module._
+## src\nav\services\safety\safety_ring.py
+_SafetyRing �?unified safety + evaluation + dialogue in one Module._
 
 ### `get_safety_status`
-**Module:** `SafetyRingModule`
+**Module:** `SafetyRing`
 **Description:** Get current safety state: level, cross-track error, distance to goal, and module health.
 **Return type:** `str`
 **Parameters:** None
 
 ### `emergency_stop`
-**Module:** `SafetyRingModule`
+**Module:** `SafetyRing`
 **Description:** Trigger an emergency stop (safety level STOP). Use for immediate halt.
 **Return type:** `str`
 **Parameters:** None
 
-## src\nav\services\map_manager_module.py
+## src\nav\services\maps.py
 _MapManagerModule -- hive Module version of MapManager._
 
 ### `list_maps`
@@ -435,7 +435,7 @@ _MapManagerModule -- hive Module version of MapManager._
 |-----------|------|
 | `name` | `str` |
 
-## src\nav\traversable_frontier_module.py
+## src\nav\exploration\traversable_frontier_module.py
 _Traversable frontier candidate generation for inspection/exploration preview._
 
 ### `get_traversable_frontiers`
@@ -450,7 +450,7 @@ _Traversable frontier candidate generation for inspection/exploration preview._
 **Return type:** `str`
 **Parameters:** None
 
-## src\nav\voxel_grid_module.py
+## src\nav\services\map_layers\voxel_grid_module.py
 _VoxelGridModule - 3D voxel grid map from LiDAR point cloud._
 
 ### `get_voxel_stats`
@@ -476,8 +476,8 @@ _VoxelGridModule - 3D voxel grid map from LiDAR point cloud._
 | `y` | `float` |
 | `z` | `float` |
 
-## src\semantic\planner\semantic_planner_module.py
-_SemanticPlannerModule — unified semantic planning in one Module._
+## src\decision\semantic_planner_module.py
+_SemanticPlannerModule �?unified semantic planning in one Module._
 
 ### `send_instruction`
 **Module:** `SemanticPlannerModule`
@@ -503,8 +503,8 @@ _SemanticPlannerModule — unified semantic planning in one Module._
 |-----------|------|
 | `instruction` | `str` |
 
-## src\semantic\planner\visual_servo_module.py
-_VisualServoModule — bbox tracking + person following._
+## src\decision\visual_servo_module.py
+_VisualServoModule �?bbox tracking + person following._
 
 ### `find_object`
 **Module:** `VisualServoModule`
@@ -545,8 +545,8 @@ _VisualServoModule — bbox tracking + person following._
 |-----------|------|
 | `duration` | `float` |
 
-## src\slam\ntrip_client_module.py
-_NtripClientModule — pull RTCM differential corrections from a NTRIP caster_
+## src\\localization\ntrip_client_module.py
+_NtripClientModule �?pull RTCM differential corrections from a NTRIP caster_
 
 ### `get_ntrip_status`
 **Module:** `NtripClientModule`
@@ -554,8 +554,8 @@ _NtripClientModule — pull RTCM differential corrections from a NTRIP caster_
 **Return type:** `str`
 **Parameters:** None
 
-## src\slam\slam_bridge_module.py
-_SlamBridgeModule — bridges DDS SLAM outputs into the Python Module pipeline._
+## src\\localization\bridge.py
+_SlamBridgeModule �?bridges DDS SLAM outputs into the Python Module pipeline._
 
 ### `get_gnss_fusion_status`
 **Module:** `SlamBridgeModule`

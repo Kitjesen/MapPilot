@@ -1,0 +1,41 @@
+# Fast-LIO2 config for Velodyne VLP-16 (PointCloud2 input)
+imu_topic: /imu/raw
+lidar_topic: /lidar/raw_frame
+body_frame: body
+world_frame: odom
+print_time_cost: false
+
+lidar_type: 2        # Velodyne VLP-16
+scan_line: 16        # 16-beam
+timestamp_unit: 2    # US (microsecond)
+acc_scale: 1.0       # Standard IMU (m/s²), not Livox g-units
+
+lidar_filter_num: 1
+lidar_min_range: 0.5
+lidar_max_range: 30.0
+scan_resolution: 0.15
+map_resolution: 0.3
+
+cube_len: 2000
+det_range: 60
+move_thresh: 1.5
+
+max_map_points: 5000000
+stationary_thresh: 0.05
+
+na: 0.01
+ng: 0.01
+nba: 0.0001
+nbg: 0.0001
+
+imu_init_num: 20
+near_search_num: 5
+ieskf_max_iter: 5
+
+gravity_align: true
+esti_il: false
+
+r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+t_il: [0.0, 0.0, 0.0]
+
+lidar_cov_inv: 1000.0

@@ -70,37 +70,56 @@ package:
     - requirements-lite.txt
     - pyproject.toml
     - config/robot_config.yaml
+    - config/robots/thunder.yaml
     - config/devices.yaml
     - config/topic_contract.yaml
     - config/thunder_lite_package.yaml
     - scripts/deploy/thunder/runtime-env.sh
     - scripts/deploy/thunder/lingtu-thunder-lite.service
     - scripts/deploy/thunder/install_lite_service.sh
-    - src/core/
-    - src/lingtu_runtime/
+    - src/runtime/
+    - src/lingtu/
     - src/drivers/__init__.py
-    - src/drivers/spec.py
-    - src/drivers/robot_profile.py
-    - src/drivers/sensor_suite.py
     - src/drivers/real/__init__.py
     - src/drivers/real/thunder/
-    - src/nav/navigation_module.py
-    - src/nav/safety_ring_module.py
-    - src/nav/cmd_vel_mux_module.py
+    - src/nav/__init__.py
+    - src/nav/mission/navigation.py
+    - src/nav/mission/
+    - src/nav/services/plan/__init__.py
+    - src/nav/services/plan/contracts.py
+    - src/nav/services/plan/factory.py
+    - src/nav/services/plan/preview.py
+    - src/nav/services/plan/global_planner/__init__.py
+    - src/nav/services/plan/global_planner/direct.py
+    - src/nav/services/plan/global_planner/algorithm/__init__.py
+    - src/nav/services/plan/global_planner/algorithm/direct_path.py
+    - src/nav/services/safety/
+    - src/nav/services/safety/safety_ring.py
+    - src/nav/services/safety/velocity_mux.py
     - src/nav/services/__init__.py
-    - src/nav/services/geofence_manager_module.py
-    - src/base_autonomy/modules/
+    - src/nav/services/goals.py
+    - src/nav/mission/model/frame_contract.py
+    - src/nav/services/geofence.py
+    - src/nav/mission/tracking/waypoint_tracker.py
+    - src/nav/local/
+    - src/nav/kernel/__init__.py
+    - src/nav/kernel/loader.py
+    - src/nav/kernel/paths.py
   exclude_paths:
-    - src/compat/ros2/
-    - src/slam/
-    - src/semantic/
+    - src/*/adapters/ros2/
+    - src/runtime/adapters/ros2/
+    - src/nav/adapters/ros2/
+    - src/localization/adapters/ros2/
+    - src/perception/adapters/ros2/
+    - src/gateway/visualization/
+    - src/localization/
+    - src/perception/
+    - src/decision/
     - src/memory/
     - src/gateway/
-    - src/webrtc/
-    - src/exploration/
+    - src/gateway/media/
     - src/drivers/sim/
-    - src/drivers/livox_ros_driver2/
-    - src/global_planning/
+    - src/drivers/real/lidar/livox_ros_driver2/
     - sim/
     - web/
     - third_party/
@@ -112,34 +131,62 @@ package:
     - "**/tests/"
     - ".pytest_cache/"
     - ".ruff_cache/"
+    - cli/repl.py
+    - src/nav/services/plan/global_planner/algorithm/pct/vendor/
+    - src/nav/services/plan/global_planner/service.py
+    - src/nav/services/plan/global_planner/algorithm/pct/
+    - src/nav/services/plan/global_planner/algorithm/pct/runtime/
+    - src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/
+    - src/nav/services/plan/global_planner/artifacts.py
+    - src/nav/services/plan/global_planner/path_feasibility.py
     - cli/runtime_audit.py
     - cli/runtime_extra.py
-    - src/core/blueprints/full_stack.py
-    - src/core/blueprints/full_stack_wiring.py
-    - src/core/blueprints/multi_robot.py
-    - src/core/blueprints/profile_graph.py
-    - src/core/blueprints/simulation_contract.py
-    - src/core/blueprints/stacks/composition.py
-    - src/core/blueprints/stacks/exploration.py
-    - src/core/blueprints/stacks/gateway.py
-    - src/core/blueprints/stacks/lidar.py
-    - src/core/blueprints/stacks/maps.py
-    - src/core/blueprints/stacks/memory.py
-    - src/core/blueprints/stacks/perception.py
-    - src/core/blueprints/stacks/planner.py
-    - src/core/blueprints/stacks/sim_lidar.py
-    - src/core/blueprints/stacks/slam.py
-    - src/core/blueprints/stacks/system.py
-    - src/core/blueprints/wires/
-    - src/core/dds.py
-    - src/core/devices/
-    - src/core/dimos_gap.py
-    - src/core/native_install.py
-    - src/core/rerun_module.py
-    - src/core/transport/dds.py
-    - src/core/transport/dual.py
-    - src/core/transport/lcm.py
-    - src/core/transport/shm.py
+    - src/runtime/blueprints/full_stack.py
+    - src/runtime/blueprints/full_stack_wiring.py
+    - src/runtime/blueprints/multi_robot.py
+    - src/runtime/blueprints/profile_graph.py
+    - src/runtime/blueprints/simulation_contract.py
+    - src/runtime/blueprints/stacks/composition.py
+    - src/runtime/blueprints/stacks/exploration.py
+    - src/runtime/blueprints/stacks/gateway.py
+    - src/runtime/blueprints/stacks/lidar.py
+    - src/runtime/blueprints/adapters/driver_ros2_runtime.py
+    - src/runtime/blueprints/adapters/mapping_slam.py
+    - src/runtime/blueprints/adapters/navigation_io.py
+    - src/runtime/blueprints/stacks/maps.py
+    - src/runtime/blueprints/stacks/memory.py
+    - src/runtime/blueprints/adapters/perception_gateway.py
+    - src/runtime/blueprints/stacks/perception.py
+    - src/runtime/blueprints/stacks/planner.py
+    - src/runtime/blueprints/stacks/sim_lidar.py
+    - src/runtime/blueprints/stacks/slam.py
+    - src/runtime/blueprints/stacks/system.py
+    - src/runtime/blueprints/wires/
+    - src/runtime/dds.py
+    - src/runtime/devices/
+    - src/runtime/dimos_gap.py
+    - src/runtime/dimos_runtime_dataflow.py
+    - src/runtime/dynamic_filter.py
+    - src/runtime/external_service_module.py
+    - src/runtime/gateway_runtime_acceptance.py
+    - src/runtime/inspection_acceptance.py
+    - src/runtime/map_save.py
+    - src/runtime/native_module.py
+    - src/runtime/native_install.py
+    - src/runtime/product_field_check.py
+    - src/runtime/rerun_module.py
+    - src/runtime/runtime_evidence.py
+    - src/runtime/runtime_validation_gates.py
+    - src/runtime/same_source_map_artifacts.py
+    - src/runtime/transport/dds.py
+    - src/runtime/transport/dual.py
+    - src/runtime/transport/lcm.py
+    - src/runtime/transport/shm.py
+    - src/drivers/real/thunder/blueprints.py
+    - src/drivers/real/thunder/connection.py
+    - src/lingtu/sdk/
+    - src/lingtu/ros2_plugin_seed.py
+    - src/lingtu/ros2_shutdown.py
   forbidden_markers:
     - rclpy
     - sensor_msgs
@@ -161,6 +208,7 @@ runtime:
     simulation_only: false
     command_sink: hardware_driver_after_cmd_vel_mux
   expected_config:
+    runtime_mode: lite
     slam_profile: none
     enable_gateway: false
     enable_semantic: false
@@ -169,5 +217,6 @@ runtime:
     manage_external_services: false
     run_startup_checks: false
     enable_native: false
+    planner: direct
     python_autonomy_backend: simple
     python_path_follower_backend: pid

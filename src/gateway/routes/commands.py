@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
-from core.msgs.geometry import Twist, Vector3
+from runtime.msgs.geometry import Twist, Vector3
 from gateway.schemas import (
     CancelRequest,
     ClickNavRequest,

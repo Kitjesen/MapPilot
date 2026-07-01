@@ -2,10 +2,10 @@
 
 #include <random>
 #include <thread>
+#include <tuple>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
-#include <gtsam/geometry/Pose3.h>
 #include <vlcal/common/frame_cpu.hpp>
 #include <vlcal/common/vector3i_hash.hpp>
 #include <vlcal/common/concurrent_queue.hpp>
@@ -40,6 +40,8 @@ public:
  */
 class DynamicPointCloudIntegrator : public PointCloudIntegrator {
 public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
   DynamicPointCloudIntegrator(const DynamicPointCloudIntegratorParams& params = DynamicPointCloudIntegratorParams());
   ~DynamicPointCloudIntegrator();
 
@@ -47,8 +49,6 @@ public:
   virtual Frame::ConstPtr get_points() override;
 
 private:
-  void insert_points(const Frame::ConstPtr& raw_points, const gtsam::Pose3& T_odom_lidar_begin, const gtsam::Pose3& T_odom_lidar_end);
-
   void voxelgrid_task();
 
 private:
@@ -56,12 +56,12 @@ private:
 
   std::mt19937 mt;
 
-  gtsam::Pose3 last_T_odom_lidar_begin;
-  gtsam::Pose3 last_T_odom_lidar_end;
+  Eigen::Isometry3d last_T_odom_lidar_begin;
+  Eigen::Isometry3d last_T_odom_lidar_end;
   std::shared_ptr<iVox> target_ivox;
 
   std::thread voxelgrid_thread;
-  ConcurrentQueue<std::tuple<Frame::ConstPtr, gtsam::Pose3, gtsam::Pose3>> alignment_results;
+  ConcurrentQueue<std::tuple<Frame::ConstPtr, Eigen::Isometry3d, Eigen::Isometry3d>> alignment_results;
   std::unordered_map<Eigen::Vector3i, Eigen::Vector4d, Vector3iHash> voxelgrid;
 };
 }  // namespace vlcal

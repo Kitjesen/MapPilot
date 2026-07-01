@@ -13,9 +13,3 @@ def init(project_root: Path) -> None:
         sys.path.insert(0, src)
     if root not in sys.path:
         sys.path.insert(0, root)
-    for sub in ("semantic/common", "semantic/planner", "semantic/perception"):
-        p = project_root / "src" / sub
-        if p.is_dir():
-            sp = str(p)
-            if sp not in sys.path:
-                sys.path.insert(0, sp)

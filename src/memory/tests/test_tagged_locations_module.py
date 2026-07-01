@@ -11,7 +11,7 @@ import os
 import tempfile
 import unittest
 
-from core.msgs.nav import Odometry, Pose
+from runtime.msgs.nav import Odometry, Pose
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -62,13 +62,13 @@ class TestTaggedLocationsPorts(unittest.TestCase):
         return TaggedLocationsModule(**kw)
 
     def test_input_ports_exist(self):
-        from core.stream import In
+        from runtime.stream import In
         m = self._make()
         self.assertIsInstance(m.odometry, In)
         self.assertIsInstance(m.tag_command, In)
 
     def test_output_ports_exist(self):
-        from core.stream import Out
+        from runtime.stream import Out
         m = self._make()
         self.assertIsInstance(m.saved_location, Out)
         self.assertIsInstance(m.tag_status, Out)

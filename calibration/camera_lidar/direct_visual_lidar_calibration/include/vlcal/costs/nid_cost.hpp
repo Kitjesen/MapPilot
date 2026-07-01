@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <sophus/se3.hpp>
-#include <opencv2/core.hpp>
+#include <opencv2/runtime.hpp>
 #include <vlcal/common/frame.hpp>
 #include <camera/generic_camera_base.hpp>
 

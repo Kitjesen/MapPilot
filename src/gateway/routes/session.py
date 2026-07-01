@@ -9,8 +9,8 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
-from core.runtime_interface import TOPICS, topic_default_frame_id
-from core.runtime_policy import (
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.runtime_policy import (
     default_slam_profile_for_mode,
     is_supported_slam_profile,
     normalize_slam_profile,
@@ -24,7 +24,7 @@ from gateway.schemas import (
 )
 from gateway.services.map_paths import nav_map_root
 from gateway.services.map_safety import safe_map_name
-from core.same_source_map_artifacts import (
+from runtime.same_source_map_artifacts import (
     validate_saved_map_artifact_dir,
 )
 
@@ -265,7 +265,7 @@ def register_session_routes(app, gw) -> None:
         gw._session_pending = True
         gw._session_error = ""
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
 
             svc = get_service_manager()
             backend = slam_profile or default_slam_profile_for_mode(mode)
@@ -354,7 +354,7 @@ def register_session_routes(app, gw) -> None:
                     logger.warning("session/end: end_exploration failed: %s", e)
                 gw._exploring = False
                 gw.push_event({"type": "exploring", "active": False})
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
 
             svc = get_service_manager()
             svc.stop(*slam_switch_plan("stop").stop)

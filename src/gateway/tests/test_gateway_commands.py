@@ -323,7 +323,7 @@ def test_navigation_plan_preview_is_non_motion_and_typed():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     post_plan = _endpoint(gateway, "/api/v1/navigation/plan")
 
@@ -355,7 +355,7 @@ def test_navigation_plan_preview_does_not_publish_any_control_outputs():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     post_plan = _endpoint(gateway, "/api/v1/navigation/plan")
 
@@ -385,7 +385,7 @@ def test_navigation_goal_candidate_constructs_coordinate_without_publishing():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     post_candidate = _endpoint(gateway, "/api/v1/navigation/goal_candidate")
 
@@ -432,7 +432,7 @@ def test_navigation_goal_candidate_previews_frontier_target_without_publishing()
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     post_candidate = _endpoint(gateway, "/api/v1/navigation/goal_candidate")
 
@@ -490,7 +490,7 @@ def test_navigation_goal_candidate_constructs_saved_location_without_publishing(
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     gateway._tagged_loc_module = SimpleNamespace(store=Store())
     _mark_navigation_ready(gateway)
     post_candidate = _endpoint(gateway, "/api/v1/navigation/goal_candidate")
@@ -551,7 +551,7 @@ def test_inspection_acceptance_previews_saved_location_without_publishing():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     gateway._tagged_loc_module = SimpleNamespace(store=Store())
     _mark_navigation_ready(gateway)
     post_acceptance = _endpoint(gateway, "/api/v1/inspection/acceptance")
@@ -645,7 +645,7 @@ def test_inspection_acceptance_uses_active_map_when_map_dir_is_omitted(
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _install_saved_location(gateway, name="pump")
     _mark_navigation_ready(gateway)
     post_acceptance = _endpoint(gateway, "/api/v1/inspection/acceptance")
@@ -681,7 +681,7 @@ def test_inspection_acceptance_field_and_simulation_modes_do_not_publish(mode: s
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _install_saved_location(gateway, name="pump")
     _mark_navigation_ready(gateway)
     post_acceptance = _endpoint(gateway, "/api/v1/inspection/acceptance")
@@ -827,7 +827,7 @@ def test_runtime_switch_plan_inherits_current_env_endpoint_when_profile_matches(
 
 
 def test_runtime_switch_plan_endpoint_reports_invalid_current_boundary(monkeypatch):
-    from core.runtime_switch import RuntimeSwitchValidation
+    from runtime.runtime_switch import RuntimeSwitchValidation
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
     import gateway.services.runtime_switch_plan as switch_plan_mod
@@ -901,7 +901,7 @@ def test_navigation_plan_preview_degrades_without_odometry_and_does_not_plan():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     post_plan = _endpoint(gateway, "/api/v1/navigation/plan")
 
     result = asyncio.run(post_plan(PlanPreviewRequest(x=1.0, y=2.0)))
@@ -923,7 +923,7 @@ def test_navigation_plan_preview_omits_invalid_start_when_unavailable():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     gateway._mode = "estop"
     with gateway._state_lock:
@@ -947,7 +947,7 @@ def test_navigation_plan_preview_preserves_non_map_start_frame_when_blocked():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     gateway._mode = "estop"
     with gateway._state_lock:
@@ -980,7 +980,7 @@ def test_command_journal_replays_duplicate_request_id_without_republish():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     post_goal = _endpoint(gateway, "/api/v1/goal")
 
@@ -1021,7 +1021,7 @@ def test_control_commands_publish_command_ack_events():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     post_goal = _endpoint(gateway, "/api/v1/goal")
     queue = gateway._sse_subscribe()
@@ -1063,7 +1063,7 @@ def test_goal_request_yaw_is_published_as_pose_orientation():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     sent_goals = []
     gateway.goal_pose._add_callback(sent_goals.append)
@@ -1106,7 +1106,7 @@ def test_goal_route_rejects_infeasible_plan_preview_without_publishing():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav(feasible=False, reasons=["blocked_by_costmap"])
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     sent_goals = []
     gateway.goal_pose._add_callback(sent_goals.append)
@@ -1172,7 +1172,7 @@ def test_goal_route_rejects_inconsistent_or_unsafe_feasible_preview(nav):
 
     gateway = GatewayModule()
     gateway.setup()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     sent_goals = []
     gateway.goal_pose._add_callback(sent_goals.append)
@@ -1207,7 +1207,7 @@ def test_goal_route_rejects_infeasible_preview_with_instruction_without_any_publ
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav(feasible=False, reasons=["blocked_by_costmap"])
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     post_goal = _endpoint(gateway, "/api/v1/goal")
 
@@ -1241,7 +1241,7 @@ def test_goal_route_rejects_safety_stop_without_planning_or_publishing():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     with gateway._state_lock:
         gateway._safety = {"level": 2}
@@ -1281,7 +1281,7 @@ def test_goal_route_rejects_inactive_navigation_session_without_planning_or_publ
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     gateway._session_mode = "idle"
     post_goal = _endpoint(gateway, "/api/v1/goal")
@@ -1319,7 +1319,7 @@ def test_click_navigation_rejects_infeasible_plan_preview_without_publishing():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav(feasible=False, reasons=["blocked_by_costmap"])
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     sent_goals = []
     gateway.goal_pose._add_callback(sent_goals.append)
@@ -1358,7 +1358,7 @@ def test_click_navigation_rejects_safety_stop_without_planning_or_publishing():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     with gateway._state_lock:
         gateway._safety = {"level": 2}
@@ -1393,7 +1393,7 @@ def test_click_navigation_previews_publishes_and_replays_request_id_once():
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     _mark_navigation_ready(gateway)
     sent_goals = []
     gateway.goal_pose._add_callback(sent_goals.append)
@@ -1461,7 +1461,7 @@ def test_goal_route_rejects_missing_plan_preview_without_publishing():
     assert model.command.name == "goal"
     assert model.command.accepted is False
     assert model.detail["preview"]["source"] == "gateway_modules"
-    assert model.detail["preview"]["reasons"] == ["navigation_module_unavailable"]
+    assert model.detail["preview"]["reasons"] == ["nav_mission_unavailable"]
     assert sent_goals == []
     assert gateway.goal_pose.msg_count == 0
 

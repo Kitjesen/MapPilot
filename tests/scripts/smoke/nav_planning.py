@@ -3,7 +3,7 @@
 #   python tests/scripts/smoke/nav_planning.py
 import sys, os, time
 sys.path.insert(0, "src")
-for d in ["src/semantic/perception", "src/semantic/planner", "src/semantic/common"]:
+for d in ["src/perception", "src/decision"]:
     if os.path.isdir(d):
         sys.path.insert(0, d)
 import logging
@@ -18,7 +18,7 @@ if not os.path.exists(tomogram):
 print("Tomogram: %s" % tomogram)
 
 # Build system with real tomogram (no SLAM, no gateway; planning only)
-from core.blueprints.profile_builder import blueprint_for_resolved_profile
+from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 bp = blueprint_for_resolved_profile("stub", dict(
     robot="stub", slam_profile="none",
     enable_native=False, enable_semantic=False, enable_gateway=False,
@@ -28,13 +28,13 @@ system = bp.build()
 system.start()
 time.sleep(1)
 
-nav = system.modules["NavigationModule"]
+nav = system.modules["nav.mission"]
 print("Nav planner ready: %s" % nav._planner_svc.is_ready)
 print("Nav state: %s" % nav._state)
 
 # Simulate robot at origin
-from core.msgs.nav import Odometry
-from core.msgs.geometry import Pose, Vector3, PoseStamped, Quaternion
+from runtime.msgs.nav import Odometry
+from runtime.msgs.geometry import Pose, Vector3, PoseStamped, Quaternion
 import numpy as np
 
 odom = Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)))

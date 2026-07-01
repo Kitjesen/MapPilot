@@ -2,10 +2,11 @@
 import asyncio
 import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "src" / "semantic_planner"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from semantic.planner.llm_client import LLMConfig, create_llm_client
+from decision.llm_client import LLMConfig, create_llm_client
 
 
 async def main():

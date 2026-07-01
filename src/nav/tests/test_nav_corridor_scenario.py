@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from nav.global_planner_service import GlobalPlannerService
+from nav.services.plan.global_planner.service import GlobalPlanner
 from sim.engine.scenarios.nav_corridor_assets import build_corridor_gap_assets
 
 
@@ -18,7 +18,7 @@ def test_corridor_gap_tomogram_forces_astar_detour(tmp_path):
     grid = tomo["data"][0, 0]
     assert grid.max() >= 100.0
 
-    svc = GlobalPlannerService(
+    svc = GlobalPlanner(
         planner_name="astar",
         tomogram=str(assets.tomogram),
         downsample_dist=0.2,
@@ -43,7 +43,7 @@ def test_corridor_gap_tomogram_forces_astar_detour(tmp_path):
 
 def test_astar_live_costmap_preserves_static_tomogram(tmp_path):
     assets = build_corridor_gap_assets(tmp_path)
-    svc = GlobalPlannerService(
+    svc = GlobalPlanner(
         planner_name="astar",
         tomogram=str(assets.tomogram),
         downsample_dist=0.2,
@@ -61,26 +61,3 @@ def test_astar_live_costmap_preserves_static_tomogram(tmp_path):
     assert backend._grid.shape == original_shape
     assert int(np.count_nonzero(backend._grid >= 49.9)) >= original_obstacles
     assert backend._grid[2, 3] >= 100.0
-
-
-def test_astar_transposes_official_builder_tomogram_axes():
-    data = np.zeros((5, 1, 6, 4), dtype=np.float32)
-    official = {
-        "data": data,
-        "resolution": 1.0,
-        "center": [1.0, 2.0],
-        "slice_h0": 0.5,
-        "slice_dh": 0.5,
-    }
-    with tempfile.NamedTemporaryFile(suffix=".pickle", delete=False) as fh:
-        pickle.dump(official, fh)
-        path = fh.name
-
-    try:
-        from global_planning.pct_adapters.global_planner_module import _AStarBackend
-
-        backend = _AStarBackend(tomogram_path=path)
-        assert backend._grid.shape == (4, 6)
-        np.testing.assert_allclose(backend._origin, np.asarray([-2.0, 0.0]))
-    finally:
-        Path(path).unlink(missing_ok=True)

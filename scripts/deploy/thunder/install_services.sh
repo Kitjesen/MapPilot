@@ -7,10 +7,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE="${1:-lcm-endpoint}"
+MODE="${1:-dds-endpoint}"
 
 case "${MODE}" in
-    lcm|lcm-endpoint|field|thunder-nav)
+    dds|dds-endpoint|field|thunder-nav)
+        exec "${SCRIPT_DIR}/install_dds_endpoint_service.sh"
+        ;;
+    slam-dds|cpp-slam)
+        exec "${SCRIPT_DIR}/install_slam_dds_service.sh"
+        ;;
+    field-cpp|dds-cpp)
+        "${SCRIPT_DIR}/install_dds_endpoint_service.sh"
+        exec "${SCRIPT_DIR}/install_slam_dds_service.sh"
+        ;;
+    lcm|lcm-endpoint)
         exec "${SCRIPT_DIR}/install_lcm_endpoint_service.sh"
         ;;
     lite|thunder-lite|basic|thunder-basic)
@@ -30,7 +40,7 @@ case "${MODE}" in
         exec "${LEGACY_INSTALLER}" "$@"
         ;;
     *)
-        echo "Usage: $0 [lcm-endpoint|lite|ros-compat]" >&2
+        echo "Usage: $0 [dds-endpoint|slam-dds|field-cpp|lcm-endpoint|lite|ros-compat]" >&2
         exit 2
         ;;
 esac

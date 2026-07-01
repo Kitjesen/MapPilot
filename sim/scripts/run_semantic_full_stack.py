@@ -45,19 +45,19 @@ def _import_status(module_name: str) -> str:
 
 def _log_dependency_status(detector: str, encoder: str) -> None:
     detector_modules = {
-        "yoloe": "semantic_perception.yoloe_detector",
-        "yolo_world": "semantic_perception.yolo_world_detector",
-        "bpu": "semantic_perception.bpu_detector",
+        "yoloe": "perception.yoloe_detector",
+        "yolo_world": "perception.yolo_world_detector",
+        "bpu": "perception.bpu_detector",
     }
     encoder_modules = {
-        "mobileclip": "semantic_perception.mobileclip_encoder",
-        "clip": "semantic_perception.clip_encoder",
+        "mobileclip": "perception.mobileclip_encoder",
+        "clip": "perception.clip_encoder",
     }
 
     checks = [
-        ("semantic_common", "semantic_common"),
-        ("semantic_planner", "semantic_planner.llm_client"),
-        ("tracker", "semantic_perception.instance_tracker"),
+        ("runtime_utils", "runtime.utils.sanitize"),
+        ("decision", "decision.llm_client"),
+        ("tracker", "perception.instance_tracker"),
     ]
     if detector in detector_modules:
         checks.append((f"detector:{detector}", detector_modules[detector]))
@@ -88,8 +88,8 @@ def main() -> int:
     args = _parse_args()
     _log_dependency_status(args.detector, args.encoder)
 
-    from core.blueprints.profile_builder import build_system_for_profile
-    from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+    from runtime.blueprints.profile_builder import build_system_for_profile
+    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
     system = build_system_for_profile("sim", dict(
         robot="sim_mujoco",
@@ -105,7 +105,7 @@ def main() -> int:
     ))
 
     driver = system.get_module("MujocoDriverModule")
-    nav = system.get_module("NavigationModule")
+    nav = system.get_module("nav.mission")
     perception = system.get_module("PerceptionModule")
     semantic = system.get_module("SemanticPlannerModule")
 

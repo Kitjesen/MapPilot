@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Building2_9 闂幆浠跨湡鑺傜偣 (ROS2 SITL)
 
@@ -6,7 +6,7 @@ Building2_9 闂幆浠跨湡鑺傜偣 (ROS2 SITL)
 鍦板浘:     building2_9.pickle (鐪熷疄寤虹瓚鐣寗鍥? 17脳18m, 97脳94 grid @ 0.2m/voxel)
 
 璇ヨ妭鐐规壙鎷?"铏氭嫙鏈哄櫒浜? 瑙掕壊:
-  - 鍙戝竷骞冲潶鍚堟垚鐐逛簯 鈫?/nav/map_cloud + /nav/terrain_map + /nav/terrain_map_ext
+  - 鍙戝竷骞冲潶鍚堟垚鐐逛簯 鈫?/slam/map_cloud + /nav/terrain_map + /nav/terrain_map_ext
     (鏇夸唬鐪熷疄 LiDAR + terrain_analysis, 閬垮厤寤虹瓚澧欎綋琚鍒や负杩戝満闅滅鐗╄Е鍙?E-stop)
   - 鎺ユ敹 /nav/cmd_vel 鈫?绉垎浜岀淮杩愬姩瀛?鈫?鏇存柊浣嶅Э
   - 鎸佺画鍙戝竷 /nav/stop = 0 (娓呴櫎 pathFollower safetyStop_ 鏃楁爣)
@@ -40,7 +40,7 @@ from std_msgs.msg import Int8, String
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 from visualization_msgs.msg import Marker
 
-from core.runtime_interface import FRAMES, TOPICS
+from runtime.runtime_interface import FRAMES, TOPICS
 
 # 鈹€鈹€ 榛樿鍙傛暟 (琚幆澧冨彉閲忚鐩? 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 _DEF_START_X   = float(os.environ.get('SIM_START_X',   '-5.5'))
@@ -80,7 +80,7 @@ MAP_Y_MAX = float(os.environ.get('SIM_MAP_Y_MAX',   '9.0'))
 _PCD_CANDIDATES = [
     os.environ.get('SIM_PCD_PATH', ''),
     '/home/sunrise/data/SLAM/navigation/install/pct_planner/share/pct_planner/rsc/pcd/building2_9.pcd',
-    '/home/sunrise/data/SLAM/navigation/src/global_planning/pct_planner/rsc/pcd/building2_9.pcd',
+    '/home/sunrise/data/SLAM/navigation/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/pcd/building2_9.pcd',
 ]
 
 
@@ -362,7 +362,7 @@ class SimRobotNode(Node):
         self.static_br.sendTransform(tfs)
 
     def _pub_odom_tf(self, now):
-        """鍙戝竷 odom 鈫?body TF + /nav/odometry銆?""
+        """鍙戝竷 odom 鈫?body TF + /slam/odometry銆?""
         tf = TransformStamped()
         tf.header.stamp    = now
         tf.header.frame_id = FRAMES.odom

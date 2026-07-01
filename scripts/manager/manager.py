@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""LingTu Manager — product-grade control plane.
+"""LingTu Manager 鈥?product-grade control plane.
 
 Always-on process that manages the robot's operation mode.
 Exposes REST API + Web UI for customers to control the robot
-from any browser — no SSH needed.
+from any browser 鈥?no SSH needed.
 
 Endpoints:
-  GET  /                    → Web UI
-  GET  /api/status          → system status (mode, SLAM hz, battery, etc.)
-  POST /api/mode            → switch mode: {"mode": "map|nav|explore|idle"}
-  POST /api/map/save        → save map: {"name": "lab_01"}
-  POST /api/map/use         → activate map: {"name": "lab_01"}
-  GET  /api/map/list        → list available maps
-  POST /api/navigate        → send goal: {"x": 5.0, "y": 3.0} or {"instruction": "go to the door"}
-  POST /api/stop            → emergency stop
-  POST /api/rerun           → toggle rerun: {"enabled": true}
-  GET  /api/stream          → SSE telemetry stream
+  GET  /                    鈫?Web UI
+  GET  /api/status          鈫?system status (mode, SLAM hz, battery, etc.)
+  POST /api/mode            鈫?switch mode: {"mode": "map|nav|explore|idle"}
+  POST /api/map/save        鈫?save map: {"name": "lab_01"}
+  POST /api/map/use         鈫?activate map: {"name": "lab_01"}
+  GET  /api/map/list        鈫?list available maps
+  POST /api/navigate        鈫?send goal: {"x": 5.0, "y": 3.0} or {"instruction": "go to the door"}
+  POST /api/stop            鈫?emergency stop
+  POST /api/rerun           鈫?toggle rerun: {"enabled": true}
+  GET  /api/stream          鈫?SSE telemetry stream
 
 Boot:
   sudo systemctl enable lingtu-manager
@@ -44,12 +44,13 @@ logger = logging.getLogger("lingtu-manager")
 
 app = FastAPI(title="LingTu Robot Manager", version="1.0.0")
 
-# ── Config ───────────────────────────────────────────────────────────────────
+# 鈹€鈹€ Config 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 NAV_DIR = os.environ.get("NAV_DIR", "/home/sunrise/data/inovxio/lingtu")
 MAP_DIR = os.environ.get("NAV_MAP_DIR", os.path.expanduser("~/data/inovxio/data/maps"))
 MANAGER_PORT = int(os.environ.get("LINGTU_PORT", "5050"))
 MANAGER_HOST = os.environ.get("LINGTU_MANAGER_HOST", "127.0.0.1")
+GATEWAY_URL = os.environ.get("LINGTU_GATEWAY_URL", "http://127.0.0.1:5051").rstrip("/")
 MANAGER_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
@@ -79,7 +80,12 @@ def _safe_map_path(name: str) -> Path:
         raise ValueError("Map path escapes map directory")
     return path
 
-# ── State ────────────────────────────────────────────────────────────────────
+
+def _gateway_url(path: str) -> str:
+    """Build a URL for the LingTu Gateway service."""
+    return f"{GATEWAY_URL}/{path.lstrip('/')}"
+
+# 鈹€鈹€ State 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class RobotState:
     mode: str = "idle"          # idle | map | nav | explore
@@ -91,7 +97,7 @@ class RobotState:
 state = RobotState()
 
 
-# ── Service helpers ──────────────────────────────────────────────────────────
+# 鈹€鈹€ Service helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def _systemctl(action: str, service: str, timeout: int = 15) -> bool:
     try:
@@ -174,7 +180,7 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-# ── Mode switching ───────────────────────────────────────────────────────────
+# 鈹€鈹€ Mode switching 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def _switch_to_idle():
     _stop_lingtu()
@@ -186,13 +192,16 @@ def _switch_to_idle():
 
 
 def _start_rerun():
-    """Start rerun_live.py for 3D visualization."""
+    """Start the Gateway-backed Rerun viewer for 3D visualization."""
     import subprocess as _sp
     _sp.Popen(
-        ["bash", "-lc",
-         "source /opt/ros/humble/setup.bash && "
-         "source /opt/nav/install/setup.bash 2>/dev/null; "
-         "exec python3 -u scripts/visualization/rerun_live.py"],
+        [
+            "python3",
+            "-u",
+            "scripts/visualization/rerun_gateway_live.py",
+            "--gateway-url",
+            GATEWAY_URL,
+        ],
         cwd=NAV_DIR,
         stdout=open("/tmp/rerun_live.log", "a"),
         stderr=_sp.STDOUT,
@@ -204,6 +213,7 @@ def _start_rerun():
 def _stop_rerun():
     import subprocess as _sp
     _sp.run(["pkill", "-9", "-f", "rerun_live"], capture_output=True)
+    _sp.run(["pkill", "-9", "-f", "rerun_gateway_live"], capture_output=True)
     _sp.run(["fuser", "-k", "9090/tcp"], capture_output=True)
     _sp.run(["fuser", "-k", "9877/tcp"], capture_output=True)
 
@@ -246,7 +256,7 @@ def _switch_to_explore():
     return True
 
 
-# ── Map management ───────────────────────────────────────────────────────────
+# 鈹€鈹€ Map management 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def _list_maps() -> list:
     maps = []
@@ -290,9 +300,9 @@ def _save_nav_map_snapshot(pcd_path: Path) -> dict:
     if src_dir.is_dir() and str(src_dir) not in sys.path:
         sys.path.insert(0, str(src_dir))
 
-    from core.map_save import save_nav_map_with_adapter
-    from core.plugin_seed import seed_registered_plugins
-    from lingtu_runtime.plugin_seed import install_builtin_plugin_catalog
+    from runtime.map_save import save_nav_map_with_adapter
+    from runtime.plugin_seed import seed_registered_plugins
+    from lingtu.plugin_seed import install_builtin_plugin_catalog
 
     install_builtin_plugin_catalog()
     seed_registered_plugins(groups=("map_save_adapter",), reload_loaded=False)
@@ -314,7 +324,7 @@ def _use_map(name: str) -> dict:
     return {"success": True, "active": name}
 
 
-# ── API Routes ───────────────────────────────────────────────────────────────
+# 鈹€鈹€ API Routes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 @app.get("/api/status")
 async def api_status():
@@ -380,7 +390,7 @@ async def api_map_use(request: Request):
 
 @app.post("/api/stop")
 async def api_stop():
-    """Emergency stop — halt all motion."""
+    """Emergency stop 鈥?halt all motion."""
     # Send stop to brainstem
     try:
         import grpc
@@ -404,7 +414,7 @@ async def api_navigate(request: Request):
     try:
         import httpx
         async with httpx.AsyncClient() as client:
-            resp = await client.post("http://127.0.0.1:5051/api/v1/goal", json=body, timeout=5)
+            resp = await client.post(_gateway_url("/api/v1/goal"), json=body, timeout=5)
             return resp.json()
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
@@ -427,56 +437,23 @@ async def api_stream():
 
 @app.get("/api/camera/snapshot")
 async def api_camera_snapshot():
-    """Grab one JPEG frame from ROS2 camera topic via cyclonedds."""
+    """Proxy one JPEG frame from the LingTu Gateway camera endpoint."""
     try:
-        sys.path.insert(0, os.path.join(NAV_DIR, "src"))
-        import io
-        import threading
+        import httpx
+        from fastapi.responses import Response
 
-        from core.dds import ROS2TopicReader
-
-        result = {"data": None}
-        evt = threading.Event()
-
-        def on_img(img):
-            if result["data"] is None:
-                import numpy as np
-                h, w = img.height, img.width
-                enc = img.encoding.lower() if hasattr(img, 'encoding') else ''
-                if enc in ("bgr8", "rgb8"):
-                    arr = np.array(img.data, dtype=np.uint8).reshape(h, w, 3)
-                    if enc == "bgr8":
-                        arr = arr[:, :, ::-1]
-                    # Rotate for vertical mount + crop square
-                    arr = np.rot90(arr, k=1)
-                    rh, rw = arr.shape[:2]
-                    if rh > rw:
-                        m = (rh - rw) // 2
-                        arr = arr[m:m+rw]
-                    # Encode JPEG
-                    try:
-                        import cv2
-                        ok, buf = cv2.imencode(".jpg", arr[:,:,::-1], [cv2.IMWRITE_JPEG_QUALITY, 70])
-                        if ok:
-                            result["data"] = bytes(buf)
-                    except ImportError:
-                        from PIL import Image as PilImage
-                        pil = PilImage.fromarray(arr)
-                        bio = io.BytesIO()
-                        pil.save(bio, format="JPEG", quality=70)
-                        result["data"] = bio.getvalue()
-                    evt.set()
-
-        reader = ROS2TopicReader()
-        reader.on_image("/camera/color/image_raw", on_img)
-        reader.spin_background()
-        evt.wait(timeout=3)
-        reader.stop()
-
-        if result["data"]:
-            from fastapi.responses import Response
-            return Response(content=result["data"], media_type="image/jpeg")
-        return JSONResponse({"error": "No camera frame received"}, status_code=503)
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(_gateway_url("/api/v1/camera/snapshot"), timeout=5)
+        if resp.status_code == 200:
+            return Response(
+                content=resp.content,
+                media_type=resp.headers.get("content-type", "image/jpeg"),
+            )
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = {"error": resp.text or "Gateway camera snapshot unavailable"}
+        return JSONResponse(detail, status_code=resp.status_code)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -497,7 +474,7 @@ async def api_rerun_status():
     return {"running": rerun_running, "url": "http://localhost:9090" if rerun_running else None}
 
 
-# ── Web UI ───────────────────────────────────────────────────────────────────
+# 鈹€鈹€ Web UI 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -509,7 +486,7 @@ WEB_UI_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>LingTu 控制面板</title>
+<title>LingTu 鎺у埗闈㈡澘</title>
 <style>
 :root{
   --bg:#1a1a2e;--bg2:#121727;--panel:#1c2336;
@@ -669,11 +646,11 @@ input:focus{border-color:rgba(76,201,240,.45);box-shadow:0 0 0 3px rgba(76,201,2
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">LT</div>
-      <div><div class="eyebrow">LingTu Quadruped Control</div><h1>灵途控制面板</h1></div>
+      <div><div class="eyebrow">LingTu Quadruped Control</div><h1>鐏甸€旀帶鍒堕潰鏉?/h1></div>
     </div>
     <div class="top-actions">
-      <div class="live-chip"><span id="sseDot" class="dot off"></span><span id="sseText">遥测重连中</span></div>
-      <div class="live-chip"><span id="runDot" class="dot off"></span><span id="runText">离线</span></div>
+      <div class="live-chip"><span id="sseDot" class="dot off"></span><span id="sseText">閬ユ祴閲嶈繛涓?/span></div>
+      <div class="live-chip"><span id="runDot" class="dot off"></span><span id="runText">绂荤嚎</span></div>
     </div>
   </header>
 
@@ -686,45 +663,45 @@ input:focus{border-color:rgba(76,201,240,.45);box-shadow:0 0 0 3px rgba(76,201,2
   <main class="layout">
     <!-- Left Column: Controls -->
     <section class="panel">
-      <div class="panel-head"><div><div class="panel-title">模式切换</div><div class="panel-sub">Mode Selection</div></div></div>
+      <div class="panel-head"><div><div class="panel-title">妯″紡鍒囨崲</div><div class="panel-sub">Mode Selection</div></div></div>
       <div class="mode-grid">
-        <button class="btn mode-btn" data-mode="map"><span class="t">建图</span><span class="s">Map / SLAM</span></button>
-        <button class="btn mode-btn" data-mode="nav"><span class="t">导航</span><span class="s">Navigate</span></button>
-        <button class="btn mode-btn" data-mode="explore"><span class="t">探索</span><span class="s">Explore</span></button>
-        <button class="btn mode-btn" data-mode="idle"><span class="t">待机</span><span class="s">Idle</span></button>
+        <button class="btn mode-btn" data-mode="map"><span class="t">寤哄浘</span><span class="s">Map / SLAM</span></button>
+        <button class="btn mode-btn" data-mode="nav"><span class="t">瀵艰埅</span><span class="s">Navigate</span></button>
+        <button class="btn mode-btn" data-mode="explore"><span class="t">鎺㈢储</span><span class="s">Explore</span></button>
+        <button class="btn mode-btn" data-mode="idle"><span class="t">寰呮満</span><span class="s">Idle</span></button>
       </div>
       <div class="two-col">
         <div class="subcard">
-          <div class="subhead">导航目标</div>
-          <div class="input-row"><input id="navInput" placeholder="5 3 或 去门口"><button id="navBtn" class="btn warn">发送</button></div>
-          <div class="hint">自动识别坐标或语义指令</div>
+          <div class="subhead">瀵艰埅鐩爣</div>
+          <div class="input-row"><input id="navInput" placeholder="5 3 鎴?鍘婚棬鍙?><button id="navBtn" class="btn warn">鍙戦€?/button></div>
+          <div class="hint">鑷姩璇嗗埆鍧愭爣鎴栬涔夋寚浠?/div>
         </div>
         <div class="subcard">
-          <div class="subhead">保存地图</div>
-          <div class="input-row"><input id="mapNameInput" placeholder="地图名称"><button id="saveMapBtn" class="btn success">保存</button></div>
-          <div class="hint">保存当前 SLAM 地图</div>
+          <div class="subhead">淇濆瓨鍦板浘</div>
+          <div class="input-row"><input id="mapNameInput" placeholder="鍦板浘鍚嶇О"><button id="saveMapBtn" class="btn success">淇濆瓨</button></div>
+          <div class="hint">淇濆瓨褰撳墠 SLAM 鍦板浘</div>
         </div>
       </div>
     </section>
 
     <!-- Right Column: Status -->
     <section class="panel">
-      <div class="panel-head"><div><div class="panel-title">状态总览</div><div class="panel-sub">Real-time Telemetry</div></div></div>
+      <div class="panel-head"><div><div class="panel-title">鐘舵€佹€昏</div><div class="panel-sub">Real-time Telemetry</div></div></div>
       <div class="stats">
-        <div class="stat"><div class="k">当前模式</div><div class="v" id="modeVal">--</div></div>
+        <div class="stat"><div class="k">褰撳墠妯″紡</div><div class="v" id="modeVal">--</div></div>
         <div class="stat"><div class="k">SLAM</div><div class="v" id="slamVal">--</div></div>
-        <div class="stat"><div class="k">当前地图</div><div class="v" id="mapVal">--</div></div>
-        <div class="stat"><div class="k">遥测时间</div><div class="v" id="timeVal">--</div></div>
+        <div class="stat"><div class="k">褰撳墠鍦板浘</div><div class="v" id="mapVal">--</div></div>
+        <div class="stat"><div class="k">閬ユ祴鏃堕棿</div><div class="v" id="timeVal">--</div></div>
       </div>
       <div id="svcGrid" class="services"></div>
-      <div class="subhead">最近错误</div>
-      <div id="errBox" class="error-box clean">无</div>
+      <div class="subhead">鏈€杩戦敊璇?/div>
+      <div id="errBox" class="error-box clean">鏃?/div>
     </section>
 
     <!-- Camera + 3D View -->
     <section class="panel">
-      <div class="panel-head"><div><div class="panel-title">相机</div><div class="panel-sub">Camera Feed</div></div>
-        <button class="btn secondary" onclick="refreshCam()">刷新</button>
+      <div class="panel-head"><div><div class="panel-title">鐩告満</div><div class="panel-sub">Camera Feed</div></div>
+        <button class="btn secondary" onclick="refreshCam()">鍒锋柊</button>
       </div>
       <div style="text-align:center">
         <img id="camImg" src="/api/camera/snapshot" style="max-width:100%;border-radius:12px;background:#111;min-height:200px" onerror="this.style.opacity=0.3" alt="camera">
@@ -732,21 +709,21 @@ input:focus{border-color:rgba(76,201,240,.45);box-shadow:0 0 0 3px rgba(76,201,2
     </section>
 
     <section class="panel">
-      <div class="panel-head"><div><div class="panel-title">3D 视图</div><div class="panel-sub">Rerun Point Cloud</div></div>
-        <span id="rerunStatus" style="font-size:12px;color:var(--muted)">检测中...</span>
+      <div class="panel-head"><div><div class="panel-title">3D 瑙嗗浘</div><div class="panel-sub">Rerun Point Cloud</div></div>
+        <span id="rerunStatus" style="font-size:12px;color:var(--muted)">妫€娴嬩腑...</span>
       </div>
       <div id="rerunWrap" style="border-radius:12px;overflow:hidden;background:#111;min-height:200px;display:flex;align-items:center;justify-content:center">
-        <span style="color:var(--muted)">Rerun 未运行</span>
+        <span style="color:var(--muted)">Rerun 鏈繍琛?/span>
       </div>
     </section>
 
     <!-- Full Width: Maps -->
     <section class="panel span2">
       <div class="panel-head">
-        <div><div class="panel-title">地图列表</div><div class="panel-sub">活动地图绿色高亮</div></div>
-        <button id="refreshMaps" class="btn secondary">刷新</button>
+        <div><div class="panel-title">鍦板浘鍒楄〃</div><div class="panel-sub">娲诲姩鍦板浘缁胯壊楂樹寒</div></div>
+        <button id="refreshMaps" class="btn secondary">鍒锋柊</button>
       </div>
-      <div id="mapsGrid" class="maps"><div class="empty">加载中...</div></div>
+      <div id="mapsGrid" class="maps"><div class="empty">鍔犺浇涓?..</div></div>
     </section>
   </main>
 </div>
@@ -788,15 +765,15 @@ function renderStatus(s={}){
   $("#mapVal").textContent=s.active_map||"--";
   $("#timeVal").textContent=S.ttime;
   setDot($("#runDot"),!!s.lingtu_running);
-  $("#runText").textContent=s.lingtu_running?"在线":"离线";
+  $("#runText").textContent=s.lingtu_running?"鍦ㄧ嚎":"绂荤嚎";
   renderSvc(s.services||{});
   const eb=$("#errBox"),he=!!s.last_error;
-  eb.textContent=he?s.last_error:"无";eb.classList.toggle("clean",!he);
+  eb.textContent=he?s.last_error:"鏃?;eb.classList.toggle("clean",!he);
 }
 
 function renderMaps(){
   const m=S.maps||[],g=$("#mapsGrid");
-  if(!m.length){g.innerHTML='<div class="empty">暂无地图</div>';return}
+  if(!m.length){g.innerHTML='<div class="empty">鏆傛棤鍦板浘</div>';return}
   g.innerHTML=m.map(mp=>`
     <article class="map-card ${mp.active?"active":""}">
       <div class="map-head"><div class="map-name">${esc(mp.name)}</div>${mp.active?'<span class="tag active">ACTIVE</span>':'<span class="tag">READY</span>'}</div>
@@ -804,23 +781,23 @@ function renderMaps(){
         <span class="badge ${mp.has_pcd?"ok":""}">PCD ${mp.has_pcd?"OK":"--"}</span>
         <span class="badge ${mp.has_tomogram?"ok":""}">TOMO ${mp.has_tomogram?"OK":"--"}</span>
       </div>
-      <button class="btn secondary" data-use="${encodeURIComponent(mp.name)}" ${mp.active?"disabled":""}>${mp.active?"当前地图":"切换"}</button>
+      <button class="btn secondary" data-use="${encodeURIComponent(mp.name)}" ${mp.active?"disabled":""}>${mp.active?"褰撳墠鍦板浘":"鍒囨崲"}</button>
     </article>
   `).join("");
 }
 
 async function refresh(silent=false){
-  try{renderStatus(await api("/api/status"))}catch(e){if(!silent)toast("状态获取失败","error")}
+  try{renderStatus(await api("/api/status"))}catch(e){if(!silent)toast("鐘舵€佽幏鍙栧け璐?,"error")}
 }
 async function refreshMaps(silent=false){
-  try{S.maps=(await api("/api/map/list")).maps||[];renderMaps()}catch(e){if(!silent)toast("地图列表失败","error")}
+  try{S.maps=(await api("/api/map/list")).maps||[];renderMaps()}catch(e){if(!silent)toast("鍦板浘鍒楄〃澶辫触","error")}
 }
 
 function connectSSE(){
   if(S.sse)S.sse.close();const es=new EventSource("/api/stream");S.sse=es;
-  es.onopen=()=>{const rec=S.ever&&!S.connected;S.connected=true;S.ever=true;setDot($("#sseDot"),true);$("#sseText").textContent="遥测在线";if(rec)toast("遥测已恢复","success")};
+  es.onopen=()=>{const rec=S.ever&&!S.connected;S.connected=true;S.ever=true;setDot($("#sseDot"),true);$("#sseText").textContent="閬ユ祴鍦ㄧ嚎";if(rec)toast("閬ユ祴宸叉仮澶?,"success")};
   es.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.mode)setMode(d.mode);if(d.timestamp){S.ttime=new Date(d.timestamp*1000).toLocaleTimeString("zh-CN",{hour12:false});$("#timeVal").textContent=S.ttime}}catch{}};
-  es.onerror=()=>{if(S.connected)toast("遥测中断，重连中","warn",3000);S.connected=false;setDot($("#sseDot"),false);$("#sseText").textContent="重连中";es.close();setTimeout(connectSSE,2500)};
+  es.onerror=()=>{if(S.connected)toast("閬ユ祴涓柇锛岄噸杩炰腑","warn",3000);S.connected=false;setDot($("#sseDot"),false);$("#sseText").textContent="閲嶈繛涓?;es.close();setTimeout(connectSSE,2500)};
 }
 
 function parseNav(raw){
@@ -829,16 +806,16 @@ function parseNav(raw){
   return m?{x:+m[1],y:+m[2],type:"coord"}:{instruction:t,type:"inst"};
 }
 
-async function sendMode(mode){try{await api("/api/mode","POST",{mode});setMode(mode);toast("已切换: "+mode,"success");refresh(true)}catch(e){toast("切换失败: "+e.message,"error",3200)}}
+async function sendMode(mode){try{await api("/api/mode","POST",{mode});setMode(mode);toast("宸插垏鎹? "+mode,"success");refresh(true)}catch(e){toast("鍒囨崲澶辫触: "+e.message,"error",3200)}}
 async function sendNav(){
-  const p=parseNav($("#navInput").value);if(!p)return toast("请输入目标","warn");
-  try{if(p.type==="coord"){await api("/api/navigate","POST",{x:p.x,y:p.y});toast("坐标导航: "+p.x+","+p.y,"success")}else{await api("/api/navigate","POST",{instruction:p.instruction});toast("语义导航已发送","success")}$("#navInput").value=""}catch(e){toast("导航失败: "+e.message,"error",3200)}
+  const p=parseNav($("#navInput").value);if(!p)return toast("璇疯緭鍏ョ洰鏍?,"warn");
+  try{if(p.type==="coord"){await api("/api/navigate","POST",{x:p.x,y:p.y});toast("鍧愭爣瀵艰埅: "+p.x+","+p.y,"success")}else{await api("/api/navigate","POST",{instruction:p.instruction});toast("璇箟瀵艰埅宸插彂閫?,"success")}$("#navInput").value=""}catch(e){toast("瀵艰埅澶辫触: "+e.message,"error",3200)}
 }
 async function saveMap(){
-  const n=$("#mapNameInput").value.trim();if(!n)return toast("请输入名称","warn");
-  try{await api("/api/map/save","POST",{name:n});$("#mapNameInput").value="";toast("地图已保存: "+n,"success");refreshMaps(true);refresh(true)}catch(e){toast("保存失败: "+e.message,"error",3200)}
+  const n=$("#mapNameInput").value.trim();if(!n)return toast("璇疯緭鍏ュ悕绉?,"warn");
+  try{await api("/api/map/save","POST",{name:n});$("#mapNameInput").value="";toast("鍦板浘宸蹭繚瀛? "+n,"success");refreshMaps(true);refresh(true)}catch(e){toast("淇濆瓨澶辫触: "+e.message,"error",3200)}
 }
-async function stopRobot(){try{await api("/api/stop","POST");toast("急停已触发","error",3200)}catch(e){toast("急停失败: "+e.message,"error",3200)}}
+async function stopRobot(){try{await api("/api/stop","POST");toast("鎬ュ仠宸茶Е鍙?,"error",3200)}catch(e){toast("鎬ュ仠澶辫触: "+e.message,"error",3200)}}
 
 function bind(){
   $$(".mode-btn").forEach(b=>b.addEventListener("click",()=>sendMode(b.dataset.mode)));
@@ -851,7 +828,7 @@ function bind(){
   $("#mapsGrid").addEventListener("click",async e=>{
     const b=e.target.closest("[data-use]");if(!b||b.disabled)return;
     const name=decodeURIComponent(b.dataset.use);
-    try{await api("/api/map/use","POST",{name});toast("已切换: "+name,"success");refreshMaps(true);refresh(true)}catch(e){toast("切换失败: "+e.message,"error",3200)}
+    try{await api("/api/map/use","POST",{name});toast("宸插垏鎹? "+name,"success");refreshMaps(true);refresh(true)}catch(e){toast("鍒囨崲澶辫触: "+e.message,"error",3200)}
   });
 }
 
@@ -865,7 +842,7 @@ async function checkRerun(){
       w.innerHTML='<iframe src="http://'+location.hostname+':9090" style="width:100%;height:400px;border:none;border-radius:12px"></iframe>';
     }else{
       s.textContent="OFF";s.style.color="var(--muted)";
-      w.innerHTML='<span style="color:var(--muted)">Rerun 未运行 — 启动: python3 scripts/visualization/rerun_live.py</span>';
+      w.innerHTML='<span style="color:var(--muted)">Rerun 鏈繍琛?鈥?鍚姩: python3 scripts/visualization/rerun_gateway_live.py</span>';
     }
   }catch{}
 }
@@ -878,7 +855,7 @@ init();
 </body>
 </html>"""
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# 鈹€鈹€ Main 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 if __name__ == "__main__":
     # Detect active map on startup

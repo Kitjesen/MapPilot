@@ -2,7 +2,7 @@
 
 #include <memory>
 #include <iostream>
-#include <opencv2/core.hpp>
+#include <opencv2/runtime.hpp>
 #include <vlcal/common/frame_cpu.hpp>
 
 namespace vlcal {

@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 
-from core.msgs.geometry import Twist
+from runtime.msgs.geometry import Twist
 from gateway.services.safety_status import safety_stop_active
 
 logger = logging.getLogger(__name__)

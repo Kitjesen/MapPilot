@@ -29,7 +29,7 @@ lingwatch         # secondary screen, live refresh
 
 ## Subcommands
 
-### `status` — 8-section snapshot
+### `status` —8-section snapshot
 
 ```
 === Lingtu @ 17:26:52 ===
@@ -56,7 +56,7 @@ lingwatch         # secondary screen, live refresh
 | [7] Map       | `dufo -N pts (X%)`     | dynamic-removal stats present      | -                              |
 | [8] Log       | drift / dufomap / err  | quiet                              | recent entries imply trouble   |
 
-### `watch [interval]` — continuous monitor
+### `watch [interval]` —continuous monitor
 
 ```bash
 lingtu watch       # 1 second
@@ -66,7 +66,7 @@ lingtu watch 2     # 2 seconds
 Internally `watch -c -n <interval> bash <script> status`. Keep it on a side screen
 during mapping / navigation runs.
 
-### `map` — mapping session
+### `map` —mapping session
 
 ```bash
 lingtu map start              # enter mapping (starts robot-fastlio2 + slam_pgo)
@@ -107,7 +107,7 @@ curl -X POST -H 'Content-Type: application/json' \
     http://localhost:5050/api/v1/maps
 ```
 
-### `nav` — navigation session
+### `nav` —navigation session
 
 ```bash
 lingtu nav start corrected_20260406_224020    # navigating + load map (starts robot-fastlio2 + robot-localizer)
@@ -141,18 +141,21 @@ distance, per-segment spacing, and plan latency.
 ### Exploration profiles and Gateway contract
 
 `python lingtu.py explore` runs the Wavefront frontier backend, while
-`python lingtu.py tare_explore` runs the TARE backend when its binary and module
-are available. Gateway `/api/v1/explore/status` reports
-`backend=frontier|tare|none`; `/api/v1/explore/start` and `/api/v1/explore/stop`
-dispatch to the active backend. In the normal `nav` profile, `backend=none` and
-start returns `503`; this is expected because exploration is not part of the
-default saved-map navigation path.
+`python lingtu.py tare_explore` now runs the ROS-free LingTu-native frontier
+stack with traversable frontier candidates and OctoPlanner3D global planning.
+Gateway `/api/v1/explore/status` reports `backend=frontier|tare|none`;
+`/api/v1/explore/start` and `/api/v1/explore/stop` dispatch to the active
+backend. In the normal `nav` profile, `backend=none` and start returns `503`;
+this is expected because exploration is not part of the default saved-map
+navigation path. External TARE benchmark endpoints still use the TARE bridge
+when selected explicitly.
 
-### `svc` — systemd service control
+### `svc` —systemd service control
 
 ```bash
 lingtu svc status               # 6 core services: enabled / active
-lingtu doctor                   # read-only service/topic/Gateway diagnostics
+lingtu doctor                   # read-only service/Gateway/dataflow diagnostics
+lingtu doctor --ros2            # optional legacy ROS topic/node diagnostics
 lingtu svc restart slam         # restart Fast-LIO2 (i.e. robot-fastlio2.service)
 lingtu svc restart localization # restart Fast-LIO2 + localizer, then wait for /ready
 lingtu svc restart lidar        # restart Livox driver (i.e. robot-lidar.service)
@@ -165,9 +168,9 @@ lingtu svc stop slam            # stop a single service
 ```
 
 The aliases `lidar` / `slam` / `localization` / `localizer` / `lingtu` / `camera` / `brainstem` map
-to the corresponding production systemd unit. There is no `slam.service` anymore;
+to the corresponding production systemd unit. There is no `localization.service` anymore;
 `slam` aliases to `robot-fastlio2.service`. `svc status` warns if legacy
-`lidar.service`, `slam.service`, or `localizer.service` is still active because those
+`lidar.service`, `localization.service`, or `localizer.service` is still active because those
 services can duplicate ROS nodes and starve `/nav/lidar_scan` / `/nav/imu`.
 Use `svc restart localization` when systemd still shows Fast-LIO2 active but
 `/nav/odometry` has no publisher; it restarts only Fast-LIO2 and the ICP
@@ -268,10 +271,13 @@ This is read-only. It checks:
 
 - production `robot-*` service state
 - active legacy service conflicts
-- duplicate Livox/Fast-LIO/localizer ROS node names
-- publisher/subscriber counts for `/nav/lidar_scan`, `/nav/imu`, `/nav/odometry`,
-  `/nav/map_cloud`, and `/localization_quality`
+- Gateway readiness, health, localization, navigation, state, and camera snapshot
+- runtime dataflow for canonical streams such as `/nav/lidar_scan`, `/nav/imu`,
+  `/nav/odometry`, and `/nav/map_cloud`
 - Gateway `/api/v1/health` SLAM summary
+
+Use `lingtu doctor --ros2` only when you intentionally need legacy ROS
+compatibility graph details such as duplicate node names or endpoint counts.
 
 ### `soak` - non-motion readiness soak
 
@@ -294,7 +300,7 @@ against a survey-grade map.
 In `--strict` mode, stale localization, non-idle command sources, readiness
 failures, or excessive stationary drift return a non-zero exit code.
 
-### `log` — journalctl filters
+### `log` —journalctl filters
 
 ```bash
 lingtu log drift      # drift_watchdog firings
@@ -306,7 +312,7 @@ lingtu log tail       # live tail (Ctrl+C to exit)
 lingtu log all        # last 10 min, everything
 ```
 
-### `health` — REST passthrough
+### `health` —REST passthrough
 
 ```bash
 lingtu health         # GET /api/v1/health | python3 -m json.tool
@@ -377,6 +383,6 @@ lingtu map end && sleep 2 && lingtu map start
 - `docs/04-deployment/super_lio_backend.md` - experimental Super-LIO build,
   smoke, rollback, failure table, and route-validation gate
 
-- `docs/04-deployment/README.md` — deployment overview, service inventory
-- `docs/archive/05-specialized/dynamic_obstacle_removal.md` — DUFOMap Phase 1 + 2
-- `docs/archive/05-specialized/slam_drift_watchdog.md` — IEKF divergence watchdog
+- `docs/04-deployment/README.md` —deployment overview, service inventory
+- `docs/archive/05-specialized/dynamic_obstacle_removal.md` —DUFOMap Phase 1 + 2
+- `docs/archive/05-specialized/slam_drift_watchdog.md` —IEKF divergence watchdog

@@ -1,4 +1,4 @@
-"""LidarModule — Livox MID-360 as a first-class Blueprint Module.
+"""LidarModule - Livox MID-360 as a first-class Blueprint Module.
 
 Decouples LiDAR from SLAM: LiDAR is an independent hardware resource
 that can be started, stopped, and subscribed to without running SLAM.
@@ -9,14 +9,13 @@ Blueprint usage::
 
     bp.add(LidarModule)                             # default config
     bp.add(LidarModule, ip="192.168.1.120")         # override IP
-    bp.wire("LidarModule", "scan", "TerrainModule", "cloud")
+    bp.wire("LidarModule", "scan", "nav.terrain", "cloud")
 
 Stack factory usage (in blueprints/stacks/)::
 
     from drivers.real.lidar import LidarModule
     bp.add(LidarModule, ip=ip)
-    # SLAMModule no longer starts the driver — it subscribes via DDS topics
-    # that LidarModule's native driver publishes.
+    # SLAM consumes raw_scan/imu regardless of the selected LiDAR source.
 """
 
 from __future__ import annotations
@@ -24,13 +23,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.module import Module
-from core.msgs.sensor import Imu, PointCloud2
-from core.registry import register
-from core.runtime_interface import TOPICS, real_lidar_frame_id
-from core.stream import Out
+from runtime.module import Module
+from runtime.msgs.sensor import Imu, PointCloud2
+from runtime.registry import register
+from runtime.runtime_interface import TOPICS, real_lidar_frame_id
+from runtime.stream import Out
 
-from .lidar import Lidar
+from .source import LidarSource, LidarSourceFactory, create_lidar_source
 
 logger = logging.getLogger(__name__)
 LIDAR_RAW_FRAME_ID = real_lidar_frame_id()
@@ -41,11 +40,13 @@ LIDAR_RAW_FRAME_ID = real_lidar_frame_id()
 class LidarModule(Module, layer=1):
     """Livox MID-360 driver as a Module in the Blueprint system.
 
-    Owns the Livox driver lifecycle (start/stop/health) and bridges raw
-    point cloud + IMU data into Module output ports.
+    Owns the selected Livox source lifecycle and bridges raw point cloud + IMU
+    data into Module output ports. The default source is the ROS-free official
+    SDK2 process. ``start_driver=True`` is the legacy DDS compatibility path.
 
     Ports:
         scan (Out[PointCloud2]): Raw LiDAR point cloud per frame.
+        raw_scan (Out[Any]):     Lossless Livox frame with per-point metadata.
         imu  (Out[Imu]):         IMU readings from the LiDAR unit.
         alive (Out[bool]):       Driver health status.
 
@@ -58,6 +59,7 @@ class LidarModule(Module, layer=1):
     """
 
     scan:  Out[PointCloud2]
+    raw_scan: Out[Any]
     imu:   Out[Imu]
     alive: Out[bool]
 
@@ -66,13 +68,27 @@ class LidarModule(Module, layer=1):
         ip: str | None = None,
         scan_topic: str = TOPICS.lidar_scan,
         imu_topic: str = TOPICS.imu,
+        start_driver: bool = False,
+        source: LidarSource | None = None,
+        source_factory: LidarSourceFactory | None = None,
         **kw,
     ):
         super().__init__(**kw)
-        self._lidar = Lidar(ip=ip, scan_topic=scan_topic, imu_topic=imu_topic)
+        if source is not None and source_factory is not None:
+            raise ValueError("Pass either source or source_factory, not both")
+        factory = source_factory or create_lidar_source
+        source_kwargs = {
+            "ip": ip,
+            "scan_topic": scan_topic,
+            "imu_topic": imu_topic,
+        }
+        if start_driver:
+            source_kwargs["start_driver"] = True
+        self._lidar = source or factory(**source_kwargs)
 
     def setup(self) -> None:
         self._lidar.on_cloud(self._on_cloud)
+        self._lidar.on_raw_cloud(self._on_raw_cloud)
         self._lidar.on_imu(self._on_imu)
 
     def start(self) -> None:
@@ -90,9 +106,13 @@ class LidarModule(Module, layer=1):
         super().stop()
 
     def _on_cloud(self, pts) -> None:
-        """Forward numpy (N,4) → PointCloud2 on the scan port."""
+        """Forward numpy (N,4) to PointCloud2 on the scan port."""
         cloud = PointCloud2.from_numpy(pts, frame_id=LIDAR_RAW_FRAME_ID)
         self.scan.publish(cloud)
+
+    def _on_raw_cloud(self, frame: Any) -> None:
+        """Forward the lossless Livox DDS frame for LIO/deskew consumers."""
+        self.raw_scan.publish(frame)
 
     def _on_imu(self, imu_msg: Imu) -> None:
         """Forward Imu to the imu port."""

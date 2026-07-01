@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""lingtu doctor - check field services, hardware, and data flow."""
+"""lingtu doctor - check field services, hardware, and Module-first data flow."""
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shlex
@@ -11,6 +12,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any, Mapping
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 def find_repo_root(start: Path) -> Path:
@@ -27,6 +31,10 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     mark = "\033[32mOK\033[0m" if ok else "\033[31mFAIL\033[0m"
     print("  [%s] %s%s" % (mark, name, ("  " + detail) if detail else ""))
     return ok
+
+
+def skip(name: str, detail: str = "") -> None:
+    print("  [\033[33m--\033[0m] %s%s" % (name, ("  " + detail) if detail else ""))
 
 
 def service_active(name: str) -> bool:
@@ -64,16 +72,11 @@ def run(cmd: list[str], timeout: int = 5) -> str:
         return ""
 
 
-def ros2_topic_list() -> str:
-    setup_files = [
-        os.environ.get("LINGTU_ROS_SETUP", "/opt/ros/humble/setup.bash"),
-        os.environ.get("LINGTU_ROS_OVERLAY_SETUP", "/opt/nova/lingtu/v1.8.0/install/setup.bash"),
-    ]
-    source_cmds = " && ".join(
-        f"[ -f {shlex.quote(path)} ] && source {shlex.quote(path)} || true"
-        for path in setup_files
-    )
-    return run(["bash", "-lc", f"{source_cmds} && ros2 topic list 2>/dev/null"], timeout=5)
+def _safe_float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
 
 
 def read_run_state() -> dict[str, object]:
@@ -86,124 +89,347 @@ def read_run_state() -> dict[str, object]:
         return {}
 
 
-print("\n  \033[1mLingTu Doctor\033[0m\n")
+def _gateway_json(base_url: str, path: str, *, timeout_sec: float) -> Mapping[str, Any]:
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    request = Request(url, headers={"Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=timeout_sec) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{url}: {exc}") from exc
+    return payload if isinstance(payload, Mapping) else {}
 
-print("  --- Services ---")
-for svc in ["brainstem", "lidar", "camera"]:
-    check(svc, service_active(svc))
-for svc in ["slam", "slam_pgo", "localizer"]:
-    active = service_active(svc)
-    check(svc, True, "active" if active else "inactive (on-demand)")
 
-print("\n  --- Hardware ---")
-lsusb = run(["lsusb"])
-livox_ping = run(["ping", "-c1", "-W1", "192.168.1.115"])
-check("LiDAR (Livox)", "192.168.1.115" in livox_ping, "192.168.1.115")
-check("Camera (Orbbec)", "orbbec" in lsusb.lower() or "2bc5" in lsusb.lower())
-check("IMU (CP210x)", "cp210x" in lsusb.lower() or "10c4" in lsusb.lower())
-check("Xbox Controller", "8bitdo" in lsusb.lower() or "xbox" in lsusb.lower())
-check("CAN Bus", os.path.exists("/sys/class/net/can0"))
+def _nested(payload: Mapping[str, Any], *keys: str) -> Mapping[str, Any]:
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, Mapping) else {}
 
-print("\n  --- Ports ---")
-check("brainstem gRPC :13145", port_open("127.0.0.1", 13145))
-for name, port in [("Gateway :5050", 5050), ("MCP :8090", 8090)]:
-    if port_open("127.0.0.1", port):
-        check(name, True)
-    else:
-        print("  [\033[33m--\033[0m] %s  (lingtu not running)" % name)
 
-print("\n  --- Runtime State ---")
-state = read_run_state()
-if state:
-    check("run.json", True, "profile=%s pid=%s" % (state.get("profile", "?"), state.get("pid", "?")))
-else:
-    check("run.json", False, "LingTu daemon state not found")
+def _count_live_topics(topics: Any) -> tuple[int, int]:
+    if not isinstance(topics, list):
+        return (0, 0)
+    live = 0
+    for topic in topics:
+        if not isinstance(topic, Mapping):
+            continue
+        inspection = _nested(topic, "inspection")
+        if inspection.get("live") is True or inspection.get("observable") is True:
+            live += 1
+    return (len(topics), live)
 
-print("\n  --- ROS2 Topics ---")
-topics = ros2_topic_list()
-for topic in [
-    "/nav/odometry",
-    "/nav/map_cloud",
-    "/nav/registered_cloud",
-    "/camera/color/image_raw",
-    "/camera/depth/image_raw",
-    "/nav/lidar_scan",
-]:
-    check(topic, topic in topics)
 
-slam_was_off = not service_active("slam")
-auto_started_slam = False
-if slam_was_off and os.environ.get("LINGTU_DOCTOR_AUTOSTART_SLAM", "0") == "1":
-    print("\n  [..] Starting slam for data flow test...")
-    subprocess.run(["sudo", "systemctl", "start", "slam"], capture_output=True, timeout=5, check=False)
-    time.sleep(8)
-    auto_started_slam = True
-elif slam_was_off:
-    print("\n  [--] slam is inactive; set LINGTU_DOCTOR_AUTOSTART_SLAM=1 to start it for data flow checks.")
+def _count_live_stages(stages: Any) -> tuple[int, int, int]:
+    if not isinstance(stages, list):
+        return (0, 0, 0)
+    live = 0
+    missing = 0
+    for stage in stages:
+        if not isinstance(stage, Mapping):
+            continue
+        if stage.get("live") is True:
+            live += 1
+        if stage.get("status") == "missing" or stage.get("observable") is False:
+            missing += 1
+    return (len(stages), live, missing)
 
-print("\n  --- Data Flow (3s) ---")
-sys.path.insert(0, str(REPO_ROOT / "src"))
-try:
-    from compat.ros2.context import ensure_rclpy, get_shared_executor, shutdown_shared_executor
 
-    ensure_rclpy()
-    from nav_msgs.msg import Odometry
-    from rclpy.node import Node
-    from rclpy.qos import QoSProfile, ReliabilityPolicy
-    from sensor_msgs.msg import Image, PointCloud2
-
-    qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=5)
-    counts = {"odom": 0, "cloud": 0, "color": 0, "depth": 0}
-    node = Node("doctor")
-    node.create_subscription(Odometry, "/nav/odometry", lambda _msg: counts.__setitem__("odom", counts["odom"] + 1), qos)
-    node.create_subscription(PointCloud2, "/nav/map_cloud", lambda _msg: counts.__setitem__("cloud", counts["cloud"] + 1), qos)
-    node.create_subscription(Image, "/camera/color/image_raw", lambda _msg: counts.__setitem__("color", counts["color"] + 1), qos)
-    node.create_subscription(Image, "/camera/depth/image_raw", lambda _msg: counts.__setitem__("depth", counts["depth"] + 1), qos)
-    executor = get_shared_executor()
-    executor.add_node(node)
-    time.sleep(3)
-    check("SLAM odometry", counts["odom"] > 0, "%d msgs (%.0f Hz)" % (counts["odom"], counts["odom"] / 3))
-    check("SLAM cloud", counts["cloud"] > 0, "%d msgs" % counts["cloud"])
-    check("Camera color", counts["color"] > 0, "%d msgs" % counts["color"])
-    check("Camera depth", counts["depth"] > 0, "%d msgs" % counts["depth"])
-    node.destroy_node()
-    shutdown_shared_executor()
-except Exception as exc:
-    print("  [SKIP] Data flow test: %s" % exc)
-
-if auto_started_slam:
-    subprocess.run(["sudo", "systemctl", "stop", "slam"], capture_output=True, timeout=5, check=False)
-
-print("\n  --- Maps ---")
-map_dir = os.environ.get("NAV_MAP_DIR", os.path.expanduser("~/data/nova/maps"))
-if os.path.isdir(map_dir):
-    maps = [
-        name
-        for name in os.listdir(map_dir)
-        if os.path.isdir(os.path.join(map_dir, name)) and name != "active"
+def ros2_topic_list() -> str:
+    setup_files = [
+        os.environ.get("LINGTU_ROS_SETUP", "/opt/ros/humble/setup.bash"),
+        os.environ.get(
+            "LINGTU_ROS_OVERLAY_SETUP",
+            "/opt/nova/lingtu/v1.8.0/install/setup.bash",
+        ),
     ]
-    active_path = os.path.join(map_dir, "active")
-    active = os.path.basename(os.readlink(active_path)) if os.path.islink(active_path) else "none"
-    check("Maps directory", True, "%d maps, active=%s" % (len(maps), active))
-else:
-    check("Maps directory", False, map_dir)
+    source_cmds = " && ".join(
+        f"[ -f {shlex.quote(path)} ] && source {shlex.quote(path)} || true"
+        for path in setup_files
+    )
+    return run(["bash", "-lc", f"{source_cmds} && ros2 topic list 2>/dev/null"], timeout=5)
 
-print("\n  --- Python ---")
-try:
-    import lingtu  # noqa: F401
 
-    check("lingtu importable", True)
-except Exception as exc:
-    check("lingtu importable", False, str(exc))
+def run_gateway_dataflow_checks(args: argparse.Namespace) -> None:
+    print("\n  --- Runtime Data Flow (Gateway) ---")
+    try:
+        dataflow = _gateway_json(
+            args.gateway_url,
+            "/api/v1/runtime/dataflow",
+            timeout_sec=args.gateway_timeout_sec,
+        )
+    except RuntimeError as exc:
+        skip("Gateway runtime dataflow", str(exc))
+        return
 
-try:
-    from core.blueprints.profile_builder import blueprint_for_resolved_profile
-    from core.runtime.resolver import resolve_profile_config
+    transport_layers = _nested(dataflow, "transport_layers")
+    module_port_bus = _nested(transport_layers, "module_port_bus")
+    ros2_adapter = _nested(transport_layers, "ros2_adapter")
+    control_boundary = _nested(dataflow, "control_boundary")
+    runtime_boundary = _nested(dataflow, "runtime_boundary")
+    topics_total, topics_live = _count_live_topics(dataflow.get("topics"))
+    stages_total, stages_live, stages_missing = _count_live_stages(
+        dataflow.get("stage_evidence")
+    )
 
-    cfg = resolve_profile_config("thunder-nav", overrides={"run_startup_checks": False})
-    blueprint_for_resolved_profile("thunder-nav", cfg)
-    check("Thunder profile builder", True)
-except Exception as exc:
-    check("Thunder profile builder", False, str(exc))
+    check("Gateway runtime dataflow", True, args.gateway_url)
+    check("ModulePort bus primary", module_port_bus.get("primary") is True)
+    check("ROS2 adapter not primary", ros2_adapter.get("primary") is not True)
+    check(
+        "Command publish boundary",
+        control_boundary.get("arbitrary_publish_supported") is not True,
+        "arbitrary publish disabled",
+    )
+    if runtime_boundary:
+        check("Runtime boundary", runtime_boundary.get("ok") is True)
+    else:
+        skip("Runtime boundary", "not reported by Gateway")
+    check("Observable topics", topics_total > 0, f"{topics_live}/{topics_total} live")
+    check(
+        "Observable stages",
+        stages_total > 0,
+        f"{stages_live}/{stages_total} live, {stages_missing} missing",
+    )
 
-print()
+
+def run_ros2_compat_checks(args: argparse.Namespace) -> None:
+    print("\n  --- ROS2 Compatibility Topics ---")
+    topics = ros2_topic_list()
+    for topic in [
+        "/slam/odometry",
+        "/slam/map_cloud",
+        "/slam/registered_cloud",
+        "/camera/color/image_raw",
+        "/camera/depth/image_raw",
+        "/lidar/raw_frame",
+    ]:
+        check(topic, topic in topics)
+
+    slam_was_off = not service_active("slam")
+    auto_started_slam = False
+    if slam_was_off and os.environ.get("LINGTU_DOCTOR_AUTOSTART_SLAM", "0") == "1":
+        print("\n  [..] Starting slam for ROS2 compatibility data flow test...")
+        subprocess.run(
+            ["sudo", "systemctl", "start", "slam"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        time.sleep(8)
+        auto_started_slam = True
+    elif slam_was_off:
+        skip(
+            "slam",
+            "inactive; set LINGTU_DOCTOR_AUTOSTART_SLAM=1 for ROS2 compat flow checks",
+        )
+
+    print("\n  --- ROS2 Compatibility Data Flow (3s) ---")
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    try:
+        from runtime.adapters.ros2.context import (
+            ensure_rclpy,
+            get_shared_executor,
+            shutdown_shared_executor,
+        )
+
+        ensure_rclpy()
+        from nav_msgs.msg import Odometry
+        from rclpy.node import Node
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        from sensor_msgs.msg import Image, PointCloud2
+
+        qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=5)
+        counts = {"odom": 0, "cloud": 0, "color": 0, "depth": 0}
+        node = Node("doctor")
+        node.create_subscription(
+            Odometry,
+            "/slam/odometry",
+            lambda _msg: counts.__setitem__("odom", counts["odom"] + 1),
+            qos,
+        )
+        node.create_subscription(
+            PointCloud2,
+            "/slam/map_cloud",
+            lambda _msg: counts.__setitem__("cloud", counts["cloud"] + 1),
+            qos,
+        )
+        node.create_subscription(
+            Image,
+            "/camera/color/image_raw",
+            lambda _msg: counts.__setitem__("color", counts["color"] + 1),
+            qos,
+        )
+        node.create_subscription(
+            Image,
+            "/camera/depth/image_raw",
+            lambda _msg: counts.__setitem__("depth", counts["depth"] + 1),
+            qos,
+        )
+        executor = get_shared_executor()
+        executor.add_node(node)
+        time.sleep(3)
+        check("SLAM odometry", counts["odom"] > 0, "%d msgs (%.0f Hz)" % (counts["odom"], counts["odom"] / 3))
+        check("SLAM cloud", counts["cloud"] > 0, "%d msgs" % counts["cloud"])
+        check("Camera color", counts["color"] > 0, "%d msgs" % counts["color"])
+        check("Camera depth", counts["depth"] > 0, "%d msgs" % counts["depth"])
+        node.destroy_node()
+        shutdown_shared_executor()
+    except Exception as exc:
+        skip("ROS2 compatibility data flow", str(exc))
+    finally:
+        if auto_started_slam:
+            subprocess.run(
+                ["sudo", "systemctl", "stop", "slam"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+
+
+def run_service_checks() -> None:
+    print("  --- Services ---")
+    for svc in ["brainstem", "lidar", "camera"]:
+        check(svc, service_active(svc))
+    for svc in ["slam", "slam_pgo", "localizer"]:
+        active = service_active(svc)
+        check(svc, True, "active" if active else "inactive (on-demand)")
+
+
+def run_hardware_checks() -> None:
+    print("\n  --- Hardware ---")
+    lsusb = run(["lsusb"])
+    livox_ping = run(["ping", "-c1", "-W1", "192.168.1.115"])
+    check("LiDAR (Livox)", "192.168.1.115" in livox_ping, "192.168.1.115")
+    check("Camera (Orbbec)", "orbbec" in lsusb.lower() or "2bc5" in lsusb.lower())
+    check("IMU (CP210x)", "cp210x" in lsusb.lower() or "10c4" in lsusb.lower())
+    check("Xbox Controller", "8bitdo" in lsusb.lower() or "xbox" in lsusb.lower())
+    check("CAN Bus", os.path.exists("/sys/class/net/can0"))
+
+
+def run_port_checks() -> None:
+    print("\n  --- Ports ---")
+    check("brainstem gRPC :13145", port_open("127.0.0.1", 13145))
+    for name, port in [("Gateway :5050", 5050), ("MCP :8090", 8090)]:
+        if port_open("127.0.0.1", port):
+            check(name, True)
+        else:
+            skip(name, "lingtu not running")
+
+
+def run_state_checks() -> None:
+    print("\n  --- Runtime State ---")
+    state = read_run_state()
+    if state:
+        check(
+            "run.json",
+            True,
+            "profile=%s pid=%s" % (state.get("profile", "?"), state.get("pid", "?")),
+        )
+    else:
+        check("run.json", False, "LingTu daemon state not found")
+
+
+def run_map_checks() -> None:
+    print("\n  --- Maps ---")
+    map_dir = os.environ.get("NAV_MAP_DIR", os.path.expanduser("~/data/nova/maps"))
+    if os.path.isdir(map_dir):
+        maps = [
+            name
+            for name in os.listdir(map_dir)
+            if os.path.isdir(os.path.join(map_dir, name)) and name != "active"
+        ]
+        active_path = os.path.join(map_dir, "active")
+        active = (
+            os.path.basename(os.readlink(active_path))
+            if os.path.islink(active_path)
+            else "none"
+        )
+        check("Maps directory", True, "%d maps, active=%s" % (len(maps), active))
+    else:
+        check("Maps directory", False, map_dir)
+
+
+def run_python_checks() -> None:
+    print("\n  --- Python ---")
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    try:
+        import lingtu  # noqa: F401
+
+        check("lingtu importable", True)
+    except Exception as exc:
+        check("lingtu importable", False, str(exc))
+
+    try:
+        from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+        from runtime.profiles.resolver import resolve_profile_config
+
+        cfg = resolve_profile_config("nav", overrides={"run_startup_checks": False})
+        blueprint_for_resolved_profile("nav", cfg)
+        check("Thunder profile builder", True)
+    except Exception as exc:
+        check("Thunder profile builder", False, str(exc))
+
+    try:
+        from nav.kernel import require_nav_kernel
+
+        module = require_nav_kernel(context="doctor native kernel")
+        check("LingTu native navigation kernel", True, getattr(module, "__file__", "loaded"))
+    except Exception as exc:
+        check("LingTu native navigation kernel", False, str(exc).splitlines()[0])
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run LingTu field diagnostics.")
+    parser.add_argument(
+        "--gateway-url",
+        default=os.environ.get("LINGTU_GATEWAY_URL", "http://127.0.0.1:5050"),
+        help="Gateway base URL for Module-first runtime dataflow checks.",
+    )
+    parser.add_argument(
+        "--gateway-timeout-sec",
+        type=float,
+        default=_safe_float_env("LINGTU_GATEWAY_TIMEOUT_SEC", 2.0),
+        help="Gateway request timeout in seconds.",
+    )
+    parser.add_argument(
+        "--skip-gateway",
+        action="store_true",
+        help="Skip Gateway runtime dataflow checks.",
+    )
+    parser.add_argument(
+        "--ros2",
+        action="store_true",
+        help="Run legacy ROS2 topic and rclpy compatibility checks.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(list(argv or sys.argv[1:]))
+    run_ros2 = args.ros2 or os.environ.get("LINGTU_DOCTOR_ROS2", "0") == "1"
+
+    print("\n  \033[1mLingTu Doctor\033[0m\n")
+    run_service_checks()
+    run_hardware_checks()
+    run_port_checks()
+    run_state_checks()
+    if args.skip_gateway:
+        print("\n  --- Runtime Data Flow (Gateway) ---")
+        skip("Gateway runtime dataflow", "skipped")
+    else:
+        run_gateway_dataflow_checks(args)
+    if run_ros2:
+        run_ros2_compat_checks(args)
+    else:
+        print("\n  --- ROS2 Compatibility ---")
+        skip("ROS2 topic/rclpy checks", "use --ros2 or LINGTU_DOCTOR_ROS2=1")
+    run_map_checks()
+    run_python_checks()
+    print()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

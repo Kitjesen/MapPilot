@@ -13,7 +13,6 @@
 #include <sophus/ceres_manifold.hpp>
 
 #include <dfo/nelder_mead.hpp>
-#include <gtsam/geometry/Pose3.h>
 
 #include <vlcal/costs/nid_cost.hpp>
 #include <vlcal/calib/view_culling.hpp>
@@ -21,6 +20,18 @@
 
 #include <glk/pointcloud_buffer.hpp>
 #include <guik/viewer/light_viewer.hpp>
+
+namespace {
+using Vector6d = Eigen::Matrix<double, 6, 1>;
+
+Eigen::Isometry3d expmap_rotation_first_order(const Vector6d& x) {
+  // Keep this optimizer's historical tangent order: [rx, ry, rz, tx, ty, tz].
+  Vector6d sophus_tangent;
+  sophus_tangent.head<3>() = x.tail<3>();
+  sophus_tangent.tail<3>() = x.head<3>();
+  return Eigen::Isometry3d(Sophus::SE3d::exp(sophus_tangent).matrix());
+}
+}  // namespace
 
 namespace vlcal {
 
@@ -100,8 +111,8 @@ Eigen::Isometry3d VisualCameraCalibration::estimate_pose_nelder_mead(const Eigen
 
   double best_cost = std::numeric_limits<double>::max();
 
-  const auto f = [&](const gtsam::Vector6& x) {
-    const Eigen::Isometry3d T_camera_lidar = init_T_camera_lidar * Eigen::Isometry3d(gtsam::Pose3::Expmap(x).matrix());
+  const auto f = [&](const Vector6d& x) {
+    const Eigen::Isometry3d T_camera_lidar = init_T_camera_lidar * expmap_rotation_first_order(x);
     double sum_costs = 0.0;
 
 #pragma omp parallel for reduction(+ : sum_costs)
@@ -124,9 +135,9 @@ Eigen::Isometry3d VisualCameraCalibration::estimate_pose_nelder_mead(const Eigen
   nelder_mead_params.convergence_var_thresh = params.nelder_mead_convergence_criteria;
   nelder_mead_params.max_iterations = params.max_inner_iterations;
   dfo::NelderMead<6> optimizer(nelder_mead_params);
-  auto result = optimizer.optimize(f, gtsam::Vector6::Zero());
+  auto result = optimizer.optimize(f, Vector6d::Zero());
 
-  const Eigen::Isometry3d T_camera_lidar = init_T_camera_lidar * Eigen::Isometry3d(gtsam::Pose3::Expmap(result.x).matrix());
+  const Eigen::Isometry3d T_camera_lidar = init_T_camera_lidar * expmap_rotation_first_order(result.x);
 
   std::stringstream sst;
   sst << boost::format("Inner optimization (Nelder-Mead) terminated after %d iterations") % result.num_iterations << std::endl;

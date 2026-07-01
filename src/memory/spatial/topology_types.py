@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.msgs.numpy_compat import np
+from runtime.msgs.numpy_compat import np
 logger = logging.getLogger(__name__)
 
 

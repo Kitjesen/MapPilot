@@ -7,9 +7,13 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from core.blueprints.profile_graph import resolve_profile_config
-from core.blueprints.runtime_endpoint import resolve_runtime_run_spec
-from core.runtime_switch import compare_runtime_switch, validate_runtime_switch
+from runtime.blueprints.profile_graph import resolve_profile_config
+from runtime.profiles.endpoints import resolve_runtime_run_spec
+from runtime.profiles.product_mode_contracts import (
+    PRODUCT_MODE_CONTRACTS,
+    product_mode_switch_plan,
+)
+from runtime.runtime_switch import compare_runtime_switch, validate_runtime_switch
 
 
 RUNTIME_SWITCH_PLAN_SCHEMA_VERSION = "lingtu.runtime_switch_plan.v1"
@@ -146,12 +150,22 @@ def build_runtime_switch_plan(request: Any = None) -> dict[str, Any]:
             for blocker in target_payload["blockers"]
         ]
         base.update(payload)
+        product_switch = None
+        if (
+            str(inputs["current_profile"]) in PRODUCT_MODE_CONTRACTS
+            and str(inputs["target_profile"]) in PRODUCT_MODE_CONTRACTS
+        ):
+            product_switch = product_mode_switch_plan(
+                str(inputs["current_profile"]),
+                str(inputs["target_profile"]),
+            )
         base.update(
             {
                 "ok": current_validation.ok and target_validation.ok,
                 "current_validation": current_payload,
                 "target_validation": target_payload,
                 "blockers": blockers,
+                "product_mode_switch": product_switch,
             }
         )
         return base

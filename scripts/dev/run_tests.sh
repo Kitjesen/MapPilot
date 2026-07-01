@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# LingTu CI test runner â€” fast tests first, slow/ROS2/sim tests last.
+# LingTu CI test runner éˆ?fast tests first, slow/ROS2/sim tests last.
 #
 # Usage:
 #   bash scripts/dev/run_tests.sh                     # all tests (fast-first ordering)
@@ -46,17 +46,17 @@ echo "============================================"
 echo ""
 
 # ======================================================================
-# Tier 1 â€” Core framework (fastest, highest value)
+# Tier 1 éˆ?Core framework (fastest, highest value)
 # ======================================================================
 echo "--- Tier 1: Core framework ---"
-if ! $PYTEST src/core/tests/ -m "not ros2 and not sim" $FLAGS; then
+if ! $PYTEST src/runtime/tests/ -m "not ros2 and not sim" $FLAGS; then
     echo "FAIL: Tier 1"
     EXIT_CODE=1
 fi
 echo ""
 
 # ======================================================================
-# Tier 2 â€” Memory, semantic, webrtc (pure Python, fast)
+# Tier 2 éˆ?Memory, perception/decision, webrtc (pure Python, fast)
 # ======================================================================
 echo "--- Tier 2: Memory ---"
 if ! $PYTEST src/memory/tests/ $FLAGS; then
@@ -64,21 +64,21 @@ if ! $PYTEST src/memory/tests/ $FLAGS; then
     EXIT_CODE=1
 fi
 
-echo "--- Tier 2: Semantic ---"
-if ! $PYTEST src/semantic/tests/ $FLAGS; then
-    echo "FAIL: Tier 2 (semantic)"
+echo "--- Tier 2: Perception / Decision ---"
+if ! $PYTEST src/perception/tests/ src/decision/tests/ $FLAGS; then
+    echo "FAIL: Tier 2 (perception/decision)"
     EXIT_CODE=1
 fi
 
 echo "--- Tier 2: WebRTC ---"
-if ! $PYTEST src/webrtc/tests/ $FLAGS; then
+if ! $PYTEST src/gateway/tests/ $FLAGS; then
     echo "FAIL: Tier 2 (webrtc)"
     EXIT_CODE=1
 fi
 echo ""
 
 # ======================================================================
-# Tier 3 â€” Navigation, slam, exploration (pure Python, moderate)
+# Tier 3 éˆ?Navigation, slam, exploration (pure Python, moderate)
 # ======================================================================
 echo "--- Tier 3: Navigation (no ros2) ---"
 if ! $PYTEST src/nav/tests/ -m "not ros2" $FLAGS; then
@@ -87,48 +87,48 @@ if ! $PYTEST src/nav/tests/ -m "not ros2" $FLAGS; then
 fi
 
 echo "--- Tier 3: SLAM (no ros2) ---"
-if ! $PYTEST src/slam/tests/ -m "not ros2" $FLAGS; then
+if ! $PYTEST src/localization/tests/ -m "not ros2" $FLAGS; then
     echo "FAIL: Tier 3 (slam)"
     EXIT_CODE=1
 fi
 
 echo "--- Tier 3: Exploration (no ros2) ---"
-if ! $PYTEST src/exploration/tests/ -m "not ros2" $FLAGS; then
+if ! $PYTEST src/nav/tests/exploration/ -m "not ros2" $FLAGS; then
     echo "FAIL: Tier 3 (exploration)"
     EXIT_CODE=1
 fi
 echo ""
 
 # ======================================================================
-# Tier 4 â€” Drivers, base_autonomy
+# Tier 4 éˆ?Drivers, base_autonomy
 # ======================================================================
 echo "--- Tier 4: Drivers (no sim) ---"
-if ! $PYTEST src/drivers/tests/ -m "not sim" $FLAGS; then
+if ! $PYTEST tests/drivers/ -m "not sim" $FLAGS; then
     echo "FAIL: Tier 4 (drivers)"
     EXIT_CODE=1
 fi
 
-echo "--- Tier 4: Base autonomy ---"
-if ! $PYTEST src/base_autonomy/tests/ $FLAGS; then
-    echo "FAIL: Tier 4 (base_autonomy)"
+echo "--- Tier 4: Nav local autonomy ---"
+if ! $PYTEST src/nav/tests/local/ $FLAGS; then
+    echo "FAIL: Tier 4 (nav local autonomy)"
     EXIT_CODE=1
 fi
 echo ""
 
 # ======================================================================
-# Tier 5 â€” Global planning (isolated C++ tests, if .so available)
+# Tier 5 éˆ?Global planning (isolated C++ tests, if .so available)
 # ======================================================================
-if [[ -f src/global_planning/pct_planner/planner/lib/libpy_planner.so ]]; then
-    echo "--- Tier 5: Global planning ---"
-    if ! $PYTEST src/global_planning/tests/ $FLAGS; then
-        echo "FAIL: Tier 5 (global_planning)"
+if [[ -f src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/libpy_planner.so ]]; then
+    echo "--- Tier 5: Nav planning backends ---"
+    if ! $PYTEST src/nav/tests/planning_backends/ $FLAGS; then
+        echo "FAIL: Tier 5 (nav planning backends)"
         EXIT_CODE=1
     fi
     echo ""
 fi
 
 # ======================================================================
-# Tier 6 â€” Gateway (fastapi-based, may need deps)
+# Tier 6 éˆ?Gateway (fastapi-based, may need deps)
 # ======================================================================
 echo "--- Tier 6: Gateway ---"
 if ! $PYTEST src/gateway/tests/test_gateway_helpers.py src/gateway/tests/test_gateway_app_bootstrap.py $FLAGS; then
@@ -138,7 +138,7 @@ fi
 echo ""
 
 # ======================================================================
-# Tier 7 â€” Slow / ROS2 / Simulation (if --all)
+# Tier 7 éˆ?Slow / ROS2 / Simulation (if --all)
 # ======================================================================
 if $RUN_ALL; then
     echo "--- Tier 7: ROS2 tests ---"

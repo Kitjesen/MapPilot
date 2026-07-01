@@ -92,8 +92,8 @@ class E2ENavTest(Node):
         self._send_static_tf()
 
         # Publishers
-        self.pub_odom    = self.create_publisher(Odometry,    '/nav/odometry',    10)
-        self.pub_cloud   = self.create_publisher(PointCloud2, '/nav/map_cloud',   10)
+        self.pub_odom    = self.create_publisher(Odometry,    '/slam/odometry',    10)
+        self.pub_cloud   = self.create_publisher(PointCloud2, '/slam/map_cloud',   10)
         self.pub_terrain = self.create_publisher(PointCloud2, '/nav/terrain_map', 10)
         self.pub_path    = self.create_publisher(Path,        '/nav/global_path', 10)
 

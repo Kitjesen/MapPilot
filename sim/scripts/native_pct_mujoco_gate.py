@@ -36,7 +36,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.msgs.numpy_compat import np, numpy_import_is_safe
+from runtime.msgs.numpy_compat import np, numpy_import_is_safe
 
 DEFAULT_MID360_PATTERN = ROOT / "sim/assets/livox/mid360.npy"
 DEFAULT_MID360_SAMPLES_PER_FRAME = 24000
@@ -278,8 +278,8 @@ def _planner_contract(route: "PctRoute", planner: str) -> dict[str, Any]:
         "selected_route_ok": bool(selection.get("selected_route_ok", route.plan.get("route_ok", True))),
         "path_safety_ok": bool(safety.get("ok", True)),
         "path_safety": safety,
-        "plan_backend_class": route.plan.get("backend_class"),
-        "native_backend_used": bool(route.plan.get("native_backend_used")),
+        "plan_planner_class": route.plan.get("planner_class"),
+        "native_runtime_used": bool(route.plan.get("native_runtime_used")),
         "native_runtime_ok": bool((route.plan.get("native_runtime") or {}).get("ok", True)),
         "pct_optimizer_enabled": route.plan.get("pct_optimizer_enabled"),
         "pct_optimizer_attempted": route.plan.get("pct_optimizer_attempted"),
@@ -460,8 +460,8 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
             blockers.append("source report selected_route_ok is false")
         if not source_contract["path_safety_ok"]:
             blockers.append("source report path_safety is not ok")
-        if planner_name == "pct" and not source_contract["native_backend_used"]:
-            blockers.append("source report did not use PCT native backend")
+        if planner_name == "pct" and not source_contract["native_runtime_used"]:
+            blockers.append("source report did not use PCT native runtime")
         if planner_name == "pct" and not source_contract["native_runtime_ok"]:
             blockers.append("source report PCT native_runtime is not ok")
         if planner_name == "pct" and not source_contract["tomogram_exists"]:
@@ -485,9 +485,9 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                         "same_source_map_artifact": map_artifacts.get("ok") is True,
                     }
                 },
-                "pct_backend_class": route.plan.get("backend_class"),
-                "pct_native_backend_used": (
-                    bool(route.plan.get("native_backend_used"))
+                "pct_planner_class": route.plan.get("planner_class"),
+                "pct_native_runtime_used": (
+                    bool(route.plan.get("native_runtime_used"))
                     if planner_name == "pct"
                     else False
                 ),
@@ -512,8 +512,8 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                 "contract_checks": {
                     "source_report_loads": True,
                     "planner_no_fallback": not source_contract["fallback_used"],
-                    "pct_native_backend_used": (
-                        source_contract["native_backend_used"]
+                    "pct_native_runtime_used": (
+                        source_contract["native_runtime_used"]
                         if planner_name == "pct"
                         else None
                     ),
@@ -560,7 +560,7 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
         report["contract_checks"] = {
             "source_report_loads": False,
             "planner_no_fallback": False,
-            "pct_native_backend_used": None,
+            "pct_native_runtime_used": None,
             "pct_native_runtime_ok": None,
             "pct_optimizer_mode_recorded": None,
             "pct_path_mode_supported": None,
@@ -632,8 +632,8 @@ def _load_pct_route(source_report: Path, *, route: str, planner: str = "pct") ->
             raise ValueError("source report used planner fallback; refusing PCT no-fallback gate")
         if selection.get("selected_route_ok") is False:
             raise ValueError("source report selected PCT route is not route_ok")
-        if not selected.get("native_backend_used"):
-            raise ValueError("PCT plan did not use native backend")
+        if not selected.get("native_runtime_used"):
+            raise ValueError("PCT plan did not use native runtime")
         runtime = selected.get("native_runtime") or {}
         if runtime and not runtime.get("ok"):
             raise ValueError("PCT native runtime is not healthy")
@@ -841,7 +841,7 @@ def _default_local_planner_path_folder() -> Path:
     candidates = (
         ROOT / "install/local_planner/share/local_planner/paths",
         ROOT / "install/share/local_planner/paths",
-        ROOT / "src/base_autonomy/local_planner/paths",
+        ROOT / "src/nav/services/plan/local_planner/paths",
     )
     for candidate in candidates:
         if (candidate / "startPaths.ply").is_file() and (candidate / "paths.ply").is_file():
@@ -2731,7 +2731,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "physical_gait_verified": False,
         "slam_verified": False,
         "real_lidar_verified": False,
-        "backend": {
+        "runtime": {
             "global_planner": "pct_native" if planner_name == "pct" else planner_name,
             "local_planner": "cmu_ros2_native/localPlanner",
             "path_follower": "cmu_ros2_native/pathFollower",
@@ -2754,7 +2754,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             "cmd_vel": "base_link",
             "sim_odometry": "map",
         },
-        "render_backend": os.environ.get("MUJOCO_GL", ""),
+        "render_runtime": os.environ.get("MUJOCO_GL", ""),
         "route": route.route,
         "sim_vehicle": str(args.sim_vehicle),
         "drive_adapter": "omni_local_path_tracker" if str(args.sim_vehicle) == "omni_cart" else "native_pathFollower_cmd_vel",
@@ -2775,8 +2775,8 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
                 "same_source_map_artifact": map_artifacts.get("ok") is True,
             }
         },
-        "pct_backend_class": route.plan.get("backend_class"),
-        "pct_native_backend_used": bool(route.plan.get("native_backend_used")) if planner_name == "pct" else False,
+        "pct_planner_class": route.plan.get("planner_class"),
+        "pct_native_runtime_used": bool(route.plan.get("native_runtime_used")) if planner_name == "pct" else False,
         "pct_runtime_ok": bool((route.plan.get("native_runtime") or {}).get("ok", True)),
         "pct_path_count": len(route.path),
         "pct_optimizer_enabled": source_contract["pct_optimizer_enabled"],
@@ -2797,10 +2797,10 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "validation_limitations": [
             "MuJoCo kinematic base only; policy gait and contact stability are not verified by this gate.",
             "Fast-LIO2 live localization is not part of this gate; run the Fast-LIO2 MuJoCo/live gate separately.",
-            "No real robot driver, Gateway command path, CmdVelMux hardware output, or systemd service is started.",
+            "No real robot driver, Gateway command path, VelocityMux hardware output, or systemd service is started.",
         ],
     }
-    report["backend"]["sim_driver"] = (
+    report["runtime"]["sim_driver"] = (
         "MuJoCoEngine(kinematic omni_cart)"
         if str(args.sim_vehicle) == "omni_cart"
         else "MuJoCoEngine(kinematic quadruped)"
@@ -2908,7 +2908,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         return report
 
     from sim.engine.core.engine import VelocityCommand
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_engine, _resolve_mid360_pattern
+    from sim.scripts.mujoco_live_gate import _build_engine, _resolve_mid360_pattern
 
     rclpy = mods["rclpy"]
     Odometry = mods["Odometry"]
@@ -3492,7 +3492,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             and path_stats["count"] > 0
             and nonzero_cmd_count > 0
             and moved_m >= args.min_motion_m
-            and (planner_name != "pct" or bool(route.plan.get("native_backend_used")))
+            and (planner_name != "pct" or bool(route.plan.get("native_runtime_used")))
             and (not obstacle_aware or not obstacle_clearance["collision"])
             and bool(trajectory_quality["ok"])
             and bool(local_path_evidence["ok"])

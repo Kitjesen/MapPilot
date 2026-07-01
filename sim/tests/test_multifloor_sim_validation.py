@@ -5,13 +5,13 @@ import pickle
 import pytest
 
 pytest.importorskip("rclpy", reason="Needs ROS2 runtime")
-from core.tests.numpy_guard import import_numpy_or_skip
+from runtime.tests.numpy_guard import import_numpy_or_skip
 
 np = import_numpy_or_skip()
 
 pytestmark = [pytest.mark.sim]
 
-from global_planning.pct_planner_runnable.runtime import prepare_tomogram_for_pct
+from nav.services.plan.global_planner.algorithm.pct.runtime.api import prepare_tomogram_for_pct
 from sim.engine.scenarios.multifloor_assets import build_multifloor_assets
 import sim.scripts.multifloor_nav_validation as multifloor_nav_validation
 from sim.scripts.multifloor_nav_validation import (
@@ -64,7 +64,7 @@ def test_multifloor_assets_have_floor_transition_gateway(tmp_path):
 
 
 def test_multifloor_assets_publish_same_source_saved_map_metadata(tmp_path):
-    from core.same_source_map_artifacts import validate_saved_map_artifact_dir
+    from runtime.same_source_map_artifacts import validate_saved_map_artifact_dir
 
     assets = build_multifloor_assets(tmp_path)
 
@@ -401,7 +401,7 @@ def test_partial_global_plan_is_kept_for_diagnostics_but_not_feasible(monkeypatc
     class FakeBackend:
         available = True
 
-    class FakeGlobalPlannerService:
+    class FakeGlobalPlanner:
         def __init__(self, **_: object) -> None:
             self._backend = FakeBackend()
             self.last_plan_report = {
@@ -416,8 +416,8 @@ def test_partial_global_plan_is_kept_for_diagnostics_but_not_feasible(monkeypatc
             return [np.array([0.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0])], 4.2
 
     monkeypatch.setattr(
-        "sim.scripts.multifloor_nav_validation.GlobalPlannerService",
-        FakeGlobalPlannerService,
+        "sim.scripts.multifloor_nav_validation.GlobalPlanner",
+        FakeGlobalPlanner,
     )
 
     tomogram = tmp_path / "diagnostic.tomogram"
@@ -443,7 +443,7 @@ def test_far_projected_safe_goal_is_not_counted_as_requested_goal(monkeypatch, t
     class FakeBackend:
         available = True
 
-    class FakeGlobalPlannerService:
+    class FakeGlobalPlanner:
         def __init__(self, **_: object) -> None:
             self._backend = FakeBackend()
             self.last_plan_report = {
@@ -458,8 +458,8 @@ def test_far_projected_safe_goal_is_not_counted_as_requested_goal(monkeypatch, t
             return [np.array([0.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0])], 4.2
 
     monkeypatch.setattr(
-        "sim.scripts.multifloor_nav_validation.GlobalPlannerService",
-        FakeGlobalPlannerService,
+        "sim.scripts.multifloor_nav_validation.GlobalPlanner",
+        FakeGlobalPlanner,
     )
 
     tomogram = tmp_path / "diagnostic.tomogram"
@@ -492,7 +492,7 @@ def test_pct_global_plan_reports_effective_planner_after_fallback(monkeypatch, t
         available = True
         _load_error = ""
 
-    class FakeGlobalPlannerService:
+    class FakeGlobalPlanner:
         def __init__(self, planner_name: str, **_: object) -> None:
             self._planner_name = planner_name
             self._backend = NativePCTBackend()
@@ -520,8 +520,8 @@ def test_pct_global_plan_reports_effective_planner_after_fallback(monkeypatch, t
             ], 3.4
 
     monkeypatch.setattr(
-        "sim.scripts.multifloor_nav_validation.GlobalPlannerService",
-        FakeGlobalPlannerService,
+        "sim.scripts.multifloor_nav_validation.GlobalPlanner",
+        FakeGlobalPlanner,
     )
     monkeypatch.setattr(
         multifloor_nav_validation,
@@ -546,7 +546,7 @@ def test_pct_global_plan_reports_effective_planner_after_fallback(monkeypatch, t
     assert plan["plan_safety_policy"] == "fallback_astar"
     assert plan["rejected_plans"][0]["planner"] == "pct"
     assert plan["backend_requested_class"] == "NativePCTBackend"
-    assert plan["backend_class"] == "AstarFallbackBackend"
+    assert plan["planner_class"] == "AstarFallbackBackend"
     assert plan["native_backend_used"] is False
 
     gate = _native_pct_gate(
@@ -625,14 +625,14 @@ def test_bridge_path_preparation_removes_near_start_dense_points():
     assert prepared.poses[-1].pose.position.x == 0.48
 
 
-def test_path_follower_nav_core_lookahead_stays_beyond_stop_threshold():
-    from base_autonomy.modules.path_follower_module import PathFollowerModule
+def test_path_follower_nav_kernel_lookahead_stays_beyond_stop_threshold():
+    from nav.local.path_follower import PathFollower
 
-    follower = PathFollowerModule(backend="nav_core", lookahead=0.8, goal_tolerance=0.25)
+    follower = PathFollower(backend="nav_kernel", lookahead=0.8, goal_tolerance=0.25)
     follower.setup()
     try:
-        if follower._backend != "nav_core" or follower._nc_params is None:
-            pytest.skip("_nav_core path follower backend is not available")
+        if follower._backend != "nav_kernel" or follower._nc_params is None:
+            pytest.skip("LingTu native navigation kernel path follower backend is not available")
         assert follower._nc_params.stop_dis_thre == pytest.approx(0.25)
         assert follower._nc_params.min_look_ahead_dis > follower._nc_params.stop_dis_thre
         assert follower._nc_params.base_look_ahead_dis >= follower._nc_params.min_look_ahead_dis
@@ -681,9 +681,9 @@ def test_bridge_loop_rejects_zero_cmd_vel_segment_even_with_message_counts(monke
 
 
 def test_local_planner_short_simple_path_still_has_two_points():
-    from base_autonomy.modules.local_planner_module import LocalPlannerModule
+    from nav.services.plan.local_planner.service import LocalPlanner
 
-    planner = LocalPlannerModule(backend="simple")
+    planner = LocalPlanner(backend="simple")
     start = np.asarray([1.0, 2.0, 0.0], dtype=float)
     goal = np.asarray([1.2, 2.1, 0.0], dtype=float)
 
@@ -695,7 +695,7 @@ def test_local_planner_short_simple_path_still_has_two_points():
 
 
 def test_nanobind_local_planner_skips_untrackable_placeholder_path():
-    from base_autonomy.modules.local_planner_module import LocalPlannerModule
+    from nav.services.plan.local_planner.service import LocalPlanner
 
     class FakeVec:
         def __init__(self, x, y, z):
@@ -718,7 +718,7 @@ def test_nanobind_local_planner_skips_untrackable_placeholder_path():
         def plan(self, *args):
             return FakeResult()
 
-    planner = LocalPlannerModule(backend="nanobind")
+    planner = LocalPlanner(backend="nanobind")
     planner._core = FakeCore()
     planner._latest_waypoint = _pose_stamped([1.0, 0.0, 0.0])
     planner._robot_pos = np.asarray([0.0, 0.0, 0.0], dtype=float)

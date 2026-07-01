@@ -183,11 +183,11 @@ def _live_nav_chain_evidence(report: dict[str, Any]) -> dict[str, Any]:
     mapping_input_path = str(report.get("true_mapping_input_path") or "")
     mapping_lower = mapping_input_path.lower()
     required_mapping_tokens = (
-        "/points_raw",
-        "/imu_raw",
+        "/lidar/raw_frame",
+        "/imu/raw",
         "fastlio2",
-        "/nav/odometry",
-        "/nav/map_cloud",
+        "/slam/odometry",
+        "/slam/map_cloud",
     )
 
     if nav_data_source != "fastlio2":

@@ -1,4 +1,4 @@
-﻿"""
+"""
 测试Laplacian模糊滤波器、3D投影、实例追踪、场景图
 
 参考: SEMANTIC_NAV_REPORT.md 第7.1节
@@ -7,9 +7,9 @@
 
 import pytest
 import numpy as np
-from semantic.perception.laplacian_filter import is_blurry
-from semantic.perception.projection import project_to_3d, CameraIntrinsics
-from semantic.perception.instance_tracker import InstanceTracker
+from perception.laplacian_filter import is_blurry
+from perception.projection import project_to_3d, CameraIntrinsics
+from perception.instance_tracker import InstanceTracker
 
 
 class TestLaplacianFilter:

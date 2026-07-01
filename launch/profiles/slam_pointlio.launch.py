@@ -43,18 +43,18 @@ def generate_launch_description():
         remappings=[
             # ── 输出: 相对话题名 → 标准接口 ──
             # 机体坐标系点云 (body frame)
-            ("cloud_registered_body", "/nav/registered_cloud"),
+            ("cloud_registered_body", "/slam/registered_cloud"),
             # 世界坐标系点云 (world frame)
-            ("cloud_registered",      "/nav/map_cloud"),
+            ("cloud_registered",      "/slam/map_cloud"),
             # 里程计
-            ("aft_mapped_to_init",    "/nav/odometry"),
+            ("aft_mapped_to_init",    "/slam/odometry"),
             # 轨迹
             ("path",                  "/lio_path"),
             # ── 输入: yaml 中配置的话题名 → 标准接口 ──
-            ("livox/imu",             "/nav/imu"),
-            ("livox/lidar",           "/nav/lidar_scan"),
+            ("livox/imu",             "/imu/raw"),
+            ("livox/lidar",           "/lidar/raw_frame"),
             # ── 服务: 相对名, 通过 namespace 变为 /pointlio/save_map → 标准接口 ──
-            ("save_map",              "/nav/save_map"),
+            ("save_map",              "/slam/save_map"),
         ],
     )
 

@@ -96,6 +96,35 @@ def test_scene_graph_path_and_locations_routes_validate_response_contracts():
     assert locations.locations[0].source == "test"
 
 
+def test_map_event_is_forwarded_to_sse_payload():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    events: list[dict] = []
+    gateway.push_event = events.append
+
+    gateway._on_map_event(
+        {
+            "schema_version": "map.event.v1",
+            "event": "map.active_changed",
+            "map_id": "field_01",
+        }
+    )
+
+    assert "map_event" in gateway.port_summary()["ports_in"]
+    assert events == [
+        {
+            "type": "map_event",
+            "data": {
+                "schema_version": "map.event.v1",
+                "event": "map.active_changed",
+                "map_id": "field_01",
+            },
+        }
+    ]
+
+
 def test_scene_graph_route_degrades_invalid_json_to_empty_structured_payload():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SceneGraphResponse
@@ -116,8 +145,8 @@ def test_scene_graph_route_degrades_invalid_json_to_empty_structured_payload():
 
 
 def test_path_route_accepts_core_path_messages_without_dropping_points():
-    from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-    from core.msgs.nav import Path
+    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+    from runtime.msgs.nav import Path
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import PathResponse
 

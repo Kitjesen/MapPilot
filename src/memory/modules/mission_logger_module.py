@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core import In, Module, skill
-from core.msgs import Odometry
-from core.registry import register
+from runtime import In, Module, skill
+from runtime.msgs import Odometry
+from runtime.registry import register
 
 logger = logging.getLogger(__name__)
 

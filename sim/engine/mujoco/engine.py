@@ -17,9 +17,15 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from sim.engine.core.engine import CameraData, RobotState, SimEngine, VelocityCommand
+from sim.engine.core.engine import (
+    CameraData,
+    DiscreteRayData,
+    RobotState,
+    SimEngine,
+    VelocityCommand,
+)
 from sim.engine.core.robot import RobotConfig, THUNDER_V3_JOINT_NAMES
-from sim.engine.core.sensor import CameraConfig, IMUConfig, LidarConfig
+from sim.engine.core.sensor import CameraConfig, DiscreteRayConfig, IMUConfig, LidarConfig
 from sim.engine.core.world import WorldConfig, SimWorld
 from sim.engine.mujoco.camera import MuJoCoCamera
 from sim.engine.mujoco.lidar import MuJoCoLidar
@@ -52,7 +58,8 @@ class MuJoCoEngine(SimEngine):
                  camera_configs: Optional[List[CameraConfig]] = None,
                  imu_config: Optional[IMUConfig] = None,
                  headless: bool = True,
-                 drive_mode: str = "policy") -> None:
+                 drive_mode: str = "policy",
+                 discrete_ray_config: Optional[DiscreteRayConfig] = None) -> None:
         """Initialize MuJoCo engine (model not loaded; call load() before use).
 
         Args:
@@ -73,6 +80,7 @@ class MuJoCoEngine(SimEngine):
         self._lidar_cfg = lidar_config or LidarConfig()
         self._camera_cfgs = camera_configs or []
         self._imu_cfg = imu_config or IMUConfig()
+        self._discrete_ray_cfg = discrete_ray_config or DiscreteRayConfig()
         self._headless = headless
         self._drive_mode = (drive_mode or "policy").strip().lower()
         if self._drive_mode not in {"policy", "kinematic"}:
@@ -113,9 +121,9 @@ class MuJoCoEngine(SimEngine):
         self._stop_event = threading.Event()
         self._sim_thread: Optional[threading.Thread] = None
 
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # Lifecycle
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def load(self, xml_path: str = "", **kwargs: Any) -> None:
         """Load scene and initialize all subsystems.
@@ -140,10 +148,10 @@ class MuJoCoEngine(SimEngine):
                           or 'type="plane"' in _xml_content)
             _has_actuators = '<actuator>' in _xml_content
             if _has_floor and _has_actuators:
-                # Scene already has robot (actuators present) — use as-is
+                # Scene already has robot (actuators present) 鈥?use as-is
                 self._model = mujoco.MjModel.from_xml_path(xml_path)
             elif _has_floor and not _has_actuators:
-                # Scene has floor but no robot — merge robot into scene using
+                # Scene has floor but no robot 鈥?merge robot into scene using
                 # structured XML editing so nested placeholder bodies are
                 # removed safely.
                 import copy
@@ -507,9 +515,9 @@ class MuJoCoEngine(SimEngine):
         self._cameras.clear()
         print('[MuJoCoEngine] Closed.')
 
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # Simulation stepping
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def step(self, cmd: Optional[VelocityCommand] = None) -> RobotState:
         """Advance one control cycle (policy_dt = 0.02s = 10 physics steps).
@@ -666,9 +674,9 @@ class MuJoCoEngine(SimEngine):
         ctrl_span = min(len(targets_mj), max(0, len(self._data.ctrl) - offset))
         self._data.ctrl[offset:offset + ctrl_span] = targets_mj[:ctrl_span]
 
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # State reading
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def get_robot_state(self, robot_id: str = "robot_0") -> RobotState:
         """Read current robot state snapshot."""
@@ -749,9 +757,140 @@ class MuJoCoEngine(SimEngine):
             return np.zeros((0, 4), dtype=np.float32)
         return self._lidar.scan()
 
-    # ──────────────────────────────────────────────────────────────
+    def get_lidar_backend_report(self) -> dict:
+        """Return JSON-ready LiDAR backend evidence for validation reports."""
+        if self._lidar is None:
+            return {
+                "backend": "none",
+                "mature_backend": False,
+                "fallback_used": False,
+                "error": "lidar_not_initialized",
+            }
+        report = getattr(self._lidar, "backend_report", None)
+        if callable(report):
+            return report()
+        return {
+            "backend": getattr(self._lidar, "backend", "unknown"),
+            "mature_backend": False,
+            "fallback_used": False,
+            "error": "backend_report_unavailable",
+        }
+
+    def get_discrete_rays(self, config: Optional[DiscreteRayConfig] = None) -> DiscreteRayData:
+        """Return IsaacLab-style fixed-pattern terrain ray observations."""
+        import mujoco
+
+        cfg = config or self._discrete_ray_cfg
+        if cfg.pattern != "grid":
+            raise ValueError(f"unsupported discrete ray pattern: {cfg.pattern}")
+        if self._model is None or self._data is None:
+            return DiscreteRayData(
+                heights=np.zeros((0,), dtype=np.float32),
+                points_body=np.zeros((0, 3), dtype=np.float32),
+                points_world=np.zeros((0, 3), dtype=np.float32),
+                valid_mask=np.zeros((0,), dtype=bool),
+                pattern=cfg.pattern,
+                metadata={"reason": "engine_not_loaded"},
+            )
+
+        x_count = max(1, int(cfg.x_count))
+        y_count = max(1, int(cfg.y_count))
+        xs = np.linspace(float(cfg.x_min), float(cfg.x_max), x_count)
+        ys = np.linspace(float(cfg.y_min), float(cfg.y_max), y_count)
+        sample_body = np.array(
+            [[x, y, float(cfg.ray_start_z)] for x in xs for y in ys],
+            dtype=np.float64,
+        )
+        n_samples = int(sample_body.shape[0])
+
+        body_id = self._base_body_id
+        body_pos = self._data.xpos[body_id].copy()
+        rmat = self._data.xmat[body_id].reshape(3, 3).copy()
+        starts_world = body_pos + sample_body @ rmat.T
+
+        direction_body = np.asarray(cfg.direction_body, dtype=np.float64).reshape(3)
+        norm = float(np.linalg.norm(direction_body))
+        if norm <= 1e-12:
+            raise ValueError("discrete ray direction must be non-zero")
+        direction_body = direction_body / norm
+        direction_world = direction_body @ rmat.T
+
+        geomgroup = np.zeros(6, dtype=np.uint8)
+        for group in cfg.geom_group_mask:
+            idx = int(group)
+            if 0 <= idx < len(geomgroup):
+                geomgroup[idx] = 1
+        if not np.any(geomgroup):
+            geomgroup[:] = 1
+
+        hits_world = np.full((n_samples, 3), np.nan, dtype=np.float32)
+        hits_body = np.full((n_samples, 3), np.nan, dtype=np.float32)
+        heights = np.full((n_samples,), np.nan, dtype=np.float32)
+        valid = np.zeros((n_samples,), dtype=bool)
+        ray_length = max(0.01, float(cfg.ray_length))
+
+        for i, start in enumerate(starts_world):
+            geom_id = np.array([-1], dtype=np.int32)
+            dist = float(
+                mujoco.mj_ray(
+                    self._model,
+                    self._data,
+                    start,
+                    direction_world,
+                    geomgroup,
+                    1,
+                    body_id,
+                    geom_id,
+                )
+            )
+            if not (0.0 <= dist <= ray_length):
+                continue
+            geom = int(geom_id[0])
+            if geom >= 0:
+                geom_body = int(self._model.geom_bodyid[geom])
+                if self._is_descendant_body(geom_body, body_id):
+                    continue
+            hit_world = start + direction_world * dist
+            hit_body = (hit_world - body_pos) @ rmat
+            hits_world[i] = hit_world.astype(np.float32)
+            hits_body[i] = hit_body.astype(np.float32)
+            heights[i] = float(body_pos[2] - hit_world[2])
+            valid[i] = True
+
+        return DiscreteRayData(
+            heights=heights,
+            points_body=hits_body,
+            points_world=hits_world,
+            valid_mask=valid,
+            pattern=cfg.pattern,
+            metadata={
+                "sample_count": n_samples,
+                "valid_count": int(valid.sum()),
+                "x_count": x_count,
+                "y_count": y_count,
+                "ray_start_z": float(cfg.ray_start_z),
+                "ray_length": ray_length,
+                "direction_body": [float(v) for v in direction_body],
+            },
+        )
+
+    def _is_descendant_body(self, body_id: int, root_body_id: int) -> bool:
+        """Return whether ``body_id`` is ``root_body_id`` or its child body."""
+        if self._model is None:
+            return False
+        cursor = int(body_id)
+        root = int(root_body_id)
+        while cursor >= 0:
+            if cursor == root:
+                return True
+            if cursor == 0:
+                return False
+            cursor = int(self._model.body_parentid[cursor])
+        return False
+
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # Control interface
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def set_cmd_vel(self, cmd: VelocityCommand, robot_id: str = "robot_0") -> None:
         """Set velocity command (thread-safe)."""
@@ -773,9 +912,9 @@ class MuJoCoEngine(SimEngine):
             raise ValueError(f"Expected 16 joint positions, got {len(positions)}")
         self._write_leg_ctrl(np.asarray(positions[:16], dtype=np.float64))
 
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # Scene manipulation
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def set_robot_pose(self, position: np.ndarray,
                        orientation: np.ndarray) -> None:
@@ -810,11 +949,11 @@ class MuJoCoEngine(SimEngine):
             rgba=rgba or [0.7, 0.7, 0.7, 1.0],
         )
         self._world_cfg.obstacles.append(obs)
-        print(f'[MuJoCoEngine] Obstacle "{name}" queued — call load() to apply.')
+        print(f'[MuJoCoEngine] Obstacle "{name}" queued 鈥?call load() to apply.')
 
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # Properties
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     @property
     def dt(self) -> float:
@@ -855,9 +994,9 @@ class MuJoCoEngine(SimEngine):
     def drive_mode(self) -> str:
         return self._drive_mode
 
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # Background physics thread (optional, for async stepping)
-    # ──────────────────────────────────────────────────────────────
+    # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def start_background_sim(self) -> None:
         """Run physics stepping in a background thread (separate from rendering)."""

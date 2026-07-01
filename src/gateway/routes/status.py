@@ -740,7 +740,7 @@ def register_status_routes(app, gw) -> None:
                         }
                     elif "CameraBridge" in name:
                         sensors["camera"] = build_camera_status(gw)
-                    elif "SlamBridge" in name or "SLAMModule" in name:
+                    elif "SlamBridge" in name:
                         odom_out = h.get("ports_out", {}).get("odometry", {})
                         slam_rate = round(odom_out.get("rate_hz", 0), 1)
                         sensors["slam"] = {
@@ -752,7 +752,7 @@ def register_status_routes(app, gw) -> None:
                             "hz": slam_rate,
                             "messages": odom_out.get("msg_count", 0),
                         }
-                    elif "Navigation" in name:
+                    elif "nav.mission" in name:
                         nav = h.get("navigation", h)
                         sensors["navigation"] = {
                             "state": nav.get(

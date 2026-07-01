@@ -22,7 +22,7 @@
 | P0-03 | Click goal -> arrive | `docs/07-testing/p0_goto.sh` | `test_new_modules.py::Navigation` | `todo` | — | — |
 | P0-04 | E-stop reflex | `docs/07-testing/p0_estop.sh` | `test_new_modules.py::SafetyRing` | `todo` | — | — |
 | P0-05 | Wave 1 hard-guardrail production path | embedded in P0-01 | 17 tests | `verified` (unit) / `todo` (robot) | — | — |
-| P0-06 | scipy / `_nav_core.so` ready on S100P | first launch under P0-01 | — | `todo` | — | — |
+| P0-06 | scipy / `_nav_runtime.so` ready on S100P | first launch under P0-01 | — | `todo` | — | — |
 
 ---
 

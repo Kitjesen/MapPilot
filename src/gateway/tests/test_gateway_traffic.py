@@ -9,7 +9,7 @@ import pytest
 
 
 pytest.importorskip("fastapi")
-from core.tests.numpy_guard import numpy_safe_skip_mark
+from runtime.tests.numpy_guard import numpy_safe_skip_mark
 
 
 def test_sse_slow_client_keeps_latest_events_and_drops_oldest():

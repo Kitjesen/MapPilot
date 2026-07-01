@@ -117,10 +117,10 @@ SemanticPlannerModule._on_instruction
 | `VoiceIntentPlanner` | `products/nova-dog/runtime/services/askme-edge-service/.../planner.py` |
 | `mission-orchestrator` | `products/nova-dog/runtime/services/mission-orchestrator/` |
 | `LingTuGrpcBridge` | `products/nova-dog/runtime/services/nav-gateway/.../lingtu_grpc_bridge.py` |
-| `ControlService` (C++) | `src/remote_monitoring/src/core/control_service.cpp` |
-| `TaskManager` (C++) | `src/remote_monitoring/src/core/task_manager.cpp` |
-| `SemanticPlannerModule` | `src/semantic/planner/semantic_planner/semantic_planner_module.py` |
-| `GoalResolver` | `src/semantic/planner/semantic_planner/goal_resolver.py` |
+| `ControlService` (C++) | `src/remote_monitoring/src/runtime/control_service.cpp` |
+| `TaskManager` (C++) | `src/remote_monitoring/src/runtime/task_manager.cpp` |
+| `SemanticPlannerModule` | `src/decision/semantic_planner/semantic_planner_module.py` |
+| `GoalResolver` | `src/decision/semantic_planner/goal_resolver.py` |
 
 ## gRPC direct (development)
 

@@ -34,15 +34,15 @@ def generate_launch_description():
         parameters=[{"config_path": LaunchConfiguration("lio_config")}],
         remappings=[
             # ── 输出: 绝对话题 → 标准接口 ──
-            ("/cloud_registered",  "/nav/registered_cloud"),
-            ("/cloud_map",         "/nav/map_cloud"),
-            ("/Odometry",          "/nav/odometry"),
+            ("/cloud_registered",  "/slam/registered_cloud"),
+            ("/cloud_map",         "/slam/map_cloud"),
+            ("/Odometry",          "/slam/odometry"),
             ("/path",              "/lio_path"),
             # ── 输入: 来自 lio.yaml 配置的话题名 → 标准接口 ──
-            ("/imu/data",          "/nav/imu"),
-            ("/lidar/scan",        "/nav/lidar_scan"),
+            ("/imu/data",          "/imu/raw"),
+            ("/lidar/scan",        "/lidar/raw_frame"),
             # ── 服务: 相对名, 通过 namespace 变为 /fastlio2/save_map → 标准接口 ──
-            ("save_map",           "/nav/save_map"),
+            ("save_map",           "/slam/save_map"),
         ],
     )
 

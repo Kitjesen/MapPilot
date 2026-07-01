@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Live visualization via Rerun — full robot dashboard.
+"""Live visualization via Rerun 鈥?full robot dashboard.
 
 Channels:
-  world/point_cloud   — LiDAR voxel blocks (height-colored Boxes3D)
-  world/robot         — robot body (wireframe box)
-  world/heading       — orientation arrow (yellow)
-  world/trajectory    — path traveled (blue line)
-  world/costmap       — 2D occupancy grid (colored mesh)
-  world/detections    — detected objects (labeled 3D points)
-  world/nav_path      — planned navigation path (green line)
-  world/tf/{frame}    — TF coordinate frames (Transform3D)
-  camera/color        — RGB camera (rotated for vertical mount)
-  camera/depth        — depth image
-  metrics/slam_hz     — SLAM update rate
-  metrics/det_count   — detection count
+  world/point_cloud   鈥?LiDAR voxel blocks (height-colored Boxes3D)
+  world/robot         鈥?robot body (wireframe box)
+  world/heading       鈥?orientation arrow (yellow)
+  world/trajectory    鈥?path traveled (blue line)
+  world/costmap       鈥?2D occupancy grid (colored mesh)
+  world/detections    鈥?detected objects (labeled 3D points)
+  world/nav_path      鈥?planned navigation path (green line)
+  world/tf/{frame}    鈥?TF coordinate frames (Transform3D)
+  camera/color        鈥?RGB camera (rotated for vertical mount)
+  camera/depth        鈥?depth image
+  metrics/slam_hz     鈥?SLAM update rate
+  metrics/det_count   鈥?detection count
 
 Usage:
   On S100P (web viewer for remote access):
@@ -22,11 +22,11 @@ Usage:
   On S100P (local native viewer):
     python3 scripts/visualization/rerun_live.py --native
 
-  View remotely (method 1 — web viewer via SSH tunnel):
+  View remotely (method 1 鈥?web viewer via SSH tunnel):
     ssh -L 9090:127.0.0.1:9090 -L 9877:127.0.0.1:9877 sunrise@192.168.66.190
     Open http://localhost:9090
 
-  View remotely (method 2 — native viewer connects to S100P gRPC):
+  View remotely (method 2 鈥?native viewer connects to S100P gRPC):
     python3 scripts/visualization/rerun_live.py                          # on S100P
     rerun --connect rerun+http://192.168.66.190:9877/proxy # on local PC
 """
@@ -51,7 +51,7 @@ parser.add_argument("--web-port", type=int, default=9090)
 parser.add_argument("--grpc-port", type=int, default=9877)
 _args = parser.parse_args()
 
-from compat.ros2.context import ensure_rclpy, get_shared_executor, shutdown_shared_executor
+from runtime.adapters.ros2.context import ensure_rclpy, get_shared_executor, shutdown_shared_executor
 ensure_rclpy()
 
 import rerun as rr
@@ -104,16 +104,16 @@ counts = {"odom": 0, "cloud": 0, "color": 0, "depth": 0,
           "costmap": 0, "det": 0, "path": 0, "tf": 0}
 _last_odom_t = 0.0
 
-# Robot body dimensions (half-sizes in meters) — Thunder quadruped
+# Robot body dimensions (half-sizes in meters) 鈥?Thunder quadruped
 ROBOT_HALF = [0.35, 0.155, 0.15]
 
 # Accumulated global map (voxel hash for dedup, keeps map growing)
 _MAP_VOXEL_SIZE = 0.1  # 10cm grid for accumulation
-_map_voxels = {}  # (ix,iy,iz) → [r,g,b]
+_map_voxels = {}  # (ix,iy,iz) 鈫?[r,g,b]
 _MAP_MAX = 100000  # max voxels to display
 
 
-# ── Point Cloud (accumulate into global map) ─────────────────────────────────
+# 鈹€鈹€ Point Cloud (accumulate into global map) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_cloud(msg):
     counts["cloud"] += 1
     if counts["cloud"] % 5 != 0:  # throttle to ~2Hz
@@ -163,7 +163,7 @@ def on_cloud(msg):
         pass
 
 
-# ── Robot Pose (wireframe box + heading arrow) ───────────────────────────────
+# 鈹€鈹€ Robot Pose (wireframe box + heading arrow) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_odom(msg):
     global _last_odom_t
     counts["odom"] += 1
@@ -173,7 +173,7 @@ def on_odom(msg):
     q = msg.pose.pose.orientation
     x, y, z = p.x, p.y, p.z
 
-    # Robot body — wireframe box
+    # Robot body 鈥?wireframe box
     rr.log("world/robot", rr.Boxes3D(
         centers=[[x, y, z + ROBOT_HALF[2]]],
         half_sizes=[ROBOT_HALF],
@@ -208,7 +208,7 @@ def on_odom(msg):
     _last_odom_t = now
 
 
-# ── TF Coordinate Frames ────────────────────────────────────────────────────
+# 鈹€鈹€ TF Coordinate Frames 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_tf(msg):
     counts["tf"] += 1
     try:
@@ -225,7 +225,7 @@ def on_tf(msg):
 
 
 def on_tf_static(msg):
-    """Static TF — logged once with static=True."""
+    """Static TF 鈥?logged once with static=True."""
     try:
         for tf in msg.transforms:
             child = tf.child_frame_id.lstrip("/")
@@ -239,7 +239,7 @@ def on_tf_static(msg):
         pass
 
 
-# ── Costmap (2D occupancy grid → colored ground plane) ───────────────────────
+# 鈹€鈹€ Costmap (2D occupancy grid 鈫?colored ground plane) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_costmap(msg):
     counts["costmap"] += 1
     if counts["costmap"] % 5 != 0:  # throttle
@@ -284,7 +284,7 @@ def on_costmap(msg):
         pass
 
 
-# ── Detections (3D labeled points from MarkerArray) ──────────────────────────
+# 鈹€鈹€ Detections (3D labeled points from MarkerArray) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_detections(msg):
     counts["det"] += 1
     try:
@@ -316,7 +316,7 @@ def on_detections(msg):
         pass
 
 
-# ── Navigation Path (green line) ─────────────────────────────────────────────
+# 鈹€鈹€ Navigation Path (green line) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_nav_path(msg):
     counts["path"] += 1
     try:
@@ -330,7 +330,7 @@ def on_nav_path(msg):
         pass
 
 
-# ── Terrain Map (local planner input, PointCloud2 with traversability) ────────
+# 鈹€鈹€ Terrain Map (local planner input, PointCloud2 with traversability) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_terrain(msg):
     counts["terrain"] = counts.get("terrain", 0) + 1
     if counts["terrain"] % 3 != 0:
@@ -364,7 +364,7 @@ def on_terrain(msg):
         pass
 
 
-# ── Camera Color ─────────────────────────────────────────────────────────────
+# 鈹€鈹€ Camera Color 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def _crop_square(img):
     """Crop center square from portrait image after rotation."""
     h, w = img.shape[:2]
@@ -406,7 +406,7 @@ def on_color(msg):
         pass
 
 
-# ── Camera Depth ─────────────────────────────────────────────────────────────
+# 鈹€鈹€ Camera Depth 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 def on_depth(msg):
     counts["depth"] += 1
     if counts["depth"] % 15 != 0:  # throttle to ~2fps
@@ -439,9 +439,9 @@ def on_depth(msg):
         pass
 
 
-# ── Subscribe ────────────────────────────────────────────────────────────────
-node.create_subscription(Odometry, "/nav/odometry", on_odom, qos)
-node.create_subscription(PointCloud2, "/nav/map_cloud", on_cloud, qos)
+# 鈹€鈹€ Subscribe 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+node.create_subscription(Odometry, "/slam/odometry", on_odom, qos)
+node.create_subscription(PointCloud2, "/slam/map_cloud", on_cloud, qos)
 node.create_subscription(Image, "/camera/color/image_raw", on_color, qos)
 node.create_subscription(Image, "/camera/depth/image_raw", on_depth, qos)
 node.create_subscription(OccupancyGrid, "/nav/costmap", on_costmap, qos_best)

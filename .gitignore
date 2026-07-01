@@ -24,6 +24,7 @@ logs/
 output/
 MUJOCO_LOG.TXT
 status.out
+.tmp_*
 
 # 鈹€鈹€ Python 鈹€鈹€
 __pycache__/
@@ -58,7 +59,14 @@ src/libc++.dll
 *.dylib
 *.exe
 *.out
+src/nav/core/build/
 src/nav/core/build_nb*/
+src/slam/fastlio2/portable/build/
+src/nav/kernel/build_py/
+src/nav/kernel/build_nb*/
+src/nav/services/plan/**/build/
+src/nav/services/plan/**/CMakeFiles/
+src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/
 
 # C++ build artifacts in global_planning
 src/global_planning/**/build/
@@ -91,6 +99,8 @@ docs/media/videos/*.mp4
 docs/media/videos/*.gif
 !src/global_planning/pct_planner/rsc/PCD/example.pcd
 !src/global_planning/pct_planner/rsc/tomogram/example.pickle
+!src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/lib/*.so*
+!src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/octomap/pcd_files/*.pcd
 
 # 鈹€鈹€ IDE / editor / tooling 鈹€鈹€
 .vscode/
@@ -172,6 +182,7 @@ sim/robots/*/tmp*.xml
 # 鈹€鈹€ Misc generated 鈹€鈹€
 generate_paper_figures*.py
 src/global_planning/pct_planner/planner/lib/3rdparty/
+src/global_planning/pct_planner/rsc/tomogram/.pct_runnable_cache/
 .claude/worktrees/
 mobileclip_blt.ts
 src/mobileclip_blt.ts

@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from core.msgs.numpy_compat import np
+from runtime.msgs.numpy_compat import np
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS entity_observations (

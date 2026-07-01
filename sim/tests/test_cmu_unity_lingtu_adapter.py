@@ -5,7 +5,7 @@ import sys
 import types
 
 import pytest
-from core.tests.numpy_guard import import_numpy_or_skip
+from runtime.tests.numpy_guard import import_numpy_or_skip
 
 pytestmark = [pytest.mark.sim]
 

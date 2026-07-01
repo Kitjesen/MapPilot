@@ -1,4 +1,4 @@
-"""nav_overlay.py — Map overlay drawing utility for navigation demos.
+"""nav_overlay.py 鈥?Map overlay drawing utility for navigation demos.
 
 Provides a single function draw_nav_overlay() that draws a 2D map panel and
 info text onto a video frame. Used by recording scripts and live visualizers.
@@ -37,8 +37,8 @@ def draw_nav_overlay(
         goal:           (x, y) world position of the goal.
         lidar_pts:      Nx3 point cloud array, or None.
         trail:          List of (x, y) world-coord tuples for the robot trail.
-        global_path:    List of np.ndarray waypoints from NavigationModule._path.
-        nav_health:     Dict from NavigationModule.health()["navigation"].
+        global_path:    List of np.ndarray waypoints from nav.mission._path.
+        nav_health:     Dict from nav.mission.health()["navigation"].
         elapsed:        Seconds elapsed since navigation start.
         scan_count:     Total number of LiDAR scans received.
         map_resolution: Grid cell size in meters (default 0.2).
@@ -64,13 +64,13 @@ def draw_nav_overlay(
     scale = (panel_size - 10) / world_span          # px / m
 
     def w2p(wx, wy):
-        """World coord → panel-local pixel coord."""
+        """World coord 鈫?panel-local pixel coord."""
         px = int((panel_size // 2) + (wx - cx_off) * scale)
         py = int((panel_size // 2) - (wy - cy_off) * scale)
         return px, py
 
     def p2frame(px, py):
-        """Panel-local pixel → frame pixel coord."""
+        """Panel-local pixel 鈫?frame pixel coord."""
         return panel_x + px, panel_y + py
 
     # --- Semi-transparent dark background panel ---------------------------
@@ -99,7 +99,7 @@ def draw_nav_overlay(
             ppx, ppy = w2p(wx, wy)
             fx, fy = p2frame(ppx, ppy)
             if 0 <= fx < W and 0 <= fy < H:
-                # dark red → bright red as occupancy rises
+                # dark red 鈫?bright red as occupancy rises
                 intensity = min(255, int(v * 2.5))
                 color = (intensity // 4, intensity // 8, intensity)
                 cv2.circle(frame, (fx, fy), 2, color, -1)

@@ -1,7 +1,7 @@
-"""Lidar — enterprise-grade Livox MID-360 interface.
+﻿"""Lidar - Livox MID-360 stream interface.
 
-Manages the full lifecycle: native driver process → DDS subscription →
-NumPy point cloud delivery. Replaces ros2 launch with a single call.
+Consumes an existing Livox DDS stream and delivers NumPy point clouds. Native
+driver process startup is an explicit compatibility option.
 
 Usage::
 
@@ -9,12 +9,12 @@ Usage::
 
     # connect + callback
     lidar = Lidar()
-    lidar.connect("192.168.1.115")
+    lidar.connect("192.168.1.115")      # subscribe only; driver is external
     lidar.on_cloud(lambda pts: print(pts.shape))
 
     # polling
     cloud = lidar.wait_for_cloud()          # numpy (N, 4) x,y,z,intensity
-    imu   = lidar.get_imu()                 # core.msgs.sensor.Imu
+    imu   = lidar.get_imu()                 # runtime.msgs.sensor.Imu
 
     # health
     print(lidar.health)                     # LidarHealth(fps=10.0, frames=42, ...)
@@ -22,7 +22,7 @@ Usage::
 
     lidar.disconnect()
 
-    # context manager — auto connect/disconnect
+    # Context manager
     with Lidar("192.168.1.115") as lidar:
         cloud = lidar.wait_for_cloud()
 """
@@ -38,15 +38,16 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from core.msgs.numpy_compat import np
-from core.runtime_interface import TOPICS
+from runtime.msgs.numpy_compat import np
+from runtime.runtime_interface import TOPICS
 
-from ._dds import HAS_LIVOX_IDL, DDS_Imu, LivoxCustomMsg, dds_imu_to_imu, livox_msg_to_numpy
+from .dds_adapter import LivoxDdsAdapter
+from .frame_stream import LidarFrameStream
 
 logger = logging.getLogger(__name__)
 
 
-# ── State machine ───────────────────────────────────────────────────────
+# State machine
 
 
 class LidarState(enum.Enum):
@@ -57,12 +58,12 @@ class LidarState(enum.Enum):
     ERROR        = "error"
 
 
-# ── Health metrics ──────────────────────────────────────────────────────
+# Health metrics
 
 
 @dataclass
 class LidarHealth:
-    """Observable health metrics — updated every frame."""
+    """Observable health metrics - updated every frame."""
     state: LidarState = LidarState.DISCONNECTED
     ip: str = ""
     fps: float = 0.0
@@ -89,51 +90,21 @@ class LidarHealth:
             "last_error": self.last_error,
         }
 
-
-# ── FPS counter ─────────────────────────────────────────────────────────
-
-
-class _FPSCounter:
-    """Sliding-window frame rate estimator (1-second window)."""
-
-    def __init__(self, window: float = 1.0):
-        self._window = window
-        self._timestamps: list[float] = []
-
-    def tick(self) -> float:
-        now = time.monotonic()
-        self._timestamps.append(now)
-        cutoff = now - self._window
-        self._timestamps = [t for t in self._timestamps if t > cutoff]
-        return float(len(self._timestamps)) / self._window
-
-    def fps(self) -> float:
-        now = time.monotonic()
-        cutoff = now - self._window
-        active = [t for t in self._timestamps if t > cutoff]
-        return float(len(active)) / self._window
-
-
-# ── Main class ──────────────────────────────────────────────────────────
+# Main class
 
 
 class Lidar:
-    """Livox MID-360 LiDAR — connect, stream, disconnect.
-
-    Replaces ``ros2 launch livox_ros_driver2 ...`` with::
-
-        lidar = Lidar()
-        lidar.connect("192.168.1.115")
+    """Livox MID-360 LiDAR - connect, stream, disconnect.
 
     Under the hood:
-    1. Launches ``livox_ros_driver2_node`` as a managed subprocess (NativeModule)
-       — auto-restart on crash, log piping, SIGTERM/SIGKILL shutdown.
-    2. Subscribes to canonical ``/nav/lidar_scan`` and ``/nav/imu``
-       via lightweight cyclonedds — no rclpy required.
+    1. Optionally launches ``livox_ros_driver2_node`` only when
+       ``start_driver=True`` is passed.
+    2. Subscribes to canonical ``/lidar/raw_frame`` and ``/imu/raw``
+       via lightweight cyclonedds - no rclpy required.
     3. Converts Livox frames to numpy (N, 4) and delivers via callback or poll.
 
     The IP given to :meth:`connect` overrides ``config/robot_config.yaml``
-    for this session only — no file modification.
+    for this session only - no file modification.
     """
 
     def __init__(
@@ -141,10 +112,12 @@ class Lidar:
         ip: str | None = None,
         scan_topic: str = TOPICS.lidar_scan,
         imu_topic: str = TOPICS.imu,
+        start_driver: bool = False,
     ):
         self._ip = ip
         self._scan_topic = scan_topic
         self._imu_topic = imu_topic
+        self._start_driver = bool(start_driver)
 
         # State
         self._state = LidarState.DISCONNECTED
@@ -153,27 +126,22 @@ class Lidar:
         # Native driver
         self._native = None
 
+        # Data/callback state is pure Python so non-ROS adapters can reuse it.
+        self._frames = LidarFrameStream()
+
         # DDS bridge
+        self._dds_adapter = LivoxDdsAdapter(
+            scan_topic=scan_topic,
+            imu_topic=imu_topic,
+            frames=self._frames,
+        )
         self._dds = None
 
-        # Data
-        self._cloud_lock = threading.Lock()
-        self._latest_cloud: np.ndarray | None = None
-        self._latest_imu = None
-        self._cloud_event = threading.Event()
-
-        # Callbacks
-        self._cloud_callbacks: list[Callable[[np.ndarray], None]] = []
-        self._imu_callbacks: list[Callable] = []
-
         # Health
-        self._fps_counter = _FPSCounter()
         self._health = LidarHealth()
         self._connect_time: float = 0.0
 
-    # ══════════════════════════════════════════════════════════════════════
     # Public API
-    # ══════════════════════════════════════════════════════════════════════
 
     def connect(self, ip: str | None = None) -> Lidar:
         """Start the LiDAR driver and begin streaming.
@@ -181,10 +149,10 @@ class Lidar:
         Args:
             ip: LiDAR IP address (e.g. ``"192.168.1.115"``).
                 Overrides constructor IP and robot_config.yaml.
-                Falls back to constructor IP → config file → default.
+                Falls back to constructor IP -> config file -> default.
 
         Returns:
-            self — for chaining.
+            self - for chaining.
 
         Raises:
             RuntimeError: If already connected.
@@ -203,8 +171,16 @@ class Lidar:
             cfg = self._build_config()
             self._health.ip = cfg.lidar.lidar_ip
 
-            # 1) Start native driver (livox_ros_driver2_node subprocess)
-            self._start_native_driver(cfg)
+            # 1) Optional compatibility path: start local Livox ROS2 driver.
+            if self._start_driver:
+                self._start_native_driver(cfg)
+            else:
+                logger.info(
+                    "Lidar native driver start skipped; expecting external "
+                    "stream on %s/%s",
+                    self._scan_topic,
+                    self._imu_topic,
+                )
 
             # 2) Start DDS bridge (subscribe to scan + imu topics)
             self._start_dds_bridge()
@@ -212,7 +188,7 @@ class Lidar:
             self._connect_time = time.monotonic()
             self._set_state(LidarState.CONNECTED)
             logger.info(
-                "Lidar connected — ip=%s, scan=%s, imu=%s",
+                "Lidar connected - ip=%s, scan=%s, imu=%s",
                 cfg.lidar.lidar_ip, self._scan_topic, self._imu_topic,
             )
         except Exception as e:
@@ -229,12 +205,11 @@ class Lidar:
             return
 
         # Stop DDS first (no more callbacks during driver shutdown)
-        if self._dds:
-            try:
-                self._dds.stop()
-            except Exception as e:
-                logger.warning("Lidar DDS stop: %s", e)
-            self._dds = None
+        try:
+            self._dds_adapter.stop()
+        except Exception as e:
+            logger.warning("Lidar DDS stop: %s", e)
+        self._dds = None
 
         # Stop native driver
         if self._native:
@@ -248,7 +223,7 @@ class Lidar:
         self._health.driver_pid = None
         logger.info("Lidar disconnected")
 
-    # ── Data access ──────────────────────────────────────────────────────
+    # Data access
 
     def on_cloud(self, callback: Callable[[np.ndarray], None]) -> Lidar:
         """Register a point cloud callback: ``fn(numpy_Nx4)``.
@@ -257,18 +232,24 @@ class Lidar:
         or offload to your own thread/queue.
 
         Returns:
-            self — for chaining.
+            self - for chaining.
         """
-        self._cloud_callbacks.append(callback)
+        self._frames.on_cloud(callback)
+        return self
+
+    def on_raw_cloud(self, callback: Callable) -> Lidar:
+        """Register a lossless Livox point-frame callback."""
+
+        self._frames.on_raw_cloud(callback)
         return self
 
     def on_imu(self, callback: Callable) -> Lidar:
-        """Register an IMU callback: ``fn(core.msgs.sensor.Imu)``.
+        """Register an IMU callback: ``fn(runtime.msgs.sensor.Imu)``.
 
         Returns:
-            self — for chaining.
+            self - for chaining.
         """
-        self._imu_callbacks.append(callback)
+        self._frames.on_imu(callback)
         return self
 
     def get_cloud(self) -> np.ndarray | None:
@@ -276,15 +257,19 @@ class Lidar:
 
         Non-blocking. Returns ``None`` if no data has arrived yet.
         """
-        with self._cloud_lock:
-            return self._latest_cloud
+        return self._frames.get_cloud()
+
+    def get_raw_cloud(self):
+        """Return the latest lossless Livox point frame."""
+
+        return self._frames.get_raw_cloud()
 
     def get_imu(self):
-        """Return the latest IMU reading (``core.msgs.sensor.Imu``).
+        """Return the latest IMU reading (``runtime.msgs.sensor.Imu``).
 
         Non-blocking. Returns ``None`` if no data yet.
         """
-        return self._latest_imu
+        return self._frames.get_imu()
 
     def wait_for_cloud(self, timeout: float = 5.0) -> np.ndarray | None:
         """Block until the first point cloud arrives.
@@ -295,13 +280,9 @@ class Lidar:
         Returns:
             numpy (N, 4) or ``None`` on timeout.
         """
-        self._cloud_event.clear()
-        if self._latest_cloud is not None:
-            return self._latest_cloud
-        self._cloud_event.wait(timeout=timeout)
-        return self.get_cloud()
+        return self._frames.wait_for_cloud(timeout=timeout)
 
-    # ── Health & introspection ───────────────────────────────────────────
+    # Health and introspection
 
     @property
     def state(self) -> LidarState:
@@ -318,14 +299,19 @@ class Lidar:
     @property
     def fps(self) -> float:
         """Current frame rate (Hz)."""
-        return self._fps_counter.fps()
+        return self._frames.fps
 
     @property
     def health(self) -> LidarHealth:
         """Snapshot of current health metrics."""
         h = self._health
         h.state = self._state
-        h.fps = self._fps_counter.fps()
+        h.fps = self._frames.fps
+        metrics = self._frames.metrics
+        h.total_frames = metrics.total_frames
+        h.total_points = metrics.total_points
+        h.last_frame_points = metrics.last_frame_points
+        h.last_frame_time = metrics.last_frame_time
         if self._connect_time > 0 and self._state == LidarState.CONNECTED:
             h.uptime_s = time.monotonic() - self._connect_time
         # Update driver PID
@@ -335,7 +321,7 @@ class Lidar:
             h.driver_restarts = self._native._restart_count
         return h
 
-    # ── Context manager ──────────────────────────────────────────────────
+    # Context manager
 
     def __enter__(self) -> Lidar:
         if self._state != LidarState.CONNECTED:
@@ -351,20 +337,18 @@ class Lidar:
             f"fps={self.fps:.1f})"
         )
 
-    # ══════════════════════════════════════════════════════════════════════
     # Internal
-    # ══════════════════════════════════════════════════════════════════════
 
     def _set_state(self, new: LidarState) -> None:
         with self._state_lock:
             old = self._state
             self._state = new
         if old != new:
-            logger.debug("Lidar state: %s → %s", old.value, new.value)
+            logger.debug("Lidar state: %s -> %s", old.value, new.value)
 
     def _build_config(self):
         """Return a RobotConfig, overriding lidar_ip if self._ip is set."""
-        from core.config import get_config
+        from runtime.config import get_config
 
         cfg = get_config()
         if self._ip and self._ip != cfg.lidar.lidar_ip:
@@ -378,14 +362,12 @@ class Lidar:
         The NativeModule provides:
         - Process spawn with correct ROS args and DDS env
         - Watchdog thread: detects crashes, auto-restarts (up to 3x)
-        - SIGTERM → SIGKILL graceful shutdown
+        - SIGTERM -> SIGKILL graceful shutdown
         - Subprocess log piping to Python logger
         """
-        # Lazy: slam is a cross-layer package.  Import inside method body
-        # so drivers/ modules load without triggering slam/ at module level.
-        from slam.native_factories import livox_driver
+        from .native_factory import livox_driver_process
 
-        self._native = livox_driver(cfg)
+        self._native = livox_driver_process(cfg)
         try:
             self._native.setup()   # validates executable exists
         except (FileNotFoundError, PermissionError) as e:
@@ -399,62 +381,17 @@ class Lidar:
     def _start_dds_bridge(self) -> None:
         """Subscribe to LiDAR scan and IMU topics via cyclonedds.
 
-        No rclpy needed — cyclonedds talks DDS directly.
+        No rclpy needed - cyclonedds talks DDS directly.
         """
-        if not HAS_LIVOX_IDL:
-            logger.warning(
-                "Lidar: cyclonedds not installed — on_cloud/get_cloud disabled.\n"
-                "  Install: pip install cyclonedds"
-            )
-            return
+        self._dds_adapter.start()
+        self._dds = self._dds_adapter.dds
 
-        from core.dds import DDSReader
-
-        self._dds = DDSReader()
-        self._dds.subscribe(self._scan_topic, LivoxCustomMsg, self._on_scan)
-        if DDS_Imu is not None:
-            self._dds.subscribe(self._imu_topic, DDS_Imu, self._on_imu)
-        self._dds.spin_background()
-
-    # ── DDS callbacks (run on reader thread) ─────────────────────────────
+    # DDS callbacks kept for compatibility with older tests/debug hooks.
 
     def _on_scan(self, msg) -> None:
-        """LivoxCustomMsg → numpy (N, 4) → store + fire callbacks."""
-        arr = livox_msg_to_numpy(msg)
-        if arr is None:
-            return
-
-        # Store
-        with self._cloud_lock:
-            self._latest_cloud = arr
-        self._cloud_event.set()
-
-        # Health
-        self._fps_counter.tick()
-        self._health.total_frames += 1
-        self._health.total_points += len(arr)
-        self._health.last_frame_points = len(arr)
-        self._health.last_frame_time = time.monotonic()
-
-        # Fire callbacks
-        for cb in self._cloud_callbacks:
-            try:
-                cb(arr)
-            except Exception as e:
-                logger.warning("Lidar cloud callback error: %s", e)
+        """Delegate LivoxCustomMsg handling to the DDS Adapter."""
+        self._dds_adapter.on_scan(msg)
 
     def _on_imu(self, msg) -> None:
-        """DDS_Imu → core.msgs.sensor.Imu → store + fire callbacks."""
-        try:
-            imu = dds_imu_to_imu(msg)
-        except Exception as e:
-            logger.debug("Lidar IMU conversion error: %s", e)
-            return
-
-        self._latest_imu = imu
-
-        for cb in self._imu_callbacks:
-            try:
-                cb(imu)
-            except Exception as e:
-                logger.warning("Lidar IMU callback error: %s", e)
+        """Delegate DDS_Imu handling to the DDS Adapter."""
+        self._dds_adapter.on_imu(msg)

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Live tracking web viewer — YOLO + FusionMOT + LLM person selection.
 
 Usage (on S100P):
@@ -26,7 +26,7 @@ import numpy as np
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-sys.path.insert(0, "/home/sunrise/data/inovxio/lingtu/src/semantic/perception")
+sys.path.insert(0, "/home/sunrise/data/inovxio/lingtu/src/perception")
 
 latest_jpg = None
 lock = threading.Lock()
@@ -112,7 +112,7 @@ def camera_loop():
     import rclpy
     from rclpy.node import Node
     from sensor_msgs.msg import Image as RosImage
-    from semantic.perception.bpu_detector import BPUDetector
+    from perception.bpu_detector import BPUDetector
 
     # Load YOLO
     det = BPUDetector(

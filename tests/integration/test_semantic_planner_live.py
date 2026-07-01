@@ -30,7 +30,7 @@ from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 
-from core.runtime_interface import TOPICS
+from runtime.runtime_interface import TOPICS
 
 # ── 工厂场景图 (机器人在 2,2,0.35) ────────────────────────
 FACTORY_SCENE_GRAPH = json.dumps({

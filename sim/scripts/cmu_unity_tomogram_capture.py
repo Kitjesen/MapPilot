@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Capture CMU Unity point clouds and build a same-source PCT tomogram."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 
-DEFAULT_TOPICS = ("/nav/map_cloud", "/nav/terrain_map_ext")
+DEFAULT_TOPICS = ("/slam/map_cloud", "/nav/terrain_map_ext")
 
 
 def _sha256_file(path: Path) -> str:
@@ -300,7 +300,7 @@ def _build_tomogram(pcd_path: Path, tomogram_path: Path, args: argparse.Namespac
             "total_cells": int(data.get("meta", {}).get("total_cells", 0)),
         }
 
-    from global_planning.pct_planner.tomography.scripts.build_tomogram import (
+    from nav.services.plan.global_planner.algorithm.pct.vendor.pct_planner.tomography.scripts.build_tomogram import (
         build_tomogram_from_pcd,
     )
 

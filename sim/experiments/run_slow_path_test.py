@@ -6,7 +6,7 @@ Validates using the Moonshot / Kimi API:
   2. Cross-lingual understanding (Chinese instruction + English scene graph)
   3. Exploration direction suggestion (target not in scene graph)
 
-API key is read from environment variable — never hardcoded:
+API key is read from environment variable 鈥?never hardcoded:
   export MOONSHOT_API_KEY=sk-xxx
 """
 
@@ -19,11 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_planner"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from semantic.planner.llm_client import LLMConfig, create_llm_client, LLMError
-from semantic.planner.goal_resolver import GoalResolver, GoalResult
-from semantic.planner.prompt_templates import build_goal_resolution_prompt
+from decision.llm_client import LLMConfig, create_llm_client, LLMError
+from decision.goal_resolver import GoalResolver, GoalResult
+from decision.prompt_templates import build_goal_resolution_prompt
 
 
 SCENE_GRAPH = {

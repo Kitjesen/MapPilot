@@ -2,7 +2,7 @@
   <img src="docs/assets/logo.png" alt="LingTu" width="480" />
 </p>
 
-<h1 align="center">LingTu (灵途)</h1>
+<h1 align="center">LingTu (灵途</h1>
 
 <p align="center">
   <strong>Autonomous navigation for quadruped robots in real-world environments</strong>
@@ -24,15 +24,16 @@ LingTu is a full-stack autonomous navigation system that runs on quadruped robot
 
 Simulation and framework tests are not field-readiness evidence. The strict algorithm claim boundary is tracked in `docs/07-testing/ALGORITHM_VALIDATION_FLOW.md`.
 
-> **Recent restructuring (v2.3.0, Sprint 5-6):** The project underwent a major engineering overhaul — module test directories separated from core/, directory naming unified to snake_case, ROS2 extracted to bridge modules, security hardening applied (CORS, shell injection), and engineering standards enforced (mypy strict, ruff rules). See [CHANGELOG.md](CHANGELOG.md) for details.
+> **Recent restructuring (v2.3.0, Sprint 5-6):** The project underwent a major engineering overhaul —module test directories separated from core/, directory naming unified to snake_case, ROS2 extracted to bridge modules, security hardening applied (CORS, shell injection), and engineering standards enforced (mypy strict, ruff rules). See [CHANGELOG.md](CHANGELOG.md) for details.
 
 **Key capabilities:**
-- **SLAM** — Fast-LIO2 mapping + ICP localization against pre-built maps
-- **Terrain-aware planning** — PCT planner + A* with traversability scoring
-- **Semantic navigation** — Natural language goals via LLM (Kimi/Qwen/OpenAI/Claude)
-- **Web Dashboard** — Real-time camera, telemetry, map management, joystick teleop
-- **MCP Server** — AI agent control interface (16 tools for LLM-based task execution)
-- **Camera auto-recovery** — 3-level watchdog (rclpy → systemd → USB reset)
+- **SLAM** —Fast-LIO2 mapping + ICP localization against pre-built maps
+- **Terrain-aware planning** —OctoPlanner3D by default, with explicit A*/PCT compatibility backends
+- **Semantic navigation** —Natural language goals via LLM (Kimi/Qwen/OpenAI/Claude)
+- **Web Dashboard** —Real-time camera, telemetry, map management, joystick teleop
+- **MCP Server** —AI agent control interface (16 tools for LLM-based task execution)
+- **Camera auto-recovery** —Gateway/module watchdog with optional ROS2
+  compatibility fallback
 
 ## Platform
 
@@ -41,7 +42,7 @@ Simulation and framework tests are not field-readiness evidence. The strict algo
 | Compute | S100P (RDK X5, Nash BPU 128 TOPS, aarch64) |
 | LiDAR | Livox MID-360 |
 | RGB-D Camera | Orbbec Gemini 335 |
-| OS | Ubuntu 22.04 + ROS2 Humble |
+| OS | Ubuntu 22.04; ROS2 Humble is optional for compatibility services |
 | Motion Control | Brainstem (gRPC :13145) |
 
 Dual-board architecture: **Nav Board** (S100P) runs LingTu; **Dog Board** runs Brainstem motor control. Connected via Ethernet.
@@ -70,7 +71,7 @@ uv sync --locked --extra dev                         # test/lint tooling
 ### Framework tests (no hardware needed)
 
 ```bash
-uv run --locked --extra dev python -m pytest src/core/tests/ -q    # framework tests only; not full algorithm closure
+uv run --locked --extra dev python -m pytest src/runtime/tests/ -q    # framework tests only; not full algorithm closure
 ```
 
 ### Run on robot
@@ -119,17 +120,17 @@ L1  Hardware     Driver + CameraBridge + LiDAR + SLAM
 L2  Maps         OccupancyGrid + ESDF + ElevationMap + Terrain + PathFollower
 L3  Perception   Detector (BPU/YOLOE) + CLIP Encoder + SemanticMapper + Memory
 L4  Decision     SemanticPlanner + LLM + VisualServo + AgentLoop
-L5  Planning     NavigationModule (A*/PCT + WaypointTracker + mission FSM)
+L5  Planning     NavigationModule (OctoPlanner3D/A*/PCT + WaypointTracker + mission FSM)
 L6  Interface    GatewayModule (HTTP/WS/SSE) + MCPServer + TeleopModule
 ```
 
-High layers → low layers only. All modules use the `core.Module` base class with `In[T]`/`Out[T]` typed ports. Modules are composed via `Blueprint` and factory functions.
+High layers →low layers only. All modules use the `runtime.Module` base class with `In[T]`/`Out[T]` typed ports. Modules are composed via `Blueprint` and factory functions.
 
 ### Composable Stack API
 
 ```python
-from core.blueprint import autoconnect
-from core.blueprints.stacks import *
+from runtime.blueprint import autoconnect
+from runtime.blueprints.stacks import *
 
 system = autoconnect(
     driver("thunder", host="192.168.66.190"),
@@ -138,7 +139,7 @@ system = autoconnect(
     perception("bpu"),
     memory(),
     planner("kimi"),
-    navigation("astar"),
+    navigation("octoplanner3d"),
     safety(),
     gateway(5050),
 ).build()
@@ -150,10 +151,10 @@ system.start()
 | Module | Backends |
 |--------|----------|
 | Driver | `thunder` (gRPC→Brainstem), `stub`, `sim_mujoco`, `sim_ros2` |
-| SLAM | `fastlio2`, `pointlio`, `localizer` (ICP), `bridge` (external ROS2) |
+| SLAM | `fastlio2`, `pointlio`, `localizer` (ICP), `bridge` (adapter-backed localization: ROS2 or LCM endpoint) |
 | Detector | `yoloe`, `yolo_world`, `bpu` (Nash 128 TOPS), `grounding_dino` |
 | LLM | `kimi`, `openai`, `claude`, `qwen`, `mock` |
-| Planner | `astar` (Python), `pct` (C++ ele_planner.so) |
+| Planner | `octoplanner3d` (default), `pct` (legacy/manual experiment), `astar` (legacy test backend) |
 
 All backends registered via `@register("category", "name")`. Zero if/else.
 
@@ -170,19 +171,18 @@ ssh -L 5050:localhost:5050 sunrise@192.168.66.190
 
 | Tab | Description |
 |-----|-------------|
-| **Console** | Camera live feed + GPS globe + MiniMap + AI chat — all draggable/resizable widgets |
-| **Scene** | RViz-style 2D/3D view — click to send nav goals, layer toggles, map management |
+| **Console** | Camera live feed + GPS globe + MiniMap + AI chat —all draggable/resizable widgets |
+| **Scene** | RViz-style 2D/3D view —click to send nav goals, layer toggles, map management |
 | **Map** | 3D point cloud viewer + map CRUD (save/activate/rename/delete) |
 | **SLAM** | Switch between mapping (fastlio2) and localization (localizer) modes |
 
 ### Features
 
-- **Floating Widgets** — Drag, resize, z-order. Layout persisted to localStorage
-- **Camera HUD** — SLAM Hz, speed, battery, temperature, latency overlay
-- **`/` Command autocomplete** — Type `/` for Claude-Code-style command dropdown
-- **Quick commands** — One-click chips: 停止, 状态, 去充电站, 回原点
-- **Brand Modals** — Glassmorphism dialogs replace native prompt/confirm
-- **Camera auto-rotate** — Backend `cv2.rotate()` compensates for sideways mounting
+- **Floating Widgets** —Drag, resize, z-order. Layout persisted to localStorage
+- **Camera HUD** —SLAM Hz, speed, battery, temperature, latency overlay
+- **`/` Command autocomplete** —Type `/` for Claude-Code-style command dropdown
+- **Quick commands** —One-click chips: 停止, 状态 去充电站, 回原点- **Brand Modals** —Glassmorphism dialogs replace native prompt/confirm
+- **Camera auto-rotate** —Backend `cv2.rotate()` compensates for sideways mounting
 
 ### Tech
 
@@ -224,13 +224,12 @@ claude mcp add --transport http lingtu http://192.168.66.190:8090/mcp
 ### 5-Level Goal Resolution
 
 ```
-Instruction: "去上次放背包的地方"
-  ↓
-1. Tag Lookup     — exact/fuzzy match in TaggedLocationStore     → goal_pose
-2. Fast Path      — scene graph keyword + CLIP matching (<200ms) → goal_pose
-3. Vector Memory  — CLIP embedding search in ChromaDB            → goal_pose
-4. Frontier       — topology graph exploration                   → goal_pose
-5. Visual Servo   — VLM bbox detection + PD tracking             → cmd_vel
+Instruction: "去上次放背包的地方
+  →1. Tag Lookup     —exact/fuzzy match in TaggedLocationStore     →goal_pose
+2. Fast Path      —scene graph keyword + CLIP matching (<200ms) →goal_pose
+3. Vector Memory  —CLIP embedding search in ChromaDB            →goal_pose
+4. Frontier       —topology graph exploration                   →goal_pose
+5. Visual Servo   —VLM bbox detection + PD tracking             →cmd_vel
 ```
 
 ### Fast-Slow Dual Process
@@ -269,7 +268,7 @@ python lingtu.py nav                    # Start with localization
 # SSH tunnel
 ssh -L 5050:localhost:5050 sunrise@192.168.66.190
 # Browser: http://localhost:5050
-# Scene tab → click on map to send goals
+# Scene tab →click on map to send goals
 ```
 
 ## cmd_vel Priority Arbitration
@@ -289,22 +288,25 @@ Highest-priority active source wins. Sources timeout after 0.5s of silence.
 
 ```
 src/
-├── core/              Framework: Module, Blueprint, Transport, Registry, constants, tests (~1300)
-├── nav/               NavigationModule, SafetyRing, CmdVelMux, WaypointTracker, tests/
-├── semantic/          Perception (Detector+Encoder), Planner (LLM+VisualServo+AgentLoop)
-├── memory/            SemanticMapper, EpisodicMemory, VectorMemory, RoomObjectKG, tests/
-├── drivers/           Thunder driver, CameraBridge, TeleopModule, LiDAR
-├── gateway/           GatewayModule (FastAPI), MCPServer, auth middleware, tests/
-├── slam/              SLAMModule (Fast-LIO2/Point-LIO), SlamBridge, C++ nodes, tests/
-├── base_autonomy/     TerrainModule, LocalPlanner, PathFollower (C++ nanobind)
-├── global_planning/   PCT planner (C++ ele_planner.so), A* backend
-├── legacy/            Migrated legacy code (thunder, pct_planner, gateway, semantic)
-└── reconstruction/    Scene reconstruction module
+|-- runtime/           Module, Blueprint, ports, registry, msgs, transport, TF
+|-- drivers/           Real/sim robot and sensor backends
+|-- slam/              SLAM/localization modules and portable SLAM code
+|-- nav/               Navigation FSM, maps, safety, exploration, planner services
+|-- nav/services/plan/ OctoPlanner3D default plus explicit PCT compatibility
+|-- nav/local/         Local planner, terrain, path follower modules and path banks
+|-- nav/kernel/        C++/nanobind local navigation kernel
+|-- perception/        Detection, encoding, scene perception, reconstruction
+|-- decision/          Semantic planner, goal resolver, LLM, visual servo
+|-- memory/            Semantic, episodic, tagged, vector, temporal memories
+|-- gateway/           REST/SSE/WS, MCP, teleop, media, runtime status
+|-- kernels/           Portable compute kernel paths and ABI contracts
+|-- lingtu/            Local package API and runtime handoff
 
-web/                   React Dashboard (18 components, Vite 8)
-config/                robot_config.yaml (single source of truth)
+web/                   React Dashboard (Vite)
+config/                Robot/device/runtime configuration
 calibration/           Camera/LiDAR/IMU calibration toolbox
-scripts/               Deploy, verify, benchmark utilities (9 test directories total)
+scripts/               Build, deploy, ops, diagnostics, robot-side commands
+tools/                 Developer validation, benchmark, offline analysis helpers
 ```
 
 ## Configuration
@@ -344,7 +346,7 @@ sudo systemctl enable lingtu camera
 sudo systemctl start lingtu
 ```
 
-Services: `lingtu.service` (navigation), `camera.service` (Orbbec), `slam.service` (Fast-LIO2), `localizer.service` (ICP).
+Services: `lingtu.service` (navigation), `camera.service` (Orbbec), `localization.service` (Fast-LIO2), `localizer.service` (ICP).
 
 Super-LIO remains an experimental field-evaluation backend and is not the
 default `nav` localization path. See
@@ -365,19 +367,24 @@ sudo systemctl restart lingtu
 
 ```bash
 # Python framework tests (no ROS2 needed)
-python -m pytest src/core/tests/ -q              # ~1300+ core framework tests
+python -m pytest src/runtime/tests/ -q              # ~1300+ core framework tests
 
 # Module-specific test suites (9 directories total)
 python -m pytest src/gateway/tests/ -q           # Gateway route/runtime/auth tests
 python -m pytest src/nav/tests/ -q               # Navigation FSM/patrol/geofence tests
-python -m pytest src/slam/tests/ -q              # SLAM backend status/bridge tests
+python -m pytest src/localization/tests/ -q              # SLAM backend status/bridge tests
 python -m pytest src/memory/tests/ -q            # Semantic/episodic/tagged tests
 
-# C++ nav_core tests
-cd src/nav/core && mkdir -p build && cd build
+# C++ nav_kernel tests
+cd src/nav/kernel && mkdir -p build && cd build
 cmake .. && make -j$(nproc)
 ./test_benchmark                                  # 12 benchmarks
-./test_local_planner_core                         # 30 tests
+
+# C++ local planner tests
+cd ../../services/plan/local_planner/cpp
+cmake -B build -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
+cmake --build build -j$(nproc)
+./build/test_local_planner_core                   # 30 tests
 
 # Full ROS2 build
 source /opt/ros/humble/setup.bash
@@ -394,7 +401,7 @@ Factory calibration toolbox in `calibration/`:
 | IMU noise | `calibration/imu/allan_variance_ros2/` | ~2 hr |
 | LiDAR-IMU extrinsics | `calibration/lidar_imu/LiDAR_IMU_Init/` | ~2 min |
 | Camera-LiDAR extrinsics | `calibration/camera_lidar/direct_visual_lidar_calibration/` | ~10 min |
-| Apply all | `calibration/apply_calibration.py` → robot_config.yaml | instant |
+| Apply all | `calibration/apply_calibration.py` →robot_config.yaml | instant |
 | Verify | `calibration/verify.py` | instant |
 
 ## Version History
@@ -402,8 +409,8 @@ Factory calibration toolbox in `calibration/`:
 | Version | Date | Highlights |
 |---------|------|------------|
 | v2.3.0 | 2026-05-31 | Sprint 5-6: Module boundary enforcement, 9 test directories, directory restructuring (PascalCase→snake_case, flattening), ROS2 extraction, security hardening (CORS/shell-injection), mypy+ruff engineering standards, FrameContract monolith extraction, +52 new tests |
-| v2.2.0 | 2026-04-13 | Dashboard Arc/Raycast → Frosted Glass redesign, DDS GIL fix, camera 3-level auto-recovery, FloatingWidget system |
-| v2.1.0 | 2026-04-06 | Enterprise hardening, C++ nav_core SIMD optimization, 1226 tests |
+| v2.2.0 | 2026-04-13 | Dashboard Arc/Raycast →Frosted Glass redesign, DDS GIL fix, camera 3-level auto-recovery, FloatingWidget system |
+| v2.1.0 | 2026-04-06 | Enterprise hardening, C++ nav_kernel SIMD optimization, 1226 tests |
 | v1.0.0 | 2026-03 | Initial release |
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
@@ -415,5 +422,5 @@ MIT License. See [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <strong>穹沛科技 (Inovxio)</strong> — 让机器人走进真实世界
+  <strong>穹沛科技 (Inovxio)</strong> —让机器人走进真实世界
 </p>

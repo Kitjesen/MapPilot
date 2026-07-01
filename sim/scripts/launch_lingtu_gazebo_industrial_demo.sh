@@ -113,15 +113,13 @@ start_demo() {
 
   sleep "${LINGTU_GAZEBO_BOOT_WAIT_SEC:-8}"
 
-  ros2 launch "$root/sim/planning/sim_navigation.launch.py" \
-    use_sim_robot:=false \
-    use_terrain_passthrough:=false \
-    flatten_global_path_z:=true \
-    use_gazebo_line_planner:=true \
-    gazebo_line_require_grid:=true \
-    goal_x:=12.0 \
-    goal_y:=0.0 \
-    goal_z:=0.0 \
+  "$python_bin" "$root/sim/scripts/gazebo_lingtu_stack.py" \
+    --profile "$LINGTU_PROFILE" \
+    --gateway-port "${LINGTU_GATEWAY_PORT:-5050}" \
+    --planner astar \
+    --frontier-safe-distance 0.80 \
+    --frontier-max-dist 20.0 \
+    --frontier-rate 2.0 \
     >"$run_dir/navigation.log" 2>&1 &
   echo $! >"$run_dir/navigation.pid"
 
@@ -177,6 +175,7 @@ stop_demo() {
   kill_pid_file "$run_dir/navigation.pid"
   kill_pid_file "$run_dir/gazebo.pid"
   pkill -f "gazebo_frontier_exploration_smoke.py.*lingtu_gazebo_industrial_demo" >/dev/null 2>&1 || true
+  pkill -f "gazebo_lingtu_stack.py.*sim_industrial" >/dev/null 2>&1 || true
   pkill -f "sim_navigation.launch.py.*gazebo_line_require_grid" >/dev/null 2>&1 || true
   pkill -f "gazebo_simulation.launch.py.*lingtu_gazebo_industrial_park.sdf" >/dev/null 2>&1 || true
   pkill -f "gz_sim.launch.py.*lingtu_gazebo_industrial_park" >/dev/null 2>&1 || true

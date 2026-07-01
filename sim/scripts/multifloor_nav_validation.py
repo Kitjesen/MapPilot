@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Non-motion multi-floor navigation simulation validation.
 
 The script is simulation-only. It builds a deterministic two-floor scene,
@@ -33,10 +33,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
-from core.msgs.nav import Odometry, Path as NavPath
-from nav.global_planner_service import GlobalPlannerService
-from global_planning.pct_planner_runnable.runtime import inspect_pct_runtime
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.nav import Odometry, Path as NavPath
+from nav.services.plan.global_planner.service import GlobalPlanner
+from nav.services.plan.global_planner.algorithm.pct.runtime.api import inspect_pct_runtime
 from sim.engine.scenarios.multifloor_assets import (
     DEFAULT_GOAL,
     DEFAULT_START,
@@ -639,11 +639,11 @@ def run_global_planner(
     safe_goal_tolerance: float = 0.0,
 ) -> dict[str, Any]:
     t0 = time.time()
-    svc: GlobalPlannerService | None = None
+    svc: GlobalPlanner | None = None
     backend: Any | None = None
     native_runtime = _pct_runtime_evidence() if planner == "pct" else None
     try:
-        svc = GlobalPlannerService(
+        svc = GlobalPlanner(
             planner_name=planner,
             tomogram=str(tomogram),
             obstacle_thr=49.9,
@@ -719,7 +719,7 @@ def run_global_planner(
             "feasible": feasible,
             "backend_available": backend_available,
             "backend_requested_available": requested_backend_available,
-            "backend_class": selected_backend.__class__.__name__ if selected_backend is not None else None,
+            "planner_class": selected_backend.__class__.__name__ if selected_backend is not None else None,
             "backend_requested_class": backend.__class__.__name__ if backend is not None else None,
             "native_runtime": native_runtime,
             "native_backend_used": (
@@ -788,7 +788,7 @@ def run_global_planner(
             "ok": False,
             "feasible": False,
             "backend_available": backend_available,
-            "backend_class": backend.__class__.__name__ if backend is not None else None,
+            "planner_class": backend.__class__.__name__ if backend is not None else None,
             "backend_requested_available": backend_available,
             "backend_requested_class": backend.__class__.__name__ if backend is not None else None,
             "native_runtime": native_runtime,
@@ -867,7 +867,7 @@ def run_route_planner(
             downsample_dist=downsample_dist,
         )
 
-    # The original PCT backend plans within one traversable layer. Multi-floor
+    # The original PCT planner plans within one traversable layer. Multi-floor
     # navigation is therefore validated as a floor graph: per-floor PCT route
     # segments plus an explicit stairs transition edge.
     lower_stair, upper_stair = _stair_transition_endpoints(tomogram)
@@ -896,7 +896,7 @@ def run_route_planner(
                 "ok": False,
                 "feasible": False,
                 "backend_available": bool(result.get("backend_available")),
-                "backend_class": result.get("backend_class"),
+                "planner_class": result.get("planner_class"),
                 "native_runtime": result.get("native_runtime"),
                 "native_backend_used": False,
                 "tomogram": str(tomogram),
@@ -939,7 +939,7 @@ def run_route_planner(
         "ok": True,
         "feasible": True,
         "backend_available": all(bool(s.get("backend_available")) for s in segments),
-        "backend_class": "floor_graph_pct_segments",
+        "planner_class": "floor_graph_pct_segments",
         "native_runtime": next((s.get("native_runtime") for s in segments if s.get("native_runtime")), None),
         "native_backend_used": all(bool(s.get("native_backend_used")) for s in segments),
         "tomogram": str(tomogram),
@@ -1083,7 +1083,7 @@ def _prepare_local_path_for_follower(
     min_xy_step: float = 0.12,
     min_start_dist: float = 0.20,
 ) -> NavPath:
-    """Make dense local-planner paths stable for nav_core follower replay."""
+    """Make dense local-planner paths stable for nav_kernel follower replay."""
     prepared = _thin_nav_path(path, min_xy_step=min_xy_step)
     if current_xy is None or len(prepared.poses) <= 2:
         return prepared
@@ -1105,7 +1105,7 @@ def _prepare_local_path_for_follower(
 def run_tracking_replay(
     path_points: list[list[float]],
     *,
-    backend: str = "nav_core",
+    backend: str = "nav_kernel",
     max_speed: float = 0.25,
     max_abs_yaw_rate: float = 1.2,
     max_tracking_error_m: float = 0.12,
@@ -1113,9 +1113,9 @@ def run_tracking_replay(
     if len(path_points) < 2:
         return {"ok": False, "error": "need at least two path points"}
 
-    from base_autonomy.modules.path_follower_module import PathFollowerModule
+    from nav.local.path_follower import PathFollower
 
-    follower = PathFollowerModule(
+    follower = PathFollower(
         backend=backend,
         max_speed=max_speed,
         min_speed=0.05,
@@ -1192,7 +1192,7 @@ def run_tracking_replay(
         "cmd_vel_sent_to_hardware": False,
         "backend_requested": backend,
         "backend_actual": follower._backend,
-        "native_backend_used": follower._backend == "nav_core",
+        "native_backend_used": follower._backend == "nav_kernel",
         "odom_tick_count": len(replay_samples) + 8,
         "cmd_count": len(cmd_samples),
         "max_tracking_error_m": round(float(max_error), 4),
@@ -1305,11 +1305,11 @@ def _run_mujoco_bridge_segment(
     max_speed: float,
     local_planner_backend: str,
 ) -> dict[str, Any]:
-    from base_autonomy.modules.local_planner_module import LocalPlannerModule
-    from base_autonomy.modules.path_follower_module import PathFollowerModule
-    from drivers.sim.mujoco_driver_module import MujocoDriverModule
-    from nav.cmd_vel_mux_module import CmdVelMux
-    from nav.waypoint_tracker import EV_PATH_COMPLETE, WaypointTracker
+    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.path_follower import PathFollower
+    from drivers.sim.mujoco.driver import MujocoDriverModule
+    from nav.safety.velocity_mux import VelocityMux
+    from nav.mission.waypoint_tracker import EV_PATH_COMPLETE, WaypointTracker
 
     start = segment[0]
     goal = segment[-1]
@@ -1325,15 +1325,15 @@ def _run_mujoco_bridge_segment(
         max_linear_vel=max_speed,
         max_angular_vel=1.0,
     )
-    local_planner = LocalPlannerModule(backend=local_planner_backend, corridor_lookahead_m=1.8)
-    follower = PathFollowerModule(
-        backend="nav_core",
+    local_planner = LocalPlanner(backend=local_planner_backend, corridor_lookahead_m=1.8)
+    follower = PathFollower(
+        backend="nav_kernel",
         max_speed=max_speed,
         min_speed=0.05,
         lookahead=0.8,
         goal_tolerance=0.25,
     )
-    mux = CmdVelMux(source_timeout=0.8)
+    mux = VelocityMux(source_timeout=0.8)
 
     odom_samples: list[list[float]] = []
     lidar_counts: list[int] = []
@@ -1502,7 +1502,7 @@ def _run_mujoco_bridge_segment(
             "drive_mode": "kinematic",
             "local_planner_backend": local_planner._backend,
             "path_follower_backend": follower._backend,
-            "native_backend_used": follower._backend == "nav_core",
+            "native_backend_used": follower._backend == "nav_kernel",
             "waypoint_total": len(segment) - 1,
             "waypoint_final_index": tracker.wp_index,
             "tracker_events": tracker_events,
@@ -1611,19 +1611,19 @@ def run_command_flow(
     *,
     local_planner_backend: str = "simple",
 ) -> dict[str, Any]:
-    from base_autonomy.modules.local_planner_module import LocalPlannerModule
-    from base_autonomy.modules.path_follower_module import PathFollowerModule
-    from nav.cmd_vel_mux_module import CmdVelMux
+    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.path_follower import PathFollower
+    from nav.safety.velocity_mux import VelocityMux
 
     path_follower_backend = "pid"
-    local_planner = LocalPlannerModule(backend=local_planner_backend, corridor_lookahead_m=2.5)
-    path_follower = PathFollowerModule(
+    local_planner = LocalPlanner(backend=local_planner_backend, corridor_lookahead_m=2.5)
+    path_follower = PathFollower(
         backend=path_follower_backend,
         max_speed=0.25,
         min_speed=0.05,
         lookahead=0.6,
     )
-    mux = CmdVelMux(source_timeout=1.0)
+    mux = VelocityMux(source_timeout=1.0)
     modules = [local_planner, path_follower, mux]
 
     seen = {"local_path": 0, "path_follower_cmd": 0, "mux_cmd": 0}
@@ -1690,7 +1690,7 @@ def run_command_flow(
             path_follower,
             requested=path_follower_backend,
             exercised_by="command_flow",
-            native_backend="nav_core",
+            native_backend="nav_kernel",
         )
         return {
             "ok": False,
@@ -1724,7 +1724,7 @@ def run_command_flow(
         path_follower,
         requested=path_follower_backend,
         exercised_by="command_flow",
-        native_backend="nav_core",
+        native_backend="nav_kernel",
     )
     local_planner_actual = str(local_planner_evidence["backend_actual"])
     path_follower_actual = str(path_follower_evidence["backend_actual"])
@@ -1786,7 +1786,7 @@ def _odom_at_path_start(path_points: list[list[float]]) -> Odometry:
 
 
 def run_frontier_exploration_probe() -> dict[str, Any]:
-    from nav.frontier_explorer_module import WavefrontFrontierExplorer
+    from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
 
     explorer = WavefrontFrontierExplorer(
         min_frontier_size=2,
@@ -1939,7 +1939,7 @@ def run_frontier_navigation_closed_loop_probe(
     downsample_dist: float = 0.5,
     local_planner_backend: str = "simple",
 ) -> dict[str, Any]:
-    from nav.frontier_explorer_module import WavefrontFrontierExplorer
+    from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
 
     rounds = max(0, int(rounds))
     assets_dir = output_dir or (ROOT / "artifacts" / "multifloor_frontier_loop")
@@ -2176,7 +2176,7 @@ def _native_pct_gate(
             selected.get("backend_requested_available", selected.get("backend_available"))
         ),
         "native_backend_used": bool(selected.get("native_backend_used")),
-        "backend_class": selected.get("backend_class"),
+        "planner_class": selected.get("planner_class"),
         "backend_requested_class": selected.get("backend_requested_class"),
         "runtime_ok": bool(runtime.get("ok")) if isinstance(runtime, dict) else False,
         "runtime": runtime,
@@ -2489,7 +2489,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--bridge-loop",
         action="store_true",
-        help="Run simulated MuJoCo driver + PathFollower + CmdVelMux closed-loop validation.",
+        help="Run simulated MuJoCo driver + PathFollower + VelocityMux closed-loop validation.",
     )
     parser.add_argument(
         "--frontier-loop",
@@ -2503,7 +2503,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--local-planner-backend",
         choices=["simple", "nanobind", "cmu", "cmu_py"],
         default="simple",
-        help="LocalPlannerModule backend used by command-flow and bridge-loop probes.",
+        help="LocalPlanner backend used by command-flow and bridge-loop probes.",
     )
     parser.add_argument(
         "--require-production-local-planner",

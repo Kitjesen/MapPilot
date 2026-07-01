@@ -22,11 +22,11 @@ from dataclasses import dataclass
 from typing import Any
 
 
-from core.module import Module, skill
-from core.msgs.nav import Odometry
-from core.msgs.semantic import SceneGraph
-from core.registry import register
-from core.stream import In, Out
+from runtime.module import Module, skill
+from runtime.msgs.nav import Odometry
+from runtime.msgs.semantic import SceneGraph
+from runtime.registry import register
+from runtime.stream import In, Out
 from memory.modules._odom_mixin import OdomTrackingMixin
 from memory.storage.temporal_store import TemporalStore
 

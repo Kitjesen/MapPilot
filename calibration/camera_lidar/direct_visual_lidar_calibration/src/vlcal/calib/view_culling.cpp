@@ -1,6 +1,6 @@
 #include <vlcal/calib/view_culling.hpp>
 
-#include <opencv2/core.hpp>
+#include <opencv2/runtime.hpp>
 #include <opencv2/imgproc.hpp>
 #include <vlcal/common/estimate_fov.hpp>
 

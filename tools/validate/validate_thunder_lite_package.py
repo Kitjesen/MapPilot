@@ -19,35 +19,54 @@ MANIFEST_PATH = ROOT_DIR / "config" / "thunder_lite_package.yaml"
 PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
 RUNTIME_ENV_PATH = ROOT_DIR / "scripts" / "deploy" / "thunder" / "runtime-env.sh"
 FORBIDDEN_PRODUCT_MODULE_PREFIXES = {
-    "compat.ros2": "ROS compatibility",
-    "slam.": "SLAM package",
+    "runtime.adapters.ros2": "ROS compatibility",
+    "localization.": "SLAM package",
 }
 REQUIRED_PACKAGE_INCLUDE_PATHS = (
     "lingtu.py",
     "requirements-lite.txt",
     "config/thunder_lite_package.yaml",
+    "config/robots/thunder.yaml",
     "scripts/deploy/thunder/runtime-env.sh",
     "scripts/deploy/thunder/lingtu-thunder-lite.service",
     "scripts/deploy/thunder/install_lite_service.sh",
-    "src/core/",
-    "src/lingtu_runtime/",
+    "src/runtime/",
+    "src/lingtu/",
     "src/drivers/real/thunder/",
-    "src/nav/navigation_module.py",
-    "src/nav/safety_ring_module.py",
-    "src/nav/cmd_vel_mux_module.py",
-    "src/base_autonomy/modules/",
+    "src/nav/__init__.py",
+    "src/nav/mission/navigation.py",
+    "src/nav/mission/",
+    "src/nav/services/plan/__init__.py",
+    "src/nav/services/plan/contracts.py",
+    "src/nav/services/plan/factory.py",
+    "src/nav/services/plan/preview.py",
+    "src/nav/services/plan/global_planner/__init__.py",
+    "src/nav/services/plan/global_planner/direct.py",
+    "src/nav/services/plan/global_planner/algorithm/__init__.py",
+    "src/nav/services/plan/global_planner/algorithm/direct_path.py",
+    "src/nav/services/safety/",
+    "src/nav/services/safety/safety_ring.py",
+    "src/nav/services/safety/velocity_mux.py",
+    "src/nav/services/__init__.py",
+    "src/nav/services/goals.py",
+    "src/nav/mission/model/frame_contract.py",
+    "src/nav/services/geofence.py",
+    "src/nav/local/",
+    "src/nav/mission/tracking/waypoint_tracker.py",
+    "src/nav/kernel/__init__.py",
+    "src/nav/kernel/loader.py",
+    "src/nav/kernel/paths.py",
 )
 REQUIRED_PACKAGE_EXCLUDE_PATHS = (
-    "src/compat/ros2/",
-    "src/slam/",
-    "src/semantic/",
+    "src/*/adapters/ros2/",
+    "src/localization/",
+    "src/perception/",
+    "src/decision/",
     "src/memory/",
     "src/gateway/",
-    "src/webrtc/",
-    "src/exploration/",
+    "src/gateway/media/",
     "src/drivers/sim/",
-    "src/drivers/livox_ros_driver2/",
-    "src/global_planning/",
+    "src/drivers/real/lidar/livox_ros_driver2/",
     "sim/",
     "web/",
     "third_party/",
@@ -58,34 +77,62 @@ REQUIRED_PACKAGE_OMIT_PATHS = (
     "**/__pycache__/",
     "**/*.pyc",
     "**/tests/",
+    "cli/repl.py",
+    "src/nav/services/plan/global_planner/algorithm/pct/vendor/",
+    "src/nav/services/plan/global_planner/service.py",
+    "src/nav/services/plan/global_planner/algorithm/pct/",
+    "src/nav/services/plan/global_planner/algorithm/pct/runtime/",
+    "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/",
+    "src/nav/services/plan/global_planner/artifacts.py",
+    "src/nav/services/plan/global_planner/path_feasibility.py",
     "cli/runtime_audit.py",
     "cli/runtime_extra.py",
-    "src/core/blueprints/full_stack.py",
-    "src/core/blueprints/full_stack_wiring.py",
-    "src/core/blueprints/multi_robot.py",
-    "src/core/blueprints/profile_graph.py",
-    "src/core/blueprints/simulation_contract.py",
-    "src/core/blueprints/stacks/composition.py",
-    "src/core/blueprints/stacks/exploration.py",
-    "src/core/blueprints/stacks/gateway.py",
-    "src/core/blueprints/stacks/lidar.py",
-    "src/core/blueprints/stacks/maps.py",
-    "src/core/blueprints/stacks/memory.py",
-    "src/core/blueprints/stacks/perception.py",
-    "src/core/blueprints/stacks/planner.py",
-    "src/core/blueprints/stacks/sim_lidar.py",
-    "src/core/blueprints/stacks/slam.py",
-    "src/core/blueprints/stacks/system.py",
-    "src/core/blueprints/wires/",
-    "src/core/dds.py",
-    "src/core/devices/",
-    "src/core/dimos_gap.py",
-    "src/core/native_install.py",
-    "src/core/rerun_module.py",
-    "src/core/transport/dds.py",
-    "src/core/transport/dual.py",
-    "src/core/transport/lcm.py",
-    "src/core/transport/shm.py",
+    "src/runtime/blueprints/full_stack.py",
+    "src/runtime/blueprints/full_stack_wiring.py",
+    "src/runtime/blueprints/multi_robot.py",
+    "src/runtime/blueprints/profile_graph.py",
+    "src/runtime/blueprints/simulation_contract.py",
+    "src/runtime/blueprints/stacks/composition.py",
+    "src/runtime/blueprints/stacks/exploration.py",
+    "src/runtime/blueprints/stacks/gateway.py",
+    "src/runtime/blueprints/stacks/lidar.py",
+    "src/runtime/blueprints/adapters/driver_ros2_runtime.py",
+    "src/runtime/blueprints/adapters/mapping_slam.py",
+    "src/runtime/blueprints/adapters/navigation_io.py",
+    "src/runtime/blueprints/stacks/maps.py",
+    "src/runtime/blueprints/stacks/memory.py",
+    "src/runtime/blueprints/adapters/perception_gateway.py",
+    "src/runtime/blueprints/stacks/perception.py",
+    "src/runtime/blueprints/stacks/planner.py",
+    "src/runtime/blueprints/stacks/sim_lidar.py",
+    "src/runtime/blueprints/stacks/slam.py",
+    "src/runtime/blueprints/stacks/system.py",
+    "src/runtime/blueprints/wires/",
+    "src/runtime/dds.py",
+    "src/runtime/devices/",
+    "src/runtime/dimos_gap.py",
+    "src/runtime/dimos_runtime_dataflow.py",
+    "src/runtime/dynamic_filter.py",
+    "src/runtime/external_service_module.py",
+    "src/runtime/gateway_runtime_acceptance.py",
+    "src/runtime/inspection_acceptance.py",
+    "src/runtime/map_save.py",
+    "src/runtime/native_module.py",
+    "src/runtime/native_install.py",
+    "src/runtime/product_field_check.py",
+    "src/runtime/rerun_module.py",
+    "src/runtime/runtime_evidence.py",
+    "src/runtime/runtime_validation_gates.py",
+    "src/runtime/same_source_map_artifacts.py",
+    "src/runtime/transport/dds.py",
+    "src/runtime/transport/dual.py",
+    "src/runtime/transport/lcm.py",
+    "src/runtime/transport/shm.py",
+    "src/drivers/real/thunder/blueprints.py",
+    "src/drivers/real/thunder/connection.py",
+    "src/lingtu/sdk/",
+    "src/lingtu/ros2_plugin_seed.py",
+    "src/lingtu/ros2_shutdown.py",
 )
 REQUIRED_PACKAGE_FORBIDDEN_MARKERS = (
     "rclpy",
@@ -96,6 +143,10 @@ REQUIRED_PACKAGE_FORBIDDEN_MARKERS = (
     "/opt/ros",
     "colcon",
 )
+LITE_FORBIDDEN_LOCAL_PLANNER_BACKENDS = frozenset({"nanobind", "cmu", "cmu_py"})
+LITE_FORBIDDEN_PATH_FOLLOWER_BACKENDS = frozenset({"nav_kernel"})
+LITE_EXPECTED_PYTHON_AUTONOMY_BACKEND = "simple"
+LITE_EXPECTED_PYTHON_PATH_FOLLOWER_BACKEND = "pid"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -236,6 +287,33 @@ def _load_manifest(path: Path) -> dict[str, Any]:
 
 def _normalize_manifest_path(value: Any) -> str:
     return str(value).replace("\\", "/").strip().lstrip("./").rstrip("/")
+
+
+def _src_path_to_module_prefix(value: Any) -> str | None:
+    rel = _normalize_manifest_path(value)
+    if "*" in rel or not rel.startswith("src/"):
+        return None
+    module_path = rel.removeprefix("src/")
+    if not module_path:
+        return None
+    if module_path.endswith(".py"):
+        return module_path[:-3].replace("/", ".")
+    return module_path.replace("/", ".").rstrip(".") + "."
+
+
+def _module_matches_prefix(module_name: str, prefix: str) -> bool:
+    normalized = prefix.rstrip(".")
+    return module_name == normalized or module_name.startswith(f"{normalized}.")
+
+
+def _lite_excluded_module_prefixes(manifest: dict[str, Any]) -> dict[str, str]:
+    package_cfg = manifest.get("package") or {}
+    prefixes: dict[str, str] = {}
+    for rel_path in package_cfg.get("exclude_paths") or ():
+        prefix = _src_path_to_module_prefix(rel_path)
+        if prefix:
+            prefixes[prefix] = f"Lite-excluded package {rel_path}"
+    return prefixes
 
 
 def _validate_deploy_files(manifest: dict[str, Any], blockers: list[str], checked_files: list[str]) -> None:
@@ -402,10 +480,10 @@ def _validate_runtime_contract(
     blockers: list[str],
     checked_files: list[str],
 ) -> None:
-    from core.blueprints.profile_builder import blueprint_for_resolved_profile
-    from core.blueprints.runtime_endpoint import resolve_runtime_run_spec
-    from core.runtime.resolver import canonical_profile_name, resolve_profile_config
-    from lingtu_runtime.plugin_seed import install_builtin_plugin_catalog
+    from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+    from runtime.profiles.endpoints import resolve_runtime_run_spec
+    from runtime.profiles.resolver import canonical_profile_name, resolve_profile_config
+    from lingtu.plugin_seed import install_builtin_plugin_catalog
 
     install_builtin_plugin_catalog()
 
@@ -424,19 +502,99 @@ def _validate_runtime_contract(
         if actual != expected:
             blockers.append(f"profile config {profile}: {field} expected {expected!r}, got {actual!r}")
 
+    _validate_lite_runtime_defaults(profile, config, spec, blockers)
     _validate_runtime_env_defaults(manifest, spec, blockers, checked_files)
     _validate_product_graph(
         profile,
         blueprint_for_resolved_profile(canonical_profile, config),
         blockers,
+        manifest,
     )
 
 
-def _validate_product_graph(profile: str, bp: Any, blockers: list[str]) -> None:
+def _validate_lite_runtime_defaults(
+    profile: str,
+    config: dict[str, Any],
+    spec: Any,
+    blockers: list[str],
+) -> None:
+    from runtime.blueprints.stacks.autonomy_chain import autonomy_stack_config
+
+    if config.get("enable_native") is not False:
+        blockers.append(f"profile config {profile}: enable_native must be false for Lite runtime")
+
+    expected_config = {
+        "runtime_mode": "lite",
+        "slam_profile": "none",
+        "enable_gateway": False,
+        "enable_semantic": False,
+        "enable_map_modules": False,
+        "enable_gnss": False,
+        "manage_external_services": False,
+        "run_startup_checks": False,
+        "planner": "direct",
+        "python_autonomy_backend": LITE_EXPECTED_PYTHON_AUTONOMY_BACKEND,
+        "python_path_follower_backend": LITE_EXPECTED_PYTHON_PATH_FOLLOWER_BACKEND,
+    }
+    for field, expected in expected_config.items():
+        actual = config.get(field)
+        if actual != expected:
+            blockers.append(f"profile config {profile}: {field} expected {expected!r}, got {actual!r}")
+
+    if config.get("local_planner_backend") in LITE_FORBIDDEN_LOCAL_PLANNER_BACKENDS:
+        blockers.append(
+            f"profile config {profile}: local_planner_backend must not use "
+            f"native/heavy backend {config.get('local_planner_backend')!r}"
+        )
+    if config.get("path_follower_backend") in LITE_FORBIDDEN_PATH_FOLLOWER_BACKENDS:
+        blockers.append(
+            f"profile config {profile}: path_follower_backend must not use "
+            f"native/heavy backend {config.get('path_follower_backend')!r}"
+        )
+
+    autonomy_config = dict(config)
+    enable_native = bool(autonomy_config.pop("enable_native", False))
+    effective = autonomy_stack_config(enable_native, **autonomy_config)
+    if effective["backend"] != LITE_EXPECTED_PYTHON_AUTONOMY_BACKEND:
+        blockers.append(
+            f"profile config {profile}: effective local planner backend expected "
+            f"{LITE_EXPECTED_PYTHON_AUTONOMY_BACKEND!r}, got {effective['backend']!r}"
+        )
+    if effective["path_follower_backend"] != LITE_EXPECTED_PYTHON_PATH_FOLLOWER_BACKEND:
+        blockers.append(
+            f"profile config {profile}: effective path follower backend expected "
+            f"{LITE_EXPECTED_PYTHON_PATH_FOLLOWER_BACKEND!r}, got "
+            f"{effective['path_follower_backend']!r}"
+        )
+
+    expected_spec = {
+        "module_transport": "local",
+        "endpoint_transport": "local",
+        "endpoint_contract": None,
+        "localization_adapter": None,
+        "simulation_only": False,
+    }
+    for field, expected in expected_spec.items():
+        actual = getattr(spec, field, None)
+        if actual != expected:
+            blockers.append(f"runtime-spec {profile}: {field} expected {expected!r}, got {actual!r}")
+
+
+def _validate_product_graph(
+    profile: str,
+    bp: Any,
+    blockers: list[str],
+    manifest: dict[str, Any] | None = None,
+) -> None:
+    manifest = manifest or _load_manifest(MANIFEST_PATH)
+    forbidden_prefixes = {
+        **_lite_excluded_module_prefixes(manifest),
+        **FORBIDDEN_PRODUCT_MODULE_PREFIXES,
+    }
     for entry in bp._entries:
         module_name = getattr(entry.module_cls, "__module__", "")
-        for prefix, label in FORBIDDEN_PRODUCT_MODULE_PREFIXES.items():
-            if module_name.startswith(prefix):
+        for prefix, label in forbidden_prefixes.items():
+            if _module_matches_prefix(module_name, prefix):
                 class_name = getattr(entry.module_cls, "__name__", str(entry.module_cls))
                 blockers.append(
                     f"{profile} graph contains {label} module "

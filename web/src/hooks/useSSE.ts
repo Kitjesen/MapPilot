@@ -39,6 +39,7 @@ export type {
   RobotStatusEvent,
   GlobalPathEvent,
   MapCloudEvent,
+  MapLifecycleEvent,
   CostmapEvent,
   SlopeGridEvent,
   AgentMessageEvent,
@@ -58,6 +59,7 @@ const INITIAL_STATE: SSEState = {
   localPath: null,
   mapCloud: null,
   savedMap: null,
+  mapEvent: null,
   session: null,
   navigationStatus: null,
   lease: null,
@@ -469,6 +471,9 @@ export function useSSE(url: string = '/api/v1/events') {
                 break
               case 'saved_map':
                 next.savedMap = event as never
+                break
+              case 'map_event':
+                next.mapEvent = (evt.data ?? evt) as never
                 break
               case 'session':
                 next.session = (evt.data ?? evt) as never

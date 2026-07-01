@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ROS 2 话题频率验证测试
 确保关键话题以预期频率发布
@@ -11,7 +11,7 @@ import time
 import sys
 from collections import defaultdict
 
-from core.runtime_interface import TOPICS
+from runtime.runtime_interface import TOPICS
 
 
 class Colors:

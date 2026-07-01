@@ -1,4 +1,4 @@
-"""src/core/msgs nav + semantic 消息类型单元测试。"""
+"""src/runtime/msgs nav + semantic 消息类型单元测试。"""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
-from core.msgs.nav import OccupancyGrid, Odometry, Path
-from core.msgs.semantic import (
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.nav import OccupancyGrid, Odometry, Path
+from runtime.msgs.semantic import (
     Detection3D,
     GoalResult,
     MissionStatus,

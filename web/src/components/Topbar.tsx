@@ -38,8 +38,6 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'scene',   label: '场景' },
   { key: 'map',     label: '地图' },
   { key: 'slam',    label: 'SLAM' },
-  { key: 'dataflow', label: 'Dataflow' },
-  { key: 'inspection', label: 'Inspection' },
 ]
 
 interface TopbarProps {

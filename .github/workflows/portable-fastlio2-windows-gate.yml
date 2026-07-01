@@ -1,0 +1,150 @@
+name: Portable FastLIO2 Windows Gate
+
+on:
+  push:
+    paths:
+      - ".github/workflows/portable-fastlio2-windows-gate.yml"
+      - "lingtu.py"
+      - "requirements-lite.txt"
+      - "pyproject.toml"
+      - "cli/**"
+      - "config/**"
+      - "docs/architecture/PORTABLE_ALGORITHM_BOUNDARY.md"
+      - "scripts/build/build_fastlio2_portable.py"
+      - "sim/scripts/portable_fastlio2_replay.py"
+      - "src/runtime/adapters/lcm/contracts.py"
+      - "src/runtime/adapters/lcm/endpoint_runner.py"
+      - "src/runtime/adapters/lcm/endpoint_service.py"
+      - "src/localization/adapters/portable/**"
+      - "src/localization/adapters/lcm/sources/portable_lio.py"
+      - "src/runtime/blueprints/**"
+      - "src/runtime/backend_status.py"
+      - "src/runtime/module.py"
+      - "src/runtime/msgs/**"
+      - "src/runtime/registry.py"
+      - "src/runtime/profiles/**"
+      - "src/runtime/runtime_interface.py"
+      - "src/runtime/stream.py"
+      - "src/runtime/tests/test_cli_no_repl.py"
+      - "src/runtime/tests/test_lcm_endpoint_runner.py"
+      - "src/runtime/tests/test_lcm_localization_adapter.py"
+      - "src/runtime/tests/test_fastlio2_portable_cpp_core.py"
+      - "src/runtime/tests/test_portable_lio_kernel.py"
+      - "src/runtime/tests/test_runtime_launcher.py"
+      - "src/runtime/tests/test_runtime_resolver.py"
+      - "src/localization/fastlio2/portable/**"
+  pull_request:
+    paths:
+      - ".github/workflows/portable-fastlio2-windows-gate.yml"
+      - "lingtu.py"
+      - "requirements-lite.txt"
+      - "pyproject.toml"
+      - "cli/**"
+      - "config/**"
+      - "docs/architecture/PORTABLE_ALGORITHM_BOUNDARY.md"
+      - "scripts/build/build_fastlio2_portable.py"
+      - "sim/scripts/portable_fastlio2_replay.py"
+      - "src/runtime/adapters/lcm/contracts.py"
+      - "src/runtime/adapters/lcm/endpoint_runner.py"
+      - "src/runtime/adapters/lcm/endpoint_service.py"
+      - "src/localization/adapters/portable/**"
+      - "src/localization/adapters/lcm/sources/portable_lio.py"
+      - "src/runtime/blueprints/**"
+      - "src/runtime/backend_status.py"
+      - "src/runtime/module.py"
+      - "src/runtime/msgs/**"
+      - "src/runtime/registry.py"
+      - "src/runtime/profiles/**"
+      - "src/runtime/runtime_interface.py"
+      - "src/runtime/stream.py"
+      - "src/runtime/tests/test_cli_no_repl.py"
+      - "src/runtime/tests/test_lcm_endpoint_runner.py"
+      - "src/runtime/tests/test_lcm_localization_adapter.py"
+      - "src/runtime/tests/test_fastlio2_portable_cpp_core.py"
+      - "src/runtime/tests/test_portable_lio_kernel.py"
+      - "src/runtime/tests/test_runtime_launcher.py"
+      - "src/runtime/tests/test_runtime_resolver.py"
+      - "src/localization/fastlio2/portable/**"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYTHONPATH: src
+
+jobs:
+  portable-fastlio2-windows:
+    name: CMake, ctypes, and runtime endpoint
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          python --version
+          cmake --version
+          where cl
+
+      - name: Install lightweight dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-lite.txt pytest
+
+      - name: Run portable FastLIO2 tests
+        shell: pwsh
+        run: |
+          python -m pytest src/runtime/tests/test_fastlio2_portable_cpp_core.py src/runtime/tests/test_portable_lio_kernel.py -q --maxfail=1
+          python -m pytest src/runtime/tests/test_lcm_endpoint_runner.py::test_endpoint_runner_portable_lio_auto_if_present_falls_back_without_library -q --maxfail=1
+          python -m pytest src/runtime/tests/test_runtime_resolver.py src/runtime/tests/test_runtime_launcher.py src/runtime/tests/test_lcm_localization_adapter.py::test_portable_lio_adapter_publishes_localization_without_ros_or_lcm -q --maxfail=1
+          python -m pytest src/runtime/tests/test_cli_no_repl.py::test_product_task_endpoint_builds_windows_fastlio2_in_graph_runtime src/runtime/tests/test_cli_no_repl.py::test_fastlio2_preflight_points_windows_users_to_portable_endpoint src/runtime/tests/test_cli_no_repl.py::test_portable_fastlio2_preflight_skips_ubuntu_ros2_guidance src/runtime/tests/test_cli_no_repl.py::test_portable_fastlio2_resolved_preflight_skips_host_checks_on_windows -q --maxfail=1
+
+      - name: Verify fallback and strict missing-library behavior
+        shell: pwsh
+        run: |
+          $empty = Join-Path $env:RUNNER_TEMP "empty-fastlio2"
+          New-Item -ItemType Directory -Force -Path $empty | Out-Null
+          $env:LINGTU_FASTLIO2_PORTABLE_SEARCH_ROOT = $empty
+          python sim\scripts\portable_fastlio2_replay.py gate --frames 1 --dt-s 0.01 --native-lib auto-if-present
+          if ($LASTEXITCODE -ne 0) {
+            throw "auto-if-present fallback failed without a portable library"
+          }
+          $strictOutput = python sim\scripts\portable_fastlio2_replay.py gate --frames 1 --dt-s 0.01 --native-lib auto 2>&1 | Out-String
+          $strictExitCode = $LASTEXITCODE
+          if ($strictExitCode -eq 0) {
+            throw "strict --native-lib auto unexpectedly succeeded without a portable library"
+          }
+          if ($strictOutput -notmatch "portable FastLIO2 library was not found") {
+            throw "strict --native-lib auto failed for an unexpected reason: $strictOutput"
+          }
+          $global:LASTEXITCODE = 0
+          Remove-Item Env:\LINGTU_FASTLIO2_PORTABLE_SEARCH_ROOT
+
+      - name: Build portable FastLIO2 shared library
+        shell: pwsh
+        run: |
+          python scripts\build\build_fastlio2_portable.py --print-library
+
+      - name: Verify Windows portable runtime endpoint
+        shell: pwsh
+        run: |
+          $lib = Get-ChildItem -Path build\fastlio2_portable -Recurse -File |
+            Where-Object { $_.Name -in @("fastlio2_portable_core.dll", "libfastlio2_portable_core.dll", "libfastlio2_portable_core.so", "libfastlio2_portable_core.dylib") } |
+            Select-Object -First 1
+          if (-not $lib) {
+            throw "portable FastLIO2 shared library was not found after build"
+          }
+          python sim\scripts\portable_fastlio2_replay.py gate --frames 2 --dt-s 0.01 --native-lib auto
+          python sim\scripts\portable_fastlio2_replay.py gate --frames 2 --dt-s 0.01 --native-lib "$($lib.FullName)"
+          python lingtu.py runtime-spec map --endpoint windows-fastlio2 --json
+          python lingtu.py runtime-spec explore --endpoint windows-fastlio2 --json

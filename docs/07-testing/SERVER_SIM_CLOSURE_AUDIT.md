@@ -31,8 +31,8 @@ required product gates:
 - CMU Unity same-source official tomogram PCT gate with TARE waypoint,
   LingTu PCT selected, no planner fallback, no direct-goal fallback, command
   output, odometry movement, and map-area growth.
-- Native PCT no-fallback route execution through ROS2 local planner/path
-  follower in MuJoCo.
+- Native PCT no-fallback route execution through the in-process local
+  planner/path follower in MuJoCo.
 - Fast-LIO2 live LiDAR/IMU bridge contract.
 - Saved-map relocalization/localizer contract.
 - Routecheck non-motion planning preflight.
@@ -49,9 +49,9 @@ It reported `ok=true`, `13` required gates passed, `remaining_gaps=[]`,
 superseded by the 2026-06-08 DimOS 13-gate result: 7/13 passed,
 `lingtu_readiness.ok=false`, and `claim_allowed=false`. The historical server
 regression set
-`src/core/tests/test_server_sim_closure.py`,
-`src/core/tests/test_sim_runtime_compat.py`, and
-`src/core/tests/test_mujoco_mid360_pattern.py` reports `88 passed`.
+`src/runtime/tests/test_server_sim_closure.py`,
+`src/runtime/tests/test_sim_runtime_adapters.py`, and
+`src/runtime/tests/test_mujoco_mid360_pattern.py` reports `88 passed`.
 
 ## Historical Required Gate Evidence
 
@@ -122,7 +122,7 @@ Do not claim yet:
 Targeted unit/evaluator verification:
 
 ```bash
-python -m pytest src/core/tests/test_server_sim_closure.py -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q
 ```
 
 Native PCT no-fallback runtime verification:

@@ -19,17 +19,17 @@ ExecStart=/bin/bash -c '\
     -p publish_freq:=10.0 \
     -p output_data_type:=0 \
     -p user_config_path:=/opt/lingtu/current/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json \
-    -r livox/lidar:=/nav/lidar_scan \
-    -r livox/imu:=/nav/imu'
+    -r livox/lidar:=/lidar/raw_frame \
+    -r livox/imu:=/imu/raw'
 ExecStartPost=/bin/bash -c '\
   source /opt/lingtu/config/ros2-env.sh && \
   for _ in $(seq 1 15); do \
-    lidar=$$(ros2 topic info /nav/lidar_scan 2>/dev/null | sed -n "s/^Publisher count: //p" | tail -1); \
-    imu=$$(ros2 topic info /nav/imu 2>/dev/null | sed -n "s/^Publisher count: //p" | tail -1); \
+    lidar=$$(ros2 topic info /lidar/raw_frame 2>/dev/null | sed -n "s/^Publisher count: //p" | tail -1); \
+    imu=$$(ros2 topic info /imu/raw 2>/dev/null | sed -n "s/^Publisher count: //p" | tail -1); \
     if [ "$${lidar:-0}" -ge 1 ] && [ "$${imu:-0}" -ge 1 ]; then exit 0; fi; \
     sleep 1; \
   done; \
-  echo "robot-lidar readiness failed: /nav/lidar_scan=$${lidar:-0} /nav/imu=$${imu:-0}" >&2; \
+  echo "robot-lidar readiness failed: /lidar/raw_frame=$${lidar:-0} /imu/raw=$${imu:-0}" >&2; \
   exit 1'
 Restart=on-failure
 RestartSec=5s

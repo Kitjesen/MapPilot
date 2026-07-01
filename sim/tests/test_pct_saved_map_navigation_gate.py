@@ -94,8 +94,8 @@ def _write_saved_map_contract_assets(
                         "planning": [
                             {
                                 "planner": "pct",
-                                "backend_class": "_PCTBackend",
-                                "native_backend_used": True,
+                                "planner_class": "PCTPlanner",
+                                "native_runtime_used": True,
                                 "native_runtime": {"ok": True},
                                 "pct_optimizer_enabled": False,
                                 "pct_planner_path_mode": "native_astar_raw_path",
@@ -169,11 +169,11 @@ def _pct_preview_report() -> dict:
                 "pct_optimizer_enabled": False,
                 "pct_planner_path_mode": "native_astar_raw_path",
                 "feasible": True,
-                "backend_class": "_PCTBackend",
+                "planner_class": "PCTPlanner",
                 "preview": {
                     "selected_planner": "pct",
                     "fallback_reason": "",
-                    "backend_class": "_PCTBackend",
+                    "planner_class": "PCTPlanner",
                     "path_safety": {"ok": True},
                     "plan_ms": 2.5,
                     "path": [
@@ -397,7 +397,7 @@ def test_pct_saved_map_contract_only_validates_source_binding(
         "map_pcd_matches_relocalization": True,
         "scene_xml_matches_saved_map": True,
         "pct_no_fallback": True,
-        "pct_native_backend_used": True,
+        "pct_native_runtime_used": True,
         "pct_native_runtime_ok": True,
         "pct_optimizer_disabled": True,
         "pct_native_raw_path": True,

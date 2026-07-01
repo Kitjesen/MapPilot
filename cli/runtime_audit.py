@@ -11,9 +11,18 @@ from typing import Any, Mapping
 import yaml
 
 from cli.profiles_data import PROFILES
-from core.blueprints.profile_graph import resolve_profile_config
-from core.blueprints.runtime_endpoint import RUNTIME_ENDPOINTS, resolve_runtime_run_spec
-from core.runtime_interface import (
+from runtime.blueprints.profile_graph import resolve_profile_config
+from runtime.profiles.endpoints import (
+    PRODUCT_PROFILE_ENDPOINTS,
+    RUNTIME_ENDPOINTS,
+    resolve_runtime_run_spec,
+)
+from runtime.profiles.binding_policy import ros2_runtime_binding_violations
+from runtime.profiles.catalog.products import (
+    OPTIONAL_NATIVE_PRODUCT_PROFILES,
+    PRODUCT_PROFILES,
+)
+from runtime.runtime_interface import (
     DATA_SOURCE_CONTRACTS,
     FRAME_LINKS,
     PROFILE_DATA_SOURCE_BINDINGS,
@@ -31,8 +40,8 @@ from core.runtime_interface import (
     runtime_topic_allowed_frame_contract,
     runtime_topic_default_frame_contract,
 )
-from core.runtime_switch import validate_runtime_switch
-from core.runtime_validation_gates import (
+from runtime.runtime_switch import validate_runtime_switch
+from runtime.runtime_validation_gates import (
     RUNTIME_AUDIT_CHECKS,
     runtime_validation_gates,
     validate_runtime_validation_gates,
@@ -41,16 +50,30 @@ from core.runtime_validation_gates import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROS_FRAME_CONTRACT_DOC = REPO_ROOT / "docs" / "architecture" / "ros_frame_contract.md"
+ROS_FREE_DEFAULT_PROFILES = frozenset(
+    (
+        *(
+            profile
+            for profile in PRODUCT_PROFILES
+            if profile not in OPTIONAL_NATIVE_PRODUCT_PROFILES
+        ),
+        "stub",
+        "dev",
+        "sim_nav",
+        "sim",
+        "portable_mujoco",
+    )
+)
 SOURCE_FRAME_CONTRACT_ROOTS = (
     "src/drivers/real/lidar/lidar_module.py",
     "src/drivers/sim",
     "src/drivers/real/thunder/connection.py",
     "src/drivers/real/thunder/han_dog_module.py",
-    "src/slam",
+    "src/localization",
     "src/nav",
-    "src/base_autonomy",
-    "src/core/msgs",
-    "src/core/blueprints",
+    "src/nav/local",
+    "src/runtime/msgs",
+    "src/runtime/blueprints",
     "src/gateway/schemas.py",
     "src/gateway/services/control_commands.py",
     "src/gateway/services/goal_builder.py",
@@ -58,18 +81,18 @@ SOURCE_FRAME_CONTRACT_ROOTS = (
     "src/gateway/services/telemetry_normalizers.py",
     "src/gateway/services/readiness.py",
     "src/gateway/routes/diagnostics.py",
-    "src/semantic/planner/semantic_planner_module.py",
-    "src/semantic/planner/goal_resolver.py",
-    "src/semantic/planner/fast_path.py",
-    "src/semantic/planner/slow_path.py",
-    "src/semantic/planner/frontier_module.py",
-    "src/semantic/planner/action_executor_module.py",
-    "src/semantic/planner/visual_servo_module.py",
-    "src/semantic/planner/action_executor.py",
-    "src/semantic/perception/perception_module.py",
-    "src/semantic/perception/instance_tracker.py",
+    "src/decision/modules/semantic_planner_module.py",
+    "src/decision/goal_resolution/goal_resolver.py",
+    "src/decision/goal_resolution/fast_path.py",
+    "src/decision/goal_resolution/slow_path.py",
+    "src/decision/modules/frontier_module.py",
+    "src/decision/modules/action_executor_module.py",
+    "src/decision/modules/visual_servo_module.py",
+    "src/decision/tasking/action_executor.py",
+    "src/perception/perception_module.py",
+    "src/perception/instance_tracker.py",
     "cli/profiles_data.py",
-    "sim/scripts/mujoco_fastlio2_live_gate.py",
+    "sim/scripts/mujoco_live_gate.py",
     "sim/scripts/saved_map_relocalize_runtime_gate.py",
 )
 SOURCE_TOPIC_CONTRACT_ROOTS = (
@@ -300,6 +323,9 @@ def _check_yaml_manifest(
     if _as_tuple_mapping(contract.get("topic_formats")) != manifest["topic_formats"]:
         blockers.append("topic_formats does not mirror runtime manifest")
 
+    if _as_tuple_mapping(contract.get("topic_ros_types")) != manifest["topic_ros_types"]:
+        blockers.append("topic_ros_types does not mirror runtime manifest")
+
     if _normalized_adapter_aliases(contract.get("adapter_aliases")) != (
         _normalized_adapter_aliases(manifest.get("adapter_aliases"))
     ):
@@ -416,7 +442,7 @@ def _append_endpoint_topic_override_blockers(
             )
 
 
-def _append_endpoint_path_override_blockers(
+def _append_endpoint_file_override_blockers(
     blockers: list[str],
     *,
     endpoint_name: str,
@@ -434,6 +460,55 @@ def _append_endpoint_path_override_blockers(
                 f"endpoint {endpoint_name} {section_name} {key} path missing: "
                 f"{path_value}"
             )
+
+
+def _append_product_endpoint_matrix_blockers(blockers: list[str]) -> None:
+    if set(PRODUCT_PROFILE_ENDPOINTS) != set(PRODUCT_PROFILES):
+        blockers.append("PRODUCT_PROFILE_ENDPOINTS and PRODUCT_PROFILES keys differ")
+
+    for profile in sorted(PRODUCT_PROFILE_ENDPOINTS):
+        expected = set(PRODUCT_PROFILE_ENDPOINTS[profile])
+        actual = {
+            endpoint_name
+            for endpoint_name, endpoint in RUNTIME_ENDPOINTS.items()
+            if profile in endpoint.supported_profiles
+        }
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        if missing:
+            blockers.append(
+                f"product profile {profile} missing allowed endpoints: "
+                + ", ".join(missing)
+            )
+        if extra:
+            blockers.append(
+                f"product profile {profile} has undeclared endpoints: "
+                + ", ".join(extra)
+            )
+
+
+def _append_product_planner_backend_blockers(blockers: list[str]) -> None:
+    for profile in PRODUCT_PROFILES:
+        if "planner_backend" in PROFILES.get(profile, {}):
+            blockers.append(
+                f"product profile {profile} must use planner, not planner_backend"
+            )
+
+    product_profiles = set(PRODUCT_PROFILES)
+    for endpoint_name, endpoint in RUNTIME_ENDPOINTS.items():
+        supported_products = product_profiles & set(endpoint.supported_profiles)
+        if supported_products and "planner_backend" in endpoint.config_overrides:
+            blockers.append(
+                f"endpoint {endpoint_name} config_overrides must not set "
+                "planner_backend for product profiles"
+            )
+        for profile in sorted(product_profiles & set(endpoint.profile_overrides)):
+            overrides = endpoint.profile_overrides[profile]
+            if "planner_backend" in overrides:
+                blockers.append(
+                    f"endpoint {endpoint_name} profile_overrides.{profile} "
+                    "must not set planner_backend"
+                )
 
 
 def _append_external_profile_metadata_blockers(
@@ -541,6 +616,61 @@ def _append_profile_binding_spec_blockers(
         )
 
 
+def _append_ros2_runtime_binding_blockers(
+    blockers: list[str],
+    *,
+    spec_label: str,
+    config: Mapping[str, Any],
+) -> None:
+    blockers.extend(
+        f"{spec_label}: {violation}"
+        for violation in _ros2_runtime_binding_violations_for_config(config)
+    )
+
+
+def _ros2_runtime_binding_violations_for_config(
+    config: Mapping[str, Any],
+) -> list[str]:
+    enable_native = bool(config.get("enable_native", False))
+    return ros2_runtime_binding_violations(
+        config,
+        enable_native=enable_native,
+    )
+
+
+def _enforces_ros2_runtime_binding_audit(
+    profile: str,
+    endpoint: Any | None = None,
+) -> bool:
+    """Return True for runtime specs that must stay free of ROS2 bindings."""
+
+    if profile in OPTIONAL_NATIVE_PRODUCT_PROFILES:
+        return False
+    if endpoint is not None:
+        return True
+    return profile in ROS_FREE_DEFAULT_PROFILES or _profile_has_external_contract(
+        profile
+    )
+
+
+def _ros2_runtime_binding_skip_reason(
+    profile: str,
+    endpoint: Any | None = None,
+) -> str:
+    """Return why a runtime spec is outside no-ROS acceptance."""
+
+    if profile in OPTIONAL_NATIVE_PRODUCT_PROFILES:
+        return "optional_native_product_profile"
+    return "outside_no_ros_acceptance_set"
+
+
+def _profile_has_external_contract(profile: str) -> bool:
+    profile_data = PROFILES.get(profile, {})
+    return bool(
+        profile_data.get("_external_launcher") or profile_data.get("_runtime_contract")
+    )
+
+
 def _append_artifact_reference_blockers(
     blockers: list[str],
     *,
@@ -645,6 +775,11 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
     frames = _required_mapping_section(manifest, "frames", blockers)
     topic_format_map = _required_mapping_section(manifest, "topic_formats", blockers)
     topic_formats = set(topic_format_map)
+    topic_ros_type_map = _required_mapping_section(
+        manifest,
+        "topic_ros_types",
+        blockers,
+    )
     topic_allowed_frames = _required_mapping_section(
         manifest,
         "topic_allowed_frame_ids",
@@ -687,6 +822,23 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
         blockers,
     )
     declared_formats = set(message_format_map)
+    if set(topic_ros_type_map) != topic_formats:
+        blockers.append("topic_ros_types keys do not match topic_formats")
+    for topic, ros_types in sorted(topic_ros_type_map.items()):
+        if not isinstance(ros_types, (list, tuple)) or not ros_types:
+            blockers.append(f"topic_ros_types {topic} must be non-empty")
+            continue
+        for ros_type in ros_types:
+            ros_type = str(ros_type)
+            if (
+                ros_type == "service"
+                or ros_type == "application/json"
+                or "/msg/" in ros_type
+            ):
+                continue
+            blockers.append(
+                f"topic_ros_types {topic} references non-ROS payload type {ros_type}"
+            )
     artifact_format_map = _required_mapping_section(
         manifest,
         "artifact_formats",
@@ -1221,10 +1373,16 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
     checked_external_profiles: list[str] = []
     checked_external_profile_specs: list[str] = []
     checked_profile_binding_specs: list[str] = []
+    checked_ros2_binding_specs: list[str] = []
+    skipped_ros2_binding_specs: list[str] = []
+    skipped_ros2_binding_reasons: dict[str, str] = {}
+    skipped_ros2_binding_violations: dict[str, list[str]] = {}
     checked_endpoint_profiles: list[str] = []
     fixed_frames = _fixed_runtime_frame_ids()
     manifest = runtime_contract_manifest()
     topic_formats = set(_required_mapping_section(manifest, "topic_formats", blockers))
+    _append_product_endpoint_matrix_blockers(blockers)
+    _append_product_planner_backend_blockers(blockers)
 
     if set(PROFILES) != set(PROFILE_DATA_SOURCE_BINDINGS):
         blockers.append("PROFILES and PROFILE_DATA_SOURCE_BINDINGS keys differ")
@@ -1276,6 +1434,22 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
                     )
         try:
             config = resolve_profile_config(profile)
+            default_ros2_spec = f"{profile}:default"
+            if _enforces_ros2_runtime_binding_audit(profile):
+                checked_ros2_binding_specs.append(default_ros2_spec)
+                _append_ros2_runtime_binding_blockers(
+                    blockers,
+                    spec_label=f"profile {profile} runtime bindings",
+                    config=config,
+                )
+            else:
+                skipped_ros2_binding_specs.append(default_ros2_spec)
+                skipped_ros2_binding_reasons[default_ros2_spec] = (
+                    _ros2_runtime_binding_skip_reason(profile)
+                )
+                skipped_ros2_binding_violations[default_ros2_spec] = (
+                    _ros2_runtime_binding_violations_for_config(config)
+                )
             spec = resolve_runtime_run_spec(profile, config)
             _append_profile_binding_spec_blockers(
                 blockers,
@@ -1360,7 +1534,7 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
             overrides=endpoint.config_overrides,
             topic_formats=topic_formats,
         )
-        _append_endpoint_path_override_blockers(
+        _append_endpoint_file_override_blockers(
             blockers,
             endpoint_name=endpoint_name,
             section_name="config_overrides",
@@ -1381,7 +1555,7 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
                 overrides=overrides,
                 topic_formats=topic_formats,
             )
-            _append_endpoint_path_override_blockers(
+            _append_endpoint_file_override_blockers(
                 blockers,
                 endpoint_name=endpoint_name,
                 section_name=f"profile_overrides.{profile_name}",
@@ -1391,6 +1565,25 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
             checked_endpoint_profiles.append(f"{endpoint_name}:{profile}")
             try:
                 config = resolve_profile_config(profile, runtime_endpoint=endpoint_name)
+                endpoint_ros2_spec = f"{endpoint_name}:{profile}"
+                if _enforces_ros2_runtime_binding_audit(profile, endpoint):
+                    checked_ros2_binding_specs.append(endpoint_ros2_spec)
+                    _append_ros2_runtime_binding_blockers(
+                        blockers,
+                        spec_label=(
+                            f"endpoint {endpoint_name} profile {profile} "
+                            "runtime bindings"
+                        ),
+                        config=config,
+                    )
+                else:
+                    skipped_ros2_binding_specs.append(endpoint_ros2_spec)
+                    skipped_ros2_binding_reasons[endpoint_ros2_spec] = (
+                        _ros2_runtime_binding_skip_reason(profile, endpoint)
+                    )
+                    skipped_ros2_binding_violations[endpoint_ros2_spec] = (
+                        _ros2_runtime_binding_violations_for_config(config)
+                    )
                 spec = resolve_runtime_run_spec(profile, config)
                 result = validate_runtime_switch(spec)
             except Exception as exc:  # pragma: no cover - surfaced in audit payload
@@ -1411,7 +1604,15 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
         "checked_external_profiles": checked_external_profiles,
         "checked_external_profile_specs": checked_external_profile_specs,
         "checked_profile_binding_specs": checked_profile_binding_specs,
+        "checked_ros2_binding_specs": checked_ros2_binding_specs,
+        "skipped_ros2_binding_specs": skipped_ros2_binding_specs,
+        "skipped_ros2_binding_reasons": skipped_ros2_binding_reasons,
+        "skipped_ros2_binding_violations": skipped_ros2_binding_violations,
         "checked_endpoint_profiles": checked_endpoint_profiles,
+        "product_endpoint_matrix": {
+            profile: list(endpoints)
+            for profile, endpoints in PRODUCT_PROFILE_ENDPOINTS.items()
+        },
     }
 
 
@@ -1687,7 +1888,7 @@ def _check_ros_frame_contract_doc(
             blockers.append(f"ros_frame_contract.md topic frame row drifted for {topic}")
 
     required_phrase = (
-        f"{THUNDER_FIELD_EVIDENCE_LABEL} must reject `/nav/map_cloud` outside `map`"
+        f"{THUNDER_FIELD_EVIDENCE_LABEL} must reject `/slam/map_cloud` outside `map`"
     )
     if required_phrase not in doc:
         blockers.append("ros_frame_contract.md missing real map_cloud rejection phrase")

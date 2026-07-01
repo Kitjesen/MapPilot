@@ -50,6 +50,24 @@ class CameraData:
 
 
 @dataclass
+class DiscreteRayData:
+    """Fixed-pattern ray/height observation snapshot."""
+
+    heights: np.ndarray       # (N,) base-height minus hit z, NaN when invalid
+    points_body: np.ndarray   # (N, 3) hit points in body frame, NaN when invalid
+    points_world: np.ndarray  # (N, 3) hit points in world frame, NaN when invalid
+    valid_mask: np.ndarray    # (N,) bool hit validity
+    pattern: str = "grid"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.heights = np.asarray(self.heights, dtype=np.float32)
+        self.points_body = np.asarray(self.points_body, dtype=np.float32)
+        self.points_world = np.asarray(self.points_world, dtype=np.float32)
+        self.valid_mask = np.asarray(self.valid_mask, dtype=bool)
+
+
+@dataclass
 class VelocityCommand:
     """Velocity command (corresponds to ROS TwistStamped)."""
 
@@ -150,6 +168,14 @@ class SimEngine(ABC):
 
         Returns:
             (N, 3) float32 world-frame point cloud, or (N, 4) with intensity
+        """
+
+    @abstractmethod
+    def get_discrete_rays(self, config: Any | None = None) -> DiscreteRayData:
+        """Read fixed-pattern terrain ray/height observations.
+
+        Returns:
+            DiscreteRayData with heights, body/world hit points, and validity mask.
         """
 
     # ──────────────────────────────────────────────────────────────

@@ -1,9 +1,9 @@
-﻿# Global Planner Selection
+# Global Planner Selection
 
 This is the rationale for which global-planner backend a given profile
 uses. The runtime contract is defined by `_PCTBackend` and `_AStarBackend`
-(both registered under `core.registry`), and used by
-`src/nav/global_planner_service.py`.
+(both registered under `runtime.registry`), and used by
+`src/nav/services/plan/global_planner/service.py`.
 
 ## TL;DR
 
@@ -33,27 +33,27 @@ ssh sunrise@192.168.66.190 "ps aux | grep 'lingtu.py' | grep -v grep"
   鈫?PlannerService.send_instruction(kind="goto", x, y)
   鈫?SemanticPlannerModule.goal_pose Out[PoseStamped]
 
-[NavigationModule  src/nav/navigation_module.py]
+[NavigationModule  src/nav/mission/navigation_module.py]
   goal_pose In[PoseStamped]
   鈫?mission FSM: IDLE 鈫?PLANNING
   鈫?GlobalPlannerService.plan(start=robot_pose, goal=user_goal)
 
-[GlobalPlannerService  src/nav/global_planner_service.py]
+[GlobalPlannerService  src/nav/services/plan/global_planner/service.py]
   picks the backend by `planner=` argument:
     "pct"   鈫?_PCTBackend (ele_planner.so, aarch64 C++)
     "astar" 鈫?_AStarBackend (pure Python, 8-connected)
   Input:  tomogram.pickle (built from map_cloud + elevation_map)
   Output: np.ndarray (N, 3) world-frame [x, y, z]
 
-[WaypointTracker  src/nav/waypoint_tracker.py]
+[WaypointTracker  src/nav/mission/tracking/waypoint_tracker.py]
   downsample path 鈫?waypoints
   鈫?NavigationModule.waypoint Out[PoseStamped] streamed point-by-point
   鈫?arrival / stuck detection, recovery, replan
 
-[PathFollower  src/nav/core/path_follower_core.hpp]
+[PathFollower  src/nav/core/path_follower_runtime.hpp]
   waypoint + current pose 鈫?Pure Pursuit 鈫?cmd_vel
 
-[CmdVelMux  src/nav/cmd_vel_mux_module.py]
+[CmdVelMux  src/nav/services/safety/cmd_vel_mux_module.py]
   priority arbitration with 0.5 s freshness:
     teleop 100 > visual_servo 80 > recovery 60 > path_follower 40
   鈫?driver_cmd_vel Out
@@ -81,7 +81,7 @@ Important:
 | Registry name | `pct` |
 | Implementation | C++ (HKU/HKUST, GPLv2) |
 | Entry | `_PCTBackend` 鈫?`TomogramPlanner.plan()` |
-| C++ source | `src/global_planning/pct_planner/planner/lib/src/ele_planner/` |
+| C++ source | `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/src/ele_planner/` |
 | Compiled `.so` | `planner/lib/ele_planner.so` (aarch64 only) |
 | Map format | Tomogram `.pickle` (multi-layer traversability + elevation + gradient) |
 | Capabilities | 3D terrain awareness (stairs, ramps), GPMP trajectory optimisation, slope penalties |
@@ -95,7 +95,7 @@ Used by the `nav`, `explore`, `tare_explore`, and `s100p` profiles.
 |----------|-------|
 | Registry name | `astar` |
 | Implementation | `_AStarBackend`, 8-connected A* |
-| File | `src/global_planning/pct_adapters/src/global_planner_module.py` |
+| File | `src/nav/services/plan/global_planner/algorithm/pct/backend.py` |
 | Map format | The same tomogram pickle, but only the ground-floor slice |
 | Capabilities | 2D, no trajectory optimisation, no slope awareness |
 | Reason for existing | `ele_planner.so` is aarch64-only; CI and dev machines need a backend |
@@ -162,9 +162,9 @@ if not path:
 
 | File | Role |
 |------|------|
-| `src/global_planning/pct_adapters/src/global_planner_module.py` | `_PCTBackend` and `_AStarBackend` registration |
-| `src/global_planning/pct_planner/planner/scripts/planner_wrapper.py` | `TomogramPlanner` Python wrapper around the `.so` |
-| `src/global_planning/pct_planner/planner/lib/src/ele_planner/` | C++ source |
-| `src/nav/global_planner_service.py` | `GlobalPlannerService` consumed by `NavigationModule` |
+| `src/nav/services/plan/global_planner/algorithm/pct/backend.py` | `_PCTBackend` and `_AStarBackend` registration |
+| `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/planner_wrapper.py` | `TomogramPlanner` Python wrapper around the `.so` |
+| `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/src/ele_planner/` | C++ source |
+| `src/nav/services/plan/global_planner/service.py` | `GlobalPlannerService` consumed by `NavigationModule` |
 | `cli/profiles_data.py` | Profile `planner` field |
-| `src/core/blueprints/full_stack.py` | Blueprint default `planner_backend="astar"` |
+| `src/runtime/blueprints/full_stack.py` | Blueprint default `planner_backend="astar"` |

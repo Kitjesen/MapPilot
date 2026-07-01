@@ -186,7 +186,7 @@ def test_readiness_snapshot_includes_navigation_blockers():
     from gateway.services.readiness import build_readiness_snapshot
 
     gateway = GatewayModule()
-    gateway._all_modules = {"NavigationModule": _HealthyModule()}
+    gateway._all_modules = {"nav.mission": _HealthyModule()}
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.03
     with gateway._state_lock:
@@ -229,7 +229,7 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
 
     gateway = GatewayModule()
-    gateway._all_modules = {"NavigationModule": _HealthyModule()}
+    gateway._all_modules = {"nav.mission": _HealthyModule()}
     gateway._session_mode = "navigating"
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "frame_id": "map"}
@@ -268,37 +268,37 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
         "required": True,
     }
     assert payload["runtime"]["boundary"]["topic_allowed_frame_ids"][
-        "/nav/map_cloud"
+        "/slam/map_cloud"
     ] == ["map"]
     assert payload["runtime"]["boundary"]["topic_default_frame_ids"][
-        "/nav/map_cloud"
+        "/slam/map_cloud"
     ] == "map"
     assert payload["runtime"]["boundary"]["required_topic_frame_ids"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
     ]
     assert payload["runtime"]["boundary"]["runtime_data_flow_topics"][:2] == [
-        "/points_raw",
-        "/imu_raw",
+        "/lidar/raw_frame",
+        "/imu/raw",
     ]
     flow = {
         stage["name"]: stage
         for stage in payload["runtime"]["boundary"]["resolved_runtime_data_flow"]
     }
-    assert flow["endpoint_adapter"]["inputs"] == ["/points_raw", "/imu_raw"]
+    assert flow["endpoint_adapter"]["inputs"] == ["/lidar/raw_frame", "/imu/raw"]
     assert flow["command_boundary"]["outputs"] == ["mujoco_velocity_adapter"]
     assert payload["runtime"]["boundary"][
         "runtime_data_flow_stage_algorithm_interfaces"
     ]["global_planning"] == [
         "global_planning",
-        "astar_global_planning",
         "pct_global_planning",
+        "octoplanner3d_global_planning",
     ]
     assert payload["runtime"]["summary"]["data_blockers"] == [
         "runtime_blocked:runtime_contract_data_source_mismatch",
@@ -318,7 +318,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
     gateway = GatewayModule()
-    gateway._all_modules = {"NavigationModule": _HealthyModule()}
+    gateway._all_modules = {"nav.mission": _HealthyModule()}
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.03
     with gateway._state_lock:
@@ -352,18 +352,18 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     )
     localization = payload["runtime"]["localization"]
     assert localization["runtime_contract"] == "thunder_field"
-    assert localization["topic_default_frame_ids"]["/nav/map_cloud"] == "map"
+    assert localization["topic_default_frame_ids"]["/slam/map_cloud"] == "map"
     assert localization["required_topic_frame_ids"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
     ]
-    assert "/nav/odometry" in localization["runtime_data_flow_topics"]
+    assert "/slam/odometry" in localization["runtime_data_flow_topics"]
     assert localization["runtime_data_flow_stage_algorithm_interfaces"][
         "local_planning_and_following"
     ] == [
@@ -375,9 +375,9 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     assert frames["registered_cloud_frame_id"] == "body"
     assert frames["map_cloud_frame_id"] == "map"
     assert frames["observed_topic_frame_ids"] == {
-        "/nav/odometry": "odom",
-        "/nav/registered_cloud": "body",
-        "/nav/map_cloud": "map",
+        "/slam/odometry": "odom",
+        "/slam/registered_cloud": "body",
+        "/slam/map_cloud": "map",
     }
     assert frames["missing_required_topic_frame_ids"] == []
     assert frames["mismatches"] == []
@@ -394,7 +394,7 @@ def test_readiness_snapshot_blocks_motion_but_not_data_when_safety_stop_active()
     from gateway.services.readiness import build_readiness_snapshot
 
     gateway = GatewayModule()
-    gateway._all_modules = {"NavigationModule": _HealthyModule()}
+    gateway._all_modules = {"nav.mission": _HealthyModule()}
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.03
     with gateway._state_lock:
@@ -438,8 +438,8 @@ def test_readiness_snapshot_flags_active_command_source_as_not_non_motion_safe()
 
     gateway = GatewayModule()
     gateway._all_modules = {
-        "NavigationModule": _HealthyModule(),
-        "CmdVelMux": FakeMux(),
+        "nav.mission": _HealthyModule(),
+        "nav.velocity_mux": FakeMux(),
     }
     gateway._session_mode = "navigating"
     with gateway._state_lock:
@@ -481,13 +481,13 @@ def test_readiness_snapshot_surfaces_calibration_warnings(monkeypatch):
             return "Calibration: 1 warning(s)"
 
     monkeypatch.setattr(
-        "core.utils.calibration_check.run_calibration_check",
+        "runtime.utils.calibration_check.run_calibration_check",
         lambda **_kwargs: Report(),
     )
     readiness_service._CALIBRATION_CACHE = None
 
     gateway = GatewayModule()
-    gateway._all_modules = {"NavigationModule": _HealthyModule()}
+    gateway._all_modules = {"nav.mission": _HealthyModule()}
     gateway._session_mode = "navigating"
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}

@@ -9,11 +9,14 @@ import sys
 
 from . import term as T
 from .profiles_data import _default_map_dir
+from nav.kernel import nav_kernel_available, nav_kernel_build_hint
+from runtime.profiles.binding_policy import nav_kernel_backend_required
 
 # Built-in sample tomogram (relative to project root, ships in repo)
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SAMPLE_TOMOGRAM = os.path.join(
-    _REPO_ROOT, "src", "global_planning", "pct_planner",
+    _REPO_ROOT, "src", "nav", "services", "plan", "global_planner",
+    "backends", "pct", "vendor", "pct_planner",
     "rsc", "tomogram", "building2_9.pickle",
 )
 
@@ -46,7 +49,7 @@ def _select_map_interactive(cfg: dict, map_dir: str) -> None:
     if not sys.stdin.isatty():
         return
 
-    # Current tomogram already valid 鈫?nothing to do
+    # Current tomogram already valid 閳?nothing to do
     current = cfg.get("tomogram", "")
     if current and os.path.isfile(current):
         return
@@ -78,14 +81,14 @@ def _select_map_interactive(cfg: dict, map_dir: str) -> None:
         print()
 
     # Built-in sample option
-    sample_label = "Use built-in sample map (building2_9) 鈥?PCT test only, not your environment"
+    sample_label = "Use built-in sample map (building2_9) 閳?PCT test only, not your environment"
     print(f"  {T.bold('Other options:')}")
     idx_sample = len(options) + 1
     print(f"    [{idx_sample}] {sample_label}")
     options.append(("sample", "building2_9", _SAMPLE_TOMOGRAM))
 
     idx_build = len(options) + 1
-    print(f"    [{idx_build}] Switch to 'map' profile 鈥?build a new map first")
+    print(f"    [{idx_build}] Switch to 'map' profile 閳?build a new map first")
     options.append(("build", "", ""))
 
     idx_skip = len(options) + 1
@@ -122,14 +125,14 @@ def _select_map_interactive(cfg: dict, map_dir: str) -> None:
 
     elif action == "sample":
         cfg["tomogram"] = _SAMPLE_TOMOGRAM
-        print(f"  {T.yellow('Using sample map')} 鈥?results reflect demo environment, not yours.")
+        print(f"  {T.yellow('Using sample map')} 閳?results reflect demo environment, not yours.")
         print("  Run 'lingtu map' on your robot to build a real map.")
 
     elif action == "build":
         print()
         print(f"  Run:  {T.green('python lingtu.py map')}")
         print("  Then: drive the robot around to build the map.")
-        print("  Then: map save <name>  鈫? map use <name>")
+        print("  Then: map save <name>  閳? map use <name>")
         print()
         sys.exit(0)
 
@@ -150,13 +153,57 @@ def _check_port_accessible(port: int) -> bool:
         return False
 
 
-def _nav_core_available() -> bool:
-    """Check if _nav_core nanobind extension is importable."""
-    try:
-        import importlib
-        return importlib.util.find_spec("_nav_core") is not None
-    except Exception:
-        return False
+def _native_nav_kernel_available() -> bool:
+    """Check if the LingTu native navigation kernel is importable."""
+    return nav_kernel_available()
+
+
+def _octoplanner3d_runtime_errors(cfg: dict) -> tuple[str, ...]:
+    planner = str(cfg.get("planner") or cfg.get("planner_backend") or "").strip().lower()
+    if planner not in {"octoplanner3d", "octplanner", "octo", "octomap"}:
+        return ()
+
+    from nav.services.plan.global_planner.algorithm.octoplanner3d_protocol import (
+        SUPPORTED_MAP_EXTENSIONS,
+    )
+    from nav.services.plan.global_planner.algorithm.octoplanner3d_runtime import (
+        OctoPlanner3DRuntime,
+    )
+
+    runtime = OctoPlanner3DRuntime(
+        executable_path=cfg.get("octoplanner3d_executable") or None,
+        timeout_s=cfg.get("octoplanner3d_timeout_s"),
+    )
+    map_path = str(cfg.get("tomogram") or cfg.get("octomap") or "")
+    return tuple(runtime.validate_map(map_path, SUPPORTED_MAP_EXTENSIONS))
+
+
+def _uses_non_ros_localization_adapter(cfg: dict) -> bool:
+    """Return True when localization is provided by an endpoint adapter."""
+
+    adapter = str(
+        cfg.get("localization_adapter")
+        or cfg.get("_localization_adapter")
+        or ""
+    ).lower()
+    if adapter == "lcm_endpoint":
+        return True
+
+    endpoint_transport = str(
+        cfg.get("endpoint_transport")
+        or cfg.get("_endpoint_transport")
+        or ""
+    ).lower()
+    endpoint_contract = str(
+        cfg.get("endpoint_contract")
+        or cfg.get("_endpoint_contract")
+        or ""
+    )
+    return endpoint_transport == "lcm" and bool(endpoint_contract)
+
+
+def _ros_setup_path() -> str:
+    return f"/opt/ros/{os.environ.get('ROS_DISTRO', 'humble')}/setup.bash"
 
 
 def preflight(profile_name: str, cfg: dict) -> None:
@@ -167,18 +214,45 @@ def preflight(profile_name: str, cfg: dict) -> None:
         "pointlio",
         "super_lio",
         "super_lio_relocation",
-    ) and os.name != "nt":
+    ) and os.name != "nt" and not _uses_non_ros_localization_adapter(cfg):
         import shutil
         if not shutil.which("ros2"):
-            print(f"  {T.yellow('!')} ros2 not in PATH 鈥?SLAM won't start")
-            print(f"    Fix: {T.bold('source /opt/ros/humble/setup.bash')}")
-            _bashrc_cmd = 'echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc'
+            setup_path = _ros_setup_path()
+            print(
+                f"  {T.yellow('!')} ros2 not in PATH; "
+                "this SLAM profile uses the ROS2 compatibility runtime"
+            )
+            print(f"    Fix: {T.bold(f'source {setup_path}')}")
+            _bashrc_cmd = f'echo "source {setup_path}" >> ~/.bashrc'
             print(f"    Permanent: {T.dim(_bashrc_cmd)}")
+    elif slam in (
+        "fastlio2",
+        "pointlio",
+        "super_lio",
+        "super_lio_relocation",
+    ) and os.name == "nt":
+        print(
+            f"  {T.yellow('!')} Windows local FastLIO2 has no supported portable "
+            "runtime; the previous portable-lio endpoint was removed."
+        )
+        print("    Use the field LCM localization endpoint, or run ROS2 compatibility on Linux.")
 
-    # Warn if _nav_core C++ extension is missing (affects terrain/local_planner/path_follower)
-    if not _nav_core_available() and cfg.get("enable_native", False):
-        print(f"  {T.yellow('!')} C++ nav_core not compiled 鈥?terrain/local_planner will use Python fallbacks")
-        print(f"    Fix: {T.bold('make build')}  (needs ROS2 + colcon on S100P)")
+    if nav_kernel_backend_required(
+        cfg,
+        enable_native=bool(cfg.get("enable_native", True)),
+    ) and not _native_nav_kernel_available():
+        print(f"  {T.red('Error')}: LingTu native navigation kernel is required by this profile")
+        print(f"    {nav_kernel_build_hint()}")
+        print("    The production chain will not silently fall back to Python.")
+        sys.exit(2)
+
+    octo_errors = _octoplanner3d_runtime_errors(cfg)
+    if octo_errors:
+        print(f"  {T.red('Error')}: OctoPlanner3D runtime is required by this profile")
+        for error in octo_errors:
+            print(f"    - {error}")
+        print("    Run: bash scripts/build/build_octoplanner3d.sh")
+        sys.exit(2)
 
     # Check if gateway port will be reachable from LAN (firewall check)
     if cfg.get("enable_gateway"):
@@ -218,7 +292,7 @@ def preflight(profile_name: str, cfg: dict) -> None:
         tomogram = cfg.get("tomogram", "")
         if not tomogram or not os.path.isfile(tomogram):
             print(f"  {T.yellow('!')}: Tomogram not found: {tomogram or '(none)'}")
-            print("        Navigation will start but PCT planner will be unavailable.")
+            print("        Navigation will start but map-backed global planning may be unavailable.")
 
 
 def kill_residual_ports(cfg: dict) -> None:
@@ -281,3 +355,4 @@ def daemonize(log_file: str) -> bool:
     os.dup2(log_f.fileno(), sys.stderr.fileno())
 
     return True
+

@@ -25,7 +25,7 @@ Environment:
                           same-source tomogram before LingTu starts
   LINGTU_CMU_TOMOGRAM_TOPICS
                           comma-separated capture topics; defaults to
-                          /nav/map_cloud,/nav/terrain_map_ext
+                          /slam/map_cloud,/nav/terrain_map_ext
   LINGTU_CMU_TOMOGRAM_DURATION_SEC / LINGTU_CMU_TOMOGRAM_MODE
                           defaults to 20 and official
   LINGTU_CMU_PLANNER      LingTu planner backend, defaults to pct
@@ -54,7 +54,7 @@ Environment:
                           defaults to /lingtu/registered_scan_local so CMU TARE
                           consumes LingTu's local scan view, not the full map
   LINGTU_CMU_NAV_CLOUD_Z_MIN / LINGTU_CMU_NAV_CLOUD_Z_MAX
-                          obstacle-height filter for /nav/registered_cloud,
+                          obstacle-height filter for /slam/registered_cloud,
                           defaults to 0.30 / 2.00 to match OccupancyGridModule
   LINGTU_CMU_GATE_REQUIRE_NO_PRIMARY_REPLAN
                           defaults to 0; set 1 to forbid LingTu PCT repaired
@@ -62,13 +62,13 @@ Environment:
                           and are expected in cluttered exploration.
   LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS
                           space- or comma-separated map-growth topics; defaults
-                          to /nav/map_cloud and /nav/terrain_map_ext
+                          to /slam/map_cloud and /nav/terrain_map_ext
   LINGTU_CMU_WAYPOINT_THRESHOLD / LINGTU_CMU_FINAL_WAYPOINT_THRESHOLD
                           LingTu waypoint reach radii for CMU exploration
   LINGTU_CMU_STUCK_TIMEOUT / LINGTU_CMU_STUCK_DIST_THRE
                           LingTu stuck detection tuning for CMU exploration
   LINGTU_CMU_DOWNSAMPLE_DIST
-                          global path spacing passed to NavigationModule
+                          global path spacing passed to Navigation
   LINGTU_CMU_AUTO_SESSION defaults to 1; starts Gateway exploring session with
                           slam_profile=none for external CMU/Unity simulation
 EOF
@@ -267,7 +267,7 @@ capture_cmu_unity_tomogram() {
     return 2
   fi
 
-  topics_raw="${LINGTU_CMU_TOMOGRAM_TOPICS:-${LINGTU_CMU_TOMOGRAM_TOPIC:-/nav/map_cloud,/nav/terrain_map_ext}}"
+  topics_raw="${LINGTU_CMU_TOMOGRAM_TOPICS:-${LINGTU_CMU_TOMOGRAM_TOPIC:-/slam/map_cloud,/nav/terrain_map_ext}}"
   IFS=',' read -r -a topic_values <<< "$topics_raw"
   for topic in "${topic_values[@]}"; do
     topic="${topic//[[:space:]]/}"
@@ -574,7 +574,7 @@ start_runtime() {
       gate_args+=(--allow-flat-late-map-after-total-growth)
     fi
     local required_map_topic required_map_topics
-    required_map_topics="${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/nav/map_cloud /nav/terrain_map_ext}"
+    required_map_topics="${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/slam/map_cloud /nav/terrain_map_ext}"
     required_map_topics="${required_map_topics//,/ }"
     for required_map_topic in $required_map_topics; do
       gate_args+=(--required-map-topic "$required_map_topic")
@@ -627,7 +627,7 @@ run_gate_only() {
     gate_args+=(--allow-flat-late-map-after-total-growth)
   fi
   local required_map_topic required_map_topics
-  required_map_topics="${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/nav/map_cloud /nav/terrain_map_ext}"
+  required_map_topics="${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/slam/map_cloud /nav/terrain_map_ext}"
   required_map_topics="${required_map_topics//,/ }"
   for required_map_topic in $required_map_topics; do
     gate_args+=(--required-map-topic "$required_map_topic")

@@ -46,7 +46,7 @@
           "color": "rgba(0, 240, 80, 1.0)",
           "lineWidth": 3
         },
-        "/nav/odometry": {
+        "/slam/odometry": {
           "visible": true,
           "displayType": "arrow",
           "color": "rgba(0, 120, 255, 0.9)"

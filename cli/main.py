@@ -10,20 +10,23 @@ import textwrap
 import threading
 from pathlib import Path
 
-from core.plugin_seed import seed_registered_plugins
-from lingtu_runtime.plugin_seed import install_builtin_plugin_catalog
-
 from . import term as T
-from .lifecycle import daemonize, health_check, kill_residual_ports
+from .lifecycle import (
+    daemonize,
+    health_check,
+    kill_residual_ports,
+    lite_runtime_lifecycle_blockers,
+    needs_full_preflight,
+)
 from .logging_util import setup_logging
 from .profiles_data import PROFILES
-from .repl import LingTuREPL
 from .run_state import (
     _lingtu_version,
     clear_run_state,
     save_run_state,
     update_run_state,
 )
+from .runtime_bootstrap import install_runtime_plugin_catalog, seed_runtime_plugins
 from .runtime_display import (
     format_frame_links,
     format_inspection_acceptance,
@@ -55,7 +58,6 @@ from .ui import (
 )
 
 logger = logging.getLogger("lingtu")
-install_builtin_plugin_catalog()
 
 
 _SPECIAL_COMMANDS = {
@@ -77,29 +79,32 @@ _SPECIAL_COMMANDS = {
     "inspection-check",
     "saved-map-artifact-gate",
     "real-runtime-evidence",
+    "mujoco",
+    "portable-mujoco",
+    "mujoco-portable",
 }
 
 
 def _runtime_endpoint(name: str):
-    from core.blueprints.runtime_endpoint import runtime_endpoint
+    from runtime.profiles.endpoints import runtime_endpoint
 
     return runtime_endpoint(name)
 
 
 def _module_transport_names() -> tuple[str, ...]:
-    from core.transport.abc import TransportStrategy
+    from runtime.transport.abc import TransportStrategy
 
     return tuple(strategy.value for strategy in TransportStrategy)
 
 
 def _canonical_profile_name(profile_name: str) -> str:
-    from core.runtime.resolver import canonical_profile_name
+    from runtime.profiles.resolver import canonical_profile_name
 
     return canonical_profile_name(profile_name)
 
 
 def _is_runtime_endpoint_error(exc: Exception) -> bool:
-    from core.blueprints.runtime_endpoint import RuntimeEndpointError
+    from runtime.profiles.endpoints import RuntimeEndpointError
 
     return isinstance(exc, RuntimeEndpointError)
 
@@ -107,43 +112,32 @@ def _is_runtime_endpoint_error(exc: Exception) -> bool:
 def _apply_runtime_process_env(profile_name: str, cfg: dict, args: argparse.Namespace):
     import os
 
-    from core.blueprints.runtime_endpoint import resolve_runtime_run_spec
-    from core.runtime_switch import validate_runtime_switch
+    from runtime.profiles.launcher import resolve_runtime_process_context
+    from runtime.runtime_switch import validate_runtime_switch
 
-    spec = resolve_runtime_run_spec(
+    context = resolve_runtime_process_context(
         profile_name,
         cfg,
         record=bool(getattr(args, "record", False)),
         extra_args=tuple(args.extra or ()),
     )
+    spec = context.spec
     validation = validate_runtime_switch(spec)
     if not validation.ok:
         print(f"  {T.red('Error')}: runtime boundary invalid")
         for blocker in validation.blockers:
             print(f"    - {blocker}")
         sys.exit(2)
-    for key, value in spec.env.items():
+    for key, value in context.env.items():
         os.environ[key] = value
     return spec
 
 
-def _needs_full_preflight(cfg: dict) -> bool:
-    slam_profile = str(cfg.get("slam_profile", "none"))
-    return (
-        slam_profile in {
-            "fastlio2",
-            "pointlio",
-            "localizer",
-            "super_lio",
-            "super_lio_relocation",
-        }
-        or bool(cfg.get("enable_native", False))
-        or bool(cfg.get("enable_gateway", False))
-    )
-
-
-def _preflight(profile_name: str, cfg: dict) -> None:
-    if not _needs_full_preflight(cfg):
+def preflight(profile_name: str, cfg: dict) -> None:
+    blockers = lite_runtime_lifecycle_blockers(profile_name, cfg)
+    if blockers:
+        _exit_lite_lifecycle_error(profile_name, blockers)
+    if not needs_full_preflight(cfg):
         return
     try:
         from .runtime_extra import preflight
@@ -153,6 +147,20 @@ def _preflight(profile_name: str, cfg: dict) -> None:
             "runtime preflight module, but this package only contains the Lite runtime."
         )
         sys.exit(2)
+    preflight(profile_name, cfg)
+
+
+def _exit_lite_lifecycle_error(profile_name: str, blockers: tuple[str, ...]) -> None:
+    print(
+        f"  {T.red('Error')}: profile {profile_name!r} is a Lite runtime "
+        "but requested full-stack lifecycle features."
+    )
+    for blocker in blockers:
+        print(f"    - {blocker}")
+    sys.exit(2)
+
+
+def _preflight(profile_name: str, cfg: dict) -> None:
     preflight(profile_name, cfg)
 
 
@@ -167,19 +175,19 @@ def _run_external_profile_launcher(
     import os
     import subprocess
 
-    from core.blueprints.runtime_endpoint import resolve_runtime_run_spec
+    from runtime.profiles.launcher import build_external_launch_context
 
-    spec = resolve_runtime_run_spec(
+    context = build_external_launch_context(
         profile_name,
         cfg,
+        repo_root=repo_root,
         record=bool(getattr(args, "record", False)),
         extra_args=tuple(args.extra or ()),
+        base_env=os.environ.copy(),
     )
-    if not spec.launcher:
-        raise RuntimeError("external profile missing _external_launcher")
-    launcher_path = (repo_root / spec.launcher).resolve()
-    if not launcher_path.exists():
-        print(f"  {T.red('Error')}: launcher not found: {launcher_path}")
+    spec = context.spec
+    if not context.launcher_path.exists():
+        print(f"  {T.red('Error')}: launcher not found: {context.launcher_path}")
         sys.exit(1)
     if args.daemon:
         print(
@@ -187,10 +195,6 @@ def _run_external_profile_launcher(
             "use the launcher's status/stop commands."
         )
         sys.exit(2)
-
-    env = os.environ.copy()
-    for key, value in spec.env.items():
-        env[key] = value
 
     print(f"\n  Launching external simulation profile ({T.green(profile_name)})...", flush=True)
     print(f"  Launcher: {spec.launcher}", flush=True)
@@ -201,17 +205,18 @@ def _run_external_profile_launcher(
     print(f"  Topic frames: {format_runtime_topic_frames(spec)}", flush=True)
     print(f"  Flow:     {format_runtime_flow(spec)}", flush=True)
     print(f"  Flow stages: {format_runtime_flow_stages(spec)}", flush=True)
-    command = spec.as_command()
+    command = list(context.command)
     print(f"  Command:  {' '.join(command)}", flush=True)
     try:
         proc = subprocess.run(
             command,
             cwd=str(repo_root),
-            env=env,
+            env=dict(context.env),
             check=False,
         )
     except FileNotFoundError:
-        print(f"  {T.red('Error')}: bash is required to run {spec.launcher}")
+        required = "python" if str(spec.launcher).endswith(".py") else "bash"
+        print(f"  {T.red('Error')}: {required} is required to run {spec.launcher}")
         sys.exit(127)
     if proc.returncode:
         sys.exit(proc.returncode)
@@ -220,8 +225,12 @@ def _run_external_profile_launcher(
 def _cmd_switch_plan(args: argparse.Namespace) -> None:
     import json
 
-    from core.blueprints.runtime_endpoint import resolve_runtime_run_spec
-    from core.runtime_switch import compare_runtime_switch, validate_runtime_switch
+    from runtime.profiles.endpoints import resolve_runtime_run_spec
+    from runtime.profiles.product_mode_contracts import (
+        PRODUCT_MODE_CONTRACTS,
+        product_mode_switch_plan,
+    )
+    from runtime.runtime_switch import compare_runtime_switch, validate_runtime_switch
 
     if len(args.extra) < 2:
         print(
@@ -242,6 +251,12 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
     current_validation = validate_runtime_switch(current_spec)
     target_validation = validate_runtime_switch(target_spec)
     payload = compare_runtime_switch(current_spec, target_spec)
+    payload["product_mode_switch"] = (
+        product_mode_switch_plan(current_profile, target_profile)
+        if current_profile in PRODUCT_MODE_CONTRACTS
+        and target_profile in PRODUCT_MODE_CONTRACTS
+        else None
+    )
     payload["ok"] = current_validation.ok and target_validation.ok
     payload["current_validation"] = {
         "ok": current_validation.ok,
@@ -268,8 +283,8 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
 def _cmd_runtime_spec(args: argparse.Namespace) -> None:
     import json
 
-    from core.blueprints.runtime_endpoint import resolve_runtime_run_spec
-    from core.runtime_switch import runtime_spec_summary, validate_runtime_switch
+    from runtime.profiles.endpoints import resolve_runtime_run_spec
+    from runtime.runtime_switch import runtime_spec_summary, validate_runtime_switch
 
     if len(args.extra) != 1:
         print("  Usage: lingtu runtime-spec <profile> [--endpoint ENDPOINT]")
@@ -303,7 +318,7 @@ def _cmd_runtime_spec(args: argparse.Namespace) -> None:
 def _cmd_runtime_contract(args: argparse.Namespace) -> None:
     import json
 
-    from core.runtime_interface import runtime_contract_manifest
+    from runtime.runtime_interface import runtime_contract_manifest
 
     if args.extra:
         print("  Usage: lingtu runtime-contract [--json] [--json-out PATH]")
@@ -343,7 +358,7 @@ def _cmd_runtime_audit(args: argparse.Namespace) -> None:
 def _cmd_gateway_runtime_acceptance(args: argparse.Namespace) -> None:
     import json
 
-    from core.gateway_runtime_acceptance import (
+    from runtime.gateway_runtime_acceptance import (
         collect_gateway_runtime_acceptance,
         format_gateway_runtime_acceptance,
     )
@@ -564,7 +579,7 @@ def _cmd_dataflow(args: argparse.Namespace) -> None:
 def _cmd_field_check(args: argparse.Namespace) -> None:
     import json
 
-    from core.product_field_check import collect_product_field_check
+    from runtime.product_field_check import collect_product_field_check
 
     if len(args.extra) > 1:
         print(
@@ -604,7 +619,7 @@ def _parse_inspection_point(raw: str):
 def _cmd_inspection_check(args: argparse.Namespace) -> None:
     import json
 
-    from core.inspection_acceptance import collect_inspection_acceptance
+    from runtime.inspection_acceptance import collect_inspection_acceptance
 
     if len(args.extra) > 1:
         print(
@@ -683,18 +698,25 @@ def _cmd_real_runtime_evidence(args: argparse.Namespace) -> None:
     if args.extra:
         print(
             "  Usage: lingtu real-runtime-evidence "
+            "[--collector gateway|ros2] [--gateway-url URL] "
             "[--duration-sec SEC] [--json-out PATH] [--json] "
             "[--expected-command-subscriber NAME] [--no-validate]"
         )
         sys.exit(1)
 
-    from core.runtime_evidence import REAL_RUNTIME_CONTRACT
+    from runtime.runtime_evidence import REAL_RUNTIME_CONTRACT
 
     repo_root = Path(__file__).resolve().parent.parent
     report_path = args.json_out or Path("artifacts/thunder_field_runtime/report.json")
     cmd = [
         sys.executable,
         str(repo_root / "scripts" / "gates" / "real_runtime_evidence_collect.py"),
+        "--collector",
+        args.collector,
+        "--gateway-url",
+        args.gateway_url,
+        "--gateway-timeout-sec",
+        str(args.gateway_timeout_sec),
         "--duration-sec",
         str(args.duration_sec),
         "--min-motion-m",
@@ -724,6 +746,84 @@ def _cmd_real_runtime_evidence(args: argparse.Namespace) -> None:
         sys.exit(proc.returncode)
 
 
+def _cmd_portable_mujoco(args: argparse.Namespace) -> None:
+    """Run the no-ROS portable MuJoCo planning + sensor acceptance gate."""
+
+    import json
+    import subprocess
+
+    if args.extra:
+        print(
+            "  Usage: lingtu mujoco "
+            "[--mujoco-world WORLD] [--nav-duration SEC] "
+            "[--nav-goal-distance M] [--min-nav-motion M] "
+            "[--json] [--json-out PATH]"
+        )
+        sys.exit(1)
+
+    repo_root = Path(__file__).resolve().parent.parent
+    report_path = args.json_out or Path("artifacts/mujoco_full_system.json")
+    if not report_path.is_absolute():
+        report_path = repo_root / report_path
+    worlds = args.mujoco_worlds or ["open_field"]
+
+    cmd = [
+        sys.executable,
+        str(repo_root / "sim" / "validation" / "full_system.py"),
+        "--run-mujoco",
+        "--nav-duration",
+        str(args.nav_duration),
+        "--nav-goal-distance",
+        str(args.nav_goal_distance),
+        "--min-nav-motion",
+        str(args.min_nav_motion),
+        "--json-out",
+        str(report_path),
+    ]
+    for world in worlds:
+        cmd.extend(["--mujoco-world", world])
+    if args.require_all:
+        cmd.append("--require-all")
+
+    proc = subprocess.run(
+        cmd,
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode and proc.stdout:
+        print(proc.stdout, end="")
+    if proc.returncode and proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+
+    if report_path.exists():
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            summary = report.get("summary", {})
+            print("  MuJoCo planning + sensor gate")
+            print(f"  Report: {report_path}")
+            print(f"  Result: {'PASS' if report.get('passed') else 'FAIL'} {summary}")
+            for check in report.get("checks", []):
+                if check.get("name") in {
+                    "sim_nav_planning_wiring",
+                    "mujoco_sensor_runtime",
+                    "mujoco_kinematic_nav_runtime",
+                    "mujoco_lidar_open_field",
+                }:
+                    print(
+                        f"  - {check.get('name')}: {check.get('status')} 鈥?"
+                        f"{check.get('summary')}"
+                    )
+    elif not proc.returncode:
+        print(f"  {T.yellow('WARN')}: portable MuJoCo gate succeeded but no report was written: {report_path}")
+
+    if proc.returncode:
+        sys.exit(proc.returncode)
+
+
 def _resolve_profile_name(explicit_profile: str | None, args: argparse.Namespace) -> str:
     profile_name = explicit_profile
     if profile_name is None:
@@ -746,9 +846,20 @@ def _resolve_profile_name(explicit_profile: str | None, args: argparse.Namespace
 
 
 def _validate_backend_overrides(args: argparse.Namespace) -> None:
-    from core.backend_status import require_backend
-    from core.registry import list_plugins
-    from core.runtime_policy import normalize_slam_profile
+    from runtime.backend_status import require_backend
+    from runtime.profiles.planner_backends import normalize_planner_name
+    from runtime.registry import list_plugins
+    from runtime.runtime_policy import normalize_slam_profile
+
+    planner_backend = getattr(args, "planner", None)
+    if planner_backend is not None:
+        normalized_planner = normalize_planner_name(planner_backend)
+        require_backend(
+            "planner",
+            normalized_planner,
+            ("octoplanner3d", "pct", "direct"),
+        )
+        args.planner = normalized_planner
 
     slam_profile = getattr(args, "slam_profile", None)
     if slam_profile is not None:
@@ -774,7 +885,7 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
         )
 
     if getattr(args, "local_planner_backend", None) is not None:
-        seed_registered_plugins(groups=("autonomy",), reload_loaded=True)
+        seed_runtime_plugins(groups=("autonomy",), reload_loaded=True)
         require_backend(
             "local_planner",
             args.local_planner_backend,
@@ -782,7 +893,7 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
         )
 
     if getattr(args, "path_follower_backend", None) is not None:
-        seed_registered_plugins(groups=("autonomy",), reload_loaded=True)
+        seed_runtime_plugins(groups=("autonomy",), reload_loaded=True)
         require_backend(
             "path_follower",
             args.path_follower_backend,
@@ -790,7 +901,7 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
         )
 
     if getattr(args, "terrain_backend", None) is not None:
-        seed_registered_plugins(groups=("autonomy",), reload_loaded=True)
+        seed_runtime_plugins(groups=("autonomy",), reload_loaded=True)
         require_backend(
             "terrain",
             args.terrain_backend,
@@ -810,7 +921,11 @@ def _resolve_config(
         print(f"  Available: {', '.join(PROFILES.keys())}")
         sys.exit(1)
 
-    _validate_backend_overrides(args)
+    try:
+        _validate_backend_overrides(args)
+    except ValueError as exc:
+        print(f"  {T.red('Error')}: {exc}")
+        sys.exit(2)
 
     endpoint_name = getattr(args, "endpoint", None)
     overrides = {
@@ -830,6 +945,7 @@ def _resolve_config(
         "fallback_planner_name": getattr(args, "fallback_planner_name", None),
         "gateway_port": getattr(args, "gateway_port", None),
         "module_transport": getattr(args, "module_transport", None),
+        "nav_plan_transport": getattr(args, "nav_plan_transport", None),
     }
     overrides = {key: value for key, value in overrides.items() if value is not None}
     if getattr(args, "local_planner_backend", None) is not None:
@@ -847,7 +963,14 @@ def _resolve_config(
     if getattr(args, "rerun", False):
         overrides["enable_rerun"] = True
 
-    from core.runtime.resolver import resolve_profile_config
+    lifecycle_check_overrides = dict(overrides)
+    if endpoint_name is not None:
+        lifecycle_check_overrides["runtime_endpoint"] = endpoint_name
+    blockers = lite_runtime_lifecycle_blockers(profile_name, lifecycle_check_overrides)
+    if blockers:
+        _exit_lite_lifecycle_error(profile_name, blockers)
+
+    from runtime.profiles.resolver import resolve_profile_config
 
     try:
         cfg = resolve_profile_config(
@@ -870,6 +993,8 @@ def _resolve_config(
 
 
 def main() -> None:
+    install_runtime_plugin_catalog()
+
     parser = argparse.ArgumentParser(
         description=(
             "LingTu Navigation System. Product inspection uses Gateway + "
@@ -887,7 +1012,7 @@ def main() -> None:
               aliases   thunder-lite, thunder-map, thunder-nav, thunder-explore
 
             advanced profiles:
-              tare_explore  CMU TARE exploration when external TARE is installed
+              tare_explore  LingTu-native traversable frontier exploration
               use --list --all for simulation, dev, and experimental profiles
 
             runtime endpoints:
@@ -897,7 +1022,7 @@ def main() -> None:
               --endpoint mujoco_live  Run a product task against MuJoCo raw MID-360 + Fast-LIO
               --endpoint replay       Run a product task against no-actuation replay logs
               --endpoint gazebo       Run a product task against Gazebo/GZ industrial adapter
-              --endpoint cmu_unity    Run TARE task against CMU Unity external runtime
+              --endpoint cmu_unity    Run TARE bridge task against CMU Unity external runtime
 
             product simulation examples:
               python lingtu.py explore --endpoint mujoco_live
@@ -921,6 +1046,7 @@ def main() -> None:
               inspection-check Non-motion inspection-point acceptance pack
               saved-map-artifact-gate Validate saved map artifact provenance
               real-runtime-evidence Collect read-only Thunder field runtime evidence
+              mujoco       Run MuJoCo planning + sensor gate on this computer
               log          Print the current run log (add -f to follow)
               health       Sensor and module health (add --json for jq)
               doctor       Run diagnostics
@@ -934,9 +1060,9 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Show advanced, simulation, and dev profiles with --list")
     parser.add_argument("--version", action="store_true", help="Print LingTu version and exit")
     parser.add_argument("--json", action="store_true",
-                        help="Machine-readable JSON output (status / show-config / switch-plan / runtime-spec / runtime-contract / runtime-audit / dataflow / gateway-runtime-acceptance / field-check / inspection-check / real-runtime-evidence)")
+                        help="Machine-readable JSON output (status / show-config / switch-plan / runtime-spec / runtime-contract / runtime-audit / dataflow / gateway-runtime-acceptance / field-check / inspection-check / real-runtime-evidence / mujoco)")
     parser.add_argument("--json-out", type=Path, default=None,
-                        help="Write JSON output for commands such as switch-plan, runtime-spec, runtime-contract, runtime-audit, dataflow, gateway-runtime-acceptance, field-check, inspection-check, or real-runtime-evidence")
+                        help="Write JSON output for commands such as switch-plan, runtime-spec, runtime-contract, runtime-audit, dataflow, gateway-runtime-acceptance, field-check, inspection-check, real-runtime-evidence, or mujoco")
     parser.add_argument("--daemon", "-d", action="store_true", help="Run as background daemon (Unix)")
     parser.add_argument("--follow", "-f", action="store_true", help="Follow output for `lingtu log`")
     parser.add_argument("--lines", type=int, default=80, help="Number of lines for `lingtu log` (default: 80)")
@@ -974,15 +1100,15 @@ def main() -> None:
     parser.add_argument(
         "--plan-safety-policy",
         default=None,
-        choices=["off", "observe", "reject", "fallback_astar"],
+        choices=["off", "observe", "reject"],
         dest="plan_safety_policy",
-        help="Global plan safety handling: observe by default, or fallback/reject unsafe plans",
+        help="Global plan safety handling: observe, reject, or disable safety checks",
     )
     parser.add_argument(
         "--fallback-planner",
         default=None,
         dest="fallback_planner_name",
-        help="Planner backend used when --plan-safety-policy=fallback_astar",
+        help="Legacy explicit fallback backend for non-product planner experiments",
     )
     parser.add_argument("--gateway-port", type=int, default=None, dest="gateway_port")
     parser.add_argument(
@@ -991,6 +1117,13 @@ def main() -> None:
         default=None,
         dest="module_transport",
         help="ModulePort transport strategy for this process (default: endpoint/local)",
+    )
+    parser.add_argument(
+        "--nav-plan-transport",
+        choices=_module_transport_names(),
+        default=None,
+        dest="nav_plan_transport",
+        help="Transport only for Navigation <-> LocalPlanner execution wires",
     )
     parser.add_argument("--no-semantic", action="store_true")
     parser.add_argument("--no-gateway", action="store_true")
@@ -1003,8 +1136,20 @@ def main() -> None:
                         dest="log_format", help="Log file format: text (default) or json")
     parser.add_argument("--duration-sec", type=float, default=20.0,
                         help="Duration for `lingtu real-runtime-evidence`")
+    parser.add_argument("--collector", choices=["gateway", "ros2"], default="gateway",
+                        help="Read-only evidence source for `lingtu real-runtime-evidence`")
+    parser.add_argument("--mujoco-world", action="append", default=[], dest="mujoco_worlds",
+                        help="MuJoCo world for `lingtu mujoco`. Repeat for multiple worlds; default: open_field")
+    parser.add_argument("--nav-duration", type=float, default=8.0,
+                        help="Navigation duration in seconds for `lingtu mujoco`")
+    parser.add_argument("--nav-goal-distance", type=float, default=1.0,
+                        help="Goal distance in meters for `lingtu mujoco`")
+    parser.add_argument("--min-nav-motion", type=float, default=0.15,
+                        help="Minimum MuJoCo motion in meters for `lingtu mujoco`")
+    parser.add_argument("--require-all", action="store_true",
+                        help="For `lingtu mujoco`, fail on any blocked optional check")
     parser.add_argument("--gateway-url", default="http://127.0.0.1:5050",
-                        help="Gateway base URL for `lingtu dataflow`, `lingtu gateway-runtime-acceptance`, `lingtu field-check`, or `lingtu inspection-check`")
+                        help="Gateway base URL for dataflow, acceptance, field-check, inspection-check, or real-runtime-evidence")
     parser.add_argument("--gateway-timeout-sec", type=float, default=2.0,
                         help="Per-request timeout for Gateway dataflow/acceptance/field-check/inspection-check")
     parser.add_argument("--topic", default=None,
@@ -1067,13 +1212,39 @@ def main() -> None:
     if args.target == "doctor":
         import subprocess as _sp
 
-        _sp.run([sys.executable, str(_repo / "scripts" / "diagnostics" / "doctor.py")])
+        _sp.run([
+            sys.executable,
+            str(_repo / "scripts" / "diagnostics" / "doctor.py"),
+            "--gateway-url",
+            args.gateway_url,
+            "--gateway-timeout-sec",
+            str(args.gateway_timeout_sec),
+            *args.extra,
+        ])
         return
 
     if args.target == "rerun":
         import subprocess as _sp
 
-        _sp.run([sys.executable, str(_repo / "scripts" / "visualization" / "rerun_live.py")])
+        use_ros2_rerun = "--ros2" in args.extra
+        rerun_extra = [item for item in args.extra if item != "--ros2"]
+        script = (
+            _repo / "scripts" / "visualization" / "rerun_live.py"
+            if use_ros2_rerun
+            else _repo / "scripts" / "visualization" / "rerun_gateway_live.py"
+        )
+        cmd = [sys.executable, str(script)]
+        if args.native:
+            rerun_extra.append("--native")
+        if not use_ros2_rerun:
+            cmd.extend([
+                "--gateway-url",
+                args.gateway_url,
+                "--gateway-timeout-sec",
+                str(args.gateway_timeout_sec),
+            ])
+        cmd.extend(rerun_extra)
+        _sp.run(cmd)
         return
 
     if args.target == "log":
@@ -1118,6 +1289,10 @@ def main() -> None:
 
     if args.target == "real-runtime-evidence":
         _cmd_real_runtime_evidence(args)
+        return
+
+    if args.target in {"mujoco", "portable-mujoco", "mujoco-portable"}:
+        _cmd_portable_mujoco(args)
         return
 
     if args.target == "show-config":
@@ -1176,7 +1351,7 @@ def main() -> None:
     print(f"  Flow stages: {format_runtime_flow_stages(runtime_spec)}")
     print(f"\n  Building system ({T.green(profile_name)})...")
 
-    from core.blueprints.profile_builder import build_system_from_resolved_profile
+    from runtime.blueprints.profile_builder import build_system_from_resolved_profile
 
     try:
         system = build_system_from_resolved_profile(profile_name, blueprint_cfg)
@@ -1186,7 +1361,7 @@ def main() -> None:
         sys.exit(1)
 
     if not health_check(system):
-        print(f"  {T.red('Health check failed')} — some modules did not build correctly")
+        print(f"  {T.red('Health check failed')} 鈥?some modules did not build correctly")
         sys.exit(1)
     logger.info("Health check passed: %d modules OK", len(system.modules))
 
@@ -1234,7 +1409,7 @@ def main() -> None:
         _wire_count = len(getattr(system, "_connections", []) or [])
     except Exception:
         _wire_count = None
-    from core.runtime_switch import runtime_spec_summary
+    from runtime.runtime_switch import runtime_spec_summary
 
     save_run_state(
         profile_name,
@@ -1281,6 +1456,8 @@ def main() -> None:
             shutdown.wait()
     else:
         signal.signal(signal.SIGINT, signal.default_int_handler)
+        from .repl import LingTuREPL
+
         repl = LingTuREPL(system, cfg)
         try:
             repl.cmdloop()
@@ -1294,13 +1471,13 @@ def main() -> None:
         pass
     system.stop()
     try:
-        from compat.ros2.context import shutdown_shared_executor
+        from lingtu.ros2_shutdown import shutdown_ros2_runtime
 
-        shutdown_shared_executor()
+        shutdown_ros2_runtime()
     except Exception:
         pass
     try:
-        from core.service_manager import get_service_manager
+        from runtime.service_manager import get_service_manager
 
         svc = get_service_manager()
         if svc._started:

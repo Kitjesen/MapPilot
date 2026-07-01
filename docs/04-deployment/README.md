@@ -14,7 +14,7 @@ ssh sunrise@192.168.66.190 'systemctl status lingtu robot-brainstem robot-camera
 ssh sunrise@192.168.66.190 'lingtu status'
 ```
 
-The `lingtu` CLI gives you an 8-section snapshot — see `lingtu_cli.md`.
+The `lingtu` CLI gives you an 8-section snapshot —see `lingtu_cli.md`.
 
 ---
 
@@ -89,10 +89,10 @@ super_lio_relocation.service
 install_services.sh      # field-evaluation installer and robot-super-lio aliases
 ```
 
-> The previous `slam.service` was removed and replaced with `robot-fastlio2.service` +
+> The previous `localization.service` was removed and replaced with `robot-fastlio2.service` +
 > `robot-localizer.service`. The legacy `nav-*.service` family (12 disabled stubs from a
 > prior generation), `lingtu_*.service`, `askme*.service`, and the in-process
-> `grpc_gateway`-style `ota-daemon.service` are all gone — see `S100P_STACK_INVENTORY.md`
+> `grpc_gateway`-style `ota-daemon.service` are all gone —see `S100P_STACK_INVENTORY.md`
 > for the historical cleanup decisions.
 
 ---
@@ -101,7 +101,7 @@ install_services.sh      # field-evaluation installer and robot-super-lio aliase
 
 ```
 /opt/lingtu/
-  current -> releases/v2.0.0/   # symlink — OTA flips this
+  current -> releases/v2.0.0/   # symlink —OTA flips this
   releases/
     v2.0.0/                     # immutable, current release
     v1.9.x/                     # kept for rollback
@@ -126,7 +126,7 @@ install_services.sh      # field-evaluation installer and robot-super-lio aliase
 Developer checkout on the robot lives in `~/data/inovxio/lingtu/`. The
 `lingtu.service` unit shipped under `docs/04-deployment/services/` runs out of
 `/opt/lingtu/current/`; the unit currently checked into `scripts/deploy/` points
-at the developer checkout instead — that's the developer-shell variant used
+at the developer checkout instead —that's the developer-shell variant used
 during the migration to immutable releases. New robots should use the
 `docs/04-deployment/services/` files.
 
@@ -138,11 +138,12 @@ during the migration to immutable releases. New robots should use the
 # 1. Clone repo to ~/data/inovxio/lingtu
 ssh sunrise@<robot> 'git clone https://github.com/Kitjesen/lingtu ~/data/inovxio/lingtu'
 
-# 2. Build native modules
-ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_nav_core.sh'
+# 2. Build native product modules
+ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_nav_kernel.sh --clean'
+ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_octoplanner3d.sh'
 
-# 3. Build ROS2 workspace
-ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && source /opt/ros/humble/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release'
+# 3. Optional: build ROS compatibility workspace for robot-* SLAM/sensor services
+ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_ros_workspace.sh'
 
 # 4. Install service units
 ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash docs/04-deployment/services/install.sh'
@@ -219,12 +220,12 @@ ss -tnlp | grep -E "5050|8090"           # leftover process holding the port?
 ```bash
 journalctl -u robot-lidar -n 40
 lingtu doctor
-ros2 topic hz /nav/lidar_scan
-ros2 topic hz /nav/imu
+lingtu dataflow /nav/lidar_scan
+lingtu dataflow /nav/imu
 ip -br addr | grep 192.168.1            # MID-360 host sub-net, usually eth0=192.168.1.5
 ```
 
-If `lingtu doctor` reports active legacy `lidar.service`, `slam.service`, or
+If `lingtu doctor` reports active legacy `lidar.service`, `localization.service`, or
 `localizer.service`, stop the duplicate stack before restarting the production
 `robot-*` services. Two Livox drivers will fight for the same UDP ports and can leave
 `/nav/lidar_scan` and `/nav/imu` with zero publishers.
@@ -233,16 +234,17 @@ Legacy command references from older docs are wrong for the current stack:
 
 ```bash
 journalctl -u robot-lidar -n 40
-ros2 topic hz /nav/lidar_scan            # not /livox/lidar in production
+lingtu dataflow /nav/lidar_scan          # not /livox/lidar in production
+lingtu doctor --ros2                     # optional compatibility graph inspection
 ```
 
 ### Drift / lost localization
 
 ```bash
-ros2 topic hz /nav/odometry              # expect live odometry
-ros2 topic hz /nav/map_cloud             # expect live map cloud in mapping/localization
+lingtu dataflow /nav/odometry            # expect live odometry flow
+lingtu dataflow /nav/map_cloud           # expect live map cloud in mapping/localization
 lingtu soak --duration 120 --interval 2 --json --strict
-ros2 topic echo /localization_quality
+lingtu doctor --ros2                     # optional legacy topic details if needed
 sudo systemctl restart robot-fastlio2 robot-localizer
 ```
 
@@ -279,9 +281,9 @@ sudo systemctl restart lingtu
 - `super_lio_backend.md` - experimental Super-LIO build, smoke, rollback, and
   route-validation gate
 
-- `GOVERNANCE.md` — six principles for deployment hygiene (historical 2026-04 cleanup)
-- `S100P_STACK_INVENTORY.md` — what was on the robot before consolidation, and why
+- `GOVERNANCE.md` —six principles for deployment hygiene (historical 2026-04 cleanup)
+- `S100P_STACK_INVENTORY.md` —what was on the robot before consolidation, and why
   the stack looks the way it does today
-- `OTA_GUIDE.md` — OTA design, signing, manifest schema, rollback
-- `lingtu_cli.md` — operations CLI subcommands
-- `services/` — actual systemd unit files installed on the robot
+- `OTA_GUIDE.md` —OTA design, signing, manifest schema, rollback
+- `lingtu_cli.md` —operations CLI subcommands
+- `services/` —actual systemd unit files installed on the robot

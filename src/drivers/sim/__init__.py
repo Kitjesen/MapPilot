@@ -1,4 +1,4 @@
-"""Simulation and test drivers -- no hardware required."""
+"""Simulation drivers -- no hardware required."""
 
 import time
 from typing import Any
@@ -7,9 +7,8 @@ from typing import Any
 def build_sim_robot_state() -> dict[str, Any]:
     """Return a standard robot-state dict shared by all sim drivers.
 
-    Both ``MujocoDriverModule`` and ``ROS2SimDriverModule`` publish
-    identical robot state dictionaries.  This helper ensures they stay
-    in sync when fields change.
+    ``MujocoDriverModule`` and ``SimEndpointDriverModule`` publish the
+    same robot-state fields. This helper keeps them in sync.
     """
     return {
         "standing": True,

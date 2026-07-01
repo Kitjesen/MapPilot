@@ -5,16 +5,18 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import math
 import time
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from core.runtime_interface import ARTIFACT_FORMATS
-from core.runtime_interface import TOPICS
-from core.runtime_interface import runtime_contract_manifest
-from core.runtime_interface import runtime_data_flow_topics
+from runtime.runtime_interface import ARTIFACT_FORMATS
+from runtime.runtime_interface import TOPICS
+from runtime.runtime_interface import runtime_contract_manifest
+from runtime.runtime_interface import runtime_data_flow_topics
 from gateway.services.map_paths import active_map_link
 from gateway.services.map_paths import active_map_name
 from gateway.services.map_paths import map_dir_for
@@ -261,11 +263,180 @@ def _json_payload(value: Any) -> Any:
         return {"raw": str(value)}
 
 
+def _finite_float(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _sequence_len(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return len(value)
+    except TypeError:
+        return None
+
+
+def _frame_id_from_payload(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        frame_id = value.get("frame_id")
+        if frame_id:
+            return str(frame_id)
+        header = value.get("header")
+        if isinstance(header, Mapping) and header.get("frame_id"):
+            return str(header["frame_id"])
+        return None
+    frame_id = getattr(value, "frame_id", None)
+    if frame_id:
+        return str(frame_id)
+    header = getattr(value, "header", None)
+    frame_id = getattr(header, "frame_id", None)
+    return str(frame_id) if frame_id else None
+
+
+def _position_from_payload(value: Any) -> dict[str, float] | None:
+    if isinstance(value, Mapping):
+        x = _finite_float(value.get("x"))
+        y = _finite_float(value.get("y"))
+        z = _finite_float(value.get("z", 0.0))
+        if x is not None and y is not None:
+            return {"x": x, "y": y, "z": z or 0.0}
+        pose = value.get("pose")
+        if isinstance(pose, Mapping):
+            return _position_from_payload(pose)
+        return None
+    pose = getattr(value, "pose", None)
+    pose = getattr(pose, "pose", pose)
+    position = getattr(pose, "position", None)
+    if position is None:
+        return None
+    x = _finite_float(getattr(position, "x", None))
+    y = _finite_float(getattr(position, "y", None))
+    z = _finite_float(getattr(position, "z", 0.0))
+    if x is None or y is None:
+        return None
+    return {"x": x, "y": y, "z": z or 0.0}
+
+
+def _cmd_norm_from_payload(value: Any) -> float | None:
+    twist = value.get("twist", value) if isinstance(value, Mapping) else getattr(value, "twist", value)
+    if isinstance(twist, Mapping):
+        linear = twist.get("linear") or {}
+        angular = twist.get("angular") or {}
+        lx = _finite_float(linear.get("x") if isinstance(linear, Mapping) else None) or 0.0
+        ly = _finite_float(linear.get("y") if isinstance(linear, Mapping) else None) or 0.0
+        az = _finite_float(angular.get("z") if isinstance(angular, Mapping) else None) or 0.0
+        return math.sqrt(lx * lx + ly * ly + az * az)
+    linear = getattr(twist, "linear", None)
+    angular = getattr(twist, "angular", None)
+    if linear is None or angular is None:
+        return None
+    lx = _finite_float(getattr(linear, "x", None)) or 0.0
+    ly = _finite_float(getattr(linear, "y", None)) or 0.0
+    az = _finite_float(getattr(angular, "z", None)) or 0.0
+    return math.sqrt(lx * lx + ly * ly + az * az)
+
+
+def _latest_payload_summary(value: Any) -> dict[str, Any]:
+    summary: dict[str, Any] = {"payload_type": type(value).__name__}
+    frame_id = _frame_id_from_payload(value)
+    if frame_id:
+        summary["frame_id"] = frame_id
+
+    position = _position_from_payload(value)
+    if position is not None:
+        summary["position"] = position
+
+    if isinstance(value, Mapping):
+        for key in ("count", "points", "cells", "max_poses"):
+            number = _finite_float(value.get(key))
+            if number is not None:
+                summary[key] = int(number)
+        for key in ("data", "state", "status", "health"):
+            if value.get(key) is not None:
+                summary[key] = str(value[key])
+                break
+        for key in ("value", "quality", "fitness", "icp_quality", "icp_fitness"):
+            number = _finite_float(value.get(key))
+            if number is not None:
+                summary["value"] = number
+                break
+        for key in ("path", "poses"):
+            count = _sequence_len(value.get(key))
+            if count is not None:
+                summary["max_poses"] = max(int(summary.get("max_poses", 0)), count)
+        point_count = _sequence_len(value.get("points"))
+        if point_count is not None:
+            summary["points"] = max(int(summary.get("points", 0)), point_count)
+    else:
+        points = getattr(value, "points", None)
+        point_count = _sequence_len(points)
+        if point_count is not None:
+            summary["points"] = point_count
+        poses = getattr(value, "poses", None)
+        pose_count = _sequence_len(poses)
+        if pose_count is not None:
+            summary["max_poses"] = pose_count
+        data = getattr(value, "data", None)
+        if isinstance(data, str):
+            summary["data"] = data
+        else:
+            number = _finite_float(data)
+            if number is not None:
+                summary["value"] = number
+
+    cmd_norm = _cmd_norm_from_payload(value)
+    if cmd_norm is not None:
+        summary["cmd_norm"] = cmd_norm
+    return summary
+
+
 def _latest_payload_for_topic(gw: Any, topic: str) -> Any | None:
     attr_by_topic = {
         TOPICS.traversable_frontiers: "_last_traversable_frontiers",
         TOPICS.frontier_candidate: "_last_frontier_candidate",
     }
+    if topic == TOPICS.odometry:
+        with (getattr(gw, "_state_lock", None) or nullcontext()):
+            value = getattr(gw, "_odom", None)
+        return None if value is None else _json_payload(value)
+    if topic == TOPICS.global_path:
+        with (getattr(gw, "_state_lock", None) or nullcontext()):
+            path = list(getattr(gw, "_last_path", []) or [])
+        return {
+            "frame_id": "map",
+            "count": len(path),
+            "max_poses": len(path),
+            "path": path,
+            "source": "gateway_cache",
+        }
+    if topic == TOPICS.local_path:
+        with (getattr(gw, "_state_lock", None) or nullcontext()):
+            path = list(getattr(gw, "_last_local_path", []) or [])
+        return {
+            "frame_id": "body",
+            "count": len(path),
+            "max_poses": len(path),
+            "path": path,
+            "source": "gateway_cache",
+        }
+    if topic == TOPICS.map_cloud:
+        lock = getattr(gw, "_map_cloud_lock", None)
+        if lock is None:
+            points = getattr(gw, "_map_points", None)
+        else:
+            with lock:
+                points = getattr(gw, "_map_points", None)
+        count = _sequence_len(points) or 0
+        return {
+            "frame_id": "map",
+            "count": count,
+            "points": count,
+            "source": "live_map_cloud",
+        }
     attr = attr_by_topic.get(topic)
     if not attr:
         return None
@@ -497,6 +668,22 @@ def _module_port_snapshot(gw: Any) -> dict[str, Any]:
         }
         if "error" in summary:
             snapshot[str(name)]["error"] = summary["error"]
+        try:
+            module_ports_in = module.ports_in if hasattr(module, "ports_in") else {}
+        except Exception:
+            module_ports_in = {}
+        if isinstance(module_ports_in, Mapping):
+            for port_name, port in module_ports_in.items():
+                if port_name not in snapshot[str(name)]["ports_in"]:
+                    continue
+                latest = getattr(port, "latest", None)
+                if latest is None:
+                    continue
+                latest_summary = _latest_payload_summary(latest)
+                if latest_summary:
+                    snapshot[str(name)]["ports_in"][port_name][
+                        "latest_summary"
+                    ] = latest_summary
     return snapshot
 
 

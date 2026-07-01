@@ -9,11 +9,11 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_planner"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from semantic.planner.llm_client import LLMConfig, create_llm_client
-from semantic.planner.goal_resolver import GoalResolver
-from semantic.planner.prompt_templates import build_goal_resolution_prompt
+from decision.llm_client import LLMConfig, create_llm_client
+from decision.goal_resolver import GoalResolver
+from decision.prompt_templates import build_goal_resolution_prompt
 
 SCENE_GRAPH = {
     "summary": "Two-floor office building. Floor 1: corridor + main office. 15 objects total.",
@@ -164,7 +164,7 @@ async def run_demo():
             })
             continue
 
-        # Slow Path — call LLM directly to capture raw output
+        # Slow Path 鈥?call LLM directly to capture raw output
         print(f"  [{i+1}/{len(TESTS)}] {name}: calling Kimi-k2.5...", end="", flush=True)
 
         if i > 0 and TESTS[i-1][2] in ("zh",) or "explore" in TESTS[i-1][0].lower():

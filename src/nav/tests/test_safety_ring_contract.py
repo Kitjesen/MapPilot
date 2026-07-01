@@ -1,4 +1,4 @@
-"""Contract tests for SafetyRingModule — port types, safety level computation,
+"""Contract tests for SafetyRing port types, safety level computation,
 stop_cmd publishing, and AI-callable skills.
 
 All tests are pure-Python, no ROS2 / hardware / MuJoCo required.
@@ -13,19 +13,19 @@ import unittest
 
 import numpy as np
 
-from core.msgs.geometry import Pose, PoseStamped, Twist, Vector3
-from core.msgs.nav import Odometry, Path
-from core.stream import In, Out
+from runtime.msgs.geometry import Pose, PoseStamped, Twist, Vector3
+from runtime.msgs.nav import Odometry, Path
+from runtime.stream import In, Out
 
 
 class TestSafetyRingContract(unittest.TestCase):
-    """Contract tests for SafetyRingModule."""
+    """Contract tests for nav.services.safety."""
 
     def _make(self, **kw):
-        from nav.safety_ring_module import SafetyRingModule
+        from nav.services.safety.safety_ring import SafetyRing
         kwargs = dict(cross_track_warn=1.5, cross_track_danger=3.0)
         kwargs.update(kw)
-        return SafetyRingModule(**kwargs)
+        return SafetyRing(**kwargs)
 
     def test_ports_in(self):
         """Must declare all required input ports."""
@@ -51,7 +51,7 @@ class TestSafetyRingContract(unittest.TestCase):
         self.assertIsInstance(m.ports_out["dialogue_state"], Out)
 
     def test_layer_is_0(self):
-        """SafetyRingModule must be layer 0."""
+        """SafetyRing must be layer 0."""
         m = self._make()
         self.assertEqual(m.layer, 0)
 

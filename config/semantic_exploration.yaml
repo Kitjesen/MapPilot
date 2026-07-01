@@ -1,23 +1,23 @@
-# ═══════════════════════════════════════════════════════════════
-# semantic_exploration.yaml — 探索模式专用配置
+﻿# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+# semantic_exploration.yaml 鈥?鎺㈢储妯″紡涓撶敤閰嶇疆
 #
-# 与 semantic_planner.yaml 的关键差异:
-#   - SCG auto_expand: true  (打通 SCG 管道, 每10帧自动扩展多面体)
-#   - GCM enable: true       (全局覆盖掩码追踪探索进度)
-#   - exploration.strategy: frontier  (FrontierScorer 实时探索, SG-Nav 限定目标确认)
-#   - exploration.max_explore_steps: 50 (探索步数更多)
-#   - llm.backend: mock      (默认不需要 API key, 可按需改为 kimi/openai)
+# 涓?decision.yaml 鐨勫叧閿樊寮?
+#   - SCG auto_expand: true  (鎵撻€?SCG 绠￠亾, 姣?0甯ц嚜鍔ㄦ墿灞曞闈綋)
+#   - GCM enable: true       (鍏ㄥ眬瑕嗙洊鎺╃爜杩借釜鎺㈢储杩涘害)
+#   - exploration.strategy: frontier  (FrontierScorer 瀹炴椂鎺㈢储, SG-Nav 闄愬畾鐩爣纭)
+#   - exploration.max_explore_steps: 50 (鎺㈢储姝ユ暟鏇村)
+#   - llm.backend: mock      (榛樿涓嶉渶瑕?API key, 鍙寜闇€鏀逛负 kimi/openai)
 #
-# 使用场景:
-#   ros2 launch navigation_explore.launch.py  (自动使用此配置)
+# 浣跨敤鍦烘櫙:
+#   ros2 launch navigation_explore.launch.py  (鑷姩浣跨敤姝ら厤缃?
 #
-# 如需使用真实 LLM 推理:
-#   将 llm.backend 改为 "kimi" 并设置 MOONSHOT_API_KEY 环境变量
-# ═══════════════════════════════════════════════════════════════
+# 濡傞渶浣跨敤鐪熷疄 LLM 鎺ㄧ悊:
+#   灏?llm.backend 鏀逛负 "kimi" 骞惰缃?MOONSHOT_API_KEY 鐜鍙橀噺
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
-semantic_perception_node:
+perception_node:
   ros__parameters:
-    # ── 检测器后端 (同默认配置) ──
+    # 鈹€鈹€ 妫€娴嬪櫒鍚庣 (鍚岄粯璁ら厤缃? 鈹€鈹€
     detector_type: "yoloe"
 
     yoloe:
@@ -27,16 +27,16 @@ semantic_perception_node:
       tensorrt: false
       max_detections: 30
 
-    # ── 语义编码 ──
+    # 鈹€鈹€ 璇箟缂栫爜 鈹€鈹€
     clip:
       enable: true
       model: "ViT-B/32"
       text_only: true
 
-    # ── 默认检测类别 ──
+    # 鈹€鈹€ 榛樿妫€娴嬬被鍒?鈹€鈹€
     default_classes: "door . chair . fire extinguisher . person . desk . stairs . elevator . sign . trash can . sofa . table . bed . refrigerator . window"
 
-    # ── 3D 投影 ──
+    # 鈹€鈹€ 3D 鎶曞奖 鈹€鈹€
     depth_scale: 0.001
     max_depth: 6.0
     min_depth: 0.3
@@ -44,7 +44,7 @@ semantic_perception_node:
     clip_similarity_threshold: 0.75
     merge_distance: 0.5
 
-    # ── 场景图 ──
+    # 鈹€鈹€ 鍦烘櫙鍥?鈹€鈹€
     scene_graph:
       enable: true
       publish_rate: 2.0
@@ -56,32 +56,32 @@ semantic_perception_node:
     target_fps: 15.0
     skip_frames: 1
 
-    # ── 实例追踪 (增量更新) ──
+    # 鈹€鈹€ 瀹炰緥杩借釜 (澧為噺鏇存柊) 鈹€鈹€
     tracker:
       incremental_update: true
       update_radius: 5.0
       stale_remove_timeout: 30.0
 
-    # ── SCG 路径规划 + 自动多面体扩展 (★ 探索模式核心) ──
+    # 鈹€鈹€ SCG 璺緞瑙勫垝 + 鑷姩澶氶潰浣撴墿灞?(鈽?鎺㈢储妯″紡鏍稿績) 鈹€鈹€
     scg:
       enable: true
       request_topic: "/nav/scg/plan_request"
       result_topic: "/nav/scg/plan_result"
-      # 探索模式新增: 每N帧从当前局部栅格自动扩展多面体并更新 SCG
+      # 鎺㈢储妯″紡鏂板: 姣廚甯т粠褰撳墠灞€閮ㄦ爡鏍艰嚜鍔ㄦ墿灞曞闈綋骞舵洿鏂?SCG
       auto_expand: true
-      expand_every_n_frames: 10     # 约 1.5Hz (@ 15Hz 感知频率)
-      min_new_polyhedra: 2          # 少于此数量的新多面体时跳过更新
+      expand_every_n_frames: 10     # 绾?1.5Hz (@ 15Hz 鎰熺煡棰戠巼)
+      min_new_polyhedra: 2          # 灏戜簬姝ゆ暟閲忕殑鏂板闈綋鏃惰烦杩囨洿鏂?
 
-    # ── 全局覆盖掩码 (★ 探索模式核心) ──
+    # 鈹€鈹€ 鍏ㄥ眬瑕嗙洊鎺╃爜 (鈽?鎺㈢储妯″紡鏍稿績) 鈹€鈹€
     gcm:
       enable: true
-      resolution: 0.5               # 格子大小 (米), 粗粒度追踪覆盖进度
+      resolution: 0.5               # 鏍煎瓙澶у皬 (绫?, 绮楃矑搴﹁拷韪鐩栬繘搴?
 
 
-semantic_planner_node:
+decision_node:
   ros__parameters:
-    # ── LLM 配置 (探索模式默认 mock, 无需 API key) ──
-    # 改为 "kimi" 并设置 MOONSHOT_API_KEY 可使用真实推理
+    # 鈹€鈹€ LLM 閰嶇疆 (鎺㈢储妯″紡榛樿 mock, 鏃犻渶 API key) 鈹€鈹€
+    # 鏀逛负 "kimi" 骞惰缃?MOONSHOT_API_KEY 鍙娇鐢ㄧ湡瀹炴帹鐞?
     llm:
       backend: "mock"
       model: "mock"
@@ -90,7 +90,7 @@ semantic_planner_node:
       max_retries: 1
       temperature: 0.2
 
-    # ── 备用 LLM ──
+    # 鈹€鈹€ 澶囩敤 LLM 鈹€鈹€
     llm_fallback:
       backend: "mock"
       model: "mock"
@@ -98,33 +98,33 @@ semantic_planner_node:
       timeout_sec: 5.0
       max_retries: 1
 
-    # ── 目标解析 (降低阈值, 更容易触发探索) ──
+    # 鈹€鈹€ 鐩爣瑙ｆ瀽 (闄嶄綆闃堝€? 鏇村鏄撹Е鍙戞帰绱? 鈹€鈹€
     goal_resolution:
-      confidence_threshold: 0.5     # 低于此置信度触发 Frontier 探索
+      confidence_threshold: 0.5     # 浣庝簬姝ょ疆淇″害瑙﹀彂 Frontier 鎺㈢储
       vision_threshold: 0.5
       replan_on_failure: true
       max_replan_attempts: 3
       fast_path_threshold: 0.70
 
-    # ── 探索策略 (★ 核心参数) ──
+    # 鈹€鈹€ 鎺㈢储绛栫暐 (鈽?鏍稿績鍙傛暟) 鈹€鈹€
     exploration:
       enable: true
-      strategy: "frontier"          # frontier = FrontierScorer 实时探索 (USS-Nav style)
-                                    # SG-Nav 子图推理仅在目标确认阶段按需触发
-                                    # 如需 SG-Nav 全程探索 (慢, <1Hz), 改为 "sg_nav"
-      max_explore_steps: 50         # 探索模式步数更多
+      strategy: "frontier"          # frontier = FrontierScorer 瀹炴椂鎺㈢储 (USS-Nav style)
+                                    # SG-Nav 瀛愬浘鎺ㄧ悊浠呭湪鐩爣纭闃舵鎸夐渶瑙﹀彂
+                                    # 濡傞渶 SG-Nav 鍏ㄧ▼鎺㈢储 (鎱? <1Hz), 鏀逛负 "sg_nav"
+      max_explore_steps: 50         # 鎺㈢储妯″紡姝ユ暟鏇村
       step_distance: 2.0
       costmap_topic: "/nav/costmap"
-      frontier_score_threshold: 0.15   # 降低门槛, 接受更多候选 frontier
+      frontier_score_threshold: 0.15   # 闄嶄綆闂ㄦ, 鎺ュ彈鏇村鍊欓€?frontier
       frontier_min_size: 5
       frontier_max_count: 10
       frontier_cluster_radius_cells: 3
 
-      # Frontier 评分权重 (探索模式调整: 提高新颖度权重)
+      # Frontier 璇勫垎鏉冮噸 (鎺㈢储妯″紡璋冩暣: 鎻愰珮鏂伴搴︽潈閲?
       frontier_distance_weight: 0.25
-      frontier_novelty_weight: 0.35    # 新颖度权重提高 (鼓励探索新区域)
+      frontier_novelty_weight: 0.35    # 鏂伴搴︽潈閲嶆彁楂?(榧撳姳鎺㈢储鏂板尯鍩?
       frontier_language_weight: 0.20
-      frontier_grounding_weight: 0.20  # 降低, 因为目标可能未知
+      frontier_grounding_weight: 0.20  # 闄嶄綆, 鍥犱负鐩爣鍙兘鏈煡
 
       frontier_novelty_distance: 5.0
       frontier_nearby_object_radius: 3.0
@@ -135,10 +135,10 @@ semantic_planner_node:
       frontier_grounding_relation_bonus: 0.15
       frontier_vision_weight: 0.15
 
-      # SG-Nav 参数 (sg_nav 策略已启用)
+      # SG-Nav 鍙傛暟 (sg_nav 绛栫暐宸插惎鐢?
       sgnav:
         max_subgraphs: 6
-        use_llm_reasoning: false     # mock 模式下关闭 LLM 推理
+        use_llm_reasoning: false     # mock 妯″紡涓嬪叧闂?LLM 鎺ㄧ悊
         heuristic_weight: 0.60
         llm_weight: 0.40
         frontier_base_weight: 0.55
@@ -154,7 +154,7 @@ semantic_planner_node:
         reperception_n_max: 10
         reperception_s_thresh: 0.8
 
-    # ── 融合权重 ──
+    # 鈹€鈹€ 铻嶅悎鏉冮噸 鈹€鈹€
     fusion:
       weight_label_match: 0.35
       weight_clip_sim: 0.35
@@ -165,30 +165,30 @@ semantic_planner_node:
       no_clip_weight_spatial: 0.20
       detector_count_normalize: 3
 
-    # ── Vision Grounding ──
+    # 鈹€鈹€ Vision Grounding 鈹€鈹€
     vision:
       enable: true
       image_topic: "/camera/color/image_raw"
       verify_threshold: 0.5
 
-    # ── 执行参数 ──
+    # 鈹€鈹€ 鎵ц鍙傛暟 鈹€鈹€
     execution:
       arrival_radius: 1.0
       monitor_hz: 1.0
       look_around_hz: 10.0
-      default_timeout: 600.0         # 探索模式超时更长
+      default_timeout: 600.0         # 鎺㈢储妯″紡瓒呮椂鏇撮暱
 
-    # ── 拓扑记忆 ──
+    # 鈹€鈹€ 鎷撴墤璁板繂 鈹€鈹€
     topo_memory:
       new_node_distance: 2.0
-      max_nodes: 1000               # 探索模式记忆节点更多
+      max_nodes: 1000               # 鎺㈢储妯″紡璁板繂鑺傜偣鏇村
 
-    # ── 安全约束 ──
+    # 鈹€鈹€ 瀹夊叏绾︽潫 鈹€鈹€
     safety:
       max_goal_distance: 50.0
       forbidden_zones: []
 
-    # ── FSM ──
+    # 鈹€鈹€ FSM 鈹€鈹€
     fsm:
       mode: "implicit"
       implicit:

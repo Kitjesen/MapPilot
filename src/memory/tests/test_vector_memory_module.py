@@ -11,9 +11,9 @@ import unittest
 
 import numpy as np
 
-from core.msgs.geometry import Vector3
-from core.msgs.nav import Odometry, Pose
-from core.msgs.semantic import Detection3D, SceneGraph
+from runtime.msgs.geometry import Vector3
+from runtime.msgs.nav import Odometry, Pose
+from runtime.msgs.semantic import Detection3D, SceneGraph
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -96,14 +96,14 @@ class TestVectorMemoryPorts(unittest.TestCase):
         return VectorMemoryModule(**kw)
 
     def test_input_ports_exist(self):
-        from core.stream import In
+        from runtime.stream import In
         m = self._make()
         self.assertIsInstance(m.scene_graph, In)
         self.assertIsInstance(m.odometry, In)
         self.assertIsInstance(m.image, In)
 
     def test_output_ports_exist(self):
-        from core.stream import Out
+        from runtime.stream import Out
         m = self._make()
         self.assertIsInstance(m.query_result, Out)
 

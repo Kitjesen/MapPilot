@@ -1,4 +1,4 @@
-[Unit]
+﻿[Unit]
 Description=Thunder Livox MID-360 LiDAR Driver
 After=network.target
 StartLimitIntervalSec=300
@@ -19,8 +19,8 @@ ExecStart=/bin/bash -c '\
     -p publish_freq:=10.0 \
     -p output_data_type:=0 \
     -p user_config_path:=/home/sunrise/data/inovxio/lingtu/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json \
-    -r livox/lidar:=/nav/lidar_scan \
-    -r livox/imu:=/nav/imu'
+    -r livox/lidar:=/lidar/raw_frame \
+    -r livox/imu:=/imu/raw'
 Restart=on-failure
 RestartSec=3
 MemoryMax=1G

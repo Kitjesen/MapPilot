@@ -20,8 +20,8 @@ sleep 2
 BASE_CONFIG="$NAV_DIR/install/pointlio/share/pointlio/config/velody16.yaml"
 CONFIG_FILE="/tmp/vlp16_legkilo.yaml"
 sed -e 's/scan_line: 32/scan_line: 16/' \
-    -e 's|lid_topic:.*|lid_topic: "/points_raw"|' \
-    -e 's|imu_topic:.*|imu_topic: "/imu_raw"|' \
+    -e 's|lid_topic:.*|lid_topic: "/lidar/raw_frame"|' \
+    -e 's|imu_topic:.*|imu_topic: "/imu/raw"|' \
     "$BASE_CONFIG" > "$CONFIG_FILE"
 
 echo "[1/3] Starting Point-LIO..."

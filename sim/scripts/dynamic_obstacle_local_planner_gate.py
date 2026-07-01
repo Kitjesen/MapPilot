@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 np: Any = None
-LocalPlannerModule: Any = None
+LocalPlanner: Any = None
 Pose: Any = None
 PoseStamped: Any = None
 Quaternion: Any = None
@@ -46,7 +46,7 @@ PHASES = (
 
 
 def _load_runtime() -> None:
-    global LocalPlannerModule
+    global LocalPlanner
     global NavPath
     global Odometry
     global PointCloud2
@@ -60,22 +60,22 @@ def _load_runtime() -> None:
         import numpy as _np
 
         np = _np
-    if LocalPlannerModule is None:
-        from base_autonomy.modules.local_planner_module import (
-            LocalPlannerModule as _LocalPlannerModule,
+    if LocalPlanner is None:
+        from nav.services.plan.local_planner.service import (
+            LocalPlanner as _LocalPlanner,
         )
 
-        LocalPlannerModule = _LocalPlannerModule
+        LocalPlanner = _LocalPlanner
     if Pose is None:
-        from core.msgs.geometry import (
+        from runtime.msgs.geometry import (
             Pose as _Pose,
             PoseStamped as _PoseStamped,
             Quaternion as _Quaternion,
             Vector3 as _Vector3,
         )
-        from core.msgs.nav import Odometry as _Odometry
-        from core.msgs.nav import Path as _NavPath
-        from core.msgs.sensor import PointCloud2 as _PointCloud2
+        from runtime.msgs.nav import Odometry as _Odometry
+        from runtime.msgs.nav import Path as _NavPath
+        from runtime.msgs.sensor import PointCloud2 as _PointCloud2
 
         Pose = _Pose
         PoseStamped = _PoseStamped
@@ -188,7 +188,7 @@ def _phase_report(
 
 
 def _run_local_planner_phase(
-    module: LocalPlannerModule,
+    module: LocalPlanner,
     *,
     backend: str,
     obstacles: np.ndarray,
@@ -209,7 +209,7 @@ def _run_local_planner_phase(
     return published[-1]
 
 
-def _backend_evidence(module: LocalPlannerModule, *, requested: str, exercised_by: str) -> dict[str, Any]:
+def _backend_evidence(module: LocalPlanner, *, requested: str, exercised_by: str) -> dict[str, Any]:
     status = getattr(module, "_backend_status", None)
     actual = str(getattr(module, "_backend", "") or requested)
     configured = str(getattr(status, "configured", "") or requested)
@@ -242,7 +242,7 @@ def run_gate(
 ) -> dict[str, Any]:
     errors: list[str] = []
     resolved_platform = platform_system or platform.system()
-    runtime_injected = LocalPlannerModule is not None
+    runtime_injected = LocalPlanner is not None
     if (
         resolved_platform.lower() == "windows"
         and not allow_unstable_windows_numpy
@@ -286,7 +286,7 @@ def run_gate(
             errors=[blocker],
         )
 
-    module = LocalPlannerModule(backend=backend)
+    module = LocalPlanner(backend=backend)
     started = False
     backend_evidence: dict[str, Any] | None = None
     try:

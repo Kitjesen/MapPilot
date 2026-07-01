@@ -16,8 +16,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Portable package tiers.  These extras make the dependency boundary explicit so
+# Windows and Ubuntu deployments do not accidentally install ROS/Gateway/ML stacks.
 lite = []
+core-portable = []
+portable = []
+sim-mujoco = ["mujoco>=3.2", "mujoco-lidar>=0.3.3"]
+endpoint-portable = []
+endpoint-lcm = ["lcm"]
+# Optional native PCL plugin marker. The runtime looks for a separately built
+# `lingtu_pcl_ops` wheel/module and falls back to NumPy when it is absent.
+pcl-ops = []
 gateway = ["fastapi", "uvicorn", "websockets"]
+sdk = []
+sdk-async = ["aiohttp>=3.8"]
+sdk-mcp = ["httpx>=0.24"]
 vision = ["opencv-python-headless>=4.5"]
 ml = ["scikit-learn>=1.0"]
 llm = ["openai>=1.0", "anthropic"]
@@ -30,10 +43,17 @@ dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy", "fastapi", "uvi
 # Install on real robot / sunrise deploy: pip install -e '.[lite,thunder]'
 # stub / sim mode does not need this.
 thunder = ["brainstem-api @ git+https://github.com/Kitjesen/brainstem_api.git@v2.0.0#subdirectory=python"]
+robot-thunder = ["brainstem-api @ git+https://github.com/Kitjesen/brainstem_api.git@v2.0.0#subdirectory=python"]
+# ROS2/native SLAM dependencies are intentionally not pip-installed by the core package.
+# These extras are markers for explicit compatibility/capability surfaces whose system
+# packages are installed by their own deployment docs or sidecar build steps.
+ros-compat = []
+slam-native = []
 all = ["lingtu[gateway,vision,ml,llm,nlp,agent,perception,vector]"]
 
 [project.scripts]
 lingtu = "lingtu_cli:main"
+lingtu-sdk = "lingtu.sdk.cli:main"
 
 [tool.uv]
 # brainstem-api v2.0.0 metadata currently declares Python >=3.13, while the
@@ -52,15 +72,29 @@ requires-dist = [
 py-modules = ["lingtu_cli"]
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*", "cli*"]
+where = [".", "src"]
+include = [
+    "cli*",
+    "runtime*",
+    "drivers*",
+    "external_adapters*",
+    "gateway*",
+    "kernels*",
+    "lingtu*",
+    "memory*",
+    "nav*",
+    "perception*",
+    "decision*",
+    "localization*",
+    "webrtc*",
+]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 120
 src = ["src", "cli"]
 exclude = [
-    "src/global_planning/pct_planner/**",
+    "src/external_adapters/pct/pct_planner/**",
     "**/legacy/*",
 ]
 
@@ -88,9 +122,9 @@ ignore = [
     "RUF001",  # ambiguous unicode in string (Chinese chars, legacy code)
     "RUF002",  # ambiguous unicode in docstring (Chinese chars, legacy code)
     "RUF003",  # ambiguous unicode in comment (Chinese chars, legacy code)
-    "UP035",   # deprecated typing imports (Dict鈫抎ict etc, too many to fix at once)
+    "UP035",   # deprecated typing imports, too many to fix at once
     "UP031",   # printf-string-formatting (legacy %s style, migrate gradually)
-    "E741",    # ambiguous variable name (l, I, O 鈥?common in math code)
+    "E741",    # ambiguous variable name (l, I, O), common in math code
     "RUF012",  # mutable class default (Module ports use this pattern intentionally)
     "F403",    # undefined-local-with-import-star (legacy ROS2-style wildcard imports)
     "B027",    # empty-method-without-abstract-decorator (Module lifecycle stubs)
@@ -98,12 +132,27 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "nav", "semantic", "drivers", "gateway", "memory", "cli"]
+known-first-party = [
+    "cli",
+    "runtime",
+    "drivers",
+    "external_adapters",
+    "gateway",
+    "kernels",
+    "lingtu",
+    "memory",
+    "nav",
+    "perception",
+    "decision",
+    "localization",
+    "webrtc",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"src/core/tests/*" = ["F811", "E402", "D"]
-"src/semantic/*/test*" = ["F811", "E402", "D"]
+"src/runtime/tests/*" = ["F811", "E402", "D"]
+"src/perception/*/test*" = ["F811", "E402", "D"]
+"src/decision/*/test*" = ["F811", "E402", "D"]
 "src/*/tests/*" = ["D", "E402"]
 "sim/tests/*" = ["D"]
 "scripts/*" = ["D"]
@@ -112,12 +161,12 @@ known-first-party = ["core", "nav", "semantic", "drivers", "gateway", "memory", 
 "docs/**" = ["E702", "E701"]
 "src/gateway/map_dashboard.py" = ["E501"]
 # E501 in test files with embedded shell scripts or \uXXXX docstrings
-"src/core/tests/test_deployment_service_contracts.py" = ["E501"]
-"src/semantic/planner/tests/test_fast_slow_benchmark.py" = ["E501"]
-"src/semantic/planner/tests/test_fast_slow_efficiency.py" = ["E501"]
-"src/semantic/planner/task_rules.py" = ["E501"]
-"src/semantic/planner/prompt_templates.py" = ["E501"]
-"src/core/msgs/scene.py" = ["E501"]
+"src/runtime/tests/test_deployment_service_contracts.py" = ["E501"]
+"src/decision/tests/test_fast_slow_benchmark.py" = ["E501"]
+"src/decision/tests/test_fast_slow_efficiency.py" = ["E501"]
+"src/decision/tasking/task_rules.py" = ["E501"]
+"src/decision/llm/prompt_templates.py" = ["E501"]
+"src/runtime/msgs/scene.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -125,24 +174,27 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # gradual adoption
 ignore_missing_imports = true   # many deps lack stubs
-exclude = ["src/global_planning/pct_planner/planner/lib/3rdparty/", "third_party/", "research/"]
+exclude = ["src/external_adapters/pct/pct_planner/planner/lib/3rdparty/", "third_party/", "research/"]
 
 [tool.pytest.ini_options]
 testpaths = [
-    "src/core/tests",
+    "tests/contracts",
+    "src/runtime/tests",
     "src/nav/tests",
     "src/gateway/tests",
     "src/drivers/tests",
+    "src/lingtu/tests",
+    "src/lingtu/sdk/tests",
     "src/memory/tests",
     "sim/tests",
-    "src/slam/tests",
-    "src/semantic/perception/tests",
-    "src/semantic/planner/tests",
+    "src/localization/tests",
+    "src/perception/tests",
+    "src/decision/tests",
 ]
-# tests/ directory has root-level integration tests run separately:
+# tests/ contains default contracts plus root-level integration tests run separately:
 #   python -m pytest tests/ -q
 norecursedirs = [
-    "src/global_planning/pct_planner/planner/lib/3rdparty",
+    "src/external_adapters/pct/pct_planner/planner/lib/3rdparty",
     "third_party",
     "research",
     ".venv",

@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
-from core.runtime_interface import map_frame_id
+from runtime.runtime_interface import map_frame_id
 from gateway.schemas import PlanPreviewRequest
 from gateway.services.safety_status import safety_stop_active, safety_summary
 
@@ -118,11 +118,11 @@ class ControlCommandService:
                 source="gateway_readiness",
             )
 
-        nav = (getattr(self._gw, "_all_modules", {}) or {}).get("NavigationModule")
+        nav = (getattr(self._gw, "_all_modules", {}) or {}).get("nav.mission")
         if nav is None or not hasattr(nav, "preview_plan"):
             return self._plan_preview_unavailable(
                 body,
-                reasons=["navigation_module_unavailable"],
+                reasons=["nav_mission_unavailable"],
                 source="gateway_modules",
             )
 
@@ -343,7 +343,7 @@ def _point_payload(
 
 def _path_safety_blocks_motion(preview: dict[str, Any]) -> bool:
     policy = str(preview.get("plan_safety_policy") or "").lower()
-    if policy not in {"reject", "fallback_astar"}:
+    if policy != "reject":
         return False
     path_safety = preview.get("path_safety")
     if not isinstance(path_safety, dict):

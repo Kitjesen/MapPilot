@@ -129,9 +129,36 @@ function mulM(a: Float32Array, b: Float32Array) {
   return c
 }
 
+export interface PointCloudPick { x: number; y: number; z: number }
+
+function mvpFor(s: GLS) {
+  const c = s.gl.canvas as HTMLCanvasElement
+  const sinP=Math.sin(s.phi), cosP=Math.cos(s.phi)
+  const ex=s.center[0]+s.dist*sinP*Math.cos(s.theta)
+  const ey=s.center[1]+s.dist*cosP
+  const ez=s.center[2]+s.dist*sinP*Math.sin(s.theta)
+  return mulM(
+    perspective(Math.PI/4, c.width/c.height, 0.05, s.dist*20),
+    lookAt(ex,ey,ez, s.center[0],s.center[1],s.center[2]),
+  )
+}
+
+function projectPcdPoint(m: Float32Array, p: PointCloudPick, width: number, height: number) {
+  const x = p.x, y = p.z, z = p.y
+  const cx = m[0]*x + m[4]*y + m[8] *z + m[12]
+  const cy = m[1]*x + m[5]*y + m[9] *z + m[13]
+  const cz = m[2]*x + m[6]*y + m[10]*z + m[14]
+  const cw = m[3]*x + m[7]*y + m[11]*z + m[15]
+  if (!isFinite(cw) || cw <= 0) return null
+  const nx = cx / cw, ny = cy / cw, nz = cz / cw
+  if (nx < -1 || nx > 1 || ny < -1 || ny > 1 || nz < -1 || nz > 1) return null
+  return { x: (nx * 0.5 + 0.5) * width, y: (0.5 - ny * 0.5) * height }
+}
+
 // ── GL state ──────────────────────────────────────────────────
 interface GLS {
   gl: WebGLRenderingContext; prog: WebGLProgram; vbuf: WebGLBuffer; nPts: number
+  pts: Float32Array
   minZ: number; rangeZ: number
   center: [number,number,number]; radius: number
   theta: number; phi: number; dist: number
@@ -139,28 +166,52 @@ interface GLS {
 }
 
 // ── Component ─────────────────────────────────────────────────
-export function PointCloudViewer({ mapName }: { mapName: string | null }) {
+export function PointCloudViewer({
+  mapName,
+  pickedPoint,
+  onPick,
+}: {
+  mapName: string | null
+  pickedPoint?: PointCloudPick | null
+  onPick?: (point: PointCloudPick | null) => void
+}) {
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const glRef        = useRef<GLS | null>(null)
-  const dragRef      = useRef<{ x: number; y: number } | null>(null)
+  const dragRef      = useRef<{ x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null)
+  const pickedRef    = useRef<PointCloudPick | null>(null)
 
   const [status,       setStatus      ] = useState<'idle'|'loading'|'done'|'error'>('idle')
   const [info,         setInfo        ] = useState('')
   const [schemeName,   setSchemeName  ] = useState('高度')
+  const [pickScreen,   setPickScreen  ] = useState<{ x: number; y: number } | null>(null)
+
+  const updatePickScreen = useCallback((point = pickedRef.current) => {
+    const s = glRef.current
+    const canvas = canvasRef.current
+    if (!s || !canvas || !point) {
+      setPickScreen(null)
+      return
+    }
+    const projected = projectPcdPoint(mvpFor(s), point, canvas.width, canvas.height)
+    if (!projected) {
+      setPickScreen(null)
+      return
+    }
+    const rect = canvas.getBoundingClientRect()
+    setPickScreen({
+      x: projected.x * (rect.width / canvas.width),
+      y: projected.y * (rect.height / canvas.height),
+    })
+  }, [])
 
   const draw = useCallback(() => {
     const s = glRef.current; if (!s) return
-    const { gl, prog, vbuf, nPts, center, dist, theta, phi, minZ, rangeZ, scheme } = s
+    const { gl, prog, vbuf, nPts, minZ, rangeZ, scheme } = s
     const c = gl.canvas as HTMLCanvasElement
     gl.viewport(0, 0, c.width, c.height)
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-    const sinP=Math.sin(phi), cosP=Math.cos(phi)
-    const ex=center[0]+dist*sinP*Math.cos(theta)
-    const ey=center[1]+dist*cosP
-    const ez=center[2]+dist*sinP*Math.sin(theta)
-    const mvp = mulM(perspective(Math.PI/4, c.width/c.height, 0.05, dist*20),
-                     lookAt(ex,ey,ez, center[0],center[1],center[2]))
+    const mvp = mvpFor(s)
     gl.useProgram(prog)
     gl.uniformMatrix4fv(gl.getUniformLocation(prog,'u_mvp'), false, mvp)
     gl.uniform1f(gl.getUniformLocation(prog,'u_minZ'), minZ)
@@ -172,10 +223,16 @@ export function PointCloudViewer({ mapName }: { mapName: string | null }) {
     gl.enableVertexAttribArray(loc)
     gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0)
     gl.drawArrays(gl.POINTS, 0, nPts)
-  }, [])
+    updatePickScreen()
+  }, [updatePickScreen])
 
   const load = useCallback(async (name: string, scheme: CS) => {
-    glRef.current = null; setStatus('loading'); setInfo('')
+    glRef.current = null
+    pickedRef.current = null
+    setPickScreen(null)
+    onPick?.(null)
+    setStatus('loading')
+    setInfo('')
     try {
       const res = await fetch(`/api/v1/maps/${encodeURIComponent(name)}/pcd`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -199,6 +256,7 @@ export function PointCloudViewer({ mapName }: { mapName: string | null }) {
       gl.bufferData(gl.ARRAY_BUFFER, pts, gl.STATIC_DRAW)
       glRef.current = {
         gl, prog, vbuf, nPts: pts.length/3,
+        pts,
         minZ: z0, rangeZ: z1-z0,
         center: [(x0+x1)/2, (z0+z1)/2, (y0+y1)/2],
         radius, theta: 0.4, phi: 1.05, dist: radius*2.8, scheme,
@@ -207,7 +265,7 @@ export function PointCloudViewer({ mapName }: { mapName: string | null }) {
       setInfo(`${((pts.length/3)/1000).toFixed(0)}k pts`)
       setStatus('done')
     } catch { setStatus('error') }
-  }, [draw])
+  }, [draw, onPick])
 
   useEffect(() => {
     if (mapName) load(mapName, SCHEMES[schemeName] ?? SCHEMES['高度'])
@@ -215,18 +273,63 @@ export function PointCloudViewer({ mapName }: { mapName: string | null }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapName, load])
 
+  useEffect(() => {
+    pickedRef.current = pickedPoint ?? null
+    updatePickScreen()
+  }, [pickedPoint, updatePickScreen])
+
   const changeScheme = (name: string) => {
     setSchemeName(name)
     const s = glRef.current
     if (s) { s.scheme = SCHEMES[name]; draw() }
   }
 
-  const onDown  = (e: React.MouseEvent) => { dragRef.current = {x:e.clientX,y:e.clientY} }
-  const onUp    = () => { dragRef.current = null }
+  const pickNearest = useCallback((e: React.MouseEvent) => {
+    const s = glRef.current
+    const canvas = canvasRef.current
+    if (!s || !canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const px = (e.clientX - rect.left) * (canvas.width / rect.width)
+    const py = (e.clientY - rect.top) * (canvas.height / rect.height)
+    const mvp = mvpFor(s)
+    const maxDist = 18 * (canvas.width / rect.width)
+    let bestIndex = -1
+    let bestD2 = maxDist * maxDist
+    for (let i = 0; i < s.pts.length; i += 3) {
+      const point = { x: s.pts[i], y: s.pts[i + 1], z: s.pts[i + 2] }
+      const projected = projectPcdPoint(mvp, point, canvas.width, canvas.height)
+      if (!projected) continue
+      const dx = projected.x - px
+      const dy = projected.y - py
+      const d2 = dx * dx + dy * dy
+      if (d2 < bestD2) {
+        bestD2 = d2
+        bestIndex = i
+      }
+    }
+    if (bestIndex < 0) return
+    const point = { x: s.pts[bestIndex], y: s.pts[bestIndex + 1], z: s.pts[bestIndex + 2] }
+    pickedRef.current = point
+    onPick?.(point)
+    updatePickScreen(point)
+  }, [onPick, updatePickScreen])
+
+  const onDown  = (e: React.MouseEvent) => {
+    dragRef.current = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false }
+  }
+  const onUp    = (e: React.MouseEvent) => {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (drag && !drag.moved && e.button === 0) pickNearest(e)
+  }
   const onMove  = (e: React.MouseEvent) => {
     const s = glRef.current; if (!s || !dragRef.current) return
     const dx=e.clientX-dragRef.current.x, dy=e.clientY-dragRef.current.y
-    dragRef.current = {x:e.clientX,y:e.clientY}
+    if (Math.hypot(e.clientX - dragRef.current.startX, e.clientY - dragRef.current.startY) > 3) {
+      dragRef.current.moved = true
+    }
+    dragRef.current.x = e.clientX
+    dragRef.current.y = e.clientY
     s.theta -= dx*0.007
     s.phi = Math.max(0.05, Math.min(Math.PI-0.05, s.phi+dy*0.007))
     draw()
@@ -272,13 +375,14 @@ export function PointCloudViewer({ mapName }: { mapName: string | null }) {
         <canvas
           ref={canvasRef}
           className={styles.canvas}
-          style={{ display: status==='done'?'block':'none', cursor: dragRef.current?'grabbing':'grab' }}
-          onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
+          style={{ display: status==='done'?'block':'none', cursor: dragRef.current?'grabbing':'crosshair' }}
+          onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={() => { dragRef.current = null }}
           onWheel={onWheel}
         />
+        {pickScreen && <div className={styles.pickMarker} style={{ left: pickScreen.x, top: pickScreen.y }} />}
       </div>
 
-      {status === 'done' && <div className={styles.hint}>拖拽旋转 · 滚轮缩放</div>}
+      {status === 'done' && <div className={styles.hint}>点击选点 · 拖拽旋转 · 滚轮缩放</div>}
     </div>
   )
 }

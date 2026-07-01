@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from core.runtime_interface import FRAMES
+from runtime.runtime_interface import FRAMES
 
 
 THUNDER_V3_JOINT_NAMES = [

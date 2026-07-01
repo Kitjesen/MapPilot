@@ -15,10 +15,10 @@ import logging
 from typing import Any
 
 
-from core import In, Module, Out, skill
-from core.msgs import Odometry, PoseStamped
-from core.msgs.geometry import Pose, Quaternion, Vector3
-from core.registry import register
+from runtime import In, Module, Out, skill
+from runtime.msgs import Odometry, PoseStamped
+from runtime.msgs.geometry import Pose, Quaternion, Vector3
+from runtime.registry import register
 from memory.modules._odom_mixin import OdomTrackingMixin
 from memory.spatial.tagged_locations import TaggedLocationStore
 

@@ -1,64 +1,63 @@
-# ═══════════════════════════════════════════════════════════════
-# ROS 2 QoS 场景化配置 — 3D NAV
+﻿# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+# ROS 2 QoS 鍦烘櫙鍖栭厤缃?鈥?3D NAV
 #
-# 此文件定义了不同链路的推荐 QoS 配置。
-# 在代码中通过 rclcpp::QoS 或 launch 参数应用。
+# 姝ゆ枃浠跺畾涔変簡涓嶅悓閾捐矾鐨勬帹鑽?QoS 閰嶇疆銆?
+# 鍦ㄤ唬鐮佷腑閫氳繃 rclcpp::QoS 鎴?launch 鍙傛暟搴旂敤銆?
 #
-# QoS 维度说明:
-#   reliability:  RELIABLE (保证送达) / BEST_EFFORT (允许丢包)
-#   durability:   VOLATILE (仅活跃连接) / TRANSIENT_LOCAL (补发给晚到订阅者)
+# QoS 缁村害璇存槑:
+#   reliability:  RELIABLE (淇濊瘉閫佽揪) / BEST_EFFORT (鍏佽涓㈠寘)
+#   durability:   VOLATILE (浠呮椿璺冭繛鎺? / TRANSIENT_LOCAL (琛ュ彂缁欐櫄鍒拌闃呰€?
 #   history:      KEEP_LAST(depth) / KEEP_ALL
-#   deadline:     发布者承诺的最大发布间隔
-#   liveliness:   存活检测策略
-#   lifespan:     消息过期时间 (过期丢弃, 不送达)
-# ═══════════════════════════════════════════════════════════════
+#   deadline:     鍙戝竷鑰呮壙璇虹殑鏈€澶у彂甯冮棿闅?
+#   liveliness:   瀛樻椿妫€娴嬬瓥鐣?
+#   lifespan:     娑堟伅杩囨湡鏃堕棿 (杩囨湡涓㈠純, 涓嶉€佽揪)
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
-# ── 链路分类 ──────────────────────────────────────────────────
+# 鈹€鈹€ 閾捐矾鍒嗙被 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 profiles:
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 高频大数据: LiDAR 点云 (PointCloud2)
-  # 特点: ~1MB/帧, 10Hz, 丢 1 帧可接受
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 楂橀澶ф暟鎹? LiDAR 鐐逛簯 (PointCloud2)
+  # 鐗圭偣: ~1MB/甯? 10Hz, 涓?1 甯у彲鎺ュ彈
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   lidar_pointcloud:
     topics:
-      - /nav/slam/cloud_registered
+      - /slam/registered_cloud
       - /nav/terrain_map
       - /nav/terrain_map_ext
-      - /nav/scan_cloud          # sensor_scan_generation 输出
+      - /nav/scan_cloud          # sensor_scan_generation 杈撳嚭
     qos:
-      reliability: BEST_EFFORT   # 丢帧可接受, 避免重传阻塞
+      reliability: BEST_EFFORT   # 涓㈠抚鍙帴鍙? 閬垮厤閲嶄紶闃诲
       durability: VOLATILE
       history: KEEP_LAST
-      depth: 2                   # 最多缓 2 帧, 防止内存爆
-      lifespan: 200ms            # 超过 200ms 的点云无意义
+      depth: 2                   # 鏈€澶氱紦 2 甯? 闃叉鍐呭瓨鐖?
+      lifespan: 200ms            # 瓒呰繃 200ms 鐨勭偣浜戞棤鎰忎箟
     rationale: >
-      点云是最大带宽消耗者。BEST_EFFORT 避免 NACK 重传风暴。
-      depth=2 确保订阅者永远拿到最新帧。lifespan 防积压。
+      鐐逛簯鏄渶澶у甫瀹芥秷鑰楄€呫€侭EST_EFFORT 閬垮厤 NACK 閲嶄紶椋庢毚銆?
+      depth=2 纭繚璁㈤槄鑰呮案杩滄嬁鍒版渶鏂板抚銆俵ifespan 闃茬Н鍘嬨€?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 高频小数据: Odometry, IMU
-  # 特点: ~200B, 100-200Hz, 丢 1 帧可接受
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 楂橀灏忔暟鎹? Odometry, IMU
+  # 鐗圭偣: ~200B, 100-200Hz, 涓?1 甯у彲鎺ュ彈
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   high_freq_state:
     topics:
-      - /nav/odometry
-      - /nav/imu
-      - /nav/localization_quality
+      - /slam/odometry
+      - /imu/raw
+      - /slam/localization_quality
     qos:
       reliability: BEST_EFFORT
       durability: VOLATILE
       history: KEEP_LAST
       depth: 5
-      deadline: 20ms             # 期望 >= 50Hz
+      deadline: 20ms             # 鏈熸湜 >= 50Hz
       lifespan: 50ms
     rationale: >
-      状态数据只关心最新值。deadline 帮助检测发布者掉线。
-
+      鐘舵€佹暟鎹彧鍏冲績鏈€鏂板€笺€俤eadline 甯姪妫€娴嬪彂甯冭€呮帀绾裤€?
   localization_health:
     topics:
-      - /nav/localization_health
+      - /slam/localization_health
     qos:
       reliability: RELIABLE
       durability: VOLATILE
@@ -68,10 +67,9 @@ profiles:
       Localizer health is a low-rate diagnostic signal. RELIABLE keeps state
       transitions visible while VOLATILE avoids replaying stale lock/lost state.
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 控制指令: cmd_vel, stop, way_point
-  # 特点: ~100B, 50Hz, 不能丢!!!
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?  # 鎺у埗鎸囦护: cmd_vel, stop, way_point
+  # 鐗圭偣: ~100B, 50Hz, 涓嶈兘涓?!!
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   control_commands:
     topics:
       - /nav/cmd_vel
@@ -79,19 +77,19 @@ profiles:
       - /nav/way_point
       - /nav/slow_down
     qos:
-      reliability: RELIABLE       # 控制指令必须送达
+      reliability: RELIABLE       # 鎺у埗鎸囦护蹇呴』閫佽揪
       durability: VOLATILE
       history: KEEP_LAST
-      depth: 1                    # 只要最新指令
-      deadline: 50ms              # 期望 >= 20Hz
+      depth: 1                    # 鍙鏈€鏂版寚浠?
+      deadline: 50ms              # 鏈熸湜 >= 20Hz
     rationale: >
-      控制指令丢失导致失控。RELIABLE + depth=1 确保送达且不积压。
-      deadline 帮助检测 SafetyGate 是否正常工作。
+      鎺у埗鎸囦护涓㈠け瀵艰嚧澶辨帶銆俁ELIABLE + depth=1 纭繚閫佽揪涓斾笉绉帇銆?
+      deadline 甯姪妫€娴?SafetyGate 鏄惁姝ｅ父宸ヤ綔銆?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 全局路径: Path
-  # 特点: ~10KB, <1Hz, 不能丢
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 鍏ㄥ眬璺緞: Path
+  # 鐗圭偣: ~10KB, <1Hz, 涓嶈兘涓?
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   global_path:
     topics:
       - /nav/global_path
@@ -99,15 +97,15 @@ profiles:
       - /nav/pct_path
     qos:
       reliability: RELIABLE
-      durability: TRANSIENT_LOCAL  # 晚到的订阅者也能拿到最新路径
+      durability: TRANSIENT_LOCAL  # 鏅氬埌鐨勮闃呰€呬篃鑳芥嬁鍒版渶鏂拌矾寰?
       history: KEEP_LAST
       depth: 1
     rationale: >
-      路径低频但关键。TRANSIENT_LOCAL 确保新启动的节点立即拿到当前路径。
+      璺緞浣庨浣嗗叧閿€俆RANSIENT_LOCAL 纭繚鏂板惎鍔ㄧ殑鑺傜偣绔嬪嵆鎷垮埌褰撳墠璺緞銆?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 状态/健康: 低频但必达
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 鐘舵€?鍋ュ悍: 浣庨浣嗗繀杈?
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   system_status:
     topics:
       - /nav/health_status
@@ -120,12 +118,12 @@ profiles:
       history: KEEP_LAST
       depth: 1
     rationale: >
-      状态数据低频但不能丢。TRANSIENT_LOCAL 让 gRPC gateway 重启后
-      立刻拿到当前状态, 不用等下一次发布。
+      鐘舵€佹暟鎹綆棰戜絾涓嶈兘涓€俆RANSIENT_LOCAL 璁?gRPC gateway 閲嶅惎鍚?
+      绔嬪埢鎷垮埌褰撳墠鐘舵€? 涓嶇敤绛変笅涓€娆″彂甯冦€?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 围栏/目标: 事件驱动, 不能丢
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 鍥存爮/鐩爣: 浜嬩欢椹卞姩, 涓嶈兘涓?
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   geofence_events:
     topics:
       - /nav/geofence_boundary
@@ -136,11 +134,11 @@ profiles:
       history: KEEP_LAST
       depth: 1
     rationale: >
-      围栏和目标点发布后必须被所有节点收到, 且晚加入的也能拿到。
+      鍥存爮鍜岀洰鏍囩偣鍙戝竷鍚庡繀椤昏鎵€鏈夎妭鐐规敹鍒? 涓旀櫄鍔犲叆鐨勪篃鑳芥嬁鍒般€?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 图像/视频流: WebRTC 原始源
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 鍥惧儚/瑙嗛娴? WebRTC 鍘熷婧?
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   image_stream:
     topics:
       - /camera/image_raw/compressed
@@ -149,56 +147,56 @@ profiles:
       reliability: BEST_EFFORT
       durability: VOLATILE
       history: KEEP_LAST
-      depth: 1                    # 只要最新帧
+      depth: 1                    # 鍙鏈€鏂板抚
       lifespan: 100ms
     rationale: >
-      视频流丢帧无关紧要。depth=1 + lifespan 确保不积压。
+      瑙嗛娴佷涪甯ф棤鍏崇揣瑕併€俤epth=1 + lifespan 纭繚涓嶇Н鍘嬨€?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 语义感知层: 场景图 (1-2 Hz, 2-10 KB/帧)
-  # 论文依据:
-  #   Hydra (MIT SPARK, TRO 2022): fast/slow 双频架构 — 几何层 20-30Hz,
-  #     语义层 1-2Hz; TRANSIENT_LOCAL 让晚到节点立即获取当前状态。
-  #   KeySG (arXiv 2510.01049, 2025): 仅在关键帧变化时触发场景图更新。
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 璇箟鎰熺煡灞? 鍦烘櫙鍥?(1-2 Hz, 2-10 KB/甯?
+  # 璁烘枃渚濇嵁:
+  #   Hydra (MIT SPARK, TRO 2022): fast/slow 鍙岄鏋舵瀯 鈥?鍑犱綍灞?20-30Hz,
+  #     璇箟灞?1-2Hz; TRANSIENT_LOCAL 璁╂櫄鍒拌妭鐐圭珛鍗宠幏鍙栧綋鍓嶇姸鎬併€?
+  #   KeySG (arXiv 2510.01049, 2025): 浠呭湪鍏抽敭甯у彉鍖栨椂瑙﹀彂鍦烘櫙鍥炬洿鏂般€?
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   semantic_scene_graph:
     topics:
       - /nav/semantic/scene_graph
       - /nav/semantic/scene_diff
     qos:
-      reliability: RELIABLE        # 场景图不可丢：1Hz 丢一帧 = 1s 状态空白
-      durability: TRANSIENT_LOCAL  # 晚启动的 planner/gRPC 立即拿到最新快照
+      reliability: RELIABLE        # 鍦烘櫙鍥句笉鍙涪锛?Hz 涓竴甯?= 1s 鐘舵€佺┖鐧?
+      durability: TRANSIENT_LOCAL  # 鏅氬惎鍔ㄧ殑 planner/gRPC 绔嬪嵆鎷垮埌鏈€鏂板揩鐓?
       history: KEEP_LAST
-      depth: 2                     # 1Hz 发布: 缓 2 帧够用，防旧数据积压
-      lifespan: 5000ms             # 5s 后自动过期，避免重启后收到陈旧场景图
+      depth: 2                     # 1Hz 鍙戝竷: 缂?2 甯у鐢紝闃叉棫鏁版嵁绉帇
+      lifespan: 5000ms             # 5s 鍚庤嚜鍔ㄨ繃鏈燂紝閬垮厤閲嶅惎鍚庢敹鍒伴檲鏃у満鏅浘
     rationale: >
-      TRANSIENT_LOCAL 是关键: semantic_planner、goal_resolver、远程监控 gRPC
-      均可能比 perception_node 晚启动数秒，若用 VOLATILE 这些节点首次
-      接收场景图要等到下一个 1Hz 周期。depth=2 防止 1Hz 发布时队列积压
-      10 条旧数据（默认 depth=10 会导致 planner 消费 10s 前的场景图）。
+      TRANSIENT_LOCAL 鏄叧閿? semantic_planner銆乬oal_resolver銆佽繙绋嬬洃鎺?gRPC
+      鍧囧彲鑳芥瘮 perception_node 鏅氬惎鍔ㄦ暟绉掞紝鑻ョ敤 VOLATILE 杩欎簺鑺傜偣棣栨
+      鎺ユ敹鍦烘櫙鍥捐绛夊埌涓嬩竴涓?1Hz 鍛ㄦ湡銆俤epth=2 闃叉 1Hz 鍙戝竷鏃堕槦鍒楃Н鍘?
+      10 鏉℃棫鏁版嵁锛堥粯璁?depth=10 浼氬鑷?planner 娑堣垂 10s 鍓嶇殑鍦烘櫙鍥撅級銆?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 语义检测结果: 限流到 2 Hz (感知节点侧限速)
-  # 论文依据:
-  #   LOST-3DSG (arXiv 2601.02905, 2026): 避免存储 15Hz 高频密集特征,
-  #     仅保留语义摘要以减少带宽和内存; 2Hz 已满足 1Hz planner 需求。
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 璇箟妫€娴嬬粨鏋? 闄愭祦鍒?2 Hz (鎰熺煡鑺傜偣渚ч檺閫?
+  # 璁烘枃渚濇嵁:
+  #   LOST-3DSG (arXiv 2601.02905, 2026): 閬垮厤瀛樺偍 15Hz 楂橀瀵嗛泦鐗瑰緛,
+  #     浠呬繚鐣欒涔夋憳瑕佷互鍑忓皯甯﹀鍜屽唴瀛? 2Hz 宸叉弧瓒?1Hz planner 闇€姹傘€?
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   semantic_detections:
     topics:
       - /nav/semantic/detections_3d
     qos:
-      reliability: BEST_EFFORT     # 检测帧允许偶尔丢包，planner 消费最新即可
+      reliability: BEST_EFFORT     # 妫€娴嬪抚鍏佽鍋跺皵涓㈠寘锛宲lanner 娑堣垂鏈€鏂板嵆鍙?
       durability: VOLATILE
       history: KEEP_LAST
-      depth: 2                     # 2Hz 发布: 缓 2 帧防单帧延迟
-      lifespan: 1000ms             # 超过 1s 的检测结果无意义
+      depth: 2                     # 2Hz 鍙戝竷: 缂?2 甯ч槻鍗曞抚寤惰繜
+      lifespan: 1000ms             # 瓒呰繃 1s 鐨勬娴嬬粨鏋滄棤鎰忎箟
     rationale: >
-      perception_node 以 2Hz 限速发布（相比原 15Hz 减少 87% 带宽）。
-      planner_node 以 1Hz 消费, depth=2 防止队列堆积旧检测。
+      perception_node 浠?2Hz 闄愰€熷彂甯冿紙鐩告瘮鍘?15Hz 鍑忓皯 87% 甯﹀锛夈€?
+      planner_node 浠?1Hz 娑堣垂, depth=2 闃叉闃熷垪鍫嗙Н鏃ф娴嬨€?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # 语义导航指令 / 目标 / 状态: 事件驱动
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # 璇箟瀵艰埅鎸囦护 / 鐩爣 / 鐘舵€? 浜嬩欢椹卞姩
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   semantic_nav_events:
     topics:
       - /nav/semantic/instruction
@@ -206,39 +204,39 @@ profiles:
       - /nav/semantic/status
     qos:
       reliability: RELIABLE
-      durability: TRANSIENT_LOCAL  # 新启动的执行节点立即获取当前任务状态
+      durability: TRANSIENT_LOCAL  # 鏂板惎鍔ㄧ殑鎵ц鑺傜偣绔嬪嵆鑾峰彇褰撳墠浠诲姟鐘舵€?
       history: KEEP_LAST
       depth: 1
     rationale: >
-      指令和目标点是事件驱动的，必须保证送达。TRANSIENT_LOCAL 确保
-      晚加入的节点（如 action_executor 重启后）立即获取当前任务状态。
+      鎸囦护鍜岀洰鏍囩偣鏄簨浠堕┍鍔ㄧ殑锛屽繀椤讳繚璇侀€佽揪銆俆RANSIENT_LOCAL 纭繚
+      鏅氬姞鍏ョ殑鑺傜偣锛堝 action_executor 閲嶅惎鍚庯級绔嬪嵆鑾峰彇褰撳墠浠诲姟鐘舵€併€?
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # TF (tf2_ros): 使用 ROS 2 默认 QoS
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # TF (tf2_ros): 浣跨敤 ROS 2 榛樿 QoS
+  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
   tf:
     topics:
       - /tf
       - /tf_static
     qos:
-      # /tf: BEST_EFFORT + KEEP_LAST(100) (ROS 2 默认)
-      # /tf_static: RELIABLE + TRANSIENT_LOCAL (ROS 2 默认)
-      # 不要改这些, 否则 tf2_ros 行为异常
-      note: "使用 ROS 2 / tf2_ros 默认设置, 不要覆盖"
+      # /tf: BEST_EFFORT + KEEP_LAST(100) (ROS 2 榛樿)
+      # /tf_static: RELIABLE + TRANSIENT_LOCAL (ROS 2 榛樿)
+      # 涓嶈鏀硅繖浜? 鍚﹀垯 tf2_ros 琛屼负寮傚父
+      note: "浣跨敤 ROS 2 / tf2_ros 榛樿璁剧疆, 涓嶈瑕嗙洊"
 
-# ── 带宽预算 ──────────────────────────────────────────────────
+# 鈹€鈹€ 甯﹀棰勭畻 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 bandwidth_budget:
-  # 估算各链路带宽消耗 (单机, 进程间通信)
+  # 浼扮畻鍚勯摼璺甫瀹芥秷鑰?(鍗曟満, 杩涚▼闂撮€氫俊)
   lidar_10hz_1MB: "~10 MB/s"
   odometry_100hz_200B: "~20 KB/s"
   imu_200hz_200B: "~40 KB/s"
   cmd_vel_50hz_100B: "~5 KB/s"
   path_1hz_10KB: "~10 KB/s"
   image_30hz_50KB: "~1.5 MB/s"
-  scene_graph_1hz_5KB: "~5 KB/s"       # JSON 场景图 (200 物体)
-  detections_2hz_2KB: "~4 KB/s"        # 限流后 (原 15Hz: ~45 KB/s)
+  scene_graph_1hz_5KB: "~5 KB/s"       # JSON 鍦烘櫙鍥?(200 鐗╀綋)
+  detections_2hz_2KB: "~4 KB/s"        # 闄愭祦鍚?(鍘?15Hz: ~45 KB/s)
   total_estimate: "~12 MB/s"
   note: >
-    CycloneDDS 默认使用 UDP 组播。同主机 loopback 不走物理网卡,
-    带宽不是瓶颈。跨主机时 (如远程监控) 考虑限制 image_stream。
+    CycloneDDS 榛樿浣跨敤 UDP 缁勬挱銆傚悓涓绘満 loopback 涓嶈蛋鐗╃悊缃戝崱,
+    甯﹀涓嶆槸鐡堕銆傝法涓绘満鏃?(濡傝繙绋嬬洃鎺? 鑰冭檻闄愬埗 image_stream銆?

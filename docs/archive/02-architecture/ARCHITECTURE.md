@@ -9,34 +9,34 @@ The Module-level software layout lives in
 ## Boards
 
 ```
-                       ┌────────────────────────┐
-                       │      Flutter App       │
-                       │   (phone / tablet)     │
-                       └──┬──────────┬──────────┘
-                          │          │
-              gRPC :50051 │          │ gRPC :13145    BLE
-              robot.v1    │          │ han_dog.Cms    (basic
-                          │          │                 control,
-                          ▼          │                 emergency stop)
-              ┌─────────────────┐    │                ▼
-              │   Nav board     │    │       ┌────────────────┐
-              │   (S100P)       │    │       │   Dog board    │
-              │ ─────────────── │    │       │  (brainstem)   │
-              │ LingTu Module   │    │       │ CMS gRPC :13145│
-              │ stack:          │    │       │ RL policy +    │
-              │  • SLAM bridge  │    │       │  PD controller │
-              │  • Navigation   │    │       │  16 joints     │
-              │  • Semantic     │    │       │  IMU stream    │
-              │  • Gateway 5050 │    │       │  Arbiter       │
-              │  • MCP    8090  │    │       │   RC > gRPC    │
-              │ ThunderDriver ──┼────┘       └────────┬───────┘
-              │   gRPC client   │                     │
-              └─────────────────┘                     ▼
-                                          ┌────────────────────┐
-                                          │   YUNZHUO RC       │
-                                          │ SBUS / PPM direct  │
-                                          │ Always priority 1  │
-                                          └────────────────────┘
+                       ┌────────────────────────�?
+                       �?     Flutter App       �?
+                       �?  (phone / tablet)     �?
+                       └──┬──────────┬──────────�?
+                          �?         �?
+              gRPC :50051 �?         �?gRPC :13145    BLE
+              robot.v1    �?         �?han_dog.Cms    (basic
+                          �?         �?                control,
+                          �?         �?                emergency stop)
+              ┌─────────────────�?   �?               �?
+              �?  Nav board     �?   �?      ┌────────────────�?
+              �?  (S100P)       �?   �?      �?  Dog board    �?
+              �?─────────────── �?   �?      �? (brainstem)   �?
+              �?LingTu Module   �?   �?      �?CMS gRPC :13145�?
+              �?stack:          �?   �?      �?RL policy +    �?
+              �? �?SLAM bridge  �?   �?      �? PD controller �?
+              �? �?Navigation   �?   �?      �? 16 joints     �?
+              �? �?Semantic     �?   �?      �? IMU stream    �?
+              �? �?Gateway 5050 �?   �?      �? Arbiter       �?
+              �? �?MCP    8090  �?   �?      �?  RC > gRPC    �?
+              �?ThunderDriver ──┼────�?      └────────┬───────�?
+              �?  gRPC client   �?                    �?
+              └─────────────────�?                    �?
+                                          ┌────────────────────�?
+                                          �?  YUNZHUO RC       �?
+                                          �?SBUS / PPM direct  �?
+                                          �?Always priority 1  �?
+                                          └────────────────────�?
 ```
 
 ## Nav board (S100P)
@@ -78,10 +78,10 @@ CMS RPCs:
 
 | RPC | Type | Arbitrated? |
 |-----|------|-------------|
-| `Enable` / `Disable` | unary | no — hardware level |
-| `Walk(Vector3)` | unary | yes — RC overrides |
+| `Enable` / `Disable` | unary | no �?hardware level |
+| `Walk(Vector3)` | unary | yes �?RC overrides |
 | `StandUp` / `SitDown` | unary | yes |
-| `ListenImu` / `ListenJoint` / `ListenHistory` | server stream | no — observation only |
+| `ListenImu` / `ListenJoint` / `ListenHistory` | server stream | no �?observation only |
 | `GetParams` | unary | no |
 
 Flutter App can connect to either or both ports:
@@ -89,26 +89,26 @@ Flutter App can connect to either or both ports:
 | Mode | Nav | Dog | Use case |
 |------|-----|-----|----------|
 | Full | `:50051` | `:13145` | Production navigation + low-latency joint diagnostics |
-| Nav-only | `:50051` | — | Without Dog-board direct access |
-| Dog-only | — | `:13145` | Nav-board down; manual walk / stand / sit |
-| BLE-only | — | BLE | E-stop, Wi-Fi setup |
+| Nav-only | `:50051` | �?| Without Dog-board direct access |
+| Dog-only | �?| `:13145` | Nav-board down; manual walk / stand / sit |
+| BLE-only | �?| BLE | E-stop, Wi-Fi setup |
 
 ## Safety layers (high to low priority)
 
-1. **YUNZHUO RC** — hardware arbiter on the Dog board. Always wins.
-2. **CMS arbiter** — rejects gRPC `Walk` while RC is active.
-3. **ThunderDriver watchdog** — 200 ms `cmd_vel` timeout → zero velocity.
-4. **`SafetyGate` / `SafetyRingModule`** — deadman, speed and tilt limits,
+1. **YUNZHUO RC** �?hardware arbiter on the Dog board. Always wins.
+2. **CMS arbiter** �?rejects gRPC `Walk` while RC is active.
+3. **ThunderDriver watchdog** �?200 ms `cmd_vel` timeout �?zero velocity.
+4. **`SafetyGate` / `SafetyRingModule`** �?deadman, speed and tilt limits,
    near-field obstacle braking from `terrain_map`, mode guard, e-stop.
-5. **`CmdVelMux`** — priority arbitration: teleop (100) > visual servo
+5. **`CmdVelMux`** �?priority arbitration: teleop (100) > visual servo
    (80) > recovery (60) > path follower (40), each with a 0.5 s freshness
    window.
-6. **Mode FSM (Nav board)** — guards on `IDLE / MANUAL / TELEOP /
+6. **Mode FSM (Nav board)** �?guards on `IDLE / MANUAL / TELEOP /
    AUTONOMOUS / MAPPING / ESTOP` transitions (lease, TF, localization).
-7. **Localization watchdog** — `SlamBridgeModule.localization_status`
+7. **Localization watchdog** �?`SlamBridgeModule.localization_status`
    pushes `DEGRADED` / `LOST` to safety + navigation. The drift watchdog
    inside the gateway also restarts SLAM after a 60 s diverge window.
-8. **Geofence + heartbeat** — geofence boundary monitor, plus 30 s slow /
+8. **Geofence + heartbeat** �?geofence boundary monitor, plus 30 s slow /
    5 min full stop on heartbeat loss.
 
 `han_dog_bridge` referenced in older docs is the same gRPC-client role
@@ -118,25 +118,25 @@ behaviour are unchanged.
 ## Mode state machine (Nav board)
 
 ```
-                    ┌──────────┐
-         ┌──────────│   IDLE   │──────────┐
-         │          └─┬──┬──┬──┘          │
-         ▼            │  │  │             ▼
-      ┌────────┐      │  │  │       ┌──────────┐
-      │ MANUAL │      │  │  │       │ MAPPING  │
-      └────────┘      │  │  │       └──────────┘
-                      │  │  │
-         ┌────────────┘  │  └────────────┐
-         ▼               │               ▼
-      ┌─────────┐        │         ┌────────────┐
-      │ TELEOP  │◄───────┼────────►│ AUTONOMOUS │
-      └─────────┘        │         └────────────┘
-                         │
-              ┌──────────▼──────────┐
-              │       ESTOP         │
-              │ (any state → ESTOP) │
-              │ (ESTOP → IDLE only) │
-              └─────────────────────┘
+                    ┌──────────�?
+         ┌──────────�?  IDLE   │──────────�?
+         �?         └─┬──┬──┬──�?         �?
+         �?           �? �? �?            �?
+      ┌────────�?     �? �? �?      ┌──────────�?
+      �?MANUAL �?     �? �? �?      �?MAPPING  �?
+      └────────�?     �? �? �?      └──────────�?
+                      �? �? �?
+         ┌────────────�? �? └────────────�?
+         �?              �?              �?
+      ┌─────────�?       �?        ┌────────────�?
+      �?TELEOP  │◄───────┼────────►│ AUTONOMOUS �?
+      └─────────�?       �?        └────────────�?
+                         �?
+              ┌──────────▼──────────�?
+              �?      ESTOP         �?
+              �?(any state �?ESTOP) �?
+              �?(ESTOP �?IDLE only) �?
+              └─────────────────────�?
 ```
 
 Guards:
@@ -149,7 +149,7 @@ Guards:
 | `AUTONOMOUS` | From `IDLE` / `TELEOP` + `tf_ok` + `localization_valid` |
 | `MAPPING` | From `IDLE` |
 | `ESTOP` | Via `EmergencyStop` only |
-| Clear `ESTOP` → `IDLE` | `tilt_safe` + `fence_safe` |
+| Clear `ESTOP` �?`IDLE` | `tilt_safe` + `fence_safe` |
 
 ## Concurrent gRPC clients
 
@@ -166,22 +166,22 @@ only one writer at a time via `AcquireLease`.
 ## Network layout
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                          Robot                               │
-│  ┌──────────────┐  Ethernet/USB  ┌────────────────────────┐  │
-│  │  Nav board   ├─────────────── │  Dog board (brainstem) │  │
-│  │  :5050 (HTTP)│                │  :13145 (gRPC)         │  │
-│  │  :8090 (MCP) │                │   plus BLE             │  │
-│  └──────┬───────┘                └────────────────────────┘  │
-│         │                                                    │
-│      Wi-Fi AP                                                │
-└─────────┼────────────────────────────────────────────────────┘
-          │
-     ┌────┴─────┐                            ┌────────────┐
-     │ Flutter  │                            │ YUNZHUO RC │
-     │ Web UI   │                            │ SBUS/PPM   │
-     │ Codex/MCP│                            └────────────┘
-     └──────────┘
+┌──────────────────────────────────────────────────────────────�?
+�?                         Robot                               �?
+�? ┌──────────────�? Ethernet/USB  ┌────────────────────────�? �?
+�? �? Nav board   ├─────────────── �? Dog board (brainstem) �? �?
+�? �? :5050 (HTTP)�?               �? :13145 (gRPC)         �? �?
+�? �? :8090 (MCP) �?               �?  plus BLE             �? �?
+�? └──────┬───────�?               └────────────────────────�? �?
+�?        �?                                                   �?
+�?     Wi-Fi AP                                                �?
+└─────────┼────────────────────────────────────────────────────�?
+          �?
+     ┌────┴─────�?                           ┌────────────�?
+     �?Flutter  �?                           �?YUNZHUO RC �?
+     �?Web UI   �?                           �?SBUS/PPM   �?
+     �?Codex/MCP�?                           └────────────�?
+     └──────────�?
 ```
 
 ## Default ports and parameters
@@ -192,7 +192,7 @@ Common overrides:
 | Knob | Default | Source |
 |------|---------|--------|
 | `dog_host` / `dog_port` | `192.168.66.190` / `13145` | `cli/profiles_data.py` thunder preset |
-| `gateway_port` | `5050` | `core/blueprints/stacks/gateway.py` |
+| `gateway_port` | `5050` | `runtime/blueprints/stacks/gateway.py` |
 | `mcp_port` | `8090` | same |
 | Camera rotation | `0` | `config/robot_config.yaml: camera.rotate` |
 | GNSS enabled | `false` | `config/robot_config.yaml: gnss.enabled` |
@@ -202,7 +202,7 @@ Detailed parameter tuning is in [`../TUNING.md`](../TUNING.md).
 ## What is *not* in this architecture
 
 - **No** `ros2 launch` for Module-First operation. SLAM C++ binaries are
-  brought up by `slam.SLAMModule._setup_*` via `NativeModule`, or by the
+  brought up by `localization.SLAMModule._setup_*` via `NativeModule`, or by the
   systemd unit when `slam("bridge")` is selected.
 - **No** `launch/subsystems/` and **no** `scripts/legacy/`. Both
   directories were deleted in commits `6fd7257` and `fe99873` and any
@@ -213,6 +213,6 @@ Detailed parameter tuning is in [`../TUNING.md`](../TUNING.md).
 ## Multi-agent task orchestration
 
 If LingTu is being driven by an external orchestrator (Askme voice
-agent → `mission-orchestrator` → `nav-gateway` → LingTu gRPC) the
+agent �?`mission-orchestrator` �?`nav-gateway` �?LingTu gRPC) the
 contract and trigger paths are documented in
 [`TASK_ORCHESTRATION.md`](./TASK_ORCHESTRATION.md).

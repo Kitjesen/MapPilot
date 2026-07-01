@@ -12,12 +12,12 @@
 
 | File | Purpose |
 |------|---------|
-| `src/semantic/planner/semantic_planner/goal_resolver.py` | `GoalResolver` class, `GoalResult`, `TargetHypothesis`, `TargetBeliefManager`. Inherits from the two mixins below. |
-| `src/semantic/planner/semantic_planner/fast_path.py` | `FastPathMixin.fast_resolve()` and helpers (CLIP attribute disambig, score entropy, distance decay). |
-| `src/semantic/planner/semantic_planner/slow_path.py` | `SlowPathMixin.resolve()` (entry point), `_selective_grounding()`, LLM resolution. |
-| `src/semantic/planner/semantic_planner/adacot.py` | `AdaCoTRouter` — entropy-based router that can force a Slow Path call when Fast Path looks ambiguous. |
-| `src/semantic/planner/semantic_planner/goal_resolver_module.py` | Module wrapper; ports + thread integration. |
-| `src/semantic/planner/semantic_planner/llm_client.py` | Backend factory (`openai`, `claude`, `qwen`, `moonshot`/`kimi`, `mock`). |
+| `src/decision/semantic_planner/goal_resolver.py` | `GoalResolver` class, `GoalResult`, `TargetHypothesis`, `TargetBeliefManager`. Inherits from the two mixins below. |
+| `src/decision/semantic_planner/fast_path.py` | `FastPathMixin.fast_resolve()` and helpers (CLIP attribute disambig, score entropy, distance decay). |
+| `src/decision/semantic_planner/slow_path.py` | `SlowPathMixin.resolve()` (entry point), `_selective_grounding()`, LLM resolution. |
+| `src/decision/semantic_planner/adacot.py` | `AdaCoTRouter` — entropy-based router that can force a Slow Path call when Fast Path looks ambiguous. |
+| `src/decision/semantic_planner/goal_resolver_module.py` | Module wrapper; ports + thread integration. |
+| `src/decision/semantic_planner/llm_client.py` | Backend factory (`openai`, `claude`, `qwen`, `moonshot`/`kimi`, `mock`). |
 
 The class composition is
 

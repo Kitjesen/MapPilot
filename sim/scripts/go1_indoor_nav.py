@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Go1 Indoor Navigation Demo — single-thread architecture.
+"""Go1 Indoor Navigation Demo 鈥?single-thread architecture.
 
 Go1 RL policy walking + LingTu nav algorithms (cmu_py + A*) in MuJoCo
 indoor office scene. Outputs 3D demo video with point cloud, path, minimap.
@@ -35,41 +35,41 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 import mujoco
 
-from core.module import Module
-from core.blueprint import Blueprint
-from core.stream import In, Out
-from core.msgs.geometry import (
+from runtime.module import Module
+from runtime.blueprint import Blueprint
+from runtime.stream import In, Out
+from runtime.msgs.geometry import (
     Pose, PoseStamped, Quaternion, Twist, Vector3,
 )
-from core.msgs.nav import Odometry
-from core.msgs.sensor import PointCloud
-from nav.navigation_module import NavigationModule
-from base_autonomy.modules import LocalPlannerModule, PathFollowerModule
+from runtime.msgs.nav import Odometry
+from runtime.msgs.sensor import PointCloud
+from nav.mission.navigation import Navigation
+from nav.local import LocalPlanner, PathFollower
 
-# ── Go1 policy constants ──
+# 鈹€鈹€ Go1 policy constants 鈹€鈹€
 _CTRL_DT = 0.02       # 50 Hz policy
 _ACTION_SCALE = 0.5   # MuJoCo Playground Go1: confirmed action_scale=0.5, Kp=35
 _N_RAYS = 180
 _LIDAR_MIN = 0.2
 _LIDAR_MAX = 8.0
 
-# ── Scene constants ──
+# 鈹€鈹€ Scene constants 鈹€鈹€
 GOAL = (5.5, -5.5)
 START_POS = (0.0, 0.0, 0.278)
 
-# ── Video config ──
+# 鈹€鈹€ Video config 鈹€鈹€
 VIDEO_W, VIDEO_H = 1280, 720
 FPS = 25
 TOTAL_SEC = 60
 STEPS_PER_FRAME = int((1.0 / FPS) / 0.004)  # physics dt=0.004
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# LiveMapper — simple 2D occupancy grid from LiDAR
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# SensorRelay — bridge between main loop and Module pipeline
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+# LiveMapper 鈥?simple 2D occupancy grid from LiDAR
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+# SensorRelay 鈥?bridge between main loop and Module pipeline
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 class SensorRelay(Module, layer=1):
     """Publishes odometry and lidar from main loop into the Module port system."""
     odometry: Out[Odometry]
@@ -83,7 +83,7 @@ class LiveMapper(Module, layer=3):
     goal_cmd: Out[PoseStamped]
 
     GRID_SIZE = 200
-    RESOLUTION = 0.15  # m/cell — covers 30m x 30m
+    RESOLUTION = 0.15  # m/cell 鈥?covers 30m x 30m
     ORIGIN = (-5.0, -10.0)  # world coords of grid (0,0)
 
     def __init__(self, **kw):
@@ -130,9 +130,9 @@ class LiveMapper(Module, layer=3):
             })
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Go1 RL Policy (48-dim obs, 12 joints, no history — Isaac Lab Go1)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+# Go1 RL Policy (48-dim obs, 12 joints, no history 鈥?Isaac Lab Go1)
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 class Go1Policy:
     def __init__(self, onnx_path: str):
         import onnxruntime as ort
@@ -165,9 +165,9 @@ class Go1Policy:
         return action
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 # LiDAR scanner
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 def scan_lidar(model, data, trunk_id: int) -> np.ndarray | None:
     pos = data.qpos[:3].copy().astype(np.float64)
     pos[2] = max(pos[2], 0.15)
@@ -198,14 +198,14 @@ def scan_lidar(model, data, trunk_id: int) -> np.ndarray | None:
     return (pos + dirs[mask] * dist_out[mask, None]).astype(np.float32)
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 # 3D marker injection
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 def inject_markers(scene, lidar_pts, global_path, trail, goal):
     """Inject point cloud, path, trail, goal into MuJoCo scene."""
     idx = scene.ngeom
 
-    # LiDAR points — orange spheres
+    # LiDAR points 鈥?orange spheres
     if lidar_pts is not None:
         step = max(1, len(lidar_pts) // 150)
         for i in range(0, len(lidar_pts), step):
@@ -218,7 +218,7 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
                                 np.array([1.0, 0.5, 0.1, 0.8]))
             idx += 1
 
-    # Global path — cyan spheres
+    # Global path 鈥?cyan spheres
     if global_path:
         step = max(1, len(global_path) // 80)
         for i in range(0, len(global_path), step):
@@ -232,7 +232,7 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
                                 np.array([0.0, 0.8, 0.8, 0.7]))
             idx += 1
 
-    # Robot trail — blue spheres
+    # Robot trail 鈥?blue spheres
     step = max(1, len(trail) // 60)
     for i in range(0, len(trail), step):
         if idx >= scene.maxgeom - 5:
@@ -244,7 +244,7 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
                             np.array([0.2, 0.4, 1.0, 0.6]))
         idx += 1
 
-    # Goal — green sphere (larger)
+    # Goal 鈥?green sphere (larger)
     if idx < scene.maxgeom:
         gpos = np.array([goal[0], goal[1], 0.2], dtype=np.float64)
         mujoco.mjv_initGeom(scene.geoms[idx],
@@ -256,9 +256,9 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
     scene.ngeom = idx
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 # 2D minimap overlay
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 def draw_minimap(frame, grid, origin, res, robot_pos, robot_yaw,
                  lidar_pts, global_path, goal, size=200):
     h, w = frame.shape[:2]
@@ -337,9 +337,9 @@ def draw_info_panel(frame, t, pos, yaw_deg, dist, state, wp_idx, wp_total, scans
                     0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 # Odometry helpers
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 def build_odometry(data, ts: float) -> Odometry:
     pos = data.qpos[:3]
     q = data.qpos[3:7]  # MuJoCo: w, x, y, z
@@ -362,9 +362,9 @@ def get_yaw(data) -> float:
                       1.0 - 2.0*(q[2]**2 + q[3]**2))
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 # Main
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 def main():
     parser = argparse.ArgumentParser(description="Go1 Indoor Navigation Demo")
     parser.add_argument("--headless", action="store_true", help="No 3D rendering")
@@ -392,7 +392,7 @@ def main():
     step_counter = [0]
 
     def run_policy_step(m, d, cmd):
-        """Run policy and set ctrl — called every n_substeps physics steps."""
+        """Run policy and set ctrl 鈥?called every n_substeps physics steps."""
         action = policy.compute(m, d, cmd)
         d.ctrl[:] = action * _ACTION_SCALE + policy.default_angles
 
@@ -406,36 +406,36 @@ def main():
     pos = data.qpos[:3]
     print(f"  Standing at ({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})")
 
-    # ── Module pipeline ──
+    # 鈹€鈹€ Module pipeline 鈹€鈹€
     bp = Blueprint()
     bp.add(SensorRelay)
     bp.add(LiveMapper)
-    bp.add(LocalPlannerModule, backend="cmu_py")
-    bp.add(PathFollowerModule, backend="pid")
-    bp.add(NavigationModule, planner="astar", waypoint_threshold=1.5, downsample_dist=0.8)
-    # Sensor relay → all consumers
+    bp.add(LocalPlanner, backend="cmu_py")
+    bp.add(PathFollower, backend="pid")
+    bp.add(Navigation, planner="astar", waypoint_threshold=1.5, downsample_dist=0.8)
+    # Sensor relay 鈫?all consumers
     bp.wire("SensorRelay", "odometry", "LiveMapper", "odom_in")
-    bp.wire("SensorRelay", "odometry", "NavigationModule", "odometry")
-    bp.wire("SensorRelay", "odometry", "LocalPlannerModule", "odometry")
-    bp.wire("SensorRelay", "odometry", "PathFollowerModule", "odometry")
+    bp.wire("SensorRelay", "odometry", "nav.mission", "odometry")
+    bp.wire("SensorRelay", "odometry", "nav.local_planner", "odometry")
+    bp.wire("SensorRelay", "odometry", "nav.path_follower", "odometry")
     bp.wire("SensorRelay", "lidar_cloud", "LiveMapper", "lidar_in")
-    bp.wire("SensorRelay", "lidar_cloud", "LocalPlannerModule", "terrain_map")
+    bp.wire("SensorRelay", "lidar_cloud", "nav.local_planner", "terrain_map")
     # Navigation chain
-    bp.wire("LiveMapper", "costmap_out", "NavigationModule", "costmap")
-    bp.wire("LiveMapper", "goal_cmd", "NavigationModule", "goal_pose")
-    bp.wire("NavigationModule", "waypoint", "LocalPlannerModule", "waypoint")
-    bp.wire("LocalPlannerModule", "local_path", "PathFollowerModule", "local_path")
+    bp.wire("LiveMapper", "costmap_out", "nav.mission", "costmap")
+    bp.wire("LiveMapper", "goal_cmd", "nav.mission", "goal_pose")
+    bp.wire("nav.mission", "waypoint", "nav.local_planner", "waypoint")
+    bp.wire("nav.local_planner", "local_path", "nav.path_follower", "local_path")
     system = bp.build()
     system.start()
     time.sleep(1.0)
 
     relay = system.get_module("SensorRelay")
     mapper = system.get_module("LiveMapper")
-    nav = system.get_module("NavigationModule")
-    lp = system.get_module("LocalPlannerModule")
-    pf = system.get_module("PathFollowerModule")
+    nav = system.get_module("nav.mission")
+    lp = system.get_module("nav.local_planner")
+    pf = system.get_module("nav.path_follower")
 
-    # ── Renderer (if not headless) ──
+    # 鈹€鈹€ Renderer (if not headless) 鈹€鈹€
     renderer = None
     video = None
     cam = None
@@ -458,7 +458,7 @@ def main():
     # Goal will be sent after a few LiDAR scans (see main loop)
     goal_sent = False
 
-    # ── Main loop ──
+    # 鈹€鈹€ Main loop 鈹€鈹€
     trail = []
     lidar_pts = None
     global_path = None
@@ -476,7 +476,7 @@ def main():
 
         elapsed = frame_i * (1.0 / FPS)
 
-        # 2. Sensor data → Module pipeline (via SensorRelay ports)
+        # 2. Sensor data 鈫?Module pipeline (via SensorRelay ports)
         sim_time = frame_i * (1.0 / FPS)
         odom = build_odometry(data, sim_time)
         relay.odometry.publish(odom)
@@ -513,7 +513,7 @@ def main():
         while yaw_err < -math.pi: yaw_err += 2 * math.pi
 
         if rz < 0.15:
-            # Robot fell — zero command, let physics settle
+            # Robot fell 鈥?zero command, let physics settle
             nav_cmd[:] = [0.0, 0.0, 0.0]
         elif dist > 1.0:
             # Go1 policy: conservative speed for stability (~8s safe window)

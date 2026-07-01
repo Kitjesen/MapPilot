@@ -1,11 +1,11 @@
-﻿"""
+"""
 中文分词器测试
 
 测试jieba分词器的功能和性能
 """
 
 import pytest
-from semantic.planner.chinese_tokenizer import (
+from decision.goal_resolution.chinese_tokenizer import (
     ChineseTokenizer,
     extract_keywords,
     simple_extract_keywords,

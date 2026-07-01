@@ -1,9 +1,9 @@
-"""SemanticMapperModule — drives RoomObjectKG + TopologySemGraph from live SceneGraph.
+"""SemanticMapperModule -drives RoomObjectKG + TopologySemGraph from live SceneGraph.
 
 Subscribes to the scene_graph (SceneGraph) published by PerceptionService and
 odometry from the driver.  On every scene-graph update:
 
-  1. Converts SceneGraph.regions → TopologySemGraph room nodes (stable int IDs)
+  1. Converts SceneGraph.regions ->TopologySemGraph room nodes (stable int IDs)
   2. Calls RoomObjectKG.observe_room() for each region
   3. Records robot position for traversal memory
   4. Publishes topo_summary (LLM-ready text) and room_graph (serialised TSG dict)
@@ -13,8 +13,8 @@ On load it merges any previously-saved KG so the planner benefits immediately.
 
 Ports:
   In:  scene_graph (SceneGraph), odometry (Odometry)
-  Out: topo_summary (str)   — LLM-consumable room context
-       room_graph (dict)    — TopologySemGraph.to_dict() snapshot
+  Out: topo_summary (str)   -LLM-consumable room context
+       room_graph (dict)    -TopologySemGraph.to_dict() snapshot
 """
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ import os
 import time
 from typing import Any
 
-from core.module import Module, skill
-from core.msgs.nav import Odometry
-from core.msgs.semantic import SceneGraph
-from core.registry import register
-from core.stream import In, Out
+from runtime.module import Module, skill
+from runtime.msgs.nav import Odometry
+from runtime.msgs.semantic import SceneGraph
+from runtime.registry import register
+from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,11 @@ _DEFAULT_SAVE_DIR = os.path.join(os.path.expanduser("~"), ".nova", "semantic")
 class SemanticMapperModule(Module, layer=3):
     _run_in_worker = True
     _worker_group = "semantic"
-    """Real-time semantic map builder: SceneGraph → KG + topological graph.
+    """Real-time semantic map builder: SceneGraph ->KG + topological graph.
 
     Bridges the gap between the live perception stream and the two persistent
     semantic data structures:
-      - RoomObjectKG:      room-type × object co-occurrence probabilities
+      - RoomObjectKG:      room-type x object co-occurrence probabilities
       - TopologySemGraph:  room-level topological graph with traversal memory
 
     Both are saved to `save_dir` periodically and on stop().  GoalResolver
@@ -54,8 +54,8 @@ class SemanticMapperModule(Module, layer=3):
     scene_graph: In[SceneGraph]
     odometry:    In[Odometry]
 
-    topo_summary: Out[str]   # LLM-readable room context → SemanticPlanner
-    room_graph:   Out[dict]  # TSG dict snapshot → NavigationModule (optional)
+    topo_summary: Out[str]   # LLM-readable room context ->SemanticPlanner
+    room_graph:   Out[dict]  # TSG dict snapshot ->Navigation (optional)
 
     def __init__(
         self,
@@ -83,27 +83,27 @@ class SemanticMapperModule(Module, layer=3):
         # compute P(O|R) = (count(R,O) + alpha) / (sum_O' count(R,O') + alpha*K)
         # with alpha=1.0 (Laplace) and K = observed object types in room R.
         # Updated unconditionally (before and after the gate threshold).
-        self._dm_counts: dict[str, dict[str, int]] = {}  # room → {label → count}
+        self._dm_counts: dict[str, dict[str, int]] = {}  # room ->{label ->count}
         self._dm_alpha: float = 1.0
 
-        self._kg = None         # RoomObjectKG — lazy init in setup()
-        self._tsg = None        # TopologySemGraph — lazy init in setup()
+        self._kg = None         # RoomObjectKG -lazy init in setup()
+        self._tsg = None        # TopologySemGraph -lazy init in setup()
         self._robot_xy = (0.0, 0.0)
 
-        # name → stable int ID for TSG room nodes
+        # name ->stable int ID for TSG room nodes
         self._room_name_to_id: dict[str, int] = {}
         self._next_room_id: int = 0
 
         self._last_save_time: float = 0.0
         self._sg_count: int = 0
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────────
+    # Lifecycle
 
     def setup(self) -> None:
         self._init_backends()
         self.scene_graph.subscribe(self._on_scene_graph)
         self.odometry.subscribe(self._on_odom)
-        # Throttle scene_graph to 2 Hz — heavy DBSCAN already done upstream
+        # Throttle scene_graph to 2 Hz -heavy DBSCAN already done upstream
         self.scene_graph.set_policy("throttle", interval=0.5)
 
     def _init_backends(self) -> None:
@@ -135,7 +135,7 @@ class SemanticMapperModule(Module, layer=3):
         self._save_now()
         super().stop()
 
-    # ── Input handlers ────────────────────────────────────────────────────────
+    # Input handlers
 
     def _on_odom(self, odom: Odometry) -> None:
         self._robot_xy = (odom.x, odom.y)
@@ -162,7 +162,7 @@ class SemanticMapperModule(Module, layer=3):
         if now - self._last_save_time >= self._save_interval:
             self._save_now()
 
-    # ── Core update logic ─────────────────────────────────────────────────────
+    # Core update logic
 
     def _update_kg(self, sg: SceneGraph) -> None:
         """Update RoomObjectKG with Bayesian Dirichlet-Multinomial smoothing gate.
@@ -200,9 +200,9 @@ class SemanticMapperModule(Module, layer=3):
                 prev = self._obs_counts.get(key, 0)
                 self._obs_counts[key] = prev + 1
                 if self._obs_counts[key] == self._min_obs and self._min_obs > 1:
-                    # First time this pair crosses the threshold — log it.
+                    # First time this pair crosses the threshold -log it.
                     logger.info(
-                        "SemanticMapper: (%s, %s) reached %d observations — committing to KG",
+                        "SemanticMapper: (%s, %s) reached %d observations -committing to KG",
                         room_name, lbl, self._min_obs,
                     )
                 if self._obs_counts[key] >= self._min_obs:
@@ -269,7 +269,7 @@ class SemanticMapperModule(Module, layer=3):
             self._next_room_id += 1
         return self._room_name_to_id[name]
 
-    # ── Persistence ───────────────────────────────────────────────────────────
+    # Persistence
 
     def _kg_path(self) -> str:
         return os.path.join(self._save_dir, "room_object_kg.json")
@@ -316,7 +316,7 @@ class SemanticMapperModule(Module, layer=3):
 
         return ok
 
-    # ── @skill methods (MCP-exposed) ──────────────────────────────────────────
+    # @skill methods (MCP-exposed)
 
     @skill
     def get_room_summary(self) -> str:
@@ -326,7 +326,7 @@ class SemanticMapperModule(Module, layer=3):
         lines = []
         for room in self._tsg.rooms:
             labels = room.semantic_labels[:8]
-            visited = "✓" if room.visited else "○"
+            visited = "visited" if room.visited else "unvisited"
             lines.append(
                 f"{visited} {room.name} (id={room.node_id}): "
                 + (", ".join(labels) if labels else "no objects")
@@ -379,7 +379,7 @@ class SemanticMapperModule(Module, layer=3):
             "sg_updates": self._sg_count,
         }
 
-    # ── Health ────────────────────────────────────────────────────────────────
+    # Health
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()

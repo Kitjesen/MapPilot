@@ -1,46 +1,49 @@
-# tools/ — 开发、调试、离线分析工具
+# tools/ - developer utilities
 
-与 `scripts/` 的分工：
+`tools/` only holds developer-side utilities: validation, benchmarks, model
+conversion, offline reconstruction, and one-shot packaging.
 
-| 目录 | 用途 |
-|------|------|
-| **`scripts/`** | 部署、OTA、构建、机器人端 `lingtu` 运维 CLI、运行时验收 gate |
-| **`tools/`** | 开发/调试/标定/离线分析脚本（不上 systemd，不进 OTA 主路径） |
-| **`tests/scripts/`** | pytest 脚本测试和人工硬件/ROS 烟测 |
+It is not a robot runtime entrypoint and not a systemd service directory.
+Long-running commands, build/deploy/OTA flows, and field operations belong
+under `scripts/`; runtime code belongs under `src/`.
 
-## 布局
+## Layout
 
-| 路径 | 用途 |
-|------|------|
-| `validate/` | 配置、topic 契约与架构边界校验（CI / 发版前手动跑） |
-| `evaluation/` | 退化/数据集评测脚本 |
-| `perception/` | 感知 demo、BPU 导出、ONNX→HBM、图片回放、E2E 感知检查 |
-| `reconstruction/` | 离线 3D 重建和数据集回放辅助 |
-| `navigation/` | 目标点/里程计/导航辅助小工具 |
-| `gateway/` | Gateway demo viewer 与系统健康小服务 |
-| `proto_gen/` | 生成的 Protobuf Python 桩代码（由 `scripts/proto/proto_gen.sh` 刷新） |
+| Path | Purpose |
+| --- | --- |
+| `bench/` | Native kernel, PCT/GPMP, pose graph, and camera-LiDAR parity/benchmark scripts. |
+| `perception/` | BPU model export and ONNX-to-HBM conversion. |
+| `reconstruction/` | Offline 3D reconstruction and recorded dataset replay helpers. |
+| `validate/` | Static contract validators for config, topics, architecture, packages, and migration gates. |
+| `package_thunder_lite.py` | Thunder Lite package builder; runs its validator first. |
 
-## 常用命令
+Generated code, caches, and long-running robot services do not belong here.
+Protobuf generation belongs under `scripts/proto/`; Python bytecode caches stay
+untracked.
+
+## Common Commands
 
 ```bash
-# robot_config.yaml 结构校验
+# robot_config.yaml structure validation
 python tools/validate/validate_config.py
 
-# /nav/* topic 与 topic_contract.yaml 对齐
+# Topic contract validation
 python tools/validate/validate_topics.py
 
-# Module-First 包边界（含函数内 lazy import）
+# Module-First package boundary validation
 python tools/validate/validate_architecture_boundaries.py
 
-# S100P 感知 E2E（需先 scp 到 /opt/nav/tools/）
-bash tools/perception/test_perception_e2e.sh
+# Thunder Lite package contract + package build
+python tools/validate/validate_thunder_lite_package.py
+python tools/package_thunder_lite.py --output artifacts/thunder-lite-package --force
 
-# YOLO-World → ONNX → BPU
+# YOLO-World -> ONNX -> BPU
 python tools/perception/export_yoloworld_bpu.py
 bash tools/perception/convert_onnx_to_hbm.sh <onnx_path>
 
-# 离线 3D 重建
+# Offline 3D reconstruction
 python tools/reconstruction/reconstruct_local.py --dataset datasets/recording/<id>
 ```
 
-真机部署时部分脚本会同步到 `/opt/nav/tools/`（见 `tools/perception/test_perception_e2e.sh` 注释）。
+Some field diagnostics may be copied to `/opt/nav/tools/` for manual robot-side
+use. They should not be installed as systemd services from this directory.

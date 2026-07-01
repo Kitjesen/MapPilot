@@ -132,7 +132,7 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
   - `test_memory_modules.py` (103 tests) — SemanticMapper, EpisodicMemory, TaggedLocations, VectorMemory, RoomObjectKG
   - `test_semantic_modules.py` (83 tests) — SemanticPlanner, GoalResolver, VisualServo, AgentLoop, LLM backends
   - `test_nav_services.py` (92 tests) — NavigationModule FSM, WaypointTracker, GlobalPlannerService, SafetyRing, CmdVelMux
-- **Silent exception 清理** — slam_bridge_module.py, slam_module.py, robot.py 中 bare `except: pass` 全部替换为具体异常类型 + 日志
+- **Silent exception 清理** — bridge.py, slam_module.py, robot.py 中 bare `except: pass` 全部替换为具体异常类型 + 日志
 - **health() 方法补全** — MapManagerModule, PerceptionModule, VectorMemoryModule, GeofenceManagerModule 新增健康检查
 
 ### C++ nav_core 性能优化 (5 commits)

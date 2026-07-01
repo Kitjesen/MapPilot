@@ -1,14 +1,14 @@
 #!/bin/bash
 # ============================================================
-# test_semantic_nav.sh — semantic navigation repository smoke checks
+# test_semantic_nav.sh 鈥?semantic navigation repository smoke checks
 #
 # Usage:
 #   bash tests/scripts/test_semantic_nav.sh [--unit-only]
 #
 # This is a repo-layout smoke script for the current Module-First Python
-# semantic stack under src/semantic/. ROS2/Flutter legacy checks were removed
+# semantic navigation stack under src/perception/ and src/decision/. ROS2/Flutter legacy checks were removed
 # from this relocated script because those surfaces no longer own the active
-# semantic runtime contract.
+# decision/perception runtime contract.
 # ============================================================
 
 set -euo pipefail
@@ -49,17 +49,16 @@ check_dir() {
 info "Phase 0: Checking current semantic stack layout..."
 check_file "AGENTS.md"
 check_file "pyproject.toml"
-check_file "config/semantic_perception.yaml"
-check_file "config/semantic_planner.yaml"
+check_file "config/perception.yaml"
+check_file "config/decision.yaml"
 check_file "config/topic_contract.yaml"
-check_dir  "src/semantic"
-check_dir  "src/semantic/perception"
-check_dir  "src/semantic/planner"
-check_dir  "src/semantic/reconstruction"
-check_file "src/semantic/perception/__init__.py"
-check_file "src/semantic/planner/semantic_planner_module.py"
-check_file "src/semantic/planner/goal_resolver.py"
-check_file "src/semantic/planner/slow_path.py"
+check_dir  "src/perception"
+check_dir  "src/decision"
+check_dir  "src/perception/reconstruction"
+check_file "src/perception/__init__.py"
+check_file "src/decision/modules/semantic_planner_module.py"
+check_file "src/decision/goal_resolution/goal_resolver.py"
+check_file "src/decision/goal_resolution/slow_path.py"
 
 info "Phase 1: Checking semantic runtime contracts..."
 if grep -q "semantic:" "$REPO_ROOT/config/topic_contract.yaml"; then
@@ -74,13 +73,13 @@ else
   fail "resolved_goal semantic contract missing"
 fi
 
-if grep -q "topo_summary" "$REPO_ROOT/src/semantic/planner/semantic_planner_module.py"; then
+if grep -q "topo_summary" "$REPO_ROOT/src/decision/modules/semantic_planner_module.py"; then
   pass "SemanticPlanner topo_summary port present"
 else
   fail "SemanticPlanner topo_summary port missing"
 fi
 
-if grep -q "room_graph" "$REPO_ROOT/src/semantic/planner/semantic_planner_module.py"; then
+if grep -q "room_graph" "$REPO_ROOT/src/decision/modules/semantic_planner_module.py"; then
   pass "SemanticPlanner room_graph port present"
 else
   fail "SemanticPlanner room_graph port missing"
@@ -91,13 +90,13 @@ cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT/src:${PYTHONPATH:-}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 env -u PYTHONHOME -u UV_INTERNAL__PYTHONHOME -u PYTHONPATH "$PYTHON_BIN" -m pytest \
-  src/semantic/tests/test_semantic_imports.py \
-  src/semantic/planner/tests/test_planner_node_init.py \
+  src/decision/tests/test_domain_imports.py \
+  src/decision/tests/test_planner_node_init.py \
   -q
 pass "semantic unit smoke tests"
 
 if $UNIT_ONLY; then
-  info "Unit-only mode — skipping optional profile smoke."
+  info "Unit-only mode 鈥?skipping optional profile smoke."
   echo ""
   echo "============================================================"
   echo -e "${GREEN} Semantic repo-layout and unit smoke checks PASSED${NC}"

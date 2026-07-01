@@ -1,1 +1,1 @@
-"""Navigation modules: global planner, safety, CmdVelMux, and map services."""
+"""Navigation package; import runtime code from mission/planning/maps/safety/services/exploration."""

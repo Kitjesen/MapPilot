@@ -1,6 +1,6 @@
 # sim/engine — Simulation Platform Core
 
-`sim/engine` is the canonical simulation runtime core. Code here must stay
+`sim/engine` is the canonical simulation runtime runtime. Code here must stay
 hardware-free: it can create synthetic worlds, MuJoCo engines, bridges, and
 scenario assets, but it must not start robot services, publish to real robot
 topics, or depend on field hardware being present.
@@ -98,7 +98,7 @@ stack runs identically in sim and on real hardware:
 
 | Bridge | Backend | Topics |
 |--------|---------|--------|
-| `SimROS2Bridge` | MuJoCo direct | `/nav/odometry`, `/nav/registered_cloud`, `/camera/*`, TF |
+| `SimROS2Bridge` | MuJoCo direct | `/slam/odometry`, `/slam/registered_cloud`, `/camera/*`, TF |
 | `GazeboBridgeConfig` | Gazebo/GZ | Topic name mapping for `ros_gz_bridge` |
 | `GazeboRuntimeAdapter` | Gazebo ROS | `/lingtu/gazebo/raw/*` → `/nav/*` normalization |
 | `CmuUnityLingtuAdapter` | CMU Unity | External TARE topics → LingTu `/nav/*` + `/exploration/*` |

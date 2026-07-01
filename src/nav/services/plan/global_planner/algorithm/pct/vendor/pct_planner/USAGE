@@ -1,0 +1,32 @@
+PCT compatibility usage
+=======================
+
+This directory is source/tooling only. Do not start navigation by running ROS
+launch files or ROS PCT planner nodes from here.
+
+Current navigation flow:
+
+  goal_pose + odometry + map
+    -> NavigationModule
+    -> GlobalPlannerService
+    -> planner backend
+    -> global_path / waypoint
+    -> LocalPlannerModule
+
+Product backend:
+
+  octoplanner3d
+
+Compatibility backend:
+
+  pct
+
+Use the compatibility backend only through LingTu runtime/profile config or
+focused tests. Direct ROS commands such as `ros2 launch pct_planner ...` and
+`ros2 run pct_adapters pct_path_adapter` are intentionally unsupported in this
+tree.
+
+Useful checks:
+
+  python -m pytest src/nav/tests/planning_backends/test_pct_backend.py -q
+  python -m pytest src/nav/tests/planning_backends/test_pct_planner_wrapper_static.py -q

@@ -3,8 +3,8 @@
 Last updated: 2026-05-21.
 
 This is the minimum evidence chain before claiming that the LingTu navigation
-algorithm surface is healthy in simulation. It does not claim field readiness on
-S100P hardware.
+algorithm surface is healthy in simulation. It does not claim readiness on any
+real hardware target.
 
 ## Product Profile vs Strict Benchmark
 
@@ -13,6 +13,24 @@ inspection acceptance is Gateway + ModulePorts + server-side artifacts. ROS2
 topics remain valid evidence for adapter boundaries such as Gazebo, Fast-LIO,
 TARE, and external SLAM services, but they are not the only route for runtime
 dataflow verification.
+
+## Communication Evidence Boundary
+
+Previous server-linked validation counts as communication and runtime-evidence
+testing, not as a hardware navigation pass. The evidence proves that the
+product-facing surfaces can be exercised remotely through Gateway, ModulePorts,
+saved artifacts, and server-side reports. It does not prove real hardware
+motion, and it does not prove that the native LiDAR->C++ Fast-LIO path is
+active.
+
+Use these documents as the evidence entry points:
+
+| Evidence | Meaning |
+| --- | --- |
+| `docs/plans/simulation-closure-plan.md` | Historical server-side MuJoCo/Fast-LIO, saved-map, relocalization, planning, local-planning, and policy-gate evidence. |
+| `artifacts/server_sim_closure/...` | Archived server reports and videos produced by the server closure gates. |
+| `python lingtu.py real-runtime-evidence --duration-sec 20 --json-out artifacts/thunder_field_runtime/report.json` | Endpoint communication probe for Gateway/runtime dataflow; read-only collector, no goal or velocity publishing. |
+| Gateway `:5050` and MCP `:8090` checks | Control-plane communication evidence only; they do not prove planner or SLAM correctness unless paired with stage evidence. |
 
 The product-facing preset is `inspection_mvp`:
 
@@ -63,7 +81,7 @@ Claim boundary: the fresh evidence proves the live Fast-LIO mapping/localization
 chain and a one-goal closed-loop inspection under saved tomogram/PCT/local
 planning in simulation. It does not prove the whole algorithm is healthy:
 the current physical-rolling large-loop and dynamic speed/density gates are
-red, and S100P field readiness remains out of scope.
+red, and real hardware readiness remains out of scope.
 
 The latest strict `dimos_benchmark` summary is still not closed:
 
@@ -327,7 +345,7 @@ The summary must report:
 - `cmd_vel_sent_to_hardware=false`
 
 For gates that declare `runtime_contract`, the server closure summary must also
-surface `evidence.runtime_evidence` from `core.runtime_evidence`; this is the
+surface `evidence.runtime_evidence` from `runtime.runtime_evidence`; this is the
 shared check for simulation-only status, hardware command isolation, path
 evidence, command evidence, runtime contract name/health, and any required
 `frame_evidence` links such as `map->odom`, `odom->body`, and `body->lidar`.
@@ -358,8 +376,8 @@ summary of frames, frame links, real topic frame rules, real runtime data flow,
 data sources, profile-to-data-source bindings, saved-map artifact formats,
 adapter aliases/relays, stage interfaces, and algorithm interfaces.
 
-Before deploying or collecting real robot evidence, run the offline contract
-audit. It validates the Python manifest, YAML operations contract, runtime
+Before collecting future hardware evidence, run the offline contract audit. It
+validates the Python manifest, YAML operations contract, runtime
 profile specs, ROS frame-contract documentation mirror, validation-gate
 self-description, and real report collector coverage without launching ROS or
 publishing any control topic:
@@ -377,7 +395,8 @@ top-level `validation_gate` for the `runtime_audit` acceptance step and
 prior gates, proof scope, and operator summary sections. Treat that
 machine-readable sequence as the operator order: `runtime_audit` first,
 `saved_map_artifact_gate` when saved map/tomogram/occupancy/PCT artifacts are
-used, then `real_runtime_evidence` for the active S100P run.
+used, then `real_runtime_evidence` only when an actual endpoint runtime is
+under review.
 
 Saved-map navigation also requires the persisted map artifacts to prove their
 source chain. Before using a saved map for localization or PCT planning, run the
@@ -401,11 +420,10 @@ recomputes checksums for `map.pcd`, `tomogram.pickle`, and `occupancy.npz`, and
 rejects missing metadata, checksum drift, and derived artifacts whose
 `source_map_sha256` no longer matches the current `map.pcd`.
 
-Real robot reports use the same contract shape, but the safety invariant is
-reversed: `simulation_only=false`, `real_robot_motion=true`, and
-`cmd_vel_sent_to_hardware=true` are expected only for an operator-controlled
-hardware run. During the operator-controlled run, collect and validate one
-report through the unified CLI entry:
+Endpoint runtime reports use the same contract shape. For the current
+server/simulation/endpoint target, they are communication evidence only and
+must not be called real-hardware evidence. During an endpoint run, collect
+and validate one report through the unified CLI entry:
 
 ```bash
 python lingtu.py real-runtime-evidence \
@@ -419,10 +437,10 @@ subscribers. It does not publish goals, cmd_vel, or any robot-control topic.
 Without `--json`, the CLI prints an operator summary that groups missing
 evidence by `Topic frame evidence`, `Frame link evidence`,
 `Stage evidence matrix`, and `Data-flow evidence`. The stage matrix is the
-first field-readiness view: `slam_or_relayed_localization_map` must prove live
+first runtime-dataflow view: `slam_or_relayed_localization_map` must prove live
 localization and map-cloud output, `global_planning` must prove a nonempty
 global path, `local_planning_and_following` must prove local path plus nonzero
-`/nav/cmd_vel`, and `command_boundary` must prove the hardware command route.
+`/nav/cmd_vel`, and `command_boundary` must prove the configured command route.
 `Data-flow evidence` remains the detailed per-stage inputs/outputs record. A
 failed local probe on a non-ROS workstation is useful only as a wiring
 diagnostic: errors such as missing `rclpy` prove the collector did not observe
@@ -432,18 +450,18 @@ copied from the same runtime validation-gate descriptor, so archived evidence
 keeps its required prior gates, proof scope, and operator summary sections.
 Gateway clients can read the same contract from
 `/api/v1/app/capabilities.validation_gates`; the OpenAPI schema declares each
-gate's command, collector/gate commands, ROS/real-robot requirements, validates
+gate's command, collector/gate commands, ROS/endpoint requirements, validates
 list, checks, and coverage map so UI and operations tooling do not need to infer
 the validation sequence from ad hoc text.
 The gate uses
-`core.runtime_evidence.validate_real_runtime_evidence` and requires
-`runtime_contract.name=thunder_field`, the hardware command boundary
-`hardware_driver_after_cmd_vel_mux`, `map->odom->body->lidar_link` frame
+`runtime.runtime_evidence.validate_real_runtime_evidence` and requires
+`runtime_contract.name=thunder_field`, the configured command boundary,
+`map->odom->body->lidar_link` frame
 evidence, concrete `resolved_runtime_data_flow.thunder_field` stage evidence, and
-positive global path, local path, and `/nav/cmd_vel` observations. For real
-Thunder evidence, `/nav/map_cloud` and `/nav/global_path` must report `frame_id`
-as `map`; the looser simulation/replay tolerance for `odom` is not sufficient
-to prove the real saved-map/global-planning boundary.
+positive global path, local path, and `/nav/cmd_vel` observations. For endpoint
+evidence, `/nav/map_cloud` and `/nav/global_path` must report `frame_id` as
+`map`; the looser simulation/replay tolerance for `odom` is not sufficient to
+prove the saved-map/global-planning boundary.
 
 `algorithm_validation.claim_boundary` is also part of the claim. It must keep
 these roles explicit: global planning source is `static_saved_map_tomogram`,
@@ -452,9 +470,9 @@ realtime mapping/localization source is `fastlio2_lidar_imu`, and
 
 ## Runtime Validation Ladder
 
-Use this ladder as the planned promotion path from no-actuation evidence to
-operator-controlled real hardware evidence. A lower rung does not imply field
-readiness; it only narrows what the next rung needs to prove.
+Use this ladder as the planned promotion path from no-actuation evidence to a
+future hardware campaign. Current work stops at server/simulation/endpoint
+evidence unless a real hardware target is explicitly scheduled.
 
 1. Replay endpoint, no actuation: prove the product graph consumes recorded
    localization/map data and emits `global_path`, `local_path`, and `cmd_vel`
@@ -465,9 +483,9 @@ readiness; it only narrows what the next rung needs to prove.
 3. Dynamic obstacle sweep: run density and speed cases, reject collisions,
    missing coverage, unstable control, and reports that do not preserve the
    simulation-only command boundary.
-4. Real S100P dry safety: confirm startup, SLAM/localization health, map
+4. Future hardware dry safety: confirm startup, SLAM/localization health, map
    source, `CmdVelMux` route, and no automatic actuation.
-5. Real S100P controlled run: allow operator-enabled actuation only after the
+5. Future hardware controlled run: allow operator-enabled actuation only after
    replay, MuJoCo raw, dynamic-obstacle, and dry-safety evidence is current and
    green.
 

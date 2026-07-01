@@ -1,7 +1,7 @@
 # LingTu Test And Acceptance Map
 
 This directory contains legacy integration and planning tests. The current
-product acceptance path lives mostly under `src/core/tests`, `sim/scripts`, and
+product acceptance path lives mostly under `src/runtime/tests`, `sim/scripts`, and
 Gateway/CLI gates. Use this file as an operator-facing map, not as the only CI
 entry point.
 
@@ -20,8 +20,8 @@ operator to inspect `ros2 topic` output. The primary field-facing evidence is:
 ## Fast Checks
 
 ```bash
-python -m pytest src/core/tests/ -q
-python -m pytest src/core/tests/test_gateway_runtime_acceptance.py -q
+python -m pytest src/runtime/tests/ -q
+python -m pytest src/runtime/tests/test_gateway_runtime_acceptance.py -q
 python lingtu.py runtime-audit
 ```
 

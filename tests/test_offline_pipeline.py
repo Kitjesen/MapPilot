@@ -1,25 +1,25 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
-NaviMind 离线全流程测试 — 不需要 ROS2, 不需要真机, 不需要 GPU。
+NaviMind 绂荤嚎鍏ㄦ祦绋嬫祴璇?鈥?涓嶉渶瑕?ROS2, 涓嶉渶瑕佺湡鏈? 涓嶉渶瑕?GPU銆?
 
-验证:
-  1. Fast Path 目标解析 (全部 108 条指令 × 多个模拟场景图)
-  2. 任务分解 (L1–L5 指令 → 子目标序列)
-  3. BA-HSG 信念系统端到端场景
-  4. 多假设目标规划完整流程
-  5. VoI 调度器全 episode 仿真
-  6. 属性消歧义 (L1b: CLIP attribute disambiguation)
-  7. 否定/排除推理 (L2b: negation & exclusion)
-  8. 比较/序数推理 (L2c: ordinal & superlative)
-  9. 意图推理 (L4: semantic prior intent mapping)
-  10. 探索规划 (L5: TSG exploration planning)
+楠岃瘉:
+  1. Fast Path 鐩爣瑙ｆ瀽 (鍏ㄩ儴 108 鏉℃寚浠?脳 澶氫釜妯℃嫙鍦烘櫙鍥?
+  2. 浠诲姟鍒嗚В (L1鈥揕5 鎸囦护 鈫?瀛愮洰鏍囧簭鍒?
+  3. BA-HSG 淇″康绯荤粺绔埌绔満鏅?
+  4. 澶氬亣璁剧洰鏍囪鍒掑畬鏁存祦绋?
+  5. VoI 璋冨害鍣ㄥ叏 episode 浠跨湡
+  6. 灞炴€ф秷姝т箟 (L1b: CLIP attribute disambiguation)
+  7. 鍚﹀畾/鎺掗櫎鎺ㄧ悊 (L2b: negation & exclusion)
+  8. 姣旇緝/搴忔暟鎺ㄧ悊 (L2c: ordinal & superlative)
+  9. 鎰忓浘鎺ㄧ悊 (L4: semantic prior intent mapping)
+  10. 鎺㈢储瑙勫垝 (L5: TSG exploration planning)
 
-产出: 量化指标 (准确率、延迟、决策分布)，可直接填入论文。
+浜у嚭: 閲忓寲鎸囨爣 (鍑嗙‘鐜囥€佸欢杩熴€佸喅绛栧垎甯?锛屽彲鐩存帴濉叆璁烘枃銆?
 
-运行:
+杩愯:
   cd 3d_NAV
   python -m pytest tests/test_offline_pipeline.py -v --tb=short 2>&1
-  # 或生成报告:
+  # 鎴栫敓鎴愭姤鍛?
   python tests/test_offline_pipeline.py --report
 """
 
@@ -35,17 +35,17 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_planner"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from semantic.perception.instance_tracker import (
+from perception.instance_tracker import (
     TrackedObject, InstanceTracker, BELIEF_FRESHNESS_TAU,
 )
-from semantic.perception.projection import Detection3D
-from semantic.planner.goal_resolver import (
+from perception.projection import Detection3D
+from decision.goal_resolution.goal_resolver import (
     GoalResolver, GoalResult, TargetBeliefManager, TargetHypothesis,
 )
-from semantic.planner.task_decomposer import (
+from decision.tasking.task_decomposer import (
     TaskDecomposer, SubGoalAction, SubGoalStatus,
 )
 from memory.scheduling.voi_scheduler import (
@@ -54,13 +54,13 @@ from memory.scheduling.voi_scheduler import (
 
 
 # ================================================================
-#  模拟场景图工厂 — 创建逼真的室内场景
+#  妯℃嫙鍦烘櫙鍥惧伐鍘?鈥?鍒涘缓閫肩湡鐨勫鍐呭満鏅?
 # ================================================================
 
 def make_office_corridor_scene() -> dict:
-    """办公走廊场景: 3 间办公室 + 1 条走廊, 约 30 个物体。"""
+    """鍔炲叕璧板粖鍦烘櫙: 3 闂村姙鍏 + 1 鏉¤蛋寤? 绾?30 涓墿浣撱€?""
     objects = [
-        # 走廊物体
+        # 璧板粖鐗╀綋
         {"id": 0, "label": "door", "position": {"x": 3.5, "y": 1.2, "z": 1.0},
          "score": 0.92, "detection_count": 15, "room": "corridor",
          "belief": {"P_exist": 0.91, "sigma_pos": 0.05, "credibility": 0.88}},
@@ -101,7 +101,7 @@ def make_office_corridor_scene() -> dict:
          "score": 0.70, "detection_count": 2, "room": "corridor",
          "belief": {"P_exist": 0.65, "sigma_pos": 0.18, "credibility": 0.55}},
 
-        # 办公室 A 物体
+        # 鍔炲叕瀹?A 鐗╀綋
         {"id": 10, "label": "desk", "position": {"x": 4.0, "y": 3.5, "z": 0.7},
          "score": 0.91, "detection_count": 18, "room": "office",
          "belief": {"P_exist": 0.93, "sigma_pos": 0.04, "credibility": 0.90}},
@@ -133,7 +133,7 @@ def make_office_corridor_scene() -> dict:
          "score": 0.85, "detection_count": 11, "room": "office",
          "belief": {"P_exist": 0.87, "sigma_pos": 0.06, "credibility": 0.82}},
 
-        # 休息区物体
+        # 浼戞伅鍖虹墿浣?
         {"id": 20, "label": "sofa", "position": {"x": 7.0, "y": 5.0, "z": 0.4},
          "score": 0.90, "detection_count": 12, "room": "lounge",
          "belief": {"P_exist": 0.91, "sigma_pos": 0.05, "credibility": 0.87}},
@@ -147,7 +147,7 @@ def make_office_corridor_scene() -> dict:
          "score": 0.76, "detection_count": 2, "room": "lounge",
          "belief": {"P_exist": 0.65, "sigma_pos": 0.25, "credibility": 0.55}},
 
-        # 茶水间物体
+        # 鑼舵按闂寸墿浣?
         {"id": 24, "label": "refrigerator", "position": {"x": 10.0, "y": 6.0, "z": 0.0},
          "score": 0.88, "detection_count": 7, "room": "kitchen",
          "belief": {"P_exist": 0.86, "sigma_pos": 0.08, "credibility": 0.80}},
@@ -213,18 +213,18 @@ def make_office_corridor_scene() -> dict:
 
 
 # ================================================================
-#  辅助: 加载指令集
+#  杈呭姪: 鍔犺浇鎸囦护闆?
 # ================================================================
 
 def load_instruction_set() -> dict:
-    """加载指令集 JSON。"""
+    """鍔犺浇鎸囦护闆?JSON銆?""
     p = Path(__file__).resolve().parent / "experiments" / "instruction_set.json"
     with open(p, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 # ================================================================
-#  Test Suite 1: Fast Path 目标解析
+#  Test Suite 1: Fast Path 鐩爣瑙ｆ瀽
 # ================================================================
 
 @dataclass
@@ -243,11 +243,11 @@ class FastPathResult:
 
 
 class TestFastPathResolution:
-    """测试 Fast Path 在模拟场景图上的解析准确率。"""
+    """娴嬭瘯 Fast Path 鍦ㄦā鎷熷満鏅浘涓婄殑瑙ｆ瀽鍑嗙‘鐜囥€?""
 
     @classmethod
     def setup_class(cls):
-        from semantic.planner.llm_client import LLMConfig
+        from decision.llm.llm_client import LLMConfig
         cls.resolver = GoalResolver(
             primary_config=LLMConfig(backend="openai", model="gpt-4o-mini"),
             fast_path_threshold=0.55,
@@ -276,7 +276,7 @@ class TestFastPathResolution:
         err = math.sqrt(dx * dx + dy * dy)
         return err < radius, err
 
-    # ── L1: 20 条简单指令 ──
+    # 鈹€鈹€ L1: 20 鏉＄畝鍗曟寚浠?鈹€鈹€
 
     def test_L1_01_find_door(self):
         r, ms = self._resolve("find the door")
@@ -379,10 +379,10 @@ class TestFastPathResolution:
         assert r is not None
         assert "exit" in r.target_label.lower() or "door" in r.target_label.lower()
 
-    # ── L1 中文: 验证双语行为 ──
-    # 注意: 原设计假设中文指令无法直接做 label match → Fast Path 返回 None。
-    # 实际: CLIP 多语言嵌入可将中文指令直接映射到英文标签 (confidence~0.84)，
-    #       Fast Path 可成功解析，无需 Slow Path。此测试标记为 xfail 记录设计演进。
+    # 鈹€鈹€ L1 涓枃: 楠岃瘉鍙岃琛屼负 鈹€鈹€
+    # 娉ㄦ剰: 鍘熻璁″亣璁句腑鏂囨寚浠ゆ棤娉曠洿鎺ュ仛 label match 鈫?Fast Path 杩斿洖 None銆?
+    # 瀹為檯: CLIP 澶氳瑷€宓屽叆鍙皢涓枃鎸囦护鐩存帴鏄犲皠鍒拌嫳鏂囨爣绛?(confidence~0.84)锛?
+    #       Fast Path 鍙垚鍔熻В鏋愶紝鏃犻渶 Slow Path銆傛娴嬭瘯鏍囪涓?xfail 璁板綍璁捐婕旇繘銆?
 
     @pytest.mark.xfail(
         reason="CLIP multilingual embeddings resolve Chinese queries in Fast Path "
@@ -390,15 +390,15 @@ class TestFastPathResolution:
         strict=False,
     )
     def test_L1_zh_falls_through_to_slow_path(self):
-        """中文指令 + 英文标签 → Fast Path 应返回 None (需要 Slow Path)。"""
-        for text in ["找到门", "找椅子", "找灭火器"]:
+        """涓枃鎸囦护 + 鑻辨枃鏍囩 鈫?Fast Path 搴旇繑鍥?None (闇€瑕?Slow Path)銆?""
+        for text in ["鎵惧埌闂?, "鎵炬瀛?, "鎵剧伃鐏櫒"]:
             r, _ = self._resolve(text)
             assert r is None, (
                 f"Chinese '{text}' with English labels should NOT resolve via Fast Path "
                 f"(should fall through to Slow Path)"
             )
 
-    # ── L2: 空间关系指令 ──
+    # 鈹€鈹€ L2: 绌洪棿鍏崇郴鎸囦护 鈹€鈹€
 
     def test_L2_01_fire_ext_near_door(self):
         r, _ = self._resolve("find the fire extinguisher near the door")
@@ -428,10 +428,10 @@ class TestFastPathResolution:
         assert r is not None
         assert "table" in r.target_label.lower()
 
-    # ── 性能: Fast Path 延迟 ──
+    # 鈹€鈹€ 鎬ц兘: Fast Path 寤惰繜 鈹€鈹€
 
     def test_fast_path_latency_under_5ms(self):
-        """Fast Path 平均延迟应 < 5ms (无 LLM)。"""
+        """Fast Path 骞冲潎寤惰繜搴?< 5ms (鏃?LLM)銆?""
         latencies = []
         for _ in range(50):
             _, ms = self._resolve("find the chair")
@@ -443,11 +443,11 @@ class TestFastPathResolution:
 
 
 # ================================================================
-#  Test Suite 2: 任务分解
+#  Test Suite 2: 浠诲姟鍒嗚В
 # ================================================================
 
 class TestTaskDecomposition:
-    """测试任务分解对所有 45 条指令的正确性。"""
+    """娴嬭瘯浠诲姟鍒嗚В瀵规墍鏈?45 鏉℃寚浠ょ殑姝ｇ‘鎬с€?""
 
     @classmethod
     def setup_class(cls):
@@ -457,10 +457,10 @@ class TestTaskDecomposition:
     def _decompose(self, text: str):
         return self.decomposer.decompose_with_rules(text)
 
-    # ── L1: 简单指令 → 应至少有 FIND/NAVIGATE ──
+    # 鈹€鈹€ L1: 绠€鍗曟寚浠?鈫?搴旇嚦灏戞湁 FIND/NAVIGATE 鈹€鈹€
 
     def test_L1_all_produce_subgoals(self):
-        """所有 L1 指令都应产出至少 1 个子目标。"""
+        """鎵€鏈?L1 鎸囦护閮藉簲浜у嚭鑷冲皯 1 涓瓙鐩爣銆?""
         instrs = self.instructions["L1_simple"]["instructions"]
         failed = []
         for instr in instrs:
@@ -472,7 +472,7 @@ class TestTaskDecomposition:
         assert len(failed) == 0, f"Failed to decompose: {failed}"
 
     def test_L1_contain_navigate_or_find(self):
-        """L1 指令应包含 NAVIGATE 或 FIND 动作。"""
+        """L1 鎸囦护搴斿寘鍚?NAVIGATE 鎴?FIND 鍔ㄤ綔銆?""
         instrs = self.instructions["L1_simple"]["instructions"]
         nav_actions = {SubGoalAction.NAVIGATE, SubGoalAction.FIND, SubGoalAction.APPROACH}
         failed = []
@@ -486,11 +486,11 @@ class TestTaskDecomposition:
                     failed.append(instr["id"])
         assert len(failed) == 0, f"No nav action in: {failed}"
 
-    # ── L3: 多步指令 → 应有多个子目标 ──
+    # 鈹€鈹€ L3: 澶氭鎸囦护 鈫?搴旀湁澶氫釜瀛愮洰鏍?鈹€鈹€
 
     def test_L3_multi_step_produces_multiple_subgoals(self):
-        """L3 多步指令含条件/顺序关键词 → 规则引擎正确返回 None (需 LLM)。
-        复杂度守卫的存在意味着大多数 L3 指令应走 LLM 路径。
+        """L3 澶氭鎸囦护鍚潯浠?椤哄簭鍏抽敭璇?鈫?瑙勫垯寮曟搸姝ｇ‘杩斿洖 None (闇€ LLM)銆?
+        澶嶆潅搴﹀畧鍗殑瀛樺湪鎰忓懗鐫€澶у鏁?L3 鎸囦护搴旇蛋 LLM 璺緞銆?
         """
         instrs = self.instructions["L3_multistep"]["instructions"]
         results = {}
@@ -507,10 +507,10 @@ class TestTaskDecomposition:
             f"L3 multi-step: {needs_llm}/{total} correctly deferred to LLM"
         )
 
-    # ── 跟随指令 ──
+    # 鈹€鈹€ 璺熼殢鎸囦护 鈹€鈹€
 
     def test_follow_chinese(self):
-        plan = self._decompose("跟着那个人")
+        plan = self._decompose("璺熺潃閭ｄ釜浜?)
         assert plan is not None
         actions = [sg.action for sg in plan.subgoals]
         assert SubGoalAction.FOLLOW in actions
@@ -522,7 +522,7 @@ class TestTaskDecomposition:
         assert SubGoalAction.FOLLOW in actions
 
     def test_decomposition_latency(self):
-        """规则分解延迟应 < 1ms。"""
+        """瑙勫垯鍒嗚В寤惰繜搴?< 1ms銆?""
         latencies = []
         for _ in range(100):
             t0 = time.perf_counter()
@@ -533,24 +533,24 @@ class TestTaskDecomposition:
 
 
 # ================================================================
-#  Test Suite 3: BA-HSG 信念系统端到端
+#  Test Suite 3: BA-HSG 淇″康绯荤粺绔埌绔?
 # ================================================================
 
 class TestBeliefSystemEndToEnd:
-    """模拟完整导航 episode, 验证信念系统行为。"""
+    """妯℃嫙瀹屾暣瀵艰埅 episode, 楠岃瘉淇″康绯荤粺琛屼负銆?""
 
     def test_belief_update_through_navigation(self):
-        """模拟 episode: 检测→追踪→信念更新→场景图输出。"""
+        """妯℃嫙 episode: 妫€娴嬧啋杩借釜鈫掍俊蹇垫洿鏂扳啋鍦烘櫙鍥捐緭鍑恒€?""
         tracker = InstanceTracker(max_objects=50)
 
-        # 固定 CLIP 特征 (每个物体的特征一致, 确保跨帧匹配)
+        # 鍥哄畾 CLIP 鐗瑰緛 (姣忎釜鐗╀綋鐨勭壒寰佷竴鑷? 纭繚璺ㄥ抚鍖归厤)
         rng = np.random.RandomState(42)
         chair_feat = rng.randn(512).astype(np.float32)
         chair_feat /= np.linalg.norm(chair_feat)
         desk_feat = rng.randn(512).astype(np.float32)
         desk_feat /= np.linalg.norm(desk_feat)
 
-        # 模拟 10 帧检测, 逐渐建立场景图
+        # 妯℃嫙 10 甯ф娴? 閫愭笎寤虹珛鍦烘櫙鍥?
         for frame in range(10):
             detections = [
                 Detection3D(
@@ -585,7 +585,7 @@ class TestBeliefSystemEndToEnd:
                 f"Object {obj['label']} sigma_pos={obj['belief']['sigma_pos']:.2f} should not increase"
 
     def test_miss_streak_reduces_belief(self):
-        """模拟物体消失: 先检测到, 后连续未检测 → 信念下降。"""
+        """妯℃嫙鐗╀綋娑堝け: 鍏堟娴嬪埌, 鍚庤繛缁湭妫€娴?鈫?淇″康涓嬮檷銆?""
         obj = TrackedObject(
             object_id=0, label="bottle",
             position=np.array([5.0, 3.0, 0.8]),
@@ -609,10 +609,10 @@ class TestBeliefSystemEndToEnd:
 
         p_after_misses = obj.existence_prob
         assert p_after_misses < p_after_detections, \
-            f"Belief should decrease: {p_after_detections:.3f} → {p_after_misses:.3f}"
+            f"Belief should decrease: {p_after_detections:.3f} 鈫?{p_after_misses:.3f}"
 
     def test_graph_diffusion_boosts_new_object(self):
-        """模拟图扩散: 高可信度房间中新检测的物体应获得加成。"""
+        """妯℃嫙鍥炬墿鏁? 楂樺彲淇″害鎴块棿涓柊妫€娴嬬殑鐗╀綋搴旇幏寰楀姞鎴愩€?""
         tracker = InstanceTracker(max_objects=50)
 
         established_detections = [
@@ -661,14 +661,14 @@ class TestBeliefSystemEndToEnd:
 
 
 # ================================================================
-#  Test Suite 4: 多假设目标规划完整流程
+#  Test Suite 4: 澶氬亣璁剧洰鏍囪鍒掑畬鏁存祦绋?
 # ================================================================
 
 class TestMultiHypothesisFullScenario:
-    """模拟完整的多假设导航场景。"""
+    """妯℃嫙瀹屾暣鐨勫鍋囪瀵艰埅鍦烘櫙銆?""
 
     def test_disambiguation_scenario(self):
-        """场景: "find the fire extinguisher" — 走廊有 3 个灭火器。"""
+        """鍦烘櫙: "find the fire extinguisher" 鈥?璧板粖鏈?3 涓伃鐏櫒銆?""
         candidates = [
             {"id": 1, "label": "fire extinguisher", "position": [4.0, 1.0, 0.8],
              "fused_score": 0.82, "belief": {"credibility": 0.82}, "room_match": 0.8},
@@ -701,7 +701,7 @@ class TestMultiHypothesisFullScenario:
         assert mgr.best_hypothesis.posterior > 0.5
 
     def test_all_rejected_returns_none(self):
-        """所有候选都被拒绝 → 应触发探索。"""
+        """鎵€鏈夊€欓€夐兘琚嫆缁?鈫?搴旇Е鍙戞帰绱€?""
         candidates = [
             {"id": 1, "label": "chair", "position": [3.0, 4.0, 0.4],
              "fused_score": 0.6, "belief": {"credibility": 0.5}, "room_match": 0.5},
@@ -716,21 +716,21 @@ class TestMultiHypothesisFullScenario:
         mgr.bayesian_update(object_id=2, detected=False, clip_sim=0.1)
 
         result = mgr.select_next_target()
-        assert result is None, "All rejected → should return None (trigger explore)"
+        assert result is None, "All rejected 鈫?should return None (trigger explore)"
 
 
 # ================================================================
-#  Test Suite 5: VoI 调度器全 episode 仿真
+#  Test Suite 5: VoI 璋冨害鍣ㄥ叏 episode 浠跨湡
 # ================================================================
 
 class TestVoIFullEpisode:
-    """模拟完整 episode, 统计 VoI 决策分布。"""
+    """妯℃嫙瀹屾暣 episode, 缁熻 VoI 鍐崇瓥鍒嗗竷銆?""
 
     def test_episode_decision_distribution(self):
-        """模拟 50 步导航, 统计 continue/reperceive/slow_reason 分布。
+        """妯℃嫙 50 姝ュ鑸? 缁熻 continue/reperceive/slow_reason 鍒嗗竷銆?
         
-        场景: 目标信念在中段急剧下降 (模拟误检/环境变化), 触发 VoI 再感知。
-        VoI 的安全规则: credibility < 0.3 → 强制 reperceive。
+        鍦烘櫙: 鐩爣淇″康鍦ㄤ腑娈垫€ュ墽涓嬮檷 (妯℃嫙璇/鐜鍙樺寲), 瑙﹀彂 VoI 鍐嶆劅鐭ャ€?
+        VoI 鐨勫畨鍏ㄨ鍒? credibility < 0.3 鈫?寮哄埗 reperceive銆?
         """
         scheduler = VoIScheduler()
         decisions = {"continue": 0, "reperceive": 0, "slow_reason": 0}
@@ -780,11 +780,11 @@ class TestVoIFullEpisode:
         repr_rate = decisions["reperceive"] / total
 
         assert cont_rate > 0.4, f"Continue rate {cont_rate:.0%} too low"
-        assert repr_rate >= 0.02, f"Reperceive rate {repr_rate:.0%} too low — VoI never triggered"
+        assert repr_rate >= 0.02, f"Reperceive rate {repr_rate:.0%} too low 鈥?VoI never triggered"
         assert repr_rate < 0.5, f"Reperceive rate {repr_rate:.0%} too high (should be adaptive)"
 
     def test_voi_vs_fixed_interval(self):
-        """VoI 应比固定间隔更高效: 相同 SR 下更少 reperception 次数。"""
+        """VoI 搴旀瘮鍥哄畾闂撮殧鏇撮珮鏁? 鐩稿悓 SR 涓嬫洿灏?reperception 娆℃暟銆?""
         scheduler = VoIScheduler()
 
         voi_reperceive_count = 0
@@ -818,15 +818,15 @@ class TestVoIFullEpisode:
 
 
 # ================================================================
-#  Test Suite 6: 属性消歧义 (L1b)
+#  Test Suite 6: 灞炴€ф秷姝т箟 (L1b)
 # ================================================================
 
 class TestAttributeDisambiguation:
-    """L1b: 测试系统区分同类型不同属性物体的能力。"""
+    """L1b: 娴嬭瘯绯荤粺鍖哄垎鍚岀被鍨嬩笉鍚屽睘鎬х墿浣撶殑鑳藉姏銆?""
 
     @classmethod
     def setup_class(cls):
-        from semantic.planner.llm_client import LLMConfig
+        from decision.llm.llm_client import LLMConfig
         cls.resolver = GoalResolver(
             primary_config=LLMConfig(backend="openai", model="gpt-4o-mini"),
             fast_path_threshold=0.55,
@@ -834,7 +834,7 @@ class TestAttributeDisambiguation:
         cls.instructions = load_instruction_set()
 
     def _make_attribute_scene(self) -> str:
-        """构造含属性标签的场景图 (颜色/大小)。"""
+        """鏋勯€犲惈灞炴€ф爣绛剧殑鍦烘櫙鍥?(棰滆壊/澶у皬)銆?""
         objects = [
             {"id": 50, "label": "red chair", "position": {"x": 5.0, "y": 2.0, "z": 0.4},
              "score": 0.88, "detection_count": 10, "room": "office",
@@ -870,7 +870,7 @@ class TestAttributeDisambiguation:
         return json.dumps({"objects": objects, "relations": [], "rooms": [], "groups": []})
 
     def test_L1b_red_chair_over_blue(self):
-        """'find the red chair' 应匹配 red chair 而非 blue chair。"""
+        """'find the red chair' 搴斿尮閰?red chair 鑰岄潪 blue chair銆?""
         scene = self._make_attribute_scene()
         r = self.resolver.fast_resolve("find the red chair", scene, {"x": 0, "y": 0, "z": 0})
         assert r is not None
@@ -895,7 +895,7 @@ class TestAttributeDisambiguation:
         assert "cabinet" in r.target_label.lower()
 
     def test_L1b_all_10_produce_results(self):
-        """所有 L1b 指令都应产出 Fast Path 结果 (属性标签完全匹配)。"""
+        """鎵€鏈?L1b 鎸囦护閮藉簲浜у嚭 Fast Path 缁撴灉 (灞炴€ф爣绛惧畬鍏ㄥ尮閰?銆?""
         scene = self._make_attribute_scene()
         instrs = self.instructions["L1b_attribute"]["instructions"]
         resolved = 0
@@ -910,18 +910,18 @@ class TestAttributeDisambiguation:
 
 
 # ================================================================
-#  Test Suite 7: 否定/排除推理 (L2b)
+#  Test Suite 7: 鍚﹀畾/鎺掗櫎鎺ㄧ悊 (L2b)
 # ================================================================
 
 class TestNegationExclusion:
-    """L2b: 测试系统排除特定候选的能力。"""
+    """L2b: 娴嬭瘯绯荤粺鎺掗櫎鐗瑰畾鍊欓€夌殑鑳藉姏銆?""
 
     @classmethod
     def setup_class(cls):
         cls.scene = make_office_corridor_scene()
 
     def test_negation_selects_different_instance(self):
-        """'find a chair, not the one near the window' 应排除 id=19 (窗边椅)。"""
+        """'find a chair, not the one near the window' 搴旀帓闄?id=19 (绐楄竟妞?銆?""
         mgr = TargetBeliefManager()
         candidates = [
             {"id": 11, "label": "chair", "position": [5.0, 2.0, 0.4],
@@ -931,7 +931,7 @@ class TestNegationExclusion:
         ]
         mgr.init_from_candidates(candidates)
 
-        # 模拟排除窗边椅子 (id=19 被标记 rejected)
+        # 妯℃嫙鎺掗櫎绐楄竟妞呭瓙 (id=19 琚爣璁?rejected)
         mgr.bayesian_update(object_id=19, detected=False, clip_sim=0.0)
 
         target = mgr.select_next_target(robot_position=[0.0, 0.0])
@@ -939,7 +939,7 @@ class TestNegationExclusion:
         assert target.object_id == 11, f"Should select chair 11, not {target.object_id}"
 
     def test_negation_fire_ext_not_near_door(self):
-        """排除门口灭火器 (id=1) 后应选 id=30 或 id=31。"""
+        """鎺掗櫎闂ㄥ彛鐏伀鍣?(id=1) 鍚庡簲閫?id=30 鎴?id=31銆?""
         mgr = TargetBeliefManager()
         candidates = [
             {"id": 1, "label": "fire extinguisher", "position": [4.0, 1.0, 0.8],
@@ -957,7 +957,7 @@ class TestNegationExclusion:
         assert target.object_id in (30, 31)
 
     def test_negation_kitchen_trash_excluded(self):
-        """'find trash can not in kitchen' → 排除 id=27 (厨房), 应选 id=3 或 id=16。"""
+        """'find trash can not in kitchen' 鈫?鎺掗櫎 id=27 (鍘ㄦ埧), 搴旈€?id=3 鎴?id=16銆?""
         mgr = TargetBeliefManager()
         candidates = [
             {"id": 3, "label": "trash can", "position": [2.5, 4.0, 0.0],
@@ -975,7 +975,7 @@ class TestNegationExclusion:
         assert target.object_id in (3, 16)
 
     def test_all_L2b_decomposable(self):
-        """所有 L2b 指令至少产出子目标 (可能需要 Slow Path)。"""
+        """鎵€鏈?L2b 鎸囦护鑷冲皯浜у嚭瀛愮洰鏍?(鍙兘闇€瑕?Slow Path)銆?""
         instructions = load_instruction_set()
         decomposer = TaskDecomposer()
         instrs = instructions["L2b_negation"]["instructions"]
@@ -983,21 +983,21 @@ class TestNegationExclusion:
             plan = decomposer.decompose_with_rules(instr["instruction_en"])
             if plan is None:
                 plan = decomposer.decompose_with_rules(instr["instruction_zh"])
-            # 否定指令大多需要 LLM → decompose 返回 None 是正常的
-            # 至少中文/英文指令是合法字符串即可
+            # 鍚﹀畾鎸囦护澶у闇€瑕?LLM 鈫?decompose 杩斿洖 None 鏄甯哥殑
+            # 鑷冲皯涓枃/鑻辨枃鎸囦护鏄悎娉曞瓧绗︿覆鍗冲彲
             assert len(instr["instruction_en"]) > 5
 
 
 # ================================================================
-#  Test Suite 8: 比较/序数推理 (L2c)
+#  Test Suite 8: 姣旇緝/搴忔暟鎺ㄧ悊 (L2c)
 # ================================================================
 
 class TestComparativeRanking:
-    """L2c: 测试系统的距离排序和序数选择能力。"""
+    """L2c: 娴嬭瘯绯荤粺鐨勮窛绂绘帓搴忓拰搴忔暟閫夋嫨鑳藉姏銆?""
 
     @classmethod
     def setup_class(cls):
-        from semantic.planner.llm_client import LLMConfig
+        from decision.llm.llm_client import LLMConfig
         cls.resolver = GoalResolver(
             primary_config=LLMConfig(backend="openai", model="gpt-4o-mini"),
             fast_path_threshold=0.55,
@@ -1006,7 +1006,7 @@ class TestComparativeRanking:
         cls.scene_json = json.dumps(cls.scene)
 
     def test_nearest_door_from_origin(self):
-        """从 (0,0) 出发, 最近的门应是 id=0 (3.5, 1.2)。"""
+        """浠?(0,0) 鍑哄彂, 鏈€杩戠殑闂ㄥ簲鏄?id=0 (3.5, 1.2)銆?""
         r = self.resolver.fast_resolve(
             "go to the nearest door",
             self.scene_json,
@@ -1020,7 +1020,7 @@ class TestComparativeRanking:
         assert dist_to_door0 < 2.0, f"Nearest door should be near (3.5,1.2), got ({r.target_x},{r.target_y})"
 
     def test_farthest_door_from_origin(self):
-        """'find the farthest door' — 需要 Slow Path 或距离排序。"""
+        """'find the farthest door' 鈥?闇€瑕?Slow Path 鎴栬窛绂绘帓搴忋€?""
         doors = [
             o for o in self.scene["objects"]
             if "door" in o.get("label", "").lower()
@@ -1034,14 +1034,14 @@ class TestComparativeRanking:
         assert farthest["position"]["x"] > 10.0, "Farthest door should be >10m away"
 
     def test_object_count_ranking(self):
-        """走廊 (13 objects) 应是物品最多的房间。"""
+        """璧板粖 (13 objects) 搴旀槸鐗╁搧鏈€澶氱殑鎴块棿銆?""
         rooms = self.scene["rooms"]
         most = max(rooms, key=lambda r: len(r["object_ids"]))
         assert most["name"] == "corridor"
         assert len(most["object_ids"]) >= 10
 
     def test_distance_ranking_multi_fire_ext(self):
-        """3 个灭火器按距离排序: id1(4,1) < id30(8,0.5) < id31(12,-0.5)。"""
+        """3 涓伃鐏櫒鎸夎窛绂绘帓搴? id1(4,1) < id30(8,0.5) < id31(12,-0.5)銆?""
         fire_exts = [
             o for o in self.scene["objects"]
             if o["label"] == "fire extinguisher"
@@ -1058,7 +1058,7 @@ class TestComparativeRanking:
         assert sorted_by_dist[2]["id"] == 31
 
     def test_credibility_ranking(self):
-        """argmax(credibility) 应返回 desk (credibility=0.90)。"""
+        """argmax(credibility) 搴旇繑鍥?desk (credibility=0.90)銆?""
         objs = self.scene["objects"]
         best = max(objs, key=lambda o: o.get("belief", {}).get("credibility", 0))
         assert best["label"] == "desk"
@@ -1066,14 +1066,14 @@ class TestComparativeRanking:
 
 
 # ================================================================
-#  Test Suite 9: 意图推理 (L4 — Semantic Prior)
+#  Test Suite 9: 鎰忓浘鎺ㄧ悊 (L4 鈥?Semantic Prior)
 # ================================================================
 
 class TestIntentInference:
-    """L4: 测试语义先验从意图推断目标房间/物体的能力。"""
+    """L4: 娴嬭瘯璇箟鍏堥獙浠庢剰鍥炬帹鏂洰鏍囨埧闂?鐗╀綋鐨勮兘鍔涖€?""
 
     def test_print_intent_maps_to_office(self):
-        """'I need to print' → office (printer prior=0.40)。"""
+        """'I need to print' 鈫?office (printer prior=0.40)銆?""
         try:
             from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
@@ -1086,7 +1086,7 @@ class TestIntentInference:
         assert "office" in room_names, f"'printer' should map to office, got {room_names}"
 
     def test_hungry_intent_maps_to_kitchen(self):
-        """'I am hungry' → kitchen (refrigerator prior=0.90)。"""
+        """'I am hungry' 鈫?kitchen (refrigerator prior=0.90)銆?""
         try:
             from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
@@ -1099,7 +1099,7 @@ class TestIntentInference:
         assert best_room == "kitchen"
 
     def test_rest_intent_maps_to_lounge(self):
-        """'I need a break' → lounge (sofa prior=0.70)。"""
+        """'I need a break' 鈫?lounge (sofa prior=0.70)銆?""
         try:
             from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
@@ -1112,7 +1112,7 @@ class TestIntentInference:
         assert "lobby" in room_names or "lounge" in room_names
 
     def test_restroom_intent_maps_to_bathroom(self):
-        """'I need to use the restroom' → bathroom。"""
+        """'I need to use the restroom' 鈫?bathroom銆?""
         try:
             from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
@@ -1124,7 +1124,7 @@ class TestIntentInference:
         assert rooms[0][0] == "bathroom"
 
     def test_storage_intent(self):
-        """'where can I store things' → storage (shelf=0.90)。"""
+        """'where can I store things' 鈫?storage (shelf=0.90)銆?""
         try:
             from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
@@ -1137,7 +1137,7 @@ class TestIntentInference:
         assert "storage" in room_names
 
     def test_meeting_intent(self):
-        """'take me to the meeting' → meeting_room。"""
+        """'take me to the meeting' 鈫?meeting_room銆?""
         try:
             from memory.knowledge.semantic_prior import SemanticPriorEngine
         except ImportError:
@@ -1149,7 +1149,7 @@ class TestIntentInference:
         assert "meeting_room" in room_names
 
     def test_fire_emergency_nearest(self):
-        """紧急场景: 'fire emergency' → 最近的灭火器。"""
+        """绱ф€ュ満鏅? 'fire emergency' 鈫?鏈€杩戠殑鐏伀鍣ㄣ€?""
         scene = make_office_corridor_scene()
         fire_exts = [
             o for o in scene["objects"]
@@ -1166,10 +1166,10 @@ class TestIntentInference:
         assert nearest["id"] == 1
 
     def test_L4_all_require_llm(self):
-        """L4 意图指令需要 LLM 分解 — 规则分解应全部返回 None。
+        """L4 鎰忓浘鎸囦护闇€瑕?LLM 鍒嗚В 鈥?瑙勫垯鍒嗚В搴斿叏閮ㄨ繑鍥?None銆?
 
-        这是设计预期: "我想打印东西", "我饿了" 等隐式意图无法被简单
-        关键词规则处理, 必须经过 Slow Path (LLM + Semantic Prior)。
+        杩欐槸璁捐棰勬湡: "鎴戞兂鎵撳嵃涓滆タ", "鎴戦タ浜? 绛夐殣寮忔剰鍥炬棤娉曡绠€鍗?
+        鍏抽敭璇嶈鍒欏鐞? 蹇呴』缁忚繃 Slow Path (LLM + Semantic Prior)銆?
         """
         instructions = load_instruction_set()
         decomposer = TaskDecomposer()
@@ -1180,22 +1180,22 @@ class TestIntentInference:
             plan_zh = decomposer.decompose_with_rules(instr["instruction_zh"])
             if plan_en is None and plan_zh is None:
                 needs_llm += 1
-        # 扩展规则后大部分 L4 意图指令可被口语化规则匹配 (目标提取 + FIND),
-        # 少数复杂推理仍需 LLM (如 "紧急情况, 需要安全出口")
+        # 鎵╁睍瑙勫垯鍚庡ぇ閮ㄥ垎 L4 鎰忓浘鎸囦护鍙鍙ｈ鍖栬鍒欏尮閰?(鐩爣鎻愬彇 + FIND),
+        # 灏戞暟澶嶆潅鎺ㄧ悊浠嶉渶 LLM (濡?"绱ф€ユ儏鍐? 闇€瑕佸畨鍏ㄥ嚭鍙?)
         assert needs_llm >= 1, f"Expected at least 1 L4 instruction to need LLM, got {needs_llm}/15"
 
 
 # ================================================================
-#  Test Suite 10: 探索规划 (L5 — TSG)
+#  Test Suite 10: 鎺㈢储瑙勫垝 (L5 鈥?TSG)
 # ================================================================
 
 class TestExplorationPlanning:
-    """L5: 测试 TSG 拓扑探索规划能力。"""
+    """L5: 娴嬭瘯 TSG 鎷撴墤鎺㈢储瑙勫垝鑳藉姏銆?""
 
     def _make_tsg(self):
-        """通过 update_from_scene_graph 构建测试用 TSG。"""
+        """閫氳繃 update_from_scene_graph 鏋勫缓娴嬭瘯鐢?TSG銆?""
         try:
-            from semantic.perception.topology_graph import TopologySemGraph
+            from perception.topology_graph import TopologySemGraph
         except ImportError:
             return None
 
@@ -1224,7 +1224,7 @@ class TestExplorationPlanning:
         }
         tsg.update_from_scene_graph(sg)
 
-        # 标记 corridor 和 office 已访问
+        # 鏍囪 corridor 鍜?office 宸茶闂?
         if 0 in tsg._nodes:
             tsg._nodes[0].visited = True
             tsg._nodes[0].visit_count = 3
@@ -1235,7 +1235,7 @@ class TestExplorationPlanning:
         return tsg
 
     def test_tsg_node_count(self):
-        """TSG 应有 5 个房间节点。"""
+        """TSG 搴旀湁 5 涓埧闂磋妭鐐广€?""
         tsg = self._make_tsg()
         if tsg is None:
             return
@@ -1243,7 +1243,7 @@ class TestExplorationPlanning:
         assert len(room_nodes) == 5
 
     def test_tsg_visited_state(self):
-        """corridor(0) 和 office(1) 应标记为已访问。"""
+        """corridor(0) 鍜?office(1) 搴旀爣璁颁负宸茶闂€?""
         tsg = self._make_tsg()
         if tsg is None:
             return
@@ -1254,7 +1254,7 @@ class TestExplorationPlanning:
         assert tsg._nodes[4].visited is False
 
     def test_tsg_information_gain_unvisited_higher(self):
-        """未访问节点的信息增益应高于已访问节点。"""
+        """鏈闂妭鐐圭殑淇℃伅澧炵泭搴旈珮浜庡凡璁块棶鑺傜偣銆?""
         tsg = self._make_tsg()
         if tsg is None:
             return
@@ -1264,7 +1264,7 @@ class TestExplorationPlanning:
             f"Unvisited lounge IG={ig_lounge:.3f} should > visited corridor IG={ig_corridor:.3f}"
 
     def test_tsg_shortest_path_exists(self):
-        """corridor(0) → kitchen(3) 应有有效路径。"""
+        """corridor(0) 鈫?kitchen(3) 搴旀湁鏈夋晥璺緞銆?""
         tsg = self._make_tsg()
         if tsg is None:
             return
@@ -1275,7 +1275,7 @@ class TestExplorationPlanning:
         assert cost > 0
 
     def test_tsg_coverage_stats(self):
-        """5 个房间: 2 已探索, 3 未探索。"""
+        """5 涓埧闂? 2 宸叉帰绱? 3 鏈帰绱€?""
         tsg = self._make_tsg()
         if tsg is None:
             return
@@ -1286,26 +1286,26 @@ class TestExplorationPlanning:
 
 
 # ================================================================
-#  Test Suite 10b: 口语化指令解析
+#  Test Suite 10b: 鍙ｈ鍖栨寚浠よВ鏋?
 # ================================================================
 
 class TestConversationalParsing:
-    """测试口语化中文指令能否被规则路径正确解析。"""
+    """娴嬭瘯鍙ｈ鍖栦腑鏂囨寚浠よ兘鍚﹁瑙勫垯璺緞姝ｇ‘瑙ｆ瀽銆?""
 
     @classmethod
     def setup_class(cls):
-        from semantic.planner.task_decomposer import TaskDecomposer
+        from decision.tasking.task_decomposer import TaskDecomposer
         cls.decomposer = TaskDecomposer.__new__(TaskDecomposer)
 
     @pytest.mark.parametrize("instruction,expected_target", [
-        ("看一下灭火器在哪", "灭火器"),
-        ("灭火器在哪里", "灭火器"),
-        ("帮我找一下门", "门"),
-        ("带我去会议室", "会议室"),
-        ("我想找椅子", "椅子"),
-        ("哪里有打印机", "打印机"),
-        ("看看垃圾桶在哪儿", "垃圾桶"),
-        ("查一下灭火器的位置", "灭火器"),
+        ("鐪嬩竴涓嬬伃鐏櫒鍦ㄥ摢", "鐏伀鍣?),
+        ("鐏伀鍣ㄥ湪鍝噷", "鐏伀鍣?),
+        ("甯垜鎵句竴涓嬮棬", "闂?),
+        ("甯︽垜鍘讳細璁", "浼氳瀹?),
+        ("鎴戞兂鎵炬瀛?, "妞呭瓙"),
+        ("鍝噷鏈夋墦鍗版満", "鎵撳嵃鏈?),
+        ("鐪嬬湅鍨冨溇妗跺湪鍝効", "鍨冨溇妗?),
+        ("鏌ヤ竴涓嬬伃鐏櫒鐨勪綅缃?, "鐏伀鍣?),
     ])
     def test_conversational_zh_extracts_target(self, instruction, expected_target):
         plan = self.decomposer.decompose_with_rules(instruction)
@@ -1324,29 +1324,29 @@ class TestConversationalParsing:
         assert plan is not None, f"'{instruction}' should match English patterns"
 
     def test_complex_still_needs_llm(self):
-        """复杂指令仍然应该走 LLM 路径。"""
-        plan = self.decomposer.decompose_with_rules("如果门是开着的就进去，否则去旁边的房间等")
+        """澶嶆潅鎸囦护浠嶇劧搴旇璧?LLM 璺緞銆?""
+        plan = self.decomposer.decompose_with_rules("濡傛灉闂ㄦ槸寮€鐫€鐨勫氨杩涘幓锛屽惁鍒欏幓鏃佽竟鐨勬埧闂寸瓑")
         assert plan is None, "Complex conditional should not match rule-based decomposition"
 
 
 # ================================================================
-#  Test Suite 10b: 工业级扩词 — 全覆盖测试
+#  Test Suite 10b: 宸ヤ笟绾ф墿璇?鈥?鍏ㄨ鐩栨祴璇?
 # ================================================================
 
 class TestIndustrialPatterns:
     """
-    工业级模式覆盖测试:
-      - 导航/查找/跟随/探索/巡检/停止 各类前缀
-      - 口语化/方言/礼貌/急促/机器人专用
-      - 复杂度守卫 (条件/多步 → LLM)
+    宸ヤ笟绾фā寮忚鐩栨祴璇?
+      - 瀵艰埅/鏌ユ壘/璺熼殢/鎺㈢储/宸℃/鍋滄 鍚勭被鍓嶇紑
+      - 鍙ｈ鍖?鏂硅█/绀艰矊/鎬ヤ績/鏈哄櫒浜轰笓鐢?
+      - 澶嶆潅搴﹀畧鍗?(鏉′欢/澶氭 鈫?LLM)
     """
     decomposer = TaskDecomposer()
 
-    # ── 停止 / 取消 ──
+    # 鈹€鈹€ 鍋滄 / 鍙栨秷 鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "停", "停下", "停止", "停下来", "取消", "取消任务",
-        "别走了", "别动", "算了", "不去了", "不找了",
-        "紧急停止", "急停", "中断",
+        "鍋?, "鍋滀笅", "鍋滄", "鍋滀笅鏉?, "鍙栨秷", "鍙栨秷浠诲姟",
+        "鍒蛋浜?, "鍒姩", "绠椾簡", "涓嶅幓浜?, "涓嶆壘浜?,
+        "绱ф€ュ仠姝?, "鎬ュ仠", "涓柇",
     ])
     def test_stop_zh(self, inst):
         plan = self.decomposer.decompose_with_rules(inst)
@@ -1354,10 +1354,10 @@ class TestIndustrialPatterns:
         assert plan.subgoals[0].action.value == "stop"
 
     @pytest.mark.parametrize("inst", [
-        "暂停",
+        "鏆傚仠",
     ])
     def test_pause_zh(self, inst):
-        """暂停 maps to PAUSE action, not STOP."""
+        """鏆傚仠 maps to PAUSE action, not STOP."""
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is not None
         assert plan.subgoals[0].action.value == "pause"
@@ -1371,11 +1371,11 @@ class TestIndustrialPatterns:
         assert plan is not None
         assert plan.subgoals[0].action.value == "stop"
 
-    # ── 探索 ──
+    # 鈹€鈹€ 鎺㈢储 鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "探索", "探索一下", "逛逛", "四处看看", "到处看看",
-        "看看周围", "扫描", "扫描一下", "自由探索",
-        "随便走走", "随便逛逛", "侦察",
+        "鎺㈢储", "鎺㈢储涓€涓?, "閫涢€?, "鍥涘鐪嬬湅", "鍒板鐪嬬湅",
+        "鐪嬬湅鍛ㄥ洿", "鎵弿", "鎵弿涓€涓?, "鑷敱鎺㈢储",
+        "闅忎究璧拌蛋", "闅忎究閫涢€?, "渚﹀療",
     ])
     def test_explore_zh(self, inst):
         plan = self.decomposer.decompose_with_rules(inst)
@@ -1390,10 +1390,10 @@ class TestIndustrialPatterns:
         assert plan is not None
         assert plan.subgoals[0].action.value == "explore"
 
-    # ── 巡检 → FIND + LOOK_AROUND + APPROACH + VERIFY ──
+    # 鈹€鈹€ 宸℃ 鈫?FIND + LOOK_AROUND + APPROACH + VERIFY 鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "检查灭火器", "检查一下门",
-        "查看窗户", "帮我检查电箱", "去检查管道",
+        "妫€鏌ョ伃鐏櫒", "妫€鏌ヤ竴涓嬮棬",
+        "鏌ョ湅绐楁埛", "甯垜妫€鏌ョ數绠?, "鍘绘鏌ョ閬?,
     ])
     def test_inspect_zh(self, inst):
         plan = self.decomposer.decompose_with_rules(inst)
@@ -1404,10 +1404,10 @@ class TestIndustrialPatterns:
         assert "look_around" in actions
 
     @pytest.mark.parametrize("inst", [
-        "巡检设备", "巡查消防栓",
+        "宸℃璁惧", "宸℃煡娑堥槻鏍?,
     ])
     def test_patrol_prefix_zh(self, inst):
-        """'巡检/巡查' prefixes match PATROL (higher priority than INSPECT)."""
+        """'宸℃/宸℃煡' prefixes match PATROL (higher priority than INSPECT)."""
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is not None
         assert plan.subgoals[0].action.value == "patrol"
@@ -1422,18 +1422,18 @@ class TestIndustrialPatterns:
         actions = [s.action.value for s in plan.subgoals]
         assert "find" in actions
 
-    # ── 导航 — 礼貌/急促/机器人专用 ──
+    # 鈹€鈹€ 瀵艰埅 鈥?绀艰矊/鎬ヤ績/鏈哄櫒浜轰笓鐢?鈹€鈹€
     @pytest.mark.parametrize("inst,target", [
-        ("请前往会议室", "会议室"),
-        ("麻烦去大厅", "大厅"),
-        ("帮我去办公室", "办公室"),
-        ("快去门口", "门口"),
-        ("赶紧去仓库", "仓库"),
-        ("立即前往消防通道", "消防通道"),
-        ("移动至充电桩", "充电桩"),
-        ("自主前往电梯", "电梯"),
-        ("规划路径到出口", "出口"),
-        ("回到出发点", "出发点"),
+        ("璇峰墠寰€浼氳瀹?, "浼氳瀹?),
+        ("楹荤儲鍘诲ぇ鍘?, "澶у巺"),
+        ("甯垜鍘诲姙鍏", "鍔炲叕瀹?),
+        ("蹇幓闂ㄥ彛", "闂ㄥ彛"),
+        ("璧剁揣鍘讳粨搴?, "浠撳簱"),
+        ("绔嬪嵆鍓嶅線娑堥槻閫氶亾", "娑堥槻閫氶亾"),
+        ("绉诲姩鑷冲厖鐢垫々", "鍏呯數妗?),
+        ("鑷富鍓嶅線鐢垫", "鐢垫"),
+        ("瑙勫垝璺緞鍒板嚭鍙?, "鍑哄彛"),
+        ("鍥炲埌鍑哄彂鐐?, "鍑哄彂鐐?),
     ])
     def test_nav_variants_zh(self, inst, target):
         plan = self.decomposer.decompose_with_rules(inst)
@@ -1442,10 +1442,10 @@ class TestIndustrialPatterns:
         assert "navigate" in actions
 
     @pytest.mark.parametrize("inst,target", [
-        ("返回到基地", "基地"),
+        ("杩斿洖鍒板熀鍦?, "鍩哄湴"),
     ])
     def test_return_home_zh(self, inst, target):
-        """'返回到基地' matches RETURN_HOME (higher priority than navigate)."""
+        """'杩斿洖鍒板熀鍦? matches RETURN_HOME (higher priority than navigate)."""
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is not None, f"'{inst}' should be recognized as return_home"
         actions = [s.action.value for s in plan.subgoals]
@@ -1459,27 +1459,27 @@ class TestIndustrialPatterns:
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is not None, f"'{inst}' should be recognized as navigation"
 
-    # ── 查找 — 全方位变体 ──
+    # 鈹€鈹€ 鏌ユ壘 鈥?鍏ㄦ柟浣嶅彉浣?鈹€鈹€
     @pytest.mark.parametrize("inst,target", [
-        ("搜一下灭火器", "灭火器"),
-        ("搜搜看门在哪", "门在哪"),
-        ("锁定目标人物", "人物"),
-        ("帮忙定位电箱", "电箱"),
-        ("辨认这个标志", "这个标志"),
-        ("快找灭火器", "灭火器"),
-        ("赶紧找出口", "出口"),
-        ("请搜索配电箱", "配电箱"),
-        ("麻烦帮我找打印机", "打印机"),
+        ("鎼滀竴涓嬬伃鐏櫒", "鐏伀鍣?),
+        ("鎼滄悳鐪嬮棬鍦ㄥ摢", "闂ㄥ湪鍝?),
+        ("閿佸畾鐩爣浜虹墿", "浜虹墿"),
+        ("甯繖瀹氫綅鐢电", "鐢电"),
+        ("杈ㄨ杩欎釜鏍囧織", "杩欎釜鏍囧織"),
+        ("蹇壘鐏伀鍣?, "鐏伀鍣?),
+        ("璧剁揣鎵惧嚭鍙?, "鍑哄彛"),
+        ("璇锋悳绱㈤厤鐢电", "閰嶇數绠?),
+        ("楹荤儲甯垜鎵炬墦鍗版満", "鎵撳嵃鏈?),
     ])
     def test_find_variants_zh(self, inst, target):
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is not None, f"'{inst}' should be recognized as find"
 
-    # ── 跟随 — 全方位变体 ──
+    # 鈹€鈹€ 璺熼殢 鈥?鍏ㄦ柟浣嶅彉浣?鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "紧跟他", "紧紧跟着她", "一直跟着那个人",
-        "持续跟随目标", "不要跟丢他",
-        "帮我跟着", "请跟着前面的人",
+        "绱ц窡浠?, "绱х揣璺熺潃濂?, "涓€鐩磋窡鐫€閭ｄ釜浜?,
+        "鎸佺画璺熼殢鐩爣", "涓嶈璺熶涪浠?,
+        "甯垜璺熺潃", "璇疯窡鐫€鍓嶉潰鐨勪汉",
         "keep following him", "stay with the person",
         "pursue the target", "shadow that guy",
     ])
@@ -1489,40 +1489,40 @@ class TestIndustrialPatterns:
         actions = [s.action.value for s in plan.subgoals]
         assert "follow" in actions
 
-    # ── 口语化中文 — 大量变体 ──
+    # 鈹€鈹€ 鍙ｈ鍖栦腑鏂?鈥?澶ч噺鍙樹綋 鈹€鈹€
     @pytest.mark.parametrize("inst,expected_target", [
-        ("看一下灭火器在哪", "灭火器"),
-        ("帮我看看门在什么位置", "门"),
-        ("瞧瞧椅子在哪儿", "椅子"),
-        ("瞅一眼打印机在哪", "打印机"),
-        ("灭火器的位置在哪", "灭火器"),
-        ("门在什么方向呢", "门"),
-        ("灭火器怎么走啊", "灭火器"),
-        ("门咋走", "门"),
-        ("你知道灭火器在哪吗", "灭火器"),
-        ("你看到门了吗", "门"),
-        ("快帮我找电箱", "电箱"),
-        ("赶紧去找灭火器", "灭火器"),
-        ("最近的出口在哪", "出口"),
-        ("离我最近的灭火器", "灭火器"),
-        ("有几个灭火器", "灭火器"),
-        ("有多少扇门", "扇门"),
-        ("这里有椅子吗", "椅子"),
-        ("附近有没有灭火器", "灭火器"),
-        ("能找到出口吗", "出口"),
-        ("给我找个椅子", "椅子"),
-        ("整个灭火器来", "灭火器"),
-        ("搞个椅子", "椅子"),
+        ("鐪嬩竴涓嬬伃鐏櫒鍦ㄥ摢", "鐏伀鍣?),
+        ("甯垜鐪嬬湅闂ㄥ湪浠€涔堜綅缃?, "闂?),
+        ("鐬х灖妞呭瓙鍦ㄥ摢鍎?, "妞呭瓙"),
+        ("鐬呬竴鐪兼墦鍗版満鍦ㄥ摢", "鎵撳嵃鏈?),
+        ("鐏伀鍣ㄧ殑浣嶇疆鍦ㄥ摢", "鐏伀鍣?),
+        ("闂ㄥ湪浠€涔堟柟鍚戝憿", "闂?),
+        ("鐏伀鍣ㄦ€庝箞璧板晩", "鐏伀鍣?),
+        ("闂ㄥ拫璧?, "闂?),
+        ("浣犵煡閬撶伃鐏櫒鍦ㄥ摢鍚?, "鐏伀鍣?),
+        ("浣犵湅鍒伴棬浜嗗悧", "闂?),
+        ("蹇府鎴戞壘鐢电", "鐢电"),
+        ("璧剁揣鍘绘壘鐏伀鍣?, "鐏伀鍣?),
+        ("鏈€杩戠殑鍑哄彛鍦ㄥ摢", "鍑哄彛"),
+        ("绂绘垜鏈€杩戠殑鐏伀鍣?, "鐏伀鍣?),
+        ("鏈夊嚑涓伃鐏櫒", "鐏伀鍣?),
+        ("鏈夊灏戞墖闂?, "鎵囬棬"),
+        ("杩欓噷鏈夋瀛愬悧", "妞呭瓙"),
+        ("闄勮繎鏈夋病鏈夌伃鐏櫒", "鐏伀鍣?),
+        ("鑳芥壘鍒板嚭鍙ｅ悧", "鍑哄彛"),
+        ("缁欐垜鎵句釜妞呭瓙", "妞呭瓙"),
+        ("鏁翠釜鐏伀鍣ㄦ潵", "鐏伀鍣?),
+        ("鎼炰釜妞呭瓙", "妞呭瓙"),
     ])
     def test_conversational_zh_industrial(self, inst, expected_target):
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is not None, f"'{inst}' should be matched by conversational patterns"
         found_target = plan.subgoals[0].target
         assert expected_target in found_target, (
-            f"'{inst}' → target '{found_target}', expected to contain '{expected_target}'"
+            f"'{inst}' 鈫?target '{found_target}', expected to contain '{expected_target}'"
         )
 
-    # ── 口语化英文 — 大量变体 ──
+    # 鈹€鈹€ 鍙ｈ鍖栬嫳鏂?鈥?澶ч噺鍙樹綋 鈹€鈹€
     @pytest.mark.parametrize("inst", [
         "where's the fire extinguisher",
         "could you show me the door",
@@ -1546,12 +1546,12 @@ class TestIndustrialPatterns:
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is not None, f"'{inst}' should be matched by English conversational patterns"
 
-    # ── 复杂度守卫 — 全部应返回 None ──
+    # 鈹€鈹€ 澶嶆潅搴﹀畧鍗?鈥?鍏ㄩ儴搴旇繑鍥?None 鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "如果门是开着的就进去，否则去旁边的房间等",
-        "先去仓库拿工具箱，然后再去机房检查",
-        "依次检查每个房间的灭火器",
-        "巡逻所有楼层的消防通道",
+        "濡傛灉闂ㄦ槸寮€鐫€鐨勫氨杩涘幓锛屽惁鍒欏幓鏃佽竟鐨勬埧闂寸瓑",
+        "鍏堝幓浠撳簱鎷垮伐鍏风锛岀劧鍚庡啀鍘绘満鎴挎鏌?,
+        "渚濇妫€鏌ユ瘡涓埧闂寸殑鐏伀鍣?,
+        "宸￠€绘墍鏈夋ゼ灞傜殑娑堥槻閫氶亾",
         "go to office, then check the printer, and come back",
         "if the door is locked, go to the next room",
         "patrol every room one by one",
@@ -1559,15 +1559,15 @@ class TestIndustrialPatterns:
     ])
     def test_complexity_guard(self, inst):
         plan = self.decomposer.decompose_with_rules(inst)
-        assert plan is None, f"'{inst}' should be too complex for rules → None (needs LLM)"
+        assert plan is None, f"'{inst}' should be too complex for rules 鈫?None (needs LLM)"
 
-    # ── 增强复杂度守卫 — 时间/顺序约束 ──
+    # 鈹€鈹€ 澧炲己澶嶆潅搴﹀畧鍗?鈥?鏃堕棿/椤哄簭绾︽潫 鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "先去仓库然后回来",
-        "完成后去充电",
-        "每隔10分钟检查一次",
-        "定期巡检消防通道",
-        "循环检查每个房间",
+        "鍏堝幓浠撳簱鐒跺悗鍥炴潵",
+        "瀹屾垚鍚庡幓鍏呯數",
+        "姣忛殧10鍒嗛挓妫€鏌ヤ竴娆?,
+        "瀹氭湡宸℃娑堥槻閫氶亾",
+        "寰幆妫€鏌ユ瘡涓埧闂?,
         "go to office after that check the printer",
         "repeat scanning every 5 minutes",
         "once done go back to base",
@@ -1576,12 +1576,12 @@ class TestIndustrialPatterns:
         plan = self.decomposer.decompose_with_rules(inst)
         assert plan is None, f"'{inst}' should be too complex (temporal/sequential)"
 
-    # ── PICK 取物 ──
+    # 鈹€鈹€ PICK 鍙栫墿 鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "拿灭火器", "取工具箱", "帮我拿瓶水", "帮我取钥匙",
-        "给我拿个杯子", "递给我扳手", "抓住那个零件",
-        "捡起地上的螺丝", "帮忙拿文件",
-        "快拿灭火器", "赶紧拿工具",
+        "鎷跨伃鐏櫒", "鍙栧伐鍏风", "甯垜鎷跨摱姘?, "甯垜鍙栭挜鍖?,
+        "缁欐垜鎷夸釜鏉瓙", "閫掔粰鎴戞壋鎵?, "鎶撲綇閭ｄ釜闆朵欢",
+        "鎹¤捣鍦颁笂鐨勮灪涓?, "甯繖鎷挎枃浠?,
+        "蹇嬁鐏伀鍣?, "璧剁揣鎷垮伐鍏?,
     ])
     def test_pick_zh(self, inst):
         plan = self.decomposer.decompose_with_rules(inst)
@@ -1602,11 +1602,11 @@ class TestIndustrialPatterns:
         actions = [s.action.value for s in plan.subgoals]
         assert "pick" in actions
 
-    # ── PLACE 放置 ──
+    # 鈹€鈹€ PLACE 鏀剧疆 鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "放下工具", "放到桌上", "放在架子上",
-        "放回原处", "归位", "摆到柜子上",
-        "帮我放到门口", "放置到充电桩",
+        "鏀句笅宸ュ叿", "鏀惧埌妗屼笂", "鏀惧湪鏋跺瓙涓?,
+        "鏀惧洖鍘熷", "褰掍綅", "鎽嗗埌鏌滃瓙涓?,
+        "甯垜鏀惧埌闂ㄥ彛", "鏀剧疆鍒板厖鐢垫々",
     ])
     def test_place_zh(self, inst):
         plan = self.decomposer.decompose_with_rules(inst)
@@ -1625,13 +1625,13 @@ class TestIndustrialPatterns:
         actions = [s.action.value for s in plan.subgoals]
         assert "place" in actions
 
-    # ── STATUS 状态查询 ──
+    # 鈹€鈹€ STATUS 鐘舵€佹煡璇?鈹€鈹€
     @pytest.mark.parametrize("inst", [
-        "电量", "电量多少", "电池电量", "还有多少电",
-        "状态", "系统状态", "当前状态",
-        "当前任务", "任务状态", "完成了吗",
-        "现在在哪", "当前位置", "你在哪",
-        "温度多少", "当前速度", "报告状态",
+        "鐢甸噺", "鐢甸噺澶氬皯", "鐢垫睜鐢甸噺", "杩樻湁澶氬皯鐢?,
+        "鐘舵€?, "绯荤粺鐘舵€?, "褰撳墠鐘舵€?,
+        "褰撳墠浠诲姟", "浠诲姟鐘舵€?, "瀹屾垚浜嗗悧",
+        "鐜板湪鍦ㄥ摢", "褰撳墠浣嶇疆", "浣犲湪鍝?,
+        "娓╁害澶氬皯", "褰撳墠閫熷害", "鎶ュ憡鐘舵€?,
     ])
     def test_status_zh(self, inst):
         plan = self.decomposer.decompose_with_rules(inst)
@@ -1650,7 +1650,7 @@ class TestIndustrialPatterns:
         assert plan is not None, f"'{inst}' should match STATUS"
         assert plan.subgoals[0].action.value == "status"
 
-    # ── 英文非正式补充 ──
+    # 鈹€鈹€ 鑻辨枃闈炴寮忚ˉ鍏?鈹€鈹€
     @pytest.mark.parametrize("inst", [
         "gimme the wrench",
         "lemme see the control panel",
@@ -1663,11 +1663,11 @@ class TestIndustrialPatterns:
 
 
 # ================================================================
-#  Test Suite 11: 条件多步分解 (L3b)
+#  Test Suite 11: 鏉′欢澶氭鍒嗚В (L3b)
 # ================================================================
 
 class TestConditionalDecomposition:
-    """L3b: 测试复杂条件指令的分解能力。"""
+    """L3b: 娴嬭瘯澶嶆潅鏉′欢鎸囦护鐨勫垎瑙ｈ兘鍔涖€?""
 
     @classmethod
     def setup_class(cls):
@@ -1675,32 +1675,32 @@ class TestConditionalDecomposition:
         cls.instructions = load_instruction_set()
 
     def test_L3b_sequential_cross_room(self):
-        """'go to office then corridor' 应产出 ≥ 2 个子目标。"""
+        """'go to office then corridor' 搴斾骇鍑?鈮?2 涓瓙鐩爣銆?""
         plan = self.decomposer.decompose_with_rules(
             "go to the office to find the computer"
         )
         if plan is None:
-            plan = self.decomposer.decompose_with_rules("去办公室找电脑")
+            plan = self.decomposer.decompose_with_rules("鍘诲姙鍏鎵剧數鑴?)
         assert plan is not None
         assert len(plan.subgoals) >= 1
 
     def test_L3b_patrol_all_doors(self):
-        """巡逻指令需要 LLM 分解 → 返回 None 是预期行为。"""
+        """宸￠€绘寚浠ら渶瑕?LLM 鍒嗚В 鈫?杩斿洖 None 鏄鏈熻涓恒€?""
         plan = self.decomposer.decompose_with_rules(
             "check if every room's door is properly closed"
         )
-        # 复杂巡逻指令规则分解应返回 None → 需要 LLM
+        # 澶嶆潅宸￠€绘寚浠よ鍒欏垎瑙ｅ簲杩斿洖 None 鈫?闇€瑕?LLM
         assert plan is None, "Complex patrol should require LLM decomposition"
 
     def test_L3b_loop_route(self):
-        """循环路线指令需要 LLM。"""
+        """寰幆璺嚎鎸囦护闇€瑕?LLM銆?""
         plan = self.decomposer.decompose_with_rules(
             "start from here, go through office, kitchen, storage, then return to start"
         )
         assert plan is None
 
     def test_L3b_follow_with_timeout(self):
-        """'follow the person' 应产出 FIND + FOLLOW。"""
+        """'follow the person' 搴斾骇鍑?FIND + FOLLOW銆?""
         plan = self.decomposer.decompose_with_rules(
             "find the person and follow them"
         )
@@ -1710,12 +1710,12 @@ class TestConditionalDecomposition:
         assert SubGoalAction.FOLLOW in actions
 
     def test_L3b_conditional_instructions_counted(self):
-        """验证 L3b 确实有 10 条指令。"""
+        """楠岃瘉 L3b 纭疄鏈?10 鏉℃寚浠ゃ€?""
         instrs = self.instructions["L3b_conditional"]["instructions"]
         assert len(instrs) == 10
 
     def test_all_108_instructions_loaded(self):
-        """验证指令集总数为 108。"""
+        """楠岃瘉鎸囦护闆嗘€绘暟涓?108銆?""
         instructions = self.instructions
         total = sum(
             len(instructions[key]["instructions"])
@@ -1726,18 +1726,18 @@ class TestConditionalDecomposition:
 
 
 # ================================================================
-#  报告生成器 — 产出论文可用数据
+#  鎶ュ憡鐢熸垚鍣?鈥?浜у嚭璁烘枃鍙敤鏁版嵁
 # ================================================================
 
 # ================================================================
-#  知识图谱 + 开放词汇 + 场景图增强 测试
+#  鐭ヨ瘑鍥捐氨 + 寮€鏀捐瘝姹?+ 鍦烘櫙鍥惧寮?娴嬭瘯
 # ================================================================
 
 class TestKnowledgeGraphEnhanced:
-    """知识图谱扩展、安全约束、开放词汇映射测试。"""
+    """鐭ヨ瘑鍥捐氨鎵╁睍銆佸畨鍏ㄧ害鏉熴€佸紑鏀捐瘝姹囨槧灏勬祴璇曘€?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from memory.knowledge.knowledge_graph import (
             IndustrialKnowledgeGraph, SafetyLevel, AffordanceType,
         )
@@ -1745,91 +1745,91 @@ class TestKnowledgeGraphEnhanced:
         self.SafetyLevel = SafetyLevel
         self.AffordanceType = AffordanceType
 
-    # ── 概念覆盖度 ──
+    # 鈹€鈹€ 姒傚康瑕嗙洊搴?鈹€鈹€
 
     def test_kg_total_concepts_expanded(self):
-        """KG 应有 >= 50 个概念 (v2.0 扩展后)。"""
+        """KG 搴旀湁 >= 50 涓蹇?(v2.0 鎵╁睍鍚?銆?""
         assert len(self.kg.get_all_concepts()) >= 50
 
     def test_kg_categories_coverage(self):
-        """KG 应覆盖 >= 7 个类别。"""
+        """KG 搴旇鐩?>= 7 涓被鍒€?""
         stats = self.kg.get_stats()
         assert len(stats["categories"]) >= 7, f"Only {len(stats['categories'])} categories"
 
     def test_kg_medical_concepts(self):
-        """KG 应包含医疗设备。"""
+        """KG 搴斿寘鍚尰鐤楄澶囥€?""
         assert self.kg.lookup("wheelchair") is not None
         assert self.kg.lookup("stretcher") is not None
-        assert self.kg.lookup("轮椅") is not None
+        assert self.kg.lookup("杞") is not None
 
     def test_kg_outdoor_concepts(self):
-        """KG 应包含户外物体。"""
+        """KG 搴斿寘鍚埛澶栫墿浣撱€?""
         assert self.kg.lookup("traffic cone") is not None
-        assert self.kg.lookup("路锥") is not None
+        assert self.kg.lookup("璺敟") is not None
         assert self.kg.lookup("fence") is not None
         assert self.kg.lookup("street light") is not None
 
     def test_kg_residential_concepts(self):
-        """KG 应包含居住场景物体。"""
+        """KG 搴斿寘鍚眳浣忓満鏅墿浣撱€?""
         assert self.kg.lookup("bed") is not None
         assert self.kg.lookup("microwave") is not None
         assert self.kg.lookup("television") is not None
-        assert self.kg.lookup("马桶") is not None
-        assert self.kg.lookup("洗衣机") is not None
+        assert self.kg.lookup("椹《") is not None
+        assert self.kg.lookup("娲楄。鏈?) is not None
 
     def test_kg_industrial_extended(self):
-        """KG 应包含扩展工业物体。"""
+        """KG 搴斿寘鍚墿灞曞伐涓氱墿浣撱€?""
         assert self.kg.lookup("valve") is not None
         assert self.kg.lookup("crane") is not None
         assert self.kg.lookup("generator") is not None
         assert self.kg.lookup("control panel") is not None
         assert self.kg.lookup("safety helmet") is not None
 
-    # ── 安全约束 ──
+    # 鈹€鈹€ 瀹夊叏绾︽潫 鈹€鈹€
 
     def test_kg_safety_constraints_expanded(self):
-        """安全约束应 >= 15 条 (v2.0 扩展后)。"""
+        """瀹夊叏绾︽潫搴?>= 15 鏉?(v2.0 鎵╁睍鍚?銆?""
         stats = self.kg.get_stats()
         assert stats["total_safety_constraints"] >= 15
 
     def test_kg_crane_safety(self):
-        """起重机应有接近约束。"""
+        """璧烽噸鏈哄簲鏈夋帴杩戠害鏉熴€?""
         constraint = self.kg.check_safety("crane", "approach")
         assert constraint is not None
         assert constraint.max_approach_distance >= 5.0
 
     def test_kg_generator_safety(self):
-        """发电机应有接近约束。"""
+        """鍙戠數鏈哄簲鏈夋帴杩戠害鏉熴€?""
         constraint = self.kg.check_safety("generator", "approach")
         assert constraint is not None
 
     def test_kg_control_panel_blocked(self):
-        """控制面板应禁止 pick。"""
+        """鎺у埗闈㈡澘搴旂姝?pick銆?""
         constraint = self.kg.check_safety("control panel", "pick")
         assert constraint is not None
         assert constraint.response == "block"
 
     def test_kg_manhole_cover_caution(self):
-        """井盖应有接近警告。"""
+        """浜曠洊搴旀湁鎺ヨ繎璀﹀憡銆?""
         assert self.kg.get_safety_level("manhole cover") == self.SafetyLevel.CAUTION
 
-    # ── 关系 ──
+    # 鈹€鈹€ 鍏崇郴 鈹€鈹€
 
     def test_kg_relations_expanded(self):
-        """关系应 >= 60 条 (v2.0 扩展后)。"""
+        """鍏崇郴搴?>= 60 鏉?(v2.0 鎵╁睍鍚?銆?""
         stats = self.kg.get_stats()
         assert stats["total_relations"] >= 60
 
     def test_kg_valve_related_to_pipe(self):
-        """阀门应与管道有关联。"""
+        """闃€闂ㄥ簲涓庣閬撴湁鍏宠仈銆?""
         relations = self.kg.get_relations("valve")
         rel_targets = [r.target for r in relations]
         assert "pipe" in rel_targets
 
-    # ── 可供性查询 ──
+    # 鈹€鈹€ 鍙緵鎬ф煡璇?鈹€鈹€
 
     def test_kg_graspable_query(self):
-        """按 graspable 查询应包含杯子、瓶子等。"""
+        """鎸?graspable 鏌ヨ搴斿寘鍚澂瀛愩€佺摱瀛愮瓑銆?""
         graspable = self.kg.query_by_affordance(self.AffordanceType.GRASPABLE)
         labels = {c.concept_id for c in graspable}
         assert "cup" in labels
@@ -1837,42 +1837,42 @@ class TestKnowledgeGraphEnhanced:
         assert "traffic_cone" in labels
 
     def test_kg_inspectable_query(self):
-        """按 inspectable 查询应覆盖大量物体。"""
+        """鎸?inspectable 鏌ヨ搴旇鐩栧ぇ閲忕墿浣撱€?""
         inspectable = self.kg.query_by_affordance(self.AffordanceType.INSPECTABLE)
         assert len(inspectable) >= 20
 
-    # ── 操作可行性 ──
+    # 鈹€鈹€ 鎿嶄綔鍙鎬?鈹€鈹€
 
     def test_kg_manipulation_pick_bottle_feasible(self):
-        """瓶子应该可以 pick。"""
+        """鐡跺瓙搴旇鍙互 pick銆?""
         info = self.kg.get_manipulation_info("bottle", "pick")
         assert info["feasible"] is True
 
     def test_kg_manipulation_pick_electrical_panel_blocked(self):
-        """配电箱应该不能 pick。"""
+        """閰嶇數绠卞簲璇ヤ笉鑳?pick銆?""
         info = self.kg.get_manipulation_info("electrical_panel", "pick")
         assert info["feasible"] is False
 
     def test_kg_manipulation_pick_gas_cylinder_blocked(self):
-        """气瓶应该不能 pick。"""
+        """姘旂摱搴旇涓嶈兘 pick銆?""
         info = self.kg.get_manipulation_info("gas_cylinder", "pick")
         assert info["feasible"] is False
 
     def test_kg_manipulation_pick_desk_too_large(self):
-        """桌子应该不能 pick (太大)。"""
+        """妗屽瓙搴旇涓嶈兘 pick (澶ぇ)銆?""
         info = self.kg.get_manipulation_info("desk", "pick")
         assert info["feasible"] is False
 
     def test_kg_manipulation_unknown_object(self):
-        """未知物体应返回低置信度但允许。"""
+        """鏈煡鐗╀綋搴旇繑鍥炰綆缃俊搴︿絾鍏佽銆?""
         info = self.kg.get_manipulation_info("alien_artifact", "pick")
         assert info["feasible"] is True
         assert info["confidence"] < 0.5
 
-    # ── 房间预期物体 ──
+    # 鈹€鈹€ 鎴块棿棰勬湡鐗╀綋 鈹€鈹€
 
     def test_kg_room_expected_objects(self):
-        """房间类型应返回预期物体。"""
+        """鎴块棿绫诲瀷搴旇繑鍥為鏈熺墿浣撱€?""
         office_objs = self.kg.get_room_expected_objects("office")
         assert "desk" in office_objs
         assert "chair" in office_objs
@@ -1880,49 +1880,49 @@ class TestKnowledgeGraphEnhanced:
         assert "fire_extinguisher" in corridor_objs
 
     def test_kg_room_expected_warehouse(self):
-        """仓库应返回工业物体。"""
+        """浠撳簱搴旇繑鍥炲伐涓氱墿浣撱€?""
         objs = self.kg.get_room_expected_objects("warehouse")
         assert "forklift" in objs
         assert "pallet" in objs
 
-    # ── 开放词汇映射 ──
+    # 鈹€鈹€ 寮€鏀捐瘝姹囨槧灏?鈹€鈹€
 
     def test_kg_open_vocab_direct_lookup(self):
-        """已知物体应该直接映射。"""
+        """宸茬煡鐗╀綋搴旇鐩存帴鏄犲皠銆?""
         result = self.kg.map_unknown_to_concept("fire extinguisher")
         assert result is not None
         assert result.concept_id == "fire_extinguisher"
 
     def test_kg_open_vocab_substring_match(self):
-        """子串匹配应该工作。"""
-        result = self.kg.map_unknown_to_concept("干粉灭火器")
+        """瀛愪覆鍖归厤搴旇宸ヤ綔銆?""
+        result = self.kg.map_unknown_to_concept("骞茬矇鐏伀鍣?)
         assert result is not None
         assert result.concept_id == "fire_extinguisher"
 
     def test_kg_open_vocab_category_fallback(self):
-        """类别关键词应该触发模糊匹配。"""
+        """绫诲埆鍏抽敭璇嶅簲璇ヨЕ鍙戞ā绯婂尮閰嶃€?""
         result = self.kg.map_unknown_to_concept("fire detection sensor")
         assert result is not None
         assert result.category == "safety"
 
     def test_kg_open_vocab_completely_unknown(self):
-        """完全未知物体应返回 None。"""
+        """瀹屽叏鏈煡鐗╀綋搴旇繑鍥?None銆?""
         result = self.kg.map_unknown_to_concept("quantum_flux_capacitor")
         assert result is None
 
-    # ── CLIP 词汇导出 ──
+    # 鈹€鈹€ CLIP 璇嶆眹瀵煎嚭 鈹€鈹€
 
     def test_kg_clip_vocabulary(self):
-        """CLIP 词汇表应包含英文名和别名。"""
+        """CLIP 璇嶆眹琛ㄥ簲鍖呭惈鑻辨枃鍚嶅拰鍒悕銆?""
         vocab = self.kg.get_clip_vocabulary()
         assert len(vocab) >= 80
         assert "fire extinguisher" in vocab
         assert "red cylinder on wall" in vocab
 
-    # ── JSON 导出 ──
+    # 鈹€鈹€ JSON 瀵煎嚭 鈹€鈹€
 
     def test_kg_json_export(self):
-        """KG 应能导出为 JSON。"""
+        """KG 搴旇兘瀵煎嚭涓?JSON銆?""
         import json
         j = self.kg.to_json()
         data = json.loads(j)
@@ -1933,10 +1933,10 @@ class TestKnowledgeGraphEnhanced:
 
 
 class TestKGDetailedProperties:
-    """KG 细粒度属性、新概念、房间映射测试 (v2.0 phase 2)。"""
+    """KG 缁嗙矑搴﹀睘鎬с€佹柊姒傚康銆佹埧闂存槧灏勬祴璇?(v2.0 phase 2)銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.kg = IndustrialKnowledgeGraph()
 
@@ -2074,12 +2074,12 @@ class TestKGDetailedProperties:
 
 
 class TestKGIntegrationWithDecomposer:
-    """KG 安全门与 TaskDecomposer 集成测试。"""
+    """KG 瀹夊叏闂ㄤ笌 TaskDecomposer 闆嗘垚娴嬭瘯銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_planner"))
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.planner.task_decomposer import TaskDecomposer, SubGoalAction
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from decision.tasking.task_decomposer import TaskDecomposer, SubGoalAction
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.kg = IndustrialKnowledgeGraph()
         TaskDecomposer.set_knowledge_graph(self.kg)
@@ -2087,38 +2087,38 @@ class TestKGIntegrationWithDecomposer:
         self.SubGoalAction = SubGoalAction
 
     def test_pick_bottle_passes_safety(self):
-        """'帮我拿瓶水' → FIND+APPROACH+PICK (安全通过)。"""
-        plan = self.decomposer.decompose_with_rules("帮我拿瓶水")
+        """'甯垜鎷跨摱姘? 鈫?FIND+APPROACH+PICK (瀹夊叏閫氳繃)銆?""
+        plan = self.decomposer.decompose_with_rules("甯垜鎷跨摱姘?)
         assert plan is not None
         actions = [sg.action for sg in plan.subgoals]
         assert self.SubGoalAction.FIND in actions
         assert self.SubGoalAction.PICK in actions
 
     def test_pick_electrical_panel_blocked(self):
-        """'帮我拿配电箱' → KG 安全门拦截, 返回 STATUS。"""
-        plan = self.decomposer.decompose_with_rules("帮我拿配电箱")
+        """'甯垜鎷块厤鐢电' 鈫?KG 瀹夊叏闂ㄦ嫤鎴? 杩斿洖 STATUS銆?""
+        plan = self.decomposer.decompose_with_rules("甯垜鎷块厤鐢电")
         assert plan is not None
         actions = [sg.action for sg in plan.subgoals]
         assert self.SubGoalAction.STATUS in actions
         assert plan.subgoals[0].parameters.get("kg_blocked") is True
 
     def test_pick_gas_cylinder_blocked(self):
-        """'pick up the gas cylinder' → KG 安全门拦截。"""
+        """'pick up the gas cylinder' 鈫?KG 瀹夊叏闂ㄦ嫤鎴€?""
         plan = self.decomposer.decompose_with_rules("pick up the gas cylinder")
         assert plan is not None
         assert plan.subgoals[0].parameters.get("kg_blocked") is True
 
     def test_find_fire_extinguisher_has_typical_locations(self):
-        """'找灭火器' → FIND 参数应包含典型位置提示。"""
-        plan = self.decomposer.decompose_with_rules("找灭火器")
+        """'鎵剧伃鐏櫒' 鈫?FIND 鍙傛暟搴斿寘鍚吀鍨嬩綅缃彁绀恒€?""
+        plan = self.decomposer.decompose_with_rules("鎵剧伃鐏櫒")
         assert plan is not None
         find_sg = next(sg for sg in plan.subgoals if sg.action == self.SubGoalAction.FIND)
         locs = find_sg.parameters.get("typical_locations", [])
         assert len(locs) > 0, "FIND should carry KG typical_locations"
 
     def test_approach_gas_cylinder_has_safety_distance(self):
-        """'找气瓶' → APPROACH 距离应受 KG 安全约束增大。"""
-        plan = self.decomposer.decompose_with_rules("找气瓶")
+        """'鎵炬皵鐡? 鈫?APPROACH 璺濈搴斿彈 KG 瀹夊叏绾︽潫澧炲ぇ銆?""
+        plan = self.decomposer.decompose_with_rules("鎵炬皵鐡?)
         assert plan is not None
         approach_sg = next(
             (sg for sg in plan.subgoals if sg.action == self.SubGoalAction.APPROACH),
@@ -2129,7 +2129,7 @@ class TestKGIntegrationWithDecomposer:
         assert approach_dist >= 1.0, f"Gas cylinder approach distance should be >= 1.0m, got {approach_dist}"
 
     def test_pick_cup_has_kg_metadata(self):
-        """'grab the cup' → PICK 参数应包含 KG 元数据。"""
+        """'grab the cup' 鈫?PICK 鍙傛暟搴斿寘鍚?KG 鍏冩暟鎹€?""
         plan = self.decomposer.decompose_with_rules("grab the cup")
         assert plan is not None
         pick_sg = next(
@@ -2140,8 +2140,8 @@ class TestKGIntegrationWithDecomposer:
         assert "kg_safety" in pick_sg.parameters
 
     def test_navigate_to_stairs_has_safety_note(self):
-        """'去楼梯' → APPROACH 应包含 KG 安全注释 (楼梯需切换步态)。"""
-        plan = self.decomposer.decompose_with_rules("去楼梯")
+        """'鍘绘ゼ姊? 鈫?APPROACH 搴斿寘鍚?KG 瀹夊叏娉ㄩ噴 (妤兼闇€鍒囨崲姝ユ€?銆?""
+        plan = self.decomposer.decompose_with_rules("鍘绘ゼ姊?)
         assert plan is not None
         approach_sg = next(
             (sg for sg in plan.subgoals if sg.action == self.SubGoalAction.APPROACH),
@@ -2152,12 +2152,12 @@ class TestKGIntegrationWithDecomposer:
 
 
 class TestSceneGraphDynamic:
-    """DovSG 动态场景图 + 嵌入索引测试。"""
+    """DovSG 鍔ㄦ€佸満鏅浘 + 宓屽叆绱㈠紩娴嬭瘯銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import InstanceTracker, TrackedObject
-        from semantic.perception.projection import Detection3D
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import InstanceTracker, TrackedObject
+        from perception.projection import Detection3D
         self.InstanceTracker = InstanceTracker
         self.TrackedObject = TrackedObject
         self.Detection3D = Detection3D
@@ -2173,7 +2173,7 @@ class TestSceneGraphDynamic:
         )
 
     def test_scene_diff_detects_new_object(self):
-        """场景 diff 应检测到新增物体。"""
+        """鍦烘櫙 diff 搴旀娴嬪埌鏂板鐗╀綋銆?""
         tracker = self.InstanceTracker(merge_distance=0.5)
         tracker.update([self._make_det("chair", 1.0, 2.0)])
         prev_snapshot = {"objects": []}
@@ -2183,7 +2183,7 @@ class TestSceneGraphDynamic:
         assert len(added) >= 1
 
     def test_scene_diff_detects_removed_object(self):
-        """场景 diff 应检测到消失的物体。"""
+        """鍦烘櫙 diff 搴旀娴嬪埌娑堝け鐨勭墿浣撱€?""
         tracker = self.InstanceTracker(merge_distance=0.5)
         prev_snapshot = {
             "objects": [
@@ -2195,9 +2195,9 @@ class TestSceneGraphDynamic:
         assert len(removed) >= 1
 
     def test_local_update_region(self):
-        """局部更新应只影响指定区域。"""
+        """灞€閮ㄦ洿鏂板簲鍙奖鍝嶆寚瀹氬尯鍩熴€?""
         tracker = self.InstanceTracker(merge_distance=0.5)
-        # 添加两组物体在不同区域
+        # 娣诲姞涓ょ粍鐗╀綋鍦ㄤ笉鍚屽尯鍩?
         tracker.update([
             self._make_det("chair", 1.0, 1.0),
             self._make_det("desk", 1.5, 1.5),
@@ -2205,7 +2205,7 @@ class TestSceneGraphDynamic:
         ])
         regions = tracker.compute_regions()
         if len(regions) < 2:
-            return  # 如果聚类结果只有一个区域, 跳过
+            return  # 濡傛灉鑱氱被缁撴灉鍙湁涓€涓尯鍩? 璺宠繃
 
         target_region = regions[0].region_id
         result = tracker.apply_local_update(
@@ -2216,7 +2216,7 @@ class TestSceneGraphDynamic:
         assert result["region_id"] == target_region
 
     def test_embedding_index_build(self):
-        """嵌入索引应能构建。"""
+        """宓屽叆绱㈠紩搴旇兘鏋勫缓銆?""
         tracker = self.InstanceTracker(merge_distance=0.5)
         tracker.update([
             self._make_det("chair", 1.0, 1.0),
@@ -2227,7 +2227,7 @@ class TestSceneGraphDynamic:
         assert success is True
 
     def test_embedding_query(self):
-        """嵌入查询应返回结果。"""
+        """宓屽叆鏌ヨ搴旇繑鍥炵粨鏋溿€?""
         tracker = self.InstanceTracker(merge_distance=0.5)
         tracker.update([
             self._make_det("chair", 1.0, 1.0),
@@ -2239,31 +2239,31 @@ class TestSceneGraphDynamic:
         assert len(results) >= 1
 
     def test_open_vocabulary_matches(self):
-        """开放词汇查询应融合多个信号。"""
+        """寮€鏀捐瘝姹囨煡璇㈠簲铻嶅悎澶氫釜淇″彿銆?""
         tracker = self.InstanceTracker(merge_distance=0.5)
         tracker.update([
             self._make_det("chair", 1.0, 1.0),
             self._make_det("desk", 2.0, 2.0),
             self._make_det("fire extinguisher", 3.0, 3.0),
         ])
-        # 字符串匹配 fallback
+        # 瀛楃涓插尮閰?fallback
         results = tracker.get_open_vocabulary_matches("chair")
         assert len(results) >= 1
         assert results[0]["label"] == "chair"
 
     def test_open_vocabulary_with_kg(self):
-        """带 KG 的开放词汇查询应增强匹配。"""
+        """甯?KG 鐨勫紑鏀捐瘝姹囨煡璇㈠簲澧炲己鍖归厤銆?""
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         kg = IndustrialKnowledgeGraph()
         tracker = self.InstanceTracker(merge_distance=0.5, knowledge_graph=kg)
         tracker.update([
             self._make_det("fire extinguisher", 3.0, 3.0),
         ])
-        results = tracker.get_open_vocabulary_matches("灭火器")
+        results = tracker.get_open_vocabulary_matches("鐏伀鍣?)
         assert len(results) >= 1
 
     def test_scene_diff_summary(self):
-        """场景 diff 摘要应是可读的字符串。"""
+        """鍦烘櫙 diff 鎽樿搴旀槸鍙鐨勫瓧绗︿覆銆?""
         tracker = self.InstanceTracker(merge_distance=0.5)
         tracker.update([self._make_det("chair", 1.0, 2.0)])
         diff = tracker.compute_scene_diff({"objects": []})
@@ -2272,8 +2272,8 @@ class TestSceneGraphDynamic:
 
 
 def generate_offline_report():
-    """运行所有测试并生成量化报告。"""
-    from semantic.planner.llm_client import LLMConfig
+    """杩愯鎵€鏈夋祴璇曞苟鐢熸垚閲忓寲鎶ュ憡銆?""
+    from decision.llm.llm_client import LLMConfig
 
     print("=" * 70)
     print("NaviMind Offline Pipeline Evaluation Report (108 instructions)")
@@ -2289,7 +2289,7 @@ def generate_offline_report():
     )
     decomposer = TaskDecomposer()
 
-    # ── 1. Fast Path 解析率 ──
+    # 鈹€鈹€ 1. Fast Path 瑙ｆ瀽鐜?鈹€鈹€
     print("\n[1] Fast Path Resolution Rate")
     print("-" * 50)
 
@@ -2324,7 +2324,7 @@ def generate_offline_report():
         print(f"  {level_name}: {resolved}/{total} = {rate:.1%}  "
               f"avg={avg_ms:.2f}ms  p99={p99_ms:.2f}ms")
 
-    # ── 2. 任务分解成功率 ──
+    # 鈹€鈹€ 2. 浠诲姟鍒嗚В鎴愬姛鐜?鈹€鈹€
     print("\n[2] Task Decomposition Success Rate")
     print("-" * 50)
 
@@ -2351,7 +2351,7 @@ def generate_offline_report():
         print(f"  {level_name}: {success}/{total} = {success/total:.1%}  "
               f"multi-step: {multi_step}/{total}")
 
-    # ── 3. BA-HSG 信念系统指标 ──
+    # 鈹€鈹€ 3. BA-HSG 淇″康绯荤粺鎸囨爣 鈹€鈹€
     print("\n[3] BA-HSG Belief System Metrics")
     print("-" * 50)
 
@@ -2383,7 +2383,7 @@ def generate_offline_report():
         print(f"  {obj['label']:20s}  P_exist={b.get('P_exist', 0):.3f}  "
               f"sigma={b.get('sigma_pos', 0):.3f}  C={b.get('credibility', 0):.3f}")
 
-    # ── 4. VoI 调度器决策分布 ──
+    # 鈹€鈹€ 4. VoI 璋冨害鍣ㄥ喅绛栧垎甯?鈹€鈹€
     print("\n[4] VoI Scheduler Decision Distribution")
     print("-" * 50)
 
@@ -2404,7 +2404,7 @@ def generate_offline_report():
     for k, v in counts.items():
         print(f"  {k:15s}: {v:3d}  ({v/total:.1%})")
 
-    # ── 5. 多假设规划性能 ──
+    # 鈹€鈹€ 5. 澶氬亣璁捐鍒掓€ц兘 鈹€鈹€
     print("\n[5] Multi-Hypothesis Planning")
     print("-" * 50)
 
@@ -2459,7 +2459,7 @@ def generate_offline_report():
     print(f"  Success Rate: {sr:.1%} ({correct_selections}/{n_scenarios})")
     print(f"  Avg Attempts: {avg_att:.1f}")
 
-    # ── 汇总 ──
+    # 鈹€鈹€ 姹囨€?鈹€鈹€
     print("\n" + "=" * 70)
     print("SUMMARY -- Paper-Ready Metrics")
     print("=" * 70)
@@ -2485,14 +2485,14 @@ def generate_offline_report():
         f.write("| Module | Metric | Value |\n")
         f.write("|--------|--------|-------|\n")
         f.write("| Fast Path (L1, English) | Resolution Rate | 100% (20/20) |\n")
-        f.write("| Fast Path (L1b, Attribute) | Resolution Rate | ≥60% (CLIP attr disambig) |\n")
+        f.write("| Fast Path (L1b, Attribute) | Resolution Rate | 鈮?0% (CLIP attr disambig) |\n")
         f.write("| Fast Path (L2, English) | Resolution Rate | 100% (15/15) |\n")
         f.write("| Fast Path (Chinese) | Falls to Slow Path | 100% (expected) |\n")
         f.write("| Fast Path | Avg Latency | <5ms |\n")
-        f.write("| Task Decomposition (L1–L2) | Rule Success Rate | 100% |\n")
+        f.write("| Task Decomposition (L1鈥揕2) | Rule Success Rate | 100% |\n")
         f.write("| Task Decomposition (L3) | Rule Success Rate | 50% |\n")
         f.write("| Task Decomposition (L3b) | Needs LLM | Yes (conditional branching) |\n")
-        f.write("| Task Decomposition (L4) | Rule Partial | ≥20% (intent→find) |\n")
+        f.write("| Task Decomposition (L4) | Rule Partial | 鈮?0% (intent鈫抐ind) |\n")
         f.write("| BA-HSG Belief | P_exist convergence | >0.87 after 30 frames |\n")
         f.write("| BA-HSG Belief | Credibility range | 0.72-0.73 |\n")
         f.write(f"| VoI Scheduler | Continue rate | {counts['continue']/total:.0%} |\n")
@@ -2507,20 +2507,20 @@ def generate_offline_report():
     print(f"  Report saved to: {report_path}")
 
 
-# ═══════════════════════════════════════════════════════════════
-#  BA-HSG v3.0 论文级升级测试
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+#  BA-HSG v3.0 璁烘枃绾у崌绾ф祴璇?
 #  - KG-Augmented Loopy Belief Propagation
 #  - Safety-Aware Differential Credibility
 #  - Phantom (Blind) Node Reasoning
 #  - Room-Type Bayesian Posterior
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 class TestLoopyBeliefPropagation:
-    """迭代信念传播测试 — 参考 Belief Scene Graphs (ICRA 2024)。"""
+    """杩唬淇″康浼犳挱娴嬭瘯 鈥?鍙傝€?Belief Scene Graphs (ICRA 2024)銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import (
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import (
             InstanceTracker, Detection3D, TrackedObject,
             PhantomNode, RoomTypePosterior, BeliefMessage,
             BP_MAX_ITERATIONS, BP_CONVERGENCE_EPS,
@@ -2540,7 +2540,7 @@ class TestLoopyBeliefPropagation:
         self.SAFETY_INTERACT = SAFETY_THRESHOLDS_INTERACTION
 
     def _make_office_scene(self):
-        """创建典型办公室场景: desk, chair, monitor, keyboard。"""
+        """鍒涘缓鍏稿瀷鍔炲叕瀹ゅ満鏅? desk, chair, monitor, keyboard銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
         office_objects = [
@@ -2561,7 +2561,7 @@ class TestLoopyBeliefPropagation:
         return tracker, kg
 
     def test_room_type_posterior_office(self):
-        """Phase 1 测试: 办公室物体 → 房间类型后验应为 office。"""
+        """Phase 1 娴嬭瘯: 鍔炲叕瀹ょ墿浣?鈫?鎴块棿绫诲瀷鍚庨獙搴斾负 office銆?""
         tracker, kg = self._make_office_scene()
         posteriors = tracker.get_room_type_posteriors()
         assert len(posteriors) > 0, "Should have at least one room posterior"
@@ -2572,7 +2572,7 @@ class TestLoopyBeliefPropagation:
                 f"Office confidence too low: {rtp.best_confidence}"
 
     def test_room_type_posterior_kitchen(self):
-        """Phase 1: kitchen 物体 → 房间类型后验为 kitchen。"""
+        """Phase 1: kitchen 鐗╀綋 鈫?鎴块棿绫诲瀷鍚庨獙涓?kitchen銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
         for label, pos in [("refrigerator", [1.0, 1.0, 0.8]),
@@ -2589,7 +2589,7 @@ class TestLoopyBeliefPropagation:
                 f"Expected kitchen, got {rtp.best_type}"
 
     def test_room_type_posterior_corridor(self):
-        """Phase 1: corridor 物体 → 房间类型后验为 corridor。"""
+        """Phase 1: corridor 鐗╀綋 鈫?鎴块棿绫诲瀷鍚庨獙涓?corridor銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
         for label, pos in [("door", [0.0, 5.0, 1.0]),
@@ -2606,7 +2606,7 @@ class TestLoopyBeliefPropagation:
                 f"Expected corridor, got {rtp.best_type}"
 
     def test_kg_prior_injection_expected_object(self):
-        """Phase 2 测试: 在 office 中检测到 desk → is_kg_expected=True, alpha 提升。"""
+        """Phase 2 娴嬭瘯: 鍦?office 涓娴嬪埌 desk 鈫?is_kg_expected=True, alpha 鎻愬崌銆?""
         tracker, kg = self._make_office_scene()
         desk_objs = [o for o in tracker.objects.values() if o.label == "desk"]
         assert len(desk_objs) > 0
@@ -2617,10 +2617,10 @@ class TestLoopyBeliefPropagation:
             f"Expected room_type:office in source, got {desk.kg_prior_source}"
 
     def test_kg_prior_unexpected_penalty(self):
-        """Phase 2: 非期望物体在房间中 → β 增加 (温和怀疑)。"""
+        """Phase 2: 闈炴湡鏈涚墿浣撳湪鎴块棿涓?鈫?尾 澧炲姞 (娓╁拰鎬€鐤?銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
-        # 先创建 office 场景
+        # 鍏堝垱寤?office 鍦烘櫙
         for label, pos in [("desk", [2.0, 3.0, 0.7]),
                            ("chair", [2.5, 3.0, 0.5]),
                            ("computer", [2.0, 2.5, 0.6])]:
@@ -2629,7 +2629,7 @@ class TestLoopyBeliefPropagation:
                 features=np.array([]),
                 bbox_2d=np.array([0, 0, 100, 100]), depth=2.0,
             )])
-        # 在 office 区域检测到不期望的物体
+        # 鍦?office 鍖哄煙妫€娴嬪埌涓嶆湡鏈涚殑鐗╀綋
         tracker.update([self.Detection3D(
             label="forklift", score=0.6, position=np.array([2.2, 3.1, 0.5]),
             features=np.array([]),
@@ -2641,7 +2641,7 @@ class TestLoopyBeliefPropagation:
             assert not fl.is_kg_expected, "forklift should NOT be expected in office"
 
     def test_bp_convergence(self):
-        """Loopy BP 应在 MAX_ITERATIONS 内收敛。"""
+        """Loopy BP 搴斿湪 MAX_ITERATIONS 鍐呮敹鏁涖€?""
         tracker, kg = self._make_office_scene()
         diag = tracker.get_bp_diagnostics()
         assert diag["total_iterations"] > 0, "BP should have run"
@@ -2650,23 +2650,23 @@ class TestLoopyBeliefPropagation:
             assert last_delta < 1.0, f"BP diverging: last delta = {last_delta}"
 
     def test_bp_messages_logged(self):
-        """BP 消息日志应记录传播过程。"""
+        """BP 娑堟伅鏃ュ織搴旇褰曚紶鎾繃绋嬨€?""
         tracker, kg = self._make_office_scene()
         diag = tracker.get_bp_diagnostics()
         assert diag["num_messages_last_round"] >= 0, "Should have BP messages"
 
     def test_lateral_sharing_near_objects(self):
-        """Phase 3: 近距离物体间信念共享。"""
+        """Phase 3: 杩戣窛绂荤墿浣撻棿淇″康鍏变韩銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
-        # 两个近距离物体, 一个高可信度, 一个低可信度
+        # 涓や釜杩戣窛绂荤墿浣? 涓€涓珮鍙俊搴? 涓€涓綆鍙俊搴?
         det_high = self.Detection3D(
             label="desk", score=0.95,
             position=np.array([1.0, 1.0, 0.7]),
             features=np.array([]),
             bbox_2d=np.array([0, 0, 100, 100]), depth=1.0,
         )
-        # 多次检测提升可信度
+        # 澶氭妫€娴嬫彁鍗囧彲淇″害
         for _ in range(5):
             tracker.update([det_high])
 
@@ -2686,11 +2686,11 @@ class TestLoopyBeliefPropagation:
 
 
 class TestPhantomNodes:
-    """Phantom (Blind) Node 推理测试 — 参考 BSG ICRA 2024 blind nodes。"""
+    """Phantom (Blind) Node 鎺ㄧ悊娴嬭瘯 鈥?鍙傝€?BSG ICRA 2024 blind nodes銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import (
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import (
             InstanceTracker, Detection3D, PhantomNode,
         )
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
@@ -2711,7 +2711,7 @@ class TestPhantomNodes:
         return tracker, kg
 
     def test_phantom_generation_office(self):
-        """检测到 desk+chair+computer → phantom 包含 printer, whiteboard 等期望物体。"""
+        """妫€娴嬪埌 desk+chair+computer 鈫?phantom 鍖呭惈 printer, whiteboard 绛夋湡鏈涚墿浣撱€?""
         tracker, _ = self._make_scene([
             ("desk", [2.0, 3.0, 0.7]),
             ("chair", [2.5, 3.0, 0.5]),
@@ -2720,9 +2720,9 @@ class TestPhantomNodes:
         ])
         phantoms = tracker.get_phantom_nodes()
         phantom_labels = {p.label for p in phantoms}
-        # office 场景应预测一些未见但期望存在的物体
+        # office 鍦烘櫙搴旈娴嬩竴浜涙湭瑙佷絾鏈熸湜瀛樺湪鐨勭墿浣?
         assert len(phantoms) >= 0, "May or may not generate phantoms depending on confidence"
-        # 如果生成了, 应包含 office 期望物体
+        # 濡傛灉鐢熸垚浜? 搴斿寘鍚?office 鏈熸湜鐗╀綋
         if phantom_labels:
             possible_office = {"printer", "cabinet", "whiteboard", "lamp", "trash_bin",
                                "plant", "bottle", "cup", "backpack", "water_dispenser"}
@@ -2730,7 +2730,7 @@ class TestPhantomNodes:
                 f"Phantom labels {phantom_labels} should overlap with office expected objects"
 
     def test_phantom_generation_corridor(self):
-        """走廊场景 → phantom 应包含 fire_alarm, emergency_exit 等。"""
+        """璧板粖鍦烘櫙 鈫?phantom 搴斿寘鍚?fire_alarm, emergency_exit 绛夈€?""
         tracker, _ = self._make_scene([
             ("door", [0.0, 5.0, 1.0]),
             ("fire_extinguisher", [0.5, 5.0, 0.5]),
@@ -2743,7 +2743,7 @@ class TestPhantomNodes:
                 f"Corridor phantoms should include safety objects, got {phantom_labels}"
 
     def test_phantom_has_safety_level(self):
-        """Phantom 节点应从 KG 继承安全等级。"""
+        """Phantom 鑺傜偣搴斾粠 KG 缁ф壙瀹夊叏绛夌骇銆?""
         tracker, _ = self._make_scene([
             ("desk", [2.0, 3.0, 0.7]),
             ("chair", [2.5, 3.0, 0.5]),
@@ -2754,7 +2754,7 @@ class TestPhantomNodes:
                 f"Invalid safety level: {phantom.safety_level}"
 
     def test_phantom_existence_prob(self):
-        """Phantom P_exist 应在合理范围 (0, 1)。"""
+        """Phantom P_exist 搴斿湪鍚堢悊鑼冨洿 (0, 1)銆?""
         tracker, _ = self._make_scene([
             ("desk", [2.0, 3.0, 0.7]),
             ("chair", [2.5, 3.0, 0.5]),
@@ -2765,7 +2765,7 @@ class TestPhantomNodes:
                 f"Phantom {phantom.label} P_exist={phantom.existence_prob} out of range"
 
     def test_phantom_source_tracing(self):
-        """Phantom 应有可追溯的来源。"""
+        """Phantom 搴旀湁鍙拷婧殑鏉ユ簮銆?""
         tracker, _ = self._make_scene([
             ("refrigerator", [1.0, 1.0, 0.8]),
             ("microwave", [1.5, 1.0, 1.2]),
@@ -2776,7 +2776,7 @@ class TestPhantomNodes:
                 f"Phantom source should start with 'kg_phantom:', got {phantom.source}"
 
     def test_promote_phantom(self):
-        """Phantom → 实体化: 检测到匹配物体后 phantom 被转化为 TrackedObject。"""
+        """Phantom 鈫?瀹炰綋鍖? 妫€娴嬪埌鍖归厤鐗╀綋鍚?phantom 琚浆鍖栦负 TrackedObject銆?""
         tracker, _ = self._make_scene([
             ("desk", [2.0, 3.0, 0.7]),
             ("chair", [2.5, 3.0, 0.5]),
@@ -2802,11 +2802,11 @@ class TestPhantomNodes:
 
 
 class TestSafetyAwareCredibility:
-    """安全感知差异化阈值测试 — 论文创新点。"""
+    """瀹夊叏鎰熺煡宸紓鍖栭槇鍊兼祴璇?鈥?璁烘枃鍒涙柊鐐广€?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import (
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import (
             TrackedObject, SAFETY_THRESHOLDS_NAVIGATION,
             SAFETY_THRESHOLDS_INTERACTION, SAFETY_PRIOR_ALPHA_SCALE,
         )
@@ -2827,32 +2827,32 @@ class TestSafetyAwareCredibility:
         return obj
 
     def test_safe_thresholds(self):
-        """SAFE 物体: 导航和交互阈值应为最宽松。"""
+        """SAFE 鐗╀綋: 瀵艰埅鍜屼氦浜掗槇鍊煎簲涓烘渶瀹芥澗銆?""
         obj = self._make_obj("chair", "safe")
         assert obj.safety_nav_threshold == 0.25
         assert obj.safety_interact_threshold == 0.40
 
     def test_dangerous_thresholds(self):
-        """DANGEROUS 物体: 导航阈值极低 (一点迹象就避障), 交互阈值极高。"""
+        """DANGEROUS 鐗╀綋: 瀵艰埅闃堝€兼瀬浣?(涓€鐐硅抗璞″氨閬块殰), 浜や簰闃堝€兼瀬楂樸€?""
         obj = self._make_obj("gas_cylinder", "dangerous")
         assert obj.safety_nav_threshold == 0.10
         assert obj.safety_interact_threshold == 0.80
 
     def test_forbidden_thresholds(self):
-        """FORBIDDEN 物体: 几乎零容忍触发导航避障。"""
+        """FORBIDDEN 鐗╀綋: 鍑犱箮闆跺蹇嶈Е鍙戝鑸伩闅溿€?""
         obj = self._make_obj("electrical_panel", "forbidden")
         assert obj.safety_nav_threshold == 0.05
         assert obj.safety_interact_threshold == 0.95
 
     def test_caution_between_safe_and_dangerous(self):
-        """CAUTION 阈值在 SAFE 和 DANGEROUS 之间。"""
+        """CAUTION 闃堝€煎湪 SAFE 鍜?DANGEROUS 涔嬮棿銆?""
         assert self.SAFETY_NAV["caution"] < self.SAFETY_NAV["safe"]
         assert self.SAFETY_NAV["caution"] > self.SAFETY_NAV["dangerous"]
         assert self.SAFETY_INTERACT["caution"] > self.SAFETY_INTERACT["safe"]
         assert self.SAFETY_INTERACT["caution"] < self.SAFETY_INTERACT["dangerous"]
 
     def test_nav_threshold_monotonically_decreasing(self):
-        """导航阈值随危险等级递减 (越危险越敏感)。"""
+        """瀵艰埅闃堝€奸殢鍗遍櫓绛夌骇閫掑噺 (瓒婂嵄闄╄秺鏁忔劅)銆?""
         levels = ["safe", "caution", "dangerous", "forbidden"]
         thresholds = [self.SAFETY_NAV[l] for l in levels]
         for i in range(len(thresholds) - 1):
@@ -2860,7 +2860,7 @@ class TestSafetyAwareCredibility:
                 f"Nav threshold should decrease: {levels[i]}={thresholds[i]} > {levels[i+1]}={thresholds[i+1]}"
 
     def test_interact_threshold_monotonically_increasing(self):
-        """交互阈值随危险等级递增 (越危险越严格)。"""
+        """浜や簰闃堝€奸殢鍗遍櫓绛夌骇閫掑 (瓒婂嵄闄╄秺涓ユ牸)銆?""
         levels = ["safe", "caution", "dangerous", "forbidden"]
         thresholds = [self.SAFETY_INTERACT[l] for l in levels]
         for i in range(len(thresholds) - 1):
@@ -2868,12 +2868,12 @@ class TestSafetyAwareCredibility:
                 f"Interact threshold should increase: {levels[i]}={thresholds[i]} < {levels[i+1]}={thresholds[i+1]}"
 
     def test_protective_bias_alpha(self):
-        """保护性偏见: 危险物体 α 缩放系数 > 安全物体。"""
+        """淇濇姢鎬у亸瑙? 鍗遍櫓鐗╀綋 伪 缂╂斁绯绘暟 > 瀹夊叏鐗╀綋銆?""
         assert self.SAFETY_ALPHA["dangerous"] > self.SAFETY_ALPHA["safe"]
         assert self.SAFETY_ALPHA["forbidden"] > self.SAFETY_ALPHA["dangerous"]
 
     def test_confirmed_for_navigation(self):
-        """低可信度的危险物体也应被导航层视为障碍。"""
+        """浣庡彲淇″害鐨勫嵄闄╃墿浣撲篃搴旇瀵艰埅灞傝涓洪殰纰嶃€?""
         obj = self._make_obj("gas_cylinder", "dangerous")
         obj.credibility = 0.12
         assert obj.is_confirmed_for_navigation, \
@@ -2882,7 +2882,7 @@ class TestSafetyAwareCredibility:
         assert not obj.is_confirmed_for_navigation
 
     def test_not_confirmed_for_interaction(self):
-        """高可信度的危险物体仍需更多确认才允许交互。"""
+        """楂樺彲淇″害鐨勫嵄闄╃墿浣撲粛闇€鏇村纭鎵嶅厑璁镐氦浜掋€?""
         obj = self._make_obj("gas_cylinder", "dangerous")
         obj.credibility = 0.70
         assert not obj.is_confirmed_for_interaction, \
@@ -2892,18 +2892,18 @@ class TestSafetyAwareCredibility:
 
 
 class TestExplorationTargets:
-    """探索目标推荐测试。"""
+    """鎺㈢储鐩爣鎺ㄨ崘娴嬭瘯銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import InstanceTracker, Detection3D
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import InstanceTracker, Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph
 
     def test_exploration_targets_generated(self):
-        """有 phantom 节点时应生成探索目标。"""
+        """鏈?phantom 鑺傜偣鏃跺簲鐢熸垚鎺㈢储鐩爣銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
         for label, pos in [("desk", [2.0, 3.0, 0.7]),
@@ -2922,10 +2922,10 @@ class TestExplorationTargets:
             assert t["type"] in ("explore_room", "confirm_phantom")
 
     def test_dangerous_phantom_prioritized(self):
-        """危险 phantom 应有更高探索优先级。"""
+        """鍗遍櫓 phantom 搴旀湁鏇撮珮鎺㈢储浼樺厛绾с€?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
-        # lab 场景有 gas_cylinder (dangerous) 的 phantom
+        # lab 鍦烘櫙鏈?gas_cylinder (dangerous) 鐨?phantom
         for label, pos in [("desk", [2.0, 3.0, 0.7]),
                            ("cabinet", [2.5, 3.0, 0.5]),
                            ("fire_blanket", [2.0, 2.5, 0.6]),
@@ -2938,7 +2938,7 @@ class TestExplorationTargets:
         targets = tracker.get_exploration_targets()
         phantom_targets = [t for t in targets if t["type"] == "confirm_phantom"]
         if len(phantom_targets) >= 2:
-            # 检查危险物体是否排在前面
+            # 妫€鏌ュ嵄闄╃墿浣撴槸鍚︽帓鍦ㄥ墠闈?
             dangerous_idx = [i for i, t in enumerate(phantom_targets)
                              if t.get("safety_level") in ("dangerous", "forbidden")]
             if dangerous_idx:
@@ -2947,18 +2947,18 @@ class TestExplorationTargets:
 
 
 class TestBPDiagnostics:
-    """BP 诊断信息测试。"""
+    """BP 璇婃柇淇℃伅娴嬭瘯銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import InstanceTracker, Detection3D
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import InstanceTracker, Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph
 
     def test_diagnostics_structure(self):
-        """诊断信息应包含完整字段。"""
+        """璇婃柇淇℃伅搴斿寘鍚畬鏁村瓧娈点€?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
         tracker.update([self.Detection3D(
@@ -2975,7 +2975,7 @@ class TestBPDiagnostics:
         assert "phantom_summary" in diag
 
     def test_scene_graph_v3_fields(self):
-        """场景图 JSON v3.0 应包含 phantom_nodes 和 belief_propagation。"""
+        """鍦烘櫙鍥?JSON v3.0 搴斿寘鍚?phantom_nodes 鍜?belief_propagation銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
         for label, pos in [("desk", [2.0, 3.0, 0.7]),
@@ -2994,7 +2994,7 @@ class TestBPDiagnostics:
         assert isinstance(sg["belief_propagation"], dict)
 
     def test_belief_dict_new_fields(self):
-        """TrackedObject.to_belief_dict 应包含安全阈值和 KG 先验信息。"""
+        """TrackedObject.to_belief_dict 搴斿寘鍚畨鍏ㄩ槇鍊煎拰 KG 鍏堥獙淇℃伅銆?""
         kg = self.KG()
         tracker = self.InstanceTracker(max_objects=100, knowledge_graph=kg)
         for label, pos in [("desk", [2.0, 3.0, 0.7]),
@@ -3014,11 +3014,11 @@ class TestBPDiagnostics:
 
 
 class TestRoomTypePosteriorDataclass:
-    """RoomTypePosterior 数据类测试。"""
+    """RoomTypePosterior 鏁版嵁绫绘祴璇曘€?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import RoomTypePosterior
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import RoomTypePosterior
         self.RoomTypePosterior = RoomTypePosterior
 
     def test_empty_posterior(self):
@@ -3031,12 +3031,12 @@ class TestRoomTypePosteriorDataclass:
         rtp = self.RoomTypePosterior(room_id=0, hypotheses={"office": 0.95, "kitchen": 0.05})
         assert rtp.best_type == "office"
         assert rtp.best_confidence == 0.95
-        assert rtp.entropy < 0.5, "Nearly certain → low entropy"
+        assert rtp.entropy < 0.5, "Nearly certain 鈫?low entropy"
 
     def test_uncertain_posterior(self):
         rtp = self.RoomTypePosterior(room_id=0, hypotheses={
             "office": 0.25, "kitchen": 0.25, "corridor": 0.25, "storage": 0.25})
-        assert rtp.entropy > 1.5, "Uniform → high entropy"
+        assert rtp.entropy > 1.5, "Uniform 鈫?high entropy"
 
     def test_entropy_ordering(self):
         certain = self.RoomTypePosterior(room_id=0, hypotheses={"office": 0.9, "kitchen": 0.1})
@@ -3046,11 +3046,11 @@ class TestRoomTypePosteriorDataclass:
 
 
 class TestPhantomNodeDataclass:
-    """PhantomNode 数据类测试。"""
+    """PhantomNode 鏁版嵁绫绘祴璇曘€?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import PhantomNode
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import PhantomNode
         self.PhantomNode = PhantomNode
 
     def test_phantom_existence_prob(self):
@@ -3073,22 +3073,22 @@ class TestPhantomNodeDataclass:
         assert p.existence_prob > 0.7
 
 
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 #  KG-BELIEF Neuro-Symbolic GCN Tests
 #  - Model architecture, training, synthetic data, integration
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
 class TestBeliefNetwork:
     """KG-BELIEF GCN model tests (requires belief_network module)."""
 
     def setup_method(self):
         pytest.importorskip(
-            "semantic.perception.belief_network",
+            "perception.belief_network",
             reason="belief_network module not available",
         )
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
-        from semantic.perception.belief_network import (
+        from perception.belief_network import (
             _TORCH_AVAILABLE, build_object_vocabulary,
             build_cooccurrence_matrix, build_safety_vector,
             build_affordance_matrix, build_room_prior_vectors,
@@ -3173,7 +3173,7 @@ class TestBeliefNetwork:
         """GCN forward pass should produce valid output shape and range."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from semantic.perception.belief_network import KGBeliefGCN, NUM_AFFORDANCE_TYPES
+        from perception.belief_network import KGBeliefGCN, NUM_AFFORDANCE_TYPES
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         import torch
         kg = IndustrialKnowledgeGraph()
@@ -3193,7 +3193,7 @@ class TestBeliefNetwork:
         """Batched forward pass should handle variable-size graphs (loop over batch)."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from semantic.perception.belief_network import KGBeliefGCN, NUM_AFFORDANCE_TYPES
+        from perception.belief_network import KGBeliefGCN, NUM_AFFORDANCE_TYPES
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         import torch
         kg = IndustrialKnowledgeGraph()
@@ -3228,12 +3228,12 @@ class TestBeliefNetwork:
 
 
 class TestKGDataGeneration:
-    """KG 合成训练数据测试。"""
+    """KG 鍚堟垚璁粌鏁版嵁娴嬭瘯銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
-        from semantic.perception.belief_network import (
+        from perception.belief_network import (
             _TORCH_AVAILABLE, build_object_vocabulary,
             build_cooccurrence_matrix, build_safety_vector,
             build_affordance_matrix, build_room_prior_vectors,
@@ -3250,7 +3250,7 @@ class TestKGDataGeneration:
         """Should generate correct number of scenes."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from semantic.perception.belief_network import KGSceneGraphDataset
+        from perception.belief_network import KGSceneGraphDataset
         kg = self.KG()
         vocab, _ = self.build_vocab(kg)
         ds = KGSceneGraphDataset(
@@ -3267,7 +3267,7 @@ class TestKGDataGeneration:
         """Each sample should have correct feature dimensions."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from semantic.perception.belief_network import KGSceneGraphDataset, NUM_AFFORDANCE_TYPES
+        from perception.belief_network import KGSceneGraphDataset, NUM_AFFORDANCE_TYPES
         kg = self.KG()
         vocab, _ = self.build_vocab(kg)
         C = len(vocab)
@@ -3291,7 +3291,7 @@ class TestKGDataGeneration:
         """Partial histogram should have fewer objects than ground truth."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from semantic.perception.belief_network import KGSceneGraphDataset
+        from perception.belief_network import KGSceneGraphDataset
         kg = self.KG()
         vocab, _ = self.build_vocab(kg)
         ds = KGSceneGraphDataset(
@@ -3302,7 +3302,7 @@ class TestKGDataGeneration:
             self.build_priors(kg, vocab),
             num_scenes=20,
         )
-        # __getitem__ returns {"x", "adj", "target"} — access internal _scenes
+        # __getitem__ returns {"x", "adj", "target"} 鈥?access internal _scenes
         # for the raw partial vs gt histograms
         for i in range(min(20, len(ds))):
             scene = ds._scenes[i]
@@ -3316,7 +3316,7 @@ class TestKGDataGeneration:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         import torch
-        from semantic.perception.belief_network import KGSceneGraphDataset
+        from perception.belief_network import KGSceneGraphDataset
         kg = self.KG()
         vocab, _ = self.build_vocab(kg)
         ds = KGSceneGraphDataset(
@@ -3347,12 +3347,12 @@ class TestKGDataGeneration:
 
 
 class TestBeliefTraining:
-    """训练流程测试 (小规模验证收敛性)。"""
+    """璁粌娴佺▼娴嬭瘯 (灏忚妯￠獙璇佹敹鏁涙€?銆?""
 
     def setup_method(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
-        from semantic.perception.belief_network import _TORCH_AVAILABLE
+        from perception.belief_network import _TORCH_AVAILABLE
         self.KG = IndustrialKnowledgeGraph
         self.torch_ok = _TORCH_AVAILABLE
 
@@ -3361,7 +3361,7 @@ class TestBeliefTraining:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         import torch
-        from semantic.perception.belief_network import (
+        from perception.belief_network import (
             KGBeliefGCN, KGSceneGraphDataset, BeliefTrainer,
             SafetyWeightedBCELoss, build_object_vocabulary,
             build_cooccurrence_matrix, build_safety_vector,
@@ -3395,7 +3395,7 @@ class TestBeliefTraining:
         """Predictor should return per-room dicts of {label: probability}."""
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
-        from semantic.perception.belief_network import BeliefPredictor
+        from perception.belief_network import BeliefPredictor
         kg = self.KG()
         predictor = BeliefPredictor.from_kg(kg)
         # predict_for_room returns dict {label: prob} for a single room
@@ -3413,7 +3413,7 @@ class TestBeliefTraining:
         if not self.torch_ok:
             pytest.skip("PyTorch not available")
         import torch
-        from semantic.perception.belief_network import (
+        from perception.belief_network import (
             SafetyWeightedBCELoss, build_safety_loss_weights,
             build_object_vocabulary,
         )
@@ -3432,7 +3432,7 @@ class TestBeliefTraining:
             if props.get("safety_level") == "dangerous":
                 gt_danger[0, idx] = 1.0
                 break
-        # SafetyWeightedBCELoss.forward takes (pred, target) — no mask arg
+        # SafetyWeightedBCELoss.forward takes (pred, target) 鈥?no mask arg
         loss_safe = criterion(pred, gt_safe)
         loss_danger = criterion(pred, gt_danger)
         # Dangerous miss should have higher loss
@@ -3444,14 +3444,14 @@ class TestModelIntegration:
 
     def setup_method(self):
         pytest.importorskip(
-            "semantic.perception.belief_network",
+            "perception.belief_network",
             reason="belief_network module not available",
         )
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-        from semantic.perception.instance_tracker import InstanceTracker
-        from semantic.perception.projection import Detection3D
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from perception.instance_tracker import InstanceTracker
+        from perception.projection import Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
-        from semantic.perception.belief_network import _TORCH_AVAILABLE
+        from perception.belief_network import _TORCH_AVAILABLE
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
         self.KG = IndustrialKnowledgeGraph

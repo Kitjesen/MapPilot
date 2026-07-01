@@ -22,30 +22,30 @@ Decoupling is not a substitute for algorithm performance. Treat algorithm effici
 
 ## File Structure
 
-- Create `src/core/tests/test_module_boundaries.py`: AST-based regression tests for import boundaries.
-- Create `src/core/same_source_map_artifacts.py`: canonical shared saved-map artifact contract used by `core`, `nav`, and `gateway`.
-- Create `src/core/dynamic_filter.py`: canonical DUFOMap save-time filtering helper used by map save paths.
-- Create `src/core/yaml_helpers.py`: canonical YAML/JSON persistence helper used by diagnostics and nav services.
+- Create `src/runtime/tests/test_module_boundaries.py`: AST-based regression tests for import boundaries.
+- Create `src/runtime/same_source_map_artifacts.py`: canonical shared saved-map artifact contract used by `core`, `nav`, and `gateway`.
+- Create `src/runtime/dynamic_filter.py`: canonical DUFOMap save-time filtering helper used by map save paths.
+- Create `src/runtime/yaml_helpers.py`: canonical YAML/JSON persistence helper used by diagnostics and nav services.
 - Modify `src/nav/services/same_source_map_artifacts.py`: keep a backward-compatible shim for existing imports.
 - Modify `src/nav/services/dynamic_filter.py`: keep a backward-compatible shim for existing imports and monkeypatch paths.
 - Modify `src/nav/services/yaml_helpers.py`: keep a backward-compatible shim for existing imports.
-- Modify `src/nav/global_planner_service.py`: import the shared artifact contract from `core`.
-- Modify `src/nav/services/map_manager_module.py`: import the shared artifact contract from `core`.
+- Modify `src/nav/services/plan/global_planner/service.py`: import the shared artifact contract from `core`.
+- Modify `src/nav/services/maps.py`: import the shared artifact contract from `core`.
 - Modify `src/gateway/routes/maps.py`: remove direct `gateway -> nav` import.
 - Modify `src/gateway/routes/session.py`: remove direct `gateway -> nav` import.
 - Modify `src/gateway/routes/diagnostics.py`: remove lazy direct `gateway -> nav` import.
 - Modify `src/gateway/services/map_safety.py`: consume the dynamic filter helper from `core`.
 - Modify `src/gateway/gateway_module.py`: remove stale lazy `gateway -> nav` dynamic-filter import.
-- Modify `src/core/product_field_check.py`: avoid `core -> nav` dependency for saved-map artifact validation.
-- Modify `src/nav/services/map_manager_module.py`: avoid `nav -> gateway` dynamic-filter helper import.
-- Modify `src/nav/services/task_scheduler_module.py`: import YAML helpers from `core`.
-- Modify `src/nav/services/patrol_manager_module.py`: import YAML helpers from `core`.
-- Modify `src/nav/services/geofence_manager_module.py`: import YAML helpers from `core`.
+- Modify `src/runtime/product_field_check.py`: avoid `core -> nav` dependency for saved-map artifact validation.
+- Modify `src/nav/services/maps.py`: avoid `nav -> gateway` dynamic-filter helper import.
+- Modify `src/nav/services/scheduler.py`: import YAML helpers from `core`.
+- Modify `src/nav/services/patrol.py`: import YAML helpers from `core`.
+- Modify `src/nav/services/geofence.py`: import YAML helpers from `core`.
 
 ## Task 1: Record The Boundary Guard Before Fixing It
 
 **Files:**
-- Create: `src/core/tests/test_module_boundaries.py`
+- Create: `src/runtime/tests/test_module_boundaries.py`
 
 - [x] **Step 1: Write the failing import-boundary test**
 
@@ -103,7 +103,7 @@ def test_gateway_package_does_not_import_domain_layers_directly() -> None:
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_module_boundaries.py -q
+python -m pytest src/runtime/tests/test_module_boundaries.py -q
 ```
 
 Observed: FAIL showing six direct `gateway -> nav` imports across saved-map artifacts, dynamic filtering, and YAML helpers.
@@ -111,32 +111,32 @@ Observed: FAIL showing six direct `gateway -> nav` imports across saved-map arti
 ## Task 2: Move Saved-Map Artifact Contract To Core
 
 **Files:**
-- Create: `src/core/same_source_map_artifacts.py`
-- Create: `src/core/dynamic_filter.py`
-- Create: `src/core/yaml_helpers.py`
+- Create: `src/runtime/same_source_map_artifacts.py`
+- Create: `src/runtime/dynamic_filter.py`
+- Create: `src/runtime/yaml_helpers.py`
 - Modify: `src/nav/services/same_source_map_artifacts.py`
 - Modify: `src/nav/services/dynamic_filter.py`
 - Modify: `src/nav/services/yaml_helpers.py`
-- Modify: `src/nav/global_planner_service.py`
-- Modify: `src/nav/services/map_manager_module.py`
-- Modify: `src/nav/services/task_scheduler_module.py`
-- Modify: `src/nav/services/patrol_manager_module.py`
-- Modify: `src/nav/services/geofence_manager_module.py`
+- Modify: `src/nav/services/plan/global_planner/service.py`
+- Modify: `src/nav/services/maps.py`
+- Modify: `src/nav/services/scheduler.py`
+- Modify: `src/nav/services/patrol.py`
+- Modify: `src/nav/services/geofence.py`
 - Modify: `src/gateway/routes/maps.py`
 - Modify: `src/gateway/routes/session.py`
 - Modify: `src/gateway/routes/diagnostics.py`
 - Modify: `src/gateway/services/map_safety.py`
 - Modify: `src/gateway/gateway_module.py`
-- Modify: `src/core/product_field_check.py`
+- Modify: `src/runtime/product_field_check.py`
 
 - [x] **Step 1: Copy the canonical implementation to core**
 
 Copy the current contents of these nav-local shared helpers to core without changing behavior:
 
 ```text
-src/nav/services/same_source_map_artifacts.py -> src/core/same_source_map_artifacts.py
-src/nav/services/dynamic_filter.py -> src/core/dynamic_filter.py
-src/nav/services/yaml_helpers.py -> src/core/yaml_helpers.py
+src/nav/services/same_source_map_artifacts.py -> src/runtime/same_source_map_artifacts.py
+src/nav/services/dynamic_filter.py -> src/runtime/dynamic_filter.py
+src/nav/services/yaml_helpers.py -> src/runtime/yaml_helpers.py
 ```
 
 - [x] **Step 2: Replace the old nav modules with compatibility shims**
@@ -146,13 +146,13 @@ Use these implementations:
 ```python
 """Compatibility shim for saved-map artifact helpers.
 
-The canonical implementation lives in core.same_source_map_artifacts so shared
+The canonical implementation lives in runtime.same_source_map_artifacts so shared
 contracts can be used by gateway, nav, and core without cross-layer imports.
 """
 
 import sys as _sys
 
-from core import same_source_map_artifacts as _impl
+from runtime import same_source_map_artifacts as _impl
 
 _sys.modules[__name__] = _impl
 ```
@@ -162,7 +162,7 @@ _sys.modules[__name__] = _impl
 
 import sys as _sys
 
-from core import dynamic_filter as _impl
+from runtime import dynamic_filter as _impl
 
 _sys.modules[__name__] = _impl
 ```
@@ -172,7 +172,7 @@ _sys.modules[__name__] = _impl
 
 import sys as _sys
 
-from core import yaml_helpers as _impl
+from runtime import yaml_helpers as _impl
 
 _sys.modules[__name__] = _impl
 ```
@@ -188,17 +188,17 @@ from nav.services.nav_services.same_source_map_artifacts import ...
 with:
 
 ```python
-from core.same_source_map_artifacts import ...
+from runtime.same_source_map_artifacts import ...
 ```
 
-in production code. Also replace `gateway -> nav` dynamic-filter and YAML helper imports with `core.dynamic_filter` and `core.yaml_helpers`. The old import paths remain available for compatibility tests and downstream code.
+in production code. Also replace `gateway -> nav` dynamic-filter and YAML helper imports with `runtime.dynamic_filter` and `runtime.yaml_helpers`. The old import paths remain available for compatibility tests and downstream code.
 
 - [x] **Step 4: Verify the boundary test passes**
 
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_module_boundaries.py -q
+python -m pytest src/runtime/tests/test_module_boundaries.py -q
 ```
 
 Observed: PASS.
@@ -206,15 +206,15 @@ Observed: PASS.
 ## Task 3: Verify Saved-Map Behavior Stayed Compatible
 
 **Files:**
-- Test: `src/core/tests/test_saved_map_artifact_gate.py`
-- Test: `src/core/tests/test_mujoco_mid360_pattern.py`
+- Test: `src/runtime/tests/test_saved_map_artifact_gate.py`
+- Test: `src/runtime/tests/test_mujoco_mid360_pattern.py`
 
 - [x] **Step 1: Run focused artifact tests**
 
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_saved_map_artifact_gate.py src/core/tests/test_mujoco_mid360_pattern.py::test_fastlio_live_gate_writes_same_source_map_artifacts -q
+python -m pytest src/runtime/tests/test_saved_map_artifact_gate.py src/runtime/tests/test_mujoco_mid360_pattern.py::test_fastlio_live_gate_writes_same_source_map_artifacts -q
 ```
 
 Observed: PASS as part of the focused 63-test command.
@@ -224,7 +224,7 @@ Observed: PASS as part of the focused 63-test command.
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_nav_services.py -q
+python -m pytest src/runtime/tests/test_nav_services.py -q
 ```
 
 Observed: PASS.
@@ -232,9 +232,9 @@ Observed: PASS.
 ## Task 4: Extract Navigation ROS 2 Publishing Into A Bridge Surface
 
 **Files:**
-- Modify: `src/nav/navigation_module.py`
+- Modify: `src/nav/mission/navigation_module.py`
 - Create or modify: a bridge/native module under the existing ROS 2 bridge pattern
-- Test: `src/core/tests/test_module_boundaries.py`
+- Test: `src/runtime/tests/test_module_boundaries.py`
 
 - [ ] **Step 1: Extend the boundary test with a normal-Module ROS 2 import rule**
 
@@ -245,10 +245,10 @@ Add an AST test that flags direct `rclpy` imports and ROS 2 publisher creation i
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_module_boundaries.py -q
+python -m pytest src/runtime/tests/test_module_boundaries.py -q
 ```
 
-Expected: FAIL for `src/nav/navigation_module.py`.
+Expected: FAIL for `src/nav/mission/navigation_module.py`.
 
 - [ ] **Step 3: Move optional waypoint publishing behind a bridge/native adapter**
 
@@ -259,7 +259,7 @@ Keep `NavigationModule` publishing typed Module outputs. Let the bridge/native a
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_module_boundaries.py src/core/tests/test_nav_services.py -q
+python -m pytest src/runtime/tests/test_module_boundaries.py src/runtime/tests/test_nav_services.py -q
 ```
 
 Expected: PASS.
@@ -324,7 +324,7 @@ Expected: exits 0 and reports real planner metrics, not static sleeps.
 ## Task 7: Add Navigation Chain Efficiency Evidence
 
 **Files:**
-- Modify or create: existing navigation simulation artifact writer under `sim/scripts/` or `src/core/tests/`
+- Modify or create: existing navigation simulation artifact writer under `sim/scripts/` or `src/runtime/tests/`
 - Test: focused navigation-chain simulation or artifact unit test
 
 - [ ] **Step 1: Add chain-level algorithm telemetry**
@@ -341,12 +341,12 @@ Record these fields in navigation-chain evidence:
     "path_length_m": 0.0
   },
   "local_planner": {
-    "backend": "nav_core",
+    "backend": "nav_kernel",
     "latency_ms": 0.0,
     "trajectory_count": 0
   },
   "path_follower": {
-    "backend": "nav_core",
+    "backend": "nav_kernel",
     "direct_track_fallback": false,
     "cmd_rate_hz": 0.0
   },
@@ -364,8 +364,8 @@ Run the focused simulation or artifact test and assert:
 selected_planner=pct
 fallback_used=false
 direct_goal_fallback.used=false
-local_planner.backend=nav_core
-path_follower.backend=nav_core
+local_planner.backend=nav_kernel
+path_follower.backend=nav_kernel
 direct_track_fallback=false
 cmd_vel_mux.active_source=path_follower
 ```
@@ -376,4 +376,4 @@ Expected: PASS with a fresh structured artifact.
 
 - Spec coverage: The plan covers the multi-agent findings: import-boundary leaks, navigation ROS 2 leakage, simulation evidence freshness, and benchmark credibility.
 - Placeholder scan: No task uses `TBD`, `TODO`, or open-ended placeholder instructions.
-- Type consistency: The new shared module name is consistently `core.same_source_map_artifacts`, with the old `nav.services.nav_services.same_source_map_artifacts` retained only as a compatibility shim.
+- Type consistency: The new shared module name is consistently `runtime.same_source_map_artifacts`, with the old `nav.services.nav_services.same_source_map_artifacts` retained only as a compatibility shim.

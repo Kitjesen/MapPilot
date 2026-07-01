@@ -58,7 +58,7 @@ $$\alpha = \min\left(0.5,\ \alpha_{\text{base}} \cdot \text{clamp}\left(\frac{s_
 
 $$\mathbf{f}_i \leftarrow \frac{(1 - \alpha)\mathbf{f}_i + \alpha\mathbf{f}_{\text{new}}}{\|(1 - \alpha)\mathbf{f}_i + \alpha\mathbf{f}_{\text{new}}\|}$$
 
-where $\alpha_{\text{base}} = 0.3$, $s_{\text{ref}} = 0.8$, and $s_i$ is the object's best detection score. The quality factor $s_i / s_{\text{ref}}$ increases the learning rate for high-confidence detections and decreases it for uncertain ones, producing more stable CLIP features over time.
+where $\alpha_{\text{base}} = 0.3$, $s_{\text{ref}} = 0.8$, and $s_i$ is the object's best detection sruntime. The quality factor $s_i / s_{\text{ref}}$ increases the learning rate for high-confidence detections and decreases it for uncertain ones, producing more stable CLIP features over time.
 
 ### 3.2.4 Region Clustering and Room Inference
 
@@ -252,7 +252,7 @@ $$s_{\text{nov}}(f_j) = \min\left(1,\ \frac{\min_m d(f_j, \mathbf{p}_m^{\text{vi
 
 4. **Scene graph context** ($w_4 = 0.3$): Subgraph-to-frontier interpolation using distance-weighted subgraph scores:
 $$s_{\text{sg}}(f_j) = \frac{\sum_{g \in \mathcal{S}} \exp(-d(f_j, g) / \lambda) \cdot s_g}{\sum_{g \in \mathcal{S}} \exp(-d(f_j, g) / \lambda)}, \quad \lambda = 4.0\text{m}$$
-where $\mathcal{S}$ is the set of scored subgraphs and $s_g$ is each subgraph's relevance score.
+where $\mathcal{S}$ is the set of scored subgraphs and $s_g$ is each subgraph's relevance sruntime.
 
 5. **Vision score** ($w_5$, default 0.0, auto-enabled to 0.15):
 $$s_{\text{vis}}(f_j) = \text{CLIP}_{\text{sim}}(I,\ \mathbf{f}_{\theta(f_j)}^{\text{img}})$$

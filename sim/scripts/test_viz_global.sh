@@ -53,7 +53,7 @@ fi
 echo "[2/6] Starting terrain_analysis..."
 ros2 run terrain_analysis terrainAnalysis \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cloud_map:=/livox/lidar \
     -r /terrain_map:=/nav/terrain_map \
     -p scanVoxelSize:=0.1 \
@@ -98,7 +98,7 @@ echo "[4/6] Starting pct_path_adapter..."
 ros2 run pct_adapters pct_path_adapter \
     --ros-args \
     -r /pct_path:=/nav/global_path \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /planner_waypoint:=/nav/way_point \
     -p waypoint_distance:=1.5 \
     -p arrival_threshold:=0.8 \
@@ -113,7 +113,7 @@ echo "[5/6] Starting localPlanner..."
 PATHS_DIR=/home/sunrise/data/SLAM/navigation/install/local_planner/share/local_planner/paths
 ros2 run local_planner localPlanner \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cloud_map:=/livox/lidar \
     -r /terrain_map:=/nav/terrain_map \
     -r /way_point:=/nav/way_point \
@@ -133,7 +133,7 @@ sleep 1
 echo "[6/6] Starting pathFollower..."
 ros2 run local_planner pathFollower \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cmd_vel:=/nav/cmd_vel \
     -p autonomyMode:=true \
     -p autonomySpeed:=1.0 \

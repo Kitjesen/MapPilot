@@ -1,4 +1,4 @@
-[Unit]
+﻿[Unit]
 Description=Thunder ICP Localizer
 After=slam.service
 Wants=slam.service
@@ -21,13 +21,14 @@ ExecStart=/bin/bash -c '\
     -p initial_y:=0.0 \
     -p initial_z:=0.0 \
     -p initial_yaw:=0.0 \
-    -r /cloud_registered:=/nav/registered_cloud \
-    -r /Odometry:=/nav/odometry \
-    -r map_cloud:=/nav/saved_map_cloud \
-    -r /localization_quality:=/nav/localization_quality \
-    -r relocalize:=/nav/relocalize \
-    -r relocalize_check:=/nav/relocalize_check \
-    -r global_relocalize:=/nav/global_relocalize'
+    -r /cloud_registered:=/slam/registered_cloud \
+    -r /Odometry:=/slam/odometry \
+    -r map_cloud:=/slam/saved_map_cloud \
+    -r /localization_quality:=/slam/localization_quality \
+    -r relocalize:=/slam/relocalize \
+    -r relocalize_check:=/slam/relocalize_check \
+    -r global_relocalize:=/slam/global_relocalize \
+    -r global_relocalize_status:=/slam/global_relocalize_status'
 Restart=on-failure
 RestartSec=3
 MemoryMax=3G

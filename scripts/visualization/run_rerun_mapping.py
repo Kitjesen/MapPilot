@@ -7,14 +7,14 @@ import sys
 import time
 
 sys.path.insert(0, "src")
-for path in ("src/semantic/perception", "src/semantic/planner", "src/semantic/common"):
+for path in ("src/perception", "src/decision"):
     if os.path.isdir(path):
         sys.path.insert(0, path)
 
 logging.basicConfig(level=logging.WARNING)
 
 import rerun as rr
-from core.blueprints.profile_builder import blueprint_for_resolved_profile
+from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 
 rr.init("lingtu_mapping")
 server_uri = rr.serve_grpc(grpc_port=9877)

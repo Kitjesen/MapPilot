@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from core.msgs.scene import (
+from runtime.msgs.scene import (
     BELIEF_LATERAL_SHARE,
     BP_CONVERGENCE_EPS,
     BP_KG_PRIOR_BOOST,
@@ -38,7 +38,7 @@ from core.msgs.scene import (
 )
 
 if TYPE_CHECKING:
-    from core.msgs.scene import Region
+    from runtime.msgs.scene import Region
 
 logger = logging.getLogger(__name__)
 

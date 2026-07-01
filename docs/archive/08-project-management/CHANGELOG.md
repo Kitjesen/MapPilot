@@ -45,7 +45,7 @@ All notable changes to LingTu. Format inspired by [Keep a Changelog](https://kee
 
 ## 2026-03 — Module-First architecture
 
-- Composable factory pattern under `src/core/blueprints/stacks/`: `driver`, `slam`, `maps`, `perception`, `memory`, `planner`, `navigation`, `safety`, `gateway`, plus auxiliary `lidar`, `sim_lidar`, `exploration` factories.
+- Composable factory pattern under `src/runtime/blueprints/stacks/`: `driver`, `slam`, `maps`, `perception`, `memory`, `planner`, `navigation`, `safety`, `gateway`, plus auxiliary `lidar`, `sim_lidar`, `exploration` factories.
 - Plugin Registry across SLAM (`fastlio2`, `pointlio`, `localizer`, `bridge`), Detector (`yoloe`, `yolo_world`, `bpu`, `grounding_dino`), Encoder (`clip`, `mobileclip`), LLM (`kimi`, `openai`, `claude`, `qwen`, `mock`), Planner (`astar`, `pct`), PathFollower (`nav_core`, `pure_pursuit`, `pid`).
 - Per-wire transport: `callback`, `dds`, `shm`. Five backpressure policies on `Out` ports.
 

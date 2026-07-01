@@ -45,19 +45,19 @@ LingTu already has the right basic shape:
    - Inputs: route path, tomogram/costmap, robot radius, inflation margin, route metadata.
    - Outputs: `ok`, `max_cost`, `blocked_sample_count`, `min_clearance_m`, `blocked_samples`, `repair_required`.
    - Use it in `large_terrain_nav_validation.py`, `native_pct_mujoco_gate.py`, and runtime planner dispatch.
-   - Current status: `src/nav/plan_safety.py` now owns shared grid/path sampling,
+   - Current status: `src/nav/services/safety/plan_safety.py` now owns shared grid/path sampling,
      tomogram/backend axis handling, and path safety reports. Simulation gates
      and `GlobalPlannerService` use this shared contract.
 
-2. Add PCT fallback policy for unsafe plans.
-   - `pct_strict`: fail if PCT is unsafe.
-   - `pct_with_astar_fallback`: run PCT first, validate, then fallback to A* if unsafe.
+2. Reject unsafe global plans instead of downgrading planners.
+   - `pct_strict`: fail if explicit PCT output is unsafe.
+   - `octoplanner3d_strict`: fail if OctoPlanner3D output is unsafe.
    - Report fields: `selected_planner`, `fallback_reason`, `rejected_plans`.
    - Current status: `GlobalPlannerService` supports explicit
-     `plan_safety_policy`: `off`, `observe`, `reject`, and `fallback_astar`.
-     `NavigationModule` exposes the policy. Real PCT profiles use
-     `fallback_astar`, so unsafe PCT output is rejected and replanned through
-     A* on the latest live map instead of silently passing through.
+     `plan_safety_policy`: `off`, `observe`, and `reject`.
+     `NavigationModule` exposes the policy. Product profiles use `reject`, so
+     unsafe output is rejected instead of silently switching to another global
+     planner.
 
 3. Upgrade the native local planner gate.
    - Count `/path` updates, near-field estop events, slowdown events, local path min clearance, and local path-to-global progress.

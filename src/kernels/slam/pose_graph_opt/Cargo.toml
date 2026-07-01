@@ -1,0 +1,16 @@
+[package]
+name = "lingtu_pose_graph_opt"
+version = "0.1.0"
+edition = "2021"
+description = "Portable LingTu pose graph optimization kernel"
+license = "Proprietary"
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[features]
+default = []
+
+[dependencies]
+faer = "0.24"
+nalgebra = "0.34"

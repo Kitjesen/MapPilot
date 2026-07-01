@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Run LingTu against an external CMU Unity/TARE ROS graph.
 
 This is a simulation-only entry point. It does not start hardware drivers,
@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
-import signal
 import sys
-import threading
 from pathlib import Path
 
 
@@ -21,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TOMOGRAM = (
     ROOT
     / "src"
-    / "global_planning"
+    / "nav"
+    / "planning"
+    / "vendor"
     / "pct_planner"
     / "rsc"
     / "tomogram"
@@ -226,100 +226,12 @@ def main() -> int:
     sys.path.insert(0, str(ROOT / "src"))
     sys.path.insert(0, str(ROOT))
 
-    from core.blueprints.profile_builder import build_system_for_profile
-
-    system = build_system_for_profile("sim_cmu_tare", dict(
-        robot="sim_ros2",
-        # CMU Unity already enters LingTu through ROS2SimDriverModule via the
-        # adapter's /nav/* topics. Do not add SlamBridgeModule here: its
-        # default /nav/map_cloud expectation marks localization degraded in
-        # this external simulation graph.
-        slam_profile="none",
-        detector="yoloe",
-        encoder="mobileclip",
-        llm="mock",
-        planner=args.planner,
-        tomogram=tomogram,
-        plan_safety_policy=args.plan_safety_policy,
-        fallback_planner_name="astar",
-        safe_goal_tolerance=args.safe_goal_tolerance,
-        waypoint_threshold=args.waypoint_threshold,
-        final_waypoint_threshold=args.final_waypoint_threshold,
-        stuck_timeout=args.stuck_timeout,
-        stuck_dist_thre=args.stuck_dist_thre,
-        downsample_dist=args.downsample_dist,
-        # In external TARE mode, CMU's planner is the exploration waypoint
-        # source. LingTu still tries to plan through its own map first, but a
-        # temporary map/tomogram mismatch must not kill the exploration loop.
-        allow_direct_goal_fallback=not args.disable_direct_goal_fallback,
-        direct_goal_fallback_on_planner_failure=not args.disable_direct_goal_fallback,
-        accept_partial_goal_progress=(
-            False if args.enable_frontier else not args.disable_partial_goal_progress
-        ),
-        external_strategy_start_tolerance_m=args.tare_path_start_tolerance,
-        external_strategy_path_control=(
-            False if args.enable_frontier else not args.disable_external_strategy_path_control
-        ),
-        # CMU Unity's rendered terrain can produce local-planner gaps near
-        # repaired exploration subgoals. In this simulation-only profile the
-        # path follower may track the already safety-checked global segment
-        # directly when the nanobind local planner cannot produce a corridor.
-        local_planner_allow_direct_track_fallback=True,
-        local_planner_ignore_near_field_stop=True,
-        local_planner_direct_track_fallback_min_distance_m=0.3,
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=True,
-        enable_teleop=False,
-        enable_map_modules=True,
-        enable_ros2_bridge=True,
-        enable_ros2_path_bridge=True,
-        path_follower_goal_tolerance=args.path_follower_goal_tolerance,
-        enable_frontier=args.enable_frontier,
-        frontier_min_size=args.frontier_min_size,
-        frontier_safe_distance=args.frontier_safe_distance,
-        frontier_lookahead=args.frontier_lookahead,
-        frontier_max_dist=args.frontier_max_dist,
-        frontier_rate=args.frontier_rate,
-        frontier_goal_timeout=args.frontier_goal_timeout,
-        frontier_info_gain=args.frontier_info_gain,
-        exploration_backend="none" if args.enable_frontier else "tare_external",
-        exploration_auto_start=(
-            False if args.enable_frontier else not args.no_exploration_auto_start
-        ),
-        prefer_path_strategy=(
-            False if args.enable_frontier else not args.disable_tare_path_strategy
-        ),
-        path_start_tolerance_m=args.tare_path_start_tolerance,
-        path_goal_min_distance_m=args.tare_path_goal_min_distance,
-        path_goal_spacing_m=args.tare_path_goal_spacing,
-        tare_fallback_timeout_s=180.0,
-        manage_external_services=False,
-        run_startup_checks=False,
-        planning_frame_id="map",
-        latch_stop_signal=False,
-        safety_stop_wiring=False,
-        gateway_port=args.gateway_port,
-    ))
-
-    stopped = threading.Event()
-
-    def _stop(_signum=None, _frame=None) -> None:
-        stopped.set()
-
-    signal.signal(signal.SIGINT, _stop)
-    signal.signal(signal.SIGTERM, _stop)
-
     print(
-        "Starting LingTu CMU Unity simulation stack: "
-        f"ROS_DOMAIN_ID={domain}, planner={args.planner}, tomogram={tomogram}"
+        "CMU Unity ROS endpoint runtime was removed: "
+        f"ROS_DOMAIN_ID={domain}, planner={args.planner}, tomogram={tomogram}. "
+        "Use the native simulation stack."
     )
-    system.start()
-    try:
-        stopped.wait()
-    finally:
-        system.stop()
-    return 0
+    return 2
 
 
 if __name__ == "__main__":

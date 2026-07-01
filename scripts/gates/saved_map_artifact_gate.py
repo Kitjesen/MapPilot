@@ -38,10 +38,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(argv or sys.argv[1:]))
     _ensure_import_path()
 
-    from core.same_source_map_artifacts import (
+    from runtime.same_source_map_artifacts import (
         validate_saved_map_artifact_dir,
     )
-    from core.runtime_validation_gates import runtime_validation_gates
+    from runtime.runtime_validation_gates import runtime_validation_gates
     from cli.runtime_display import format_saved_map_artifact_gate_payload
 
     payload = validate_saved_map_artifact_dir(

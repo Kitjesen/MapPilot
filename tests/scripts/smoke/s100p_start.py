@@ -3,13 +3,13 @@
 #   python tests/scripts/smoke/s100p_start.py
 import sys, os, time
 sys.path.insert(0, "src")
-for d in ["src/semantic/perception", "src/semantic/planner", "src/semantic/common"]:
+for d in ["src/perception", "src/decision"]:
     if os.path.isdir(d):
         sys.path.insert(0, d)
 import logging
 logging.basicConfig(level=logging.WARNING)
 
-from core.blueprints.profile_builder import blueprint_for_resolved_profile
+from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 
 bp = blueprint_for_resolved_profile("dev", dict(
     robot="sim_ros2", slam_profile="bridge",

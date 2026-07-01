@@ -3,7 +3,7 @@
 #   python tests/scripts/smoke/mcp_full.py
 import sys, os, json, time, urllib.request
 sys.path.insert(0, "src")
-for d in ["src/semantic/perception", "src/semantic/planner", "src/semantic/common"]:
+for d in ["src/perception", "src/decision"]:
     if os.path.isdir(d):
         sys.path.insert(0, d)
 import logging
@@ -25,7 +25,7 @@ def mcp_call(method, params=None):
 
 
 # Build and start
-from core.blueprints.profile_builder import blueprint_for_resolved_profile
+from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 
 bp = blueprint_for_resolved_profile("dev", dict(
     robot="sim_ros2", slam_profile="bridge",
@@ -41,7 +41,7 @@ T("connections", len(system.connections) > 30, "%d connections" % len(system.con
 
 # Check key modules alive
 print("\n=== Module Status ===")
-for name in ["SlamBridgeModule", "CameraBridgeModule", "NavigationModule",
+for name in ["SlamBridgeModule", "CameraBridgeModule", "nav.mission",
              "SemanticPlannerModule", "GatewayModule", "MCPServerModule",
              "TeleopModule", "VectorMemoryModule", "SemanticMapperModule",
              "VisualServoModule", "DetectorModule"]:

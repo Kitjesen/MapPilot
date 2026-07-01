@@ -37,7 +37,7 @@ def test_pct_runtime_preflight_reports_host_and_abi_blockers(monkeypatch):
             "missing": ["a_star.cpython-313-x86_64-linux-gnu.so"],
             "shared_missing": ["libmetis-gtsam.so"],
             "recommended_build_command": (
-                "bash src/global_planning/pct_planner_runnable/build_host_x86_64.sh"
+                "bash src/nav/services/plan/global_planner/algorithm/pct/runtime/build_legacy_native_x86_64.sh"
             ),
             "error": "No runnable PCT native modules",
         },
@@ -65,7 +65,7 @@ def test_pct_runtime_preflight_reports_host_and_abi_blockers(monkeypatch):
         "ROS_DOMAIN_ID": "44",
     }
     assert report["claim_boundary"] == "environment_blocked_no_algorithm_claim"
-    assert any("build_host_x86_64.sh" in item for item in report["recommended_setup_commands"])
+    assert any("build_legacy_native_x86_64.sh" in item for item in report["recommended_setup_commands"])
 
 
 def test_pct_runtime_preflight_cli_writes_json_without_importing_numpy(tmp_path: Path):

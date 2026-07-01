@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Simulation helper: mirror filtered Gazebo obstacle clouds into terrain topics.
 
-Gazebo supplies a z/range-filtered /nav/map_cloud through the runtime adapter.
+Gazebo supplies a z/range-filtered /slam/map_cloud through the runtime adapter.
 The legacy ROS localPlanner also waits for /nav/terrain_map and
 /nav/terrain_map_ext, which sim_robot_node normally publishes. This node is
 only for Gazebo navigation gates where sim_robot_node is disabled so Gazebo
@@ -29,7 +29,7 @@ def main() -> int:
         terrain_pub.publish(msg)
         terrain_ext_pub.publish(msg)
 
-    node.create_subscription(PointCloud2, "/nav/map_cloud", on_cloud, 10)
+    node.create_subscription(PointCloud2, "/slam/map_cloud", on_cloud, 10)
     try:
         rclpy.spin(node)
     finally:

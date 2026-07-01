@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from core.runtime_interface import map_frame_id
+from runtime.runtime_interface import map_frame_id
 
 
 TELEMETRY_MAP_FRAME_ID = map_frame_id()

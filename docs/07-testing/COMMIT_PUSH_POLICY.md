@@ -29,7 +29,7 @@ A commit is acceptable only when all of these are true:
 Minimum local check before committing:
 
 ```bash
-python -m pytest src/core/tests/ -q
+python -m pytest src/runtime/tests/ -q
 ```
 
 Use a narrower focused suite first while iterating, then run the broader suite
@@ -53,12 +53,12 @@ Recommended Gateway/App/Web push check:
 
 ```bash
 python -m pytest \
-  src/core/tests/test_gateway_app_bootstrap.py \
-  src/core/tests/test_gateway_route_split.py \
-  src/core/tests/test_gateway_telemetry_contract.py \
-  src/core/tests/test_gateway_state_snapshot.py \
-  src/core/tests/test_gateway_runtime_status.py \
-  src/core/tests/test_gateway_readiness.py \
+  src/runtime/tests/test_gateway_app_bootstrap.py \
+  src/runtime/tests/test_gateway_route_split.py \
+  src/runtime/tests/test_gateway_telemetry_contract.py \
+  src/runtime/tests/test_gateway_state_snapshot.py \
+  src/runtime/tests/test_gateway_runtime_status.py \
+  src/runtime/tests/test_gateway_readiness.py \
   -q
 ```
 

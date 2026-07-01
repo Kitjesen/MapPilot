@@ -37,14 +37,14 @@ echo ""
 # Topic list — grouped by concern
 TOPICS=(
   # --- SLAM input ---
-  /nav/lidar_scan          # Livox CustomMsg (needs livox_ros_driver2 sourced)
-  /nav/imu
+  /lidar/raw_frame          # Livox CustomMsg (needs livox_ros_driver2 sourced)
+  /imu/raw
   # --- SLAM output ---
-  /nav/odometry
-  /nav/map_cloud
-  /nav/registered_cloud
-  /nav/localization_quality
-  /nav/localization_health
+  /slam/odometry
+  /slam/map_cloud
+  /slam/registered_cloud
+  /slam/localization_quality
+  /slam/localization_health
   # --- planning & control ---
   /nav/goal_pose
   /nav/cmd_vel

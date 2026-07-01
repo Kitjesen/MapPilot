@@ -1,7 +1,7 @@
 [Unit]
 Description=LingTu Navigation System (release-mode)
 Documentation=https://github.com/Kitjesen/MapPilot
-# Depend on the SLAM + camera services that publish /nav/odometry and
+# Depend on the SLAM + camera services that publish /slam/odometry and
 # /camera/* topics. The brainstem controller is coordinated by lingtu.target;
 # lingtu.service can still be restarted by itself for algorithm-layer updates.
 After=robot-fastlio2.service robot-localizer.service robot-camera.service network.target

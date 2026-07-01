@@ -18,7 +18,7 @@ if str(SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from global_planning.pct_planner_runnable.runtime import inspect_pct_runtime
+from nav.services.plan.global_planner.algorithm.pct.runtime.api import inspect_pct_runtime
 
 
 def _python_tag() -> str:

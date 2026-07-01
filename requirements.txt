@@ -1,20 +1,32 @@
-# LingTu full/legacy runtime dependencies (Thunder aarch64).
-# For the no-ROS Thunder Lite runtime, use requirements-lite.txt.
+# LingTu full/legacy runtime dependencies (Thunder aarch64 / monolithic dev).
+# This file is intentionally NOT the portable default install target.
+#
+# Portable installs should use:
+#   pip install -r requirements-core-portable.txt        # Windows/Ubuntu core
+#   pip install -r requirements-sim-mujoco.txt          # portable_mujoco sim
+#   pip install -e '.[sim-mujoco]'                      # pyproject extra form
+#
+# For the existing no-ROS Thunder Lite runtime, requirements-lite.txt currently
+# mirrors requirements-core-portable.txt.
 #
 # NOTE: numpy limited to <2.0 for ele_planner.so compatibility (requires numpy 1.x)
 #
 # Optional extras (pip install lingtu[<group>]):
-#   lite     - empty extra for the minimal local Thunder runtime
-#   gateway  - fastapi, uvicorn, websockets - REST/SSE/WS Gateway
-#   vision   - opencv-python-headless  - camera/image processing
-#   ml       - scikit-learn            - DBSCAN clustering room segmentation
-#   llm      - openai, anthropic       - LLM clients (Kimi, OpenAI, Claude)
-#   nlp      - jieba                   - Chinese tokenizer for semantic planner
-#   agent    - langchain               - LangChain tool conversion for Agent loop
-#   perception - torch, ultralytics, open-clip-torch - YOLO/CLIP on-device
-#   vector   - chromadb                - Vector memory for semantic search
-#   thunder  - brainstem-api           - gRPC contract for real S100P robot
-#   dev      - pytest, ruff, mypy      - Development tooling
+#   core-portable / portable / lite - marker extras for minimal runtime
+#   sim-mujoco      - mujoco desktop simulation feature
+#   endpoint-lcm    - optional LCM endpoint transport
+#   gateway         - fastapi, uvicorn, websockets - REST/SSE/WS Gateway
+#   vision          - opencv-python-headless - camera/image processing
+#   ml              - scikit-learn - DBSCAN clustering room segmentation
+#   llm             - openai, anthropic - LLM clients (Kimi, OpenAI, Claude)
+#   nlp             - jieba - Chinese tokenizer for semantic planner
+#   agent           - langchain - LangChain tool conversion for Agent loop
+#   perception      - torch, ultralytics, open-clip-torch - YOLO/CLIP on-device
+#   vector          - chromadb - Vector memory for semantic search
+#   thunder / robot-thunder - brainstem-api for real Thunder/S100P robot
+#   ros-compat      - marker extra; ROS2 system packages are installed separately
+#   slam-native     - marker extra; native sidecars/C-ABI packaging is separate
+#   dev             - pytest, ruff, mypy - Development tooling
 #
 # Quick install all extras:
 #   pip install -e '.[all]'

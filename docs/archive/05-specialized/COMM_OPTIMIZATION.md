@@ -135,5 +135,5 @@ verifying iceoryx-rt is running.
 | `config/cyclonedds.xml` | Active runtime config, sourced by `lingtu.service` |
 | `config/fastdds_no_shm.xml` | Fast-DDS fallback (no shared memory) |
 | `config/qos_profiles.yaml` | Per-channel QoS that the C++ nodes load |
-| `src/core/dds.py` | Python-side cyclonedds bindings used by `nova_nav_bridge.py` |
+| `src/runtime/dds.py` | Python-side cyclonedds bindings used by `nova_nav_bridge.py` |
 | `src/gateway/gateway_module.py` | Re-publishes a subset over WS/SSE for the web UI |

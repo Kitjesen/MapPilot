@@ -3,36 +3,36 @@ name: SLAM aarch64 Build Verification
 # Why aarch64-native?
 #
 # S100P deploys aarch64 ROS2 Humble exclusively (RDK X5, 128 TOPS BPU). All C++
-# changes in src/slam/{fastlio2,pgo,localizer} target this platform. Until
+# changes in src/localization/{fastlio2,pgo,localizer} target this platform. Until
 # Jan 2025 GitHub-hosted aarch64 runners did not exist for public OSS, so the
-# only verification was first colcon build on the robot â€” which is too late.
+# only verification was first colcon build on the robot â€?which is too late.
 # This workflow runs the same colcon build path on a native arm64 GitHub
 # runner so any include/template/symbol error surfaces in the PR, not in the
 # field. We pin the path-trigger list so x86-only changes (Python framework,
 # docs, tools) do not pay the ~12-18 min build cost.
 #
-# Reference: GitHub arm64 hosted runners GA â€” Jan 2025.
+# Reference: GitHub arm64 hosted runners GA â€?Jan 2025.
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - 'src/slam/**'
-      - 'src/nav/core/**'
-      - 'src/global_planning/**'
+      - 'src/localization/**'
+      - 'src/nav/kernel/**'
+      - 'src/nav/planning/**'
       - '.github/workflows/slam-aarch64-build.yml'
   push:
     branches: [main]
     paths:
-      - 'src/slam/**'
-      - 'src/nav/core/**'
-      - 'src/global_planning/**'
+      - 'src/localization/**'
+      - 'src/nav/kernel/**'
+      - 'src/nav/planning/**'
   # Manual trigger for branches that aren't main / aren't yet PR'd.
   # Use this on the feature branch before opening a PR to catch errors early.
   workflow_dispatch:
 
 concurrency:
-  # Cancel a running build when a new commit lands on the same ref â€” saves
+  # Cancel a running build when a new commit lands on the same ref â€?saves
   # CI minutes on rapid rebase / amend cycles.
   group: slam-aarch64-${{ github.ref }}
   cancel-in-progress: true
@@ -71,8 +71,8 @@ jobs:
             colcon-${{ runner.os }}-arm64-
 
       - name: Install workspace system deps
-        # Pinned set â€” anything else gets pulled by rosdep below. PCL/Eigen/
-        # GTSAM/yaml-cpp are the heavy ones we know fastlio2/pgo/localizer
+        # Pinned set â€?anything else gets pulled by rosdep below. PCL/Eigen/
+        # yaml-cpp are the heavy ones we know fastlio2/pgo/localizer
         # need; pulling them explicitly so the failure mode is "missing
         # apt package" not "missing transitive header" deep in colcon.
         run: |
@@ -81,7 +81,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             python3-colcon-common-extensions \
             python3-rosdep \
-            libpcl-dev libeigen3-dev libgtsam-dev libyaml-cpp-dev \
+            libpcl-dev libeigen3-dev libyaml-cpp-dev \
             libgrpc++-dev protobuf-compiler-grpc \
             ccache
           if ! rosdep db &>/dev/null; then sudo rosdep init || true; fi
@@ -91,10 +91,10 @@ jobs:
         run: |
           source /opt/ros/humble/setup.bash
           rosdep install --from-paths src -y --ignore-src --rosdistro humble \
-            || echo "(some rosdeps unresolved â€” proceeding; colcon will surface real failures)"
+            || echo "(some rosdeps unresolved â€?proceeding; colcon will surface real failures)"
 
       - name: Build slam packages only (incremental, scoped)
-        # We deliberately do NOT colcon-build the whole tree â€” Python-only
+        # We deliberately do NOT colcon-build the whole tree â€?Python-only
         # packages do not need to round-trip through CMake. Scope explicitly
         # to the C++ targets that actually changed in Sprint 1.
         run: |

@@ -4,7 +4,7 @@ This file provides guidance to Codex when working in this repository.
 
 ## Project Overview
 
-LingTu (灵途) is an autonomous navigation system for quadruped robots in
+LingTu (灵�? is an autonomous navigation system for quadruped robots in
 outdoor/off-road environments.
 
 - **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64), ROS 2 Humble, Ubuntu 22.04
@@ -14,7 +14,7 @@ outdoor/off-road environments.
 
 ## Working Rules
 
-- Follow Module-First boundaries. Do not introduce ROS 2 runtime coupling inside normal Modules; use bridge modules or NativeModule wrappers.
+- Follow Module-First boundaries. Do not introduce ROS 2 runtime coupling inside normal Modules; use explicit bridge/compat adapters. NativeModule is legacy ROS2 compatibility only, not a planner/autonomy runtime path.
 - Prefer existing factories, registries, modules, and utilities before adding new abstractions.
 - Keep diffs small, reversible, and behavior-preserving unless the task explicitly requests a behavior change.
 - No new dependencies without an explicit request.
@@ -26,7 +26,7 @@ outdoor/off-road environments.
 
 ```bash
 # Framework tests, no ROS 2 required
-python -m pytest src/core/tests/ -q
+python -m pytest src/runtime/tests/ -q
 
 # CLI
 python lingtu.py                 # interactive profile selector in a TTY
@@ -55,18 +55,18 @@ python lingtu.py nav --daemon
 ## Composable Blueprint API
 
 ```python
-from core.blueprint import autoconnect
-from core.blueprints.stacks import *
+from runtime.blueprint import autoconnect
+from runtime.blueprints.stacks import *
 
 system = autoconnect(
     driver("thunder", dog_host="192.168.66.190"),  # L1 robot + camera bridge
-    lidar(enabled=True),                            # Livox MID-360 NativeModule
+    lidar(enabled=True),                            # Livox MID-360 hardware adapter
     slam("localizer"),                              # managed SLAM/localization
     maps(),                                         # occupancy, voxel, ESDF, elevation, traversability, map manager
     perception("bpu", "mobileclip"),                # detector, encoder, reconstruction
     memory(),                                       # semantic, episodic, tagged, vector, temporal memory
     planner("kimi"),                                # semantic planner, LLM, visual servo
-    navigation("pct"),                              # global planner + autonomy chain
+    navigation("octoplanner3d"),                    # global planner + autonomy chain
     exploration("none"),                            # "none" or TARE; wavefront lives in navigation(enable_frontier=True)
     safety(),                                       # safety ring, geofence, cmd_vel mux
     gateway(5050),                                  # REST, SSE, WS teleop, MCP, optional WebRTC
@@ -97,23 +97,24 @@ message flow, not a package dependency.
 All Modules -> core/ (Module, In/Out, Registry, utils, msgs)
                ^ only legal shared dependency direction
 
-nav/       must not import semantic/, drivers/, gateway/
-semantic/  must not import nav/, drivers/, gateway/
+nav/       must not import perception/, decision/, drivers/, gateway/
+perception/ must not import nav/, decision/, drivers/, gateway/
+decision/ may consume perception outputs through runtime messages, not direct nav/gateway imports
 drivers/   must not import nav/, semantic/ except lazy blueprint registration
 gateway/   must not import nav/, semantic/, drivers/
 ```
 
-Use `core.registry.get(...)` and `@register(...)` for pluggable backends. Avoid
+Use `runtime.registry.get(...)` and `@register(...)` for pluggable backends. Avoid
 direct backend imports in business logic.
 
 ## Stack Factories
 
-Factories live under `src/core/blueprints/stacks/`.
+Factories live under `src/runtime/blueprints/stacks/`.
 
 | Factory | Purpose |
 | --- | --- |
 | `driver(robot)` | Driver + optional camera bridge auto-detection |
-| `lidar(enabled=True)` | Livox LiDAR NativeModule |
+| `lidar(enabled=True)` | Livox LiDAR hardware adapter |
 | `sim_lidar(scene_xml=...)` | Simulated point-cloud provider |
 | `slam(profile)` | SLAMModule or SlamBridgeModule |
 | `maps()` | OccupancyGrid, VoxelGrid, ESDF, ElevationMap, TraversabilityCost, MapManager |
@@ -134,8 +135,8 @@ Factories live under `src/core/blueprints/stacks/`.
 | Detector | `yoloe`, `yolo_world`, `bpu`, `grounding_dino` |
 | Encoder | `clip`, `mobileclip` |
 | LLM | `kimi`, `openai`, `claude`, `qwen`, `mock` |
-| Planner | `astar`, `pct` |
-| PathFollower | `nav_core`, `pure_pursuit`, `pid` |
+| Planner | `octoplanner3d` default; `pct` legacy/manual experiment |
+| PathFollower | `nav_kernel`, `pure_pursuit`, `pid` |
 | Exploration | `none`, `tare` |
 
 ## Profiles
@@ -144,14 +145,14 @@ Current profile definitions are in `cli/profiles_data.py`.
 
 | Profile | Default Robot | SLAM | LLM | Planner | Semantic | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `stub` | `stub` | `none` | `mock` | `astar` | no | framework tests |
-| `dev` | `stub` | `none` | `mock` | `astar` | yes | semantic pipeline dev |
-| `sim` | `sim_mujoco` | `bridge` | `mock` | `astar` | yes | MuJoCo + native stack |
-| `sim_nav` | `stub` | `none` | `mock` | `astar` | no | pure-Python nav sim |
-| `map` | `s100p` | `fastlio2` | `mock` | `astar` | no | build/save maps |
-| `nav` | `s100p` | `bridge` | `qwen` | `pct` | yes | saved-map navigation; external SLAM services |
-| `explore` | `s100p` | `fastlio2` | `qwen` | `pct` | yes | wavefront frontier via `navigation(enable_frontier=True)` |
-| `tare_explore` | `s100p` | `fastlio2` | `qwen` | `pct` | yes | CMU TARE stack; requires TARE binary |
+| `stub` | `stub` | `none` | `mock` | `octoplanner3d` | no | framework tests |
+| `dev` | `stub` | `none` | `mock` | `octoplanner3d` | yes | semantic pipeline dev |
+| `sim` | `sim_mujoco` | `bridge` | `mock` | `octoplanner3d` | yes | MuJoCo + native stack |
+| `sim_nav` | `stub` | `none` | `mock` | `octoplanner3d` | no | pure-Python nav sim |
+| `map` | `s100p` | `fastlio2` | `mock` | `octoplanner3d` | no | build/save maps |
+| `nav` | `s100p` | `bridge` | `qwen` | `octoplanner3d` | yes | saved-map navigation; external SLAM services |
+| `explore` | `s100p` | `fastlio2` | `qwen` | `octoplanner3d` | yes | wavefront frontier via `navigation(enable_frontier=True)` |
+| `tare_explore` | `s100p` | `fastlio2` | `qwen` | `octoplanner3d` | yes | CMU TARE stack; requires TARE binary |
 
 Robot presets include `stub`, `sim`, `ros2`, `s100p`, `navigate`, and
 `thunder`. `s100p` is a robot preset, while `nav` is the real navigation
@@ -162,17 +163,18 @@ profile.
 | Path | Role |
 | --- | --- |
 | `cli/` | argparse CLI, profiles, REPL, daemon lifecycle, external status commands |
-| `src/core/` | Module, Blueprint, streams, transports, registry, devices, utils, framework tests |
+| `src/runtime/` | Module, Blueprint, streams, transports, registry, devices, utils, framework tests |
 | `src/nav/` | NavigationModule, safety, maps, traversability, planner services |
-| `src/semantic/` | perception, semantic planner, LLM, visual servo, reconstruction |
+| `src/perception/` | perception, tracking, reconstruction, scene understanding |
+| `src/decision/` | semantic planner, LLM, visual servo, goal resolution |
 | `src/memory/` | semantic map, episodic/tagged/vector/temporal memories, KG |
 | `src/drivers/` | Thunder driver, simulation drivers, LiDAR, teleop |
 | `src/gateway/` | FastAPI gateway, MCP server, SSE/WS endpoints |
 | `src/webrtc/` | optional H.264 WebRTC stream module |
-| `src/base_autonomy/` | terrain, local planner, path follower C++/nanobind backends |
-| `src/global_planning/` | PCT planner and Python adapters |
-| `src/slam/` | Fast-LIO2, Point-LIO, PGO, localizer, GNSS bridge, NTRIP client |
-| `src/exploration/` | TARE planner integration and supervisor |
+| `src/nav/local/` | terrain, local planner, path follower Python modules and local autonomy backends |
+| `src/nav/services/plan/` | Planner service boundary, OctoPlanner3D backend, and explicit PCT legacy backend |
+| `src/localization/` | Fast-LIO2, Point-LIO, PGO, localizer, GNSS bridge, NTRIP client |
+| `src/nav/exploration/` | TARE planner integration and supervisor |
 | `calibration/` | camera, IMU, LiDAR-IMU, camera-LiDAR calibration tools |
 | `config/` | robot/device/DDS/DUFOMap/semantic configuration |
 | `launch/` | algorithm bridge launch files only |
@@ -186,27 +188,27 @@ profile.
 | --- | --- |
 | `lingtu.py` | primary CLI entry; `main_nav.py` is a compatibility alias |
 | `cli/profiles_data.py` | profile and robot-preset source of truth |
-| `src/core/blueprints/full_stack.py` | full-stack assembly and critical explicit wires |
-| `src/core/blueprints/stacks/` | composable stack factories |
-| `src/core/module.py` | Module base class |
-| `src/core/stream.py` | `In[T]` / `Out[T]` ports and backpressure policies |
-| `src/core/blueprint.py` | Blueprint, autoconnect, explicit wire support |
-| `src/core/registry.py` | plugin registry |
-| `src/core/devices/` | DeviceManager and hardware registry |
-| `src/core/utils/calibration_check.py` | startup calibration self-check |
-| `src/nav/navigation_module.py` | mission FSM, global planning, recovery |
-| `src/nav/global_planner_service.py` | A*/PCT backend dispatch and safe-goal search |
-| `src/nav/safety_ring_module.py` | safety evaluator and reflexes |
-| `src/nav/cmd_vel_mux_module.py` | priority-based velocity arbitration |
-| `src/nav/services/map_manager_module.py` | map lifecycle: save/use/build/delete |
+| `src/runtime/blueprints/full_stack.py` | full-stack assembly and critical explicit wires |
+| `src/runtime/blueprints/stacks/` | composable stack factories |
+| `src/runtime/module.py` | Module base class |
+| `src/runtime/stream.py` | `In[T]` / `Out[T]` ports and backpressure policies |
+| `src/runtime/blueprint.py` | Blueprint, autoconnect, explicit wire support |
+| `src/runtime/registry.py` | plugin registry |
+| `src/runtime/devices/` | DeviceManager and hardware registry |
+| `src/runtime/utils/calibration_check.py` | startup calibration self-check |
+| `src/nav/mission/navigation.py` | mission FSM, global planning, recovery |
+| `src/nav/services/plan/global_planner/service.py` | OctoPlanner3D global planner dispatch, map artifact gate, and safe-goal search |
+| `src/nav/safety/safety_ring.py` | safety evaluator and reflexes |
+| `src/nav/safety/velocity_mux.py` | priority-based velocity arbitration |
+| `src/nav/services/maps.py` | map lifecycle: save/use/build/delete |
 | `src/nav/services/dynamic_filter.py` | DUFOMap subprocess wrapper |
-| `src/semantic/planner/semantic_planner/goal_resolver.py` | fast/slow goal resolution |
-| `src/semantic/planner/semantic_planner/visual_servo_module.py` | bbox/depth visual servo |
-| `src/semantic/planner/semantic_planner/agent_loop.py` | multi-turn tool-calling agent loop |
+| `src/decision/semantic_planner/goal_resolver.py` | fast/slow goal resolution |
+| `src/decision/semantic_planner/visual_servo_module.py` | bbox/depth visual servo |
+| `src/decision/semantic_planner/agent_loop.py` | multi-turn tool-calling agent loop |
 | `src/memory/modules/semantic_mapper_module.py` | scene graph to semantic/topological maps |
 | `src/memory/modules/vector_memory_module.py` | CLIP/ChromaDB vector search with numpy fallback |
-| `src/slam/slam_module.py` | managed Fast-LIO2/Point-LIO/localizer mode |
-| `src/slam/slam_bridge_module.py` | ROS 2 SLAM bridge mode and localization health |
+| `src/localization/slam_module.py` | managed Fast-LIO2/Point-LIO/localizer mode |
+| `src/localization/bridge.py` | ROS 2 SLAM bridge mode and localization health |
 | `src/gateway/gateway_module.py` | FastAPI REST/WS/SSE, map save hooks, drift watchdog |
 | `scripts/lingtu` | robot-side unified operations CLI |
 | `scripts/build/build_dufomap.sh` | aarch64 DUFOMap build helper |
@@ -220,22 +222,27 @@ profile.
 
 ```bash
 # Python framework tests, no ROS 2 required
-python -m pytest src/core/tests/ -q
+python -m pytest src/runtime/tests/ -q
 
 # Useful focused tests
-python -m pytest src/core/tests/test_calibration_check.py -q
-python -m pytest src/core/tests/test_localization_health.py -q
-python -m pytest src/core/tests/test_scene_mode_detector.py -q
+python -m pytest src/runtime/tests/test_calibration_check.py -q
+python -m pytest src/runtime/tests/test_localization_health.py -q
+python -m pytest src/runtime/tests/test_scene_mode_detector.py -q
 
-# C++ nav_core standalone tests
-cd src/nav/core
+# C++ nav_kernel standalone tests
+cd src/nav/kernel
 mkdir -p build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . -j
 ./test_benchmark
-./test_local_planner_core
 ./test_path_follower_core
+
+# C++ local planner standalone tests
+cd ../../services/plan/local_planner/cpp
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
+cmake --build build -j
+./build/test_local_planner_core
 
 # ROS 2 build on S100P
 source /opt/ros/humble/setup.bash
@@ -247,32 +254,31 @@ failures under `-ffast-math`.
 
 ## C++ Performance Notes
 
-`src/nav/core/` is a header-first C++ algorithm library exposed to Python via
+`src/nav/kernel/` is a header-first C++ algorithm library exposed to Python via
 nanobind. aarch64 performance is critical.
 
 Key optimizations:
 
-- SoA memory layout in `local_planner_full.hpp`
-- CSR sparse layout in `local_planner_full.hpp`
-- `scorePathFast` LUT in `local_planner_core.hpp`
+- SoA memory layout in `local_planner.hpp`
+- CSR sparse layout in `local_planner.hpp`
+- `scorePathFast` LUT in `local_planner_scoring.hpp`
 - OpenMP path scoring and terrain parallelism
-- xsimd SIMD helpers in `simd_accel.hpp`
-- LTO and fast-math in CMake paths
+- LTO in CMake paths; relaxed floating-point math is not enabled globally
 
 ## Critical Files
 
 Be especially careful with these shared surfaces:
 
-- `src/core/module.py`
-- `src/core/blueprint.py`
-- `src/core/stream.py`
-- `src/core/registry.py`
-- `src/core/utils/`
-- `src/core/blueprints/full_stack.py`
-- `src/semantic/perception/.../instance_tracker.py`
-- `src/semantic/planner/semantic_planner/goal_resolver.py`
-- `src/nav/navigation_module.py`
-- `src/nav/safety_ring_module.py`
+- `src/runtime/module.py`
+- `src/runtime/blueprint.py`
+- `src/runtime/stream.py`
+- `src/runtime/registry.py`
+- `src/runtime/utils/`
+- `src/runtime/blueprints/full_stack.py`
+- `src/perception/.../instance_tracker.py`
+- `src/decision/semantic_planner/goal_resolver.py`
+- `src/nav/mission/navigation.py`
+- `src/nav/safety/safety_ring.py`
 - `config/robot_config.yaml`
 - `config/devices.yaml`
 
@@ -294,7 +300,7 @@ bp.wire("SLAMModule", "map_cloud", "TerrainModule", "map_cloud", transport="shm"
 ```
 
 Use explicit wires for critical fan-in/fan-out or ambiguous port names. See
-`src/core/blueprints/full_stack.py`.
+`src/runtime/blueprints/full_stack.py`.
 
 ## Explicit Full-Stack Wires
 

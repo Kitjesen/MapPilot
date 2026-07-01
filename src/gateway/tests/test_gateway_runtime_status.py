@@ -10,7 +10,7 @@ pytestmark = [pytest.mark.sim]
 
 
 pytest.importorskip("fastapi")
-from core.tests.numpy_guard import NUMPY_UNSAFE_REASON, numpy_import_is_safe
+from runtime.tests.numpy_guard import NUMPY_UNSAFE_REASON, numpy_import_is_safe
 
 _NUMPY_IMPORT_SAFE = numpy_import_is_safe()
 
@@ -27,7 +27,7 @@ def _payload(response_or_payload):
 
 
 def test_algorithm_benchmark_dimos_required_gates_match_core_constant():
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
     from gateway.routes.diagnostics import ALGORITHM_PRODUCT_PROFILES
 
     dimos = ALGORITHM_PRODUCT_PROFILES["dimos_benchmark"]
@@ -104,14 +104,14 @@ def _write_active_same_source_tomogram(map_root):
 
 
 def test_diagnostics_plugin_catalog_exposes_registered_backends():
-    from base_autonomy.modules.local_planner_module import LocalPlannerModule  # noqa: F401
-    from base_autonomy.modules.path_follower_module import PathFollowerModule  # noqa: F401
+    from nav.services.plan.local_planner.service import LocalPlanner  # noqa: F401
+    from nav.local.path_follower import PathFollower  # noqa: F401
     from gateway.routes.diagnostics import build_plugin_catalog, clear_diagnostics_cache
-    from semantic.planner.llm_client import MockLLMClient  # noqa: F401
-    # ^ Cross-layer: gateway test imports from semantic/ for registry setup.
+    from decision.llm.llm_client import MockLLMClient  # noqa: F401
+    # ^ Cross-layer: gateway test imports from decision/perception for registry setup.
     #   Acceptable: test needs to register a semantic backend in the global
     #   registry so build_plugin_catalog() can detect it.  No production
-    #   dependency â€?the import is for side-effect registration only.
+    #   dependency ï¿½?the import is for side-effect registration only.
 
     clear_diagnostics_cache()
 
@@ -120,12 +120,13 @@ def test_diagnostics_plugin_catalog_exposes_registered_backends():
     assert payload["schema_version"] == 1
     categories = payload["categories"]
     assert "local_planner" in categories
-    assert {entry["name"] for entry in categories["local_planner"]} >= {
+    local_planner_names = {entry["name"] for entry in categories["local_planner"]}
+    assert local_planner_names >= {
         "nanobind",
-        "cmu",
         "cmu_py",
         "simple",
     }
+    assert "cmu" not in local_planner_names
     assert "llm_client" in categories
     assert "mock" in {entry["name"] for entry in categories["llm_client"]}
 
@@ -156,7 +157,7 @@ def test_diagnostics_plugin_catalog_route_exposes_active_backend_status():
                     "configured_backend": "nanobind",
                     "backend": "cmu_py",
                     "degraded": True,
-                    "degraded_reason": "compatible _nav_core missing",
+                    "degraded_reason": "compatible LingTu native navigation kernel missing",
                 }
             }
 
@@ -194,9 +195,9 @@ def test_diagnostics_plugin_catalog_route_exposes_active_backend_status():
     gateway = GatewayModule()
     gateway.on_system_modules(
         {
-            "LocalPlannerModule": FakeLocalPlanner(),
+            "nav.local_planner": FakeLocalPlanner(),
             "VectorMemoryModule": FakeVectorMemory(),
-            "NavigationModule": FakeNavigation(),
+            "nav.mission": FakeNavigation(),
             "BrokenModule": BrokenModule(),
         }
     )
@@ -204,15 +205,15 @@ def test_diagnostics_plugin_catalog_route_exposes_active_backend_status():
     payload = asyncio.run(_endpoint(gateway, "/api/v1/diagnostics/plugins")())
 
     active = payload["active"]
-    local = active["modules"]["LocalPlannerModule"]["backends"]["local_planner"]
+    local = active["modules"]["nav.local_planner"]["backends"]["local_planner"]
     vector = active["modules"]["VectorMemoryModule"]["backends"]["encoder_backend"]
-    planner = active["modules"]["NavigationModule"]["backends"]["planner_backend"]
+    planner = active["modules"]["nav.mission"]["backends"]["planner_backend"]
     broken = active["modules"]["BrokenModule"]
     assert active["schema_version"] == 1
     assert local["configured_backend"] == "nanobind"
     assert local["backend"] == "cmu_py"
     assert local["degraded"] is True
-    assert "compatible _nav_core missing" in local["degraded_reason"]
+    assert "compatible LingTu native navigation kernel missing" in local["degraded_reason"]
     assert vector["configured_backend"] == "auto"
     assert vector["backend"] == "lexical_hash"
     assert planner["configured_backend"] == "pct"
@@ -233,9 +234,9 @@ def test_gateway_runtime_backend_switch_rejects_motion_backend_when_navigation_b
             return {"state": "EXECUTING"}
 
     gateway = GatewayModule()
-    gateway.on_system_modules({"NavigationModule": BusyNavigation()})
+    gateway.on_system_modules({"nav.mission": BusyNavigation()})
 
-    result = gateway.reconfigure_backend("local_planner", "nav_core")
+    result = gateway.reconfigure_backend("local_planner", "nav_kernel")
 
     assert result["ok"] is False
     assert result["reason"] == "motion_backend_switch_requires_idle"
@@ -272,8 +273,8 @@ def test_gateway_on_system_modules_preserves_read_only_status_inventory():
             return None
 
     modules = {
-        "NavigationModule": Navigation(),
-        "CmdVelMux": Mux(),
+        "nav.mission": Navigation(),
+        "nav.velocity_mux": Mux(),
         "SlamBridgeModule": Relocalization(),
     }
     gateway = GatewayModule()
@@ -281,9 +282,9 @@ def test_gateway_on_system_modules_preserves_read_only_status_inventory():
 
     assert gateway._all_modules == modules
     assert gateway._all_modules is not modules
-    assert gateway._navigation_module is modules["NavigationModule"]
-    assert gateway._backend_reconfigure_modules["NavigationModule"] is (
-        modules["NavigationModule"]
+    assert gateway._navigation is modules["nav.mission"]
+    assert gateway._backend_reconfigure_modules["nav.mission"] is (
+        modules["nav.mission"]
     )
     assert gateway._relocalization_service is modules["SlamBridgeModule"]
 
@@ -307,7 +308,7 @@ def test_gateway_runtime_backend_switch_dispatches_when_navigation_idle():
     gateway = GatewayModule()
     gateway.on_system_modules(
         {
-            "NavigationModule": IdleNavigation(),
+            "nav.mission": IdleNavigation(),
             "PerceptionModule": SwitchableModule(),
         }
     )
@@ -328,9 +329,9 @@ def test_gateway_motion_backend_switch_reads_nested_navigation_state():
             return {"navigation": {"state": "IDLE"}}
 
     gateway = GatewayModule()
-    gateway.on_system_modules({"NavigationModule": IdleNavigation()})
+    gateway.on_system_modules({"nav.mission": IdleNavigation()})
 
-    result = gateway.reconfigure_backend("local_planner", "nav_core")
+    result = gateway.reconfigure_backend("local_planner", "nav_kernel")
 
     assert result["ok"] is False
     assert result["reason"] == "backend_reconfigure_unsupported"
@@ -346,9 +347,9 @@ def test_gateway_motion_backend_switch_requires_public_navigation_state():
             return {}
 
     gateway = GatewayModule()
-    gateway.on_system_modules({"NavigationModule": NavigationWithoutPublicState()})
+    gateway.on_system_modules({"nav.mission": NavigationWithoutPublicState()})
 
-    result = gateway.reconfigure_backend("local_planner", "nav_core")
+    result = gateway.reconfigure_backend("local_planner", "nav_kernel")
 
     assert result["ok"] is False
     assert result["reason"] == "motion_backend_switch_requires_idle"
@@ -379,7 +380,7 @@ def test_mcp_backend_switch_tool_uses_gateway_guard():
     mcp.on_system_modules({"MCPServerModule": mcp, "GatewayModule": Gateway()})
 
     payload = json.loads(
-        mcp.switch_backend("local_planner", "nav_core", '{"force": false}')
+        mcp.switch_backend("local_planner", "nav_kernel", '{"force": false}')
     )
 
     assert payload["ok"] is False
@@ -395,7 +396,7 @@ def test_mcp_backend_switch_tool_guards_motion_without_gateway_module():
             return {"state": "EXECUTING"}
 
     mcp = MCPServerModule()
-    mcp.on_system_modules({"MCPServerModule": mcp, "NavigationModule": BusyNavigation()})
+    mcp.on_system_modules({"MCPServerModule": mcp, "nav.mission": BusyNavigation()})
 
     payload = json.loads(mcp.switch_backend("slam", "fastlio2"))
 
@@ -412,7 +413,7 @@ def test_mcp_backend_switch_reads_nested_navigation_state_without_gateway_module
             return {"navigation": {"state": "IDLE"}}
 
     mcp = MCPServerModule()
-    mcp.on_system_modules({"MCPServerModule": mcp, "NavigationModule": IdleNavigation()})
+    mcp.on_system_modules({"MCPServerModule": mcp, "nav.mission": IdleNavigation()})
 
     payload = json.loads(mcp.switch_backend("slam", "fastlio2"))
 
@@ -431,7 +432,7 @@ def test_mcp_backend_switch_requires_public_navigation_state_without_gateway_mod
 
     mcp = MCPServerModule()
     mcp.on_system_modules(
-        {"MCPServerModule": mcp, "NavigationModule": NavigationWithoutPublicState()}
+        {"MCPServerModule": mcp, "nav.mission": NavigationWithoutPublicState()}
     )
 
     payload = json.loads(mcp.switch_backend("slam", "fastlio2"))
@@ -638,20 +639,20 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
     assert runtime["frames"]["map"] == "map"
     assert runtime["frames"]["odom"] == "odom"
     assert runtime["frames"]["body"] == "body"
-    assert runtime["topic_default_frame_ids"]["/nav/odometry"] == "odom"
-    assert runtime["topic_default_frame_ids"]["/nav/registered_cloud"] == "body"
-    assert runtime["topic_default_frame_ids"]["/nav/map_cloud"] == "map"
+    assert runtime["topic_default_frame_ids"]["/slam/odometry"] == "odom"
+    assert runtime["topic_default_frame_ids"]["/slam/registered_cloud"] == "body"
+    assert runtime["topic_default_frame_ids"]["/slam/map_cloud"] == "map"
     assert runtime["required_topic_frame_ids"][:5] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
     ]
     assert runtime["runtime_data_flow_topics"][:3] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
     ]
 
     frames = payload["frames"]
@@ -1062,8 +1063,8 @@ def test_navigation_status_reports_mission_path_and_control_source():
             "icp_fitness": 0.03,
         }
     gateway._all_modules = {
-        "CmdVelMux": FakeMux(),
-        "NavigationModule": FakeNavigation(),
+        "nav.velocity_mux": FakeMux(),
+        "nav.mission": FakeNavigation(),
     }
 
     payload = build_navigation_status(gateway)
@@ -1126,8 +1127,8 @@ def test_drift_watchdog_classifies_nan_odom_as_diverged():
 
 
 def test_gateway_quarantines_non_finite_odometry_before_publication():
-    from core.msgs.geometry import Pose, Quaternion, Twist, Vector3
-    from core.msgs.nav import Odometry
+    from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
+    from runtime.msgs.nav import Odometry
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
@@ -1151,8 +1152,8 @@ def test_gateway_quarantines_non_finite_odometry_before_publication():
 
 
 def test_drift_watchdog_uses_quarantined_non_finite_odometry():
-    from core.msgs.geometry import Pose, Quaternion, Twist, Vector3
-    from core.msgs.nav import Odometry
+    from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
+    from runtime.msgs.nav import Odometry
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
@@ -1234,28 +1235,28 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
         "child": "lidar_link",
         "required": True,
     }
-    assert runtime["topic_allowed_frame_ids"]["/nav/map_cloud"] == ["map"]
+    assert runtime["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
     assert runtime["topic_allowed_frame_ids"]["/nav/global_path"] == ["map"]
-    assert runtime["topic_default_frame_ids"]["/nav/map_cloud"] == "map"
+    assert runtime["topic_default_frame_ids"]["/slam/map_cloud"] == "map"
     assert runtime["topic_default_frame_ids"]["/nav/cmd_vel"] == "body"
     assert runtime["required_topic_frame_ids"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
     ]
     assert runtime["runtime_data_flow_topics"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
-        "/nav/localization_health",
-        "/nav/localization_quality",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
+        "/slam/localization_health",
+        "/slam/localization_quality",
         "/nav/exploration_grid",
         "/nav/terrain_map_ext",
         "/exploration/way_point",
@@ -1263,6 +1264,7 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
         "/nav/traversable_frontiers",
         "/nav/frontier_candidate",
         "/nav/global_path",
+        "/nav/way_point",
         "/nav/local_path",
         "/nav/cmd_vel",
         "/nav/added_obstacles",
@@ -1271,16 +1273,16 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
     ]
     flow = {stage["name"]: stage for stage in runtime["resolved_runtime_data_flow"]}
     assert list(flow["endpoint_adapter"]["inputs"]) == [
-        "/nav/lidar_scan",
-        "/nav/imu",
+        "/lidar/raw_frame",
+        "/imu/raw",
     ]
     assert list(flow["command_boundary"]["outputs"]) == [
         "hardware_driver_after_cmd_vel_mux"
     ]
     assert runtime["runtime_data_flow_stage_algorithm_interfaces"]["global_planning"] == [
         "global_planning",
-        "astar_global_planning",
         "pct_global_planning",
+        "octoplanner3d_global_planning",
     ]
     assert runtime["runtime_data_flow_stage_algorithm_interfaces"][
         "local_planning_and_following"
@@ -1290,7 +1292,7 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
 def test_navigation_frame_summary_defaults_planning_frame_from_runtime_contract(
     monkeypatch,
 ):
-    import core.runtime_interface as runtime_interface
+    import runtime.runtime_interface as runtime_interface
     from gateway.services import runtime_status
 
     calls: list[tuple[str | None, str]] = []
@@ -1339,18 +1341,18 @@ def test_navigation_status_flags_runtime_boundary_mismatch(monkeypatch):
     assert "runtime_contract_data_source_mismatch" in runtime["blockers"]
     assert "command_sink_mismatch" in runtime["blockers"]
     assert runtime["expected_command_sink"] == "mujoco_velocity_adapter"
-    assert runtime["topic_allowed_frame_ids"]["/nav/map_cloud"] == ["map"]
+    assert runtime["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
     assert runtime["required_topic_frame_ids"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
     ]
-    assert runtime["runtime_data_flow_topics"][:2] == ["/points_raw", "/imu_raw"]
+    assert runtime["runtime_data_flow_topics"][:2] == ["/lidar/raw_frame", "/imu/raw"]
 
 
 def test_navigation_status_reports_sim_runtime_topic_frames(monkeypatch):
@@ -1383,10 +1385,10 @@ def test_navigation_status_reports_sim_runtime_topic_frames(monkeypatch):
 
     runtime = payload["runtime"]
     assert runtime["ok"] is True
-    assert runtime["topic_allowed_frame_ids"]["/nav/map_cloud"] == ["map", "odom"]
+    assert runtime["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map", "odom"]
     assert runtime["topic_allowed_frame_ids"]["/nav/global_path"] == ["map", "odom"]
     assert runtime["required_topic_frame_ids"] == []
-    assert runtime["runtime_data_flow_topics"][:2] == ["/points_raw", "/imu_raw"]
+    assert runtime["runtime_data_flow_topics"][:2] == ["/lidar/raw_frame", "/imu/raw"]
 
 
 def test_navigation_status_flags_unknown_topic_frame_contract(monkeypatch):
@@ -1438,21 +1440,21 @@ def test_navigation_status_uses_mission_plan_report_when_module_status_unavailab
             "odom_frame_id": "map",
             "costmap_frame_id": "map",
             "goal_frame_id": "map",
-            "plan_safety_policy": "fallback_astar",
+            "plan_safety_policy": "reject",
             "last_plan_report": {
-                "primary_planner": "pct",
-                "selected_planner": "astar",
-                "fallback_reason": "pct path_safety failed",
-                "rejected_plans": [{"planner": "pct", "reason": "unsafe"}],
+                "primary_planner": "octoplanner3d",
+                "selected_planner": "octoplanner3d",
+                "fallback_reason": "",
+                "rejected_plans": [{"planner": "octoplanner3d", "reason": "unsafe"}],
             },
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
 
-    assert payload["diagnostics"]["plan_safety_policy"] == "fallback_astar"
-    assert payload["diagnostics"]["last_plan_report"]["primary_planner"] == "pct"
-    assert payload["diagnostics"]["last_plan_report"]["selected_planner"] == "astar"
+    assert payload["diagnostics"]["plan_safety_policy"] == "reject"
+    assert payload["diagnostics"]["last_plan_report"]["primary_planner"] == "octoplanner3d"
+    assert payload["diagnostics"]["last_plan_report"]["selected_planner"] == "octoplanner3d"
 
 
 def test_navigation_status_blocks_goal_on_odometry_frame_mismatch():
@@ -1476,7 +1478,7 @@ def test_navigation_status_blocks_goal_on_odometry_frame_mismatch():
             "costmap_frame_id": "map",
         }
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
     NavigationStatusResponse.model_validate(payload)
@@ -1497,8 +1499,8 @@ def test_navigation_status_blocks_goal_on_odometry_frame_mismatch():
 
 
 def test_gateway_odometry_preserves_frame_for_navigation_status():
-    from core.msgs.geometry import Pose, Quaternion, Vector3
-    from core.msgs.nav import Odometry
+    from runtime.msgs.geometry import Pose, Quaternion, Vector3
+    from runtime.msgs.nav import Odometry
     from gateway.gateway_module import GatewayModule
     from gateway.services.runtime_status import build_navigation_status
 
@@ -1582,7 +1584,7 @@ def test_navigation_status_reports_costmap_frame_mismatch():
             "costmap_frame_id": "odom",
         }
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
     NavigationStatusResponse.model_validate(payload)
@@ -1600,7 +1602,7 @@ def test_navigation_status_reports_costmap_frame_mismatch():
     assert payload["can_accept_goal"] is False
 
 
-def test_navigation_status_reads_idle_costmap_frame_from_navigation_module():
+def test_navigation_status_reads_idle_costmap_frame_from_nav_mission():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import NavigationStatusResponse
     from gateway.services.runtime_status import build_navigation_status
@@ -1627,8 +1629,8 @@ def test_navigation_status_reads_idle_costmap_frame_from_navigation_module():
         gateway._mission = {"state": "IDLE", "planning_frame_id": "map"}
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
     gateway._all_modules = {
-        "CmdVelMux": FakeMux(),
-        "NavigationModule": FakeNavigation(),
+        "nav.velocity_mux": FakeMux(),
+        "nav.mission": FakeNavigation(),
     }
 
     payload = build_navigation_status(gateway)
@@ -1672,7 +1674,7 @@ def test_navigation_status_prefers_injected_runtime_refs_without_module_inventor
     gateway = GatewayModule()
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.03
-    gateway._navigation_module = FakeNavigation()
+    gateway._navigation = FakeNavigation()
     gateway._cmd_vel_mux = FakeMux()
     gateway._all_modules = {}
     with gateway._state_lock:
@@ -1706,7 +1708,7 @@ def test_navigation_status_blocks_goal_when_session_is_not_navigating():
         gateway._mode = "autonomous"
         gateway._mission = {"state": "IDLE"}
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
 
@@ -1739,7 +1741,7 @@ def test_navigation_status_allows_exploring_session_for_external_tare():
             "pose_fresh": True,
             "odom_age_ms": 100.0,
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
 
@@ -1748,11 +1750,11 @@ def test_navigation_status_allows_exploring_session_for_external_tare():
     assert "navigation_session_inactive" not in payload["readiness"]["blockers"]
 
 
-def test_navigation_status_finds_cmd_vel_mux_by_module_class_or_name():
+def test_navigation_status_requires_canonical_velocity_mux_runtime_id():
     from gateway.gateway_module import GatewayModule
     from gateway.services.runtime_status import build_navigation_status
 
-    class FakeCmdVelMuxModule:
+    class FakeVelocityMux:
         def health(self):
             return {
                 "active_source": "path_follower",
@@ -1766,13 +1768,13 @@ def test_navigation_status_finds_cmd_vel_mux_by_module_class_or_name():
         gateway._odom = {"x": 1.0, "y": 2.0}
         gateway._mission = {"state": "IDLE"}
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {"navigation.CmdVelMuxModule": FakeCmdVelMuxModule()}
+    gateway._all_modules = {"navigation.VelocityMux": FakeVelocityMux()}
 
     payload = build_navigation_status(gateway)
 
-    assert payload["control"]["cmd_vel_mux"]["available"] is True
-    assert payload["control"]["active_cmd_source"] == "path_follower"
-    assert payload["control"]["source_category"] == "autonomy"
+    assert payload["control"]["cmd_vel_mux"]["available"] is False
+    assert payload["control"]["active_cmd_source"] == "unknown"
+    assert payload["control"]["source_category"] == "unknown"
 
 
 def test_navigation_status_handles_failed_mission_and_missing_mux():
@@ -1806,6 +1808,23 @@ def test_navigation_status_handles_failed_mission_and_missing_mux():
     assert payload["diagnostics"]["failure_reason"] == "blocked"
 
 
+def test_navigation_status_handles_recovering_mission_as_active():
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_navigation_status
+
+    gateway = GatewayModule()
+    with gateway._state_lock:
+        gateway._odom = {"x": 0.0}
+        gateway._mission = {"state": "RECOVERING"}
+        gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
+
+    payload = build_navigation_status(gateway)
+
+    assert payload["state"] == "RECOVERING"
+    assert payload["progress"]["active"] is True
+    assert "mission_recovering" in payload["reason_codes"]
+
+
 def test_navigation_status_blocks_autonomy_when_pose_is_stale_but_algorithm_healthy():
     from gateway.gateway_module import GatewayModule
     from gateway.services.runtime_status import build_navigation_status
@@ -1828,7 +1847,7 @@ def test_navigation_status_blocks_autonomy_when_pose_is_stale_but_algorithm_heal
             "odom_age_ms": 2500.0,
             "localizer_health": "RECOVERED",
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
 
@@ -1863,7 +1882,7 @@ def test_navigation_status_allows_fresh_pose_with_low_confidence_snapshot():
             "odom_age_ms": 1440.0,
             "localizer_health": "RECOVERED",
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
 
@@ -1920,8 +1939,8 @@ def test_navigation_status_blocks_goal_when_map_artifact_gate_fails():
             "localizer_health": "RECOVERED",
         }
     gateway._all_modules = {
-        "NavigationModule": FakeNavigation(),
-        "CmdVelMux": FakeMux(),
+        "nav.mission": FakeNavigation(),
+        "nav.velocity_mux": FakeMux(),
     }
 
     payload = build_navigation_status(gateway)
@@ -1960,7 +1979,7 @@ def test_navigation_status_treats_mild_degeneracy_as_advisory():
             "cloud_age_ms": 120.0,
             "localizer_health": "LIO_TRACKING",
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
 
@@ -1998,7 +2017,7 @@ def test_navigation_status_uses_localizer_health_fitness_when_icp_quality_is_zer
             "localizer_health_source": "localizer_health_topic",
             "localizer_health_fitness": 0.0223,
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     localization = build_localization_status(gateway)
     navigation = build_navigation_status(gateway)
@@ -2083,7 +2102,7 @@ def test_navigation_status_blocks_ready_when_map_cloud_is_stale():
             "localizer_health_source": "localizer_health_topic",
             "localizer_health_fitness": 0.0223,
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     localization = build_localization_status(gateway)
     navigation = build_navigation_status(gateway)
@@ -2125,7 +2144,7 @@ def test_navigation_status_blocks_goal_when_super_lio_recovery_signal_is_active(
             "odom_age_ms": 120.0,
             "cloud_age_ms": 80.0,
         }
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     localization = build_localization_status(gateway)
     navigation = build_navigation_status(gateway)
@@ -2212,7 +2231,7 @@ def test_goal_route_accepts_ready_navigation_goal():
             "localizer_health": "RECOVERED",
         }
     nav = FakeNavigation()
-    gateway.on_system_modules({"NavigationModule": nav})
+    gateway.on_system_modules({"nav.mission": nav})
     sent_goals = []
     gateway.goal_pose._add_callback(sent_goals.append)
 
@@ -2268,7 +2287,7 @@ def test_navigation_status_reports_teleop_preemption_for_active_mission():
             "speed_scale": 1.0,
         }
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {"CmdVelMux": FakeMux()}
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
 
     payload = build_navigation_status(gateway)
 
@@ -2337,7 +2356,7 @@ def test_navigation_status_routes_pass_fastapi_response_validation():
 
 
 def test_drift_watchdog_restores_idle_running_localization_services(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     from gateway.gateway_module import GatewayModule
 
@@ -2385,7 +2404,7 @@ def test_drift_watchdog_restores_idle_running_localization_services(monkeypatch)
 
 
 def test_drift_watchdog_restart_noops_after_shutdown(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
 
     called = False
@@ -2406,7 +2425,7 @@ def test_drift_watchdog_restart_noops_after_shutdown(monkeypatch):
 
 
 def test_drift_watchdog_restores_idle_running_super_lio_services(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     from gateway.gateway_module import GatewayModule
 
@@ -2451,7 +2470,7 @@ def test_drift_watchdog_restores_idle_running_super_lio_services(monkeypatch):
 def test_drift_watchdog_restores_idle_running_super_lio_relocation_services(
     monkeypatch,
 ):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     from gateway.gateway_module import GatewayModule
 
@@ -2494,8 +2513,8 @@ def test_drift_watchdog_restores_idle_running_super_lio_relocation_services(
 
 
 def test_runtime_dataflow_route_exposes_module_first_observability(monkeypatch):
-    from core.runtime_interface import TOPICS
-    from core.msgs.nav import Odometry
+    from runtime.runtime_interface import TOPICS
+    from runtime.msgs.nav import Odometry
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeDataflowResponse
 
@@ -2555,7 +2574,7 @@ def test_runtime_dataflow_route_exposes_module_first_observability(monkeypatch):
 
     stages = {stage["name"]: stage for stage in initial_payload["stage_evidence"]}
     assert "global_planning" in stages
-    assert stages["global_planning"]["owner"] == "lingtu_navigation_or_pct"
+    assert stages["global_planning"]["owner"] == "lingtu_navigation_or_planner_backend"
     assert TOPICS.odometry in stages["global_planning"]["inputs"]
     assert TOPICS.global_path in stages["global_planning"]["outputs"]
     assert TOPICS.odometry in stages["global_planning"]["not_live_inputs"]
@@ -2582,7 +2601,7 @@ def test_runtime_dataflow_route_validates_active_saved_tomogram_artifact(
     monkeypatch,
     tmp_path,
 ):
-    from core.runtime_interface import TOPICS
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeDataflowResponse
 
@@ -2677,8 +2696,8 @@ def test_runtime_dataflow_route_does_not_mark_stale_port_as_live(
     monkeypatch,
 ):
     import gateway.services.runtime_dataflow as dataflow_mod
-    from core.msgs.nav import Odometry
-    from core.runtime_interface import TOPICS
+    from runtime.msgs.nav import Odometry
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
@@ -2698,8 +2717,8 @@ def test_runtime_dataflow_route_does_not_mark_stale_port_as_live(
 
 
 def test_runtime_dataflow_topic_route_answers_one_stream_without_ros2(monkeypatch):
-    from core.msgs.nav import Odometry
-    from core.runtime_interface import TOPICS
+    from runtime.msgs.nav import Odometry
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeDataflowTopicDetailResponse
 
@@ -2736,8 +2755,8 @@ def test_runtime_dataflow_topic_route_answers_one_stream_without_ros2(monkeypatc
 
 
 def test_runtime_dataflow_subscribe_route_returns_read_only_sse_plan(monkeypatch):
-    from core.msgs.nav import Odometry
-    from core.runtime_interface import TOPICS
+    from runtime.msgs.nav import Odometry
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import (
         RuntimeDataflowSubscribeRequest,
@@ -2781,9 +2800,9 @@ def test_runtime_dataflow_exposes_traversable_frontier_candidates_read_only(
 ):
     import numpy as np
 
-    from core.msgs.geometry import Pose
-    from core.msgs.nav import Odometry
-    from core.runtime_interface import TOPICS
+    from runtime.msgs.geometry import Pose
+    from runtime.msgs.nav import Odometry
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import (
         RuntimeDataflowResponse,
@@ -2791,7 +2810,7 @@ def test_runtime_dataflow_exposes_traversable_frontier_candidates_read_only(
         RuntimeDataflowSubscribeResponse,
         RuntimeDataflowTopicDetailResponse,
     )
-    from nav.traversable_frontier_module import TraversableFrontierModule
+    from nav.exploration.traversable_frontier_module import TraversableFrontierModule
     # ^ Cross-layer: gateway test imports from nav/ for runtime dataflow testing.
     #   Acceptable: test needs a concrete nav module to exercise the
     #   RuntimeDataflow endpoint with real module state.  Gateway tests
@@ -2981,8 +3000,8 @@ def test_runtime_dataflow_subscribe_route_rejects_unknown_selector_without_publi
 def test_runtime_dataflow_topic_route_accepts_canonical_stream_token(
     monkeypatch,
 ):
-    from core.msgs.nav import Odometry
-    from core.runtime_interface import TOPICS
+    from runtime.msgs.nav import Odometry
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
@@ -3003,7 +3022,7 @@ def test_runtime_dataflow_topic_route_accepts_canonical_stream_token(
 def test_runtime_dataflow_topic_route_exposes_whitelisted_command_interfaces(
     monkeypatch,
 ):
-    from core.runtime_interface import TOPICS
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
@@ -3056,7 +3075,7 @@ def test_runtime_dataflow_exposes_all_contract_streams_for_real_and_sim(
     command_sink: str,
     simulation_only: str,
 ):
-    from core.runtime_interface import runtime_data_flow_topics
+    from runtime.runtime_interface import runtime_data_flow_topics
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", contract)
@@ -3083,7 +3102,7 @@ def test_runtime_dataflow_exposes_all_contract_streams_for_real_and_sim(
 def test_runtime_dataflow_topic_route_exposes_all_whitelisted_write_interfaces(
     monkeypatch,
 ):
-    from core.runtime_interface import TOPICS
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
@@ -3140,8 +3159,8 @@ def test_runtime_dataflow_reflects_sim_to_real_runtime_switch_without_cache(
     )
     sim_topics = {item["topic"] for item in sim_payload["topics"]}
     real_topics = {item["topic"] for item in real_payload["topics"]}
-    assert "/points_raw" in sim_topics
-    assert "/nav/lidar_scan" in real_topics
+    assert "/lidar/raw_frame" in sim_topics
+    assert "/lidar/raw_frame" in real_topics
     assert sim_topics != real_topics
 
 
@@ -3160,21 +3179,21 @@ def test_runtime_dataflow_topic_route_reports_unknown_selector(monkeypatch):
     assert payload["inspection"]["observable"] is False
     assert payload["inspection"]["communicate"] is False
     assert payload["inspection"]["ros2_topic_required"] is False
-    assert "/nav/odometry" in payload["available_topics"]
+    assert "/slam/odometry" in payload["available_topics"]
 
 
 @pytest.mark.skipif(not _NUMPY_IMPORT_SAFE, reason=NUMPY_UNSAFE_REASON)
 def test_runtime_dataflow_reports_live_samples_for_field_topics(monkeypatch):
     import numpy as np
 
-    from core.gateway_runtime_acceptance import (
+    from runtime.gateway_runtime_acceptance import (
         FIELD_LIVE_TOPICS,
         FIELD_REQUIRED_LIVE_STAGE_NAMES,
     )
-    from core.msgs.nav import Odometry, Path
-    from core.msgs.geometry import Twist
-    from core.msgs.sensor import PointCloud2
-    from core.runtime_interface import TOPICS
+    from runtime.msgs.nav import Odometry, Path
+    from runtime.msgs.geometry import Twist
+    from runtime.msgs.sensor import PointCloud2
+    from runtime.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
@@ -3225,7 +3244,7 @@ def test_runtime_dataflow_reports_live_samples_for_field_topics(monkeypatch):
 def test_runtime_dataflow_topic_route_answers_every_product_observable_stream_without_ros2(
     monkeypatch,
 ):
-    from core.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
+    from runtime.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")

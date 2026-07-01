@@ -3,6 +3,28 @@ project(direct_visual_lidar_calibration)
 
 add_compile_options(-std=c++17)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
+set(LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER_DEFAULT ON)
+option(
+  LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER
+  "Use LingTu Rust camera-LiDAR optimizer C ABI for CT-ICP/CT-GICP factor linearization and dynamic integration smoothing"
+  ${LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER_DEFAULT}
+)
+set(_LINGTU_CAMERA_LIDAR_REQUIRE_RUST_DEFAULT OFF)
+if(LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER)
+  set(_LINGTU_CAMERA_LIDAR_REQUIRE_RUST_DEFAULT ON)
+endif()
+option(
+  LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER
+  "Fail dynamic integration instead of silently continuing without the Rust CT-GICP optimizer"
+  ${_LINGTU_CAMERA_LIDAR_REQUIRE_RUST_DEFAULT}
+)
+if(LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER AND NOT LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER)
+  message(
+    FATAL_ERROR
+    "LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER=ON requires "
+    "LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER=ON."
+  )
+endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build." FORCE)
@@ -22,10 +44,10 @@ endif()
 
 find_package(PCL REQUIRED)
 find_package(Ceres REQUIRED)
-find_package(GTSAM REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED COMPONENTS filesystem program_options date_time)
 find_package(Iridescence REQUIRED)
+find_package(Threads REQUIRED)
 
 set(OLD_DISTRO "humble;galactic;foxy")
 if($ENV{ROS_DISTRO} IN_LIST OLD_DISTRO)
@@ -69,7 +91,6 @@ target_include_directories(direct_visual_lidar_calibration PUBLIC
   thirdparty/Sophus
   ${Boost_INCLUDE_DIRS}
   ${CERES_INCLUDE_DIRS}
-  ${GTSAM_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
@@ -78,10 +99,79 @@ target_link_libraries(direct_visual_lidar_calibration
   ${Boost_LIBRARIES}
   ${PCL_LIBRARIES}
   ${CERES_LIBRARIES}
-  ${GTSAM_LIBRARIES}
   ${OpenCV_LIBRARIES}
   Iridescence::Iridescence
 )
+target_compile_definitions(direct_visual_lidar_calibration PRIVATE LINGTU_CAMERA_LIDAR_GTSAM_FREE_BUILD)
+
+if(LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER)
+  set(_LINGTU_CAMERA_LIDAR_PREBUILT_OPTIMIZER_LIBRARY "")
+  if(DEFINED ENV{LINGTU_CAMERA_LIDAR_OPTIMIZER_LIBRARY})
+    set(_LINGTU_CAMERA_LIDAR_PREBUILT_OPTIMIZER_LIBRARY "$ENV{LINGTU_CAMERA_LIDAR_OPTIMIZER_LIBRARY}")
+  elseif(DEFINED ENV{LINGTU_CAMERA_LIDAR_OPTIMIZER_LIB_DIR})
+    find_library(
+      _LINGTU_CAMERA_LIDAR_PREBUILT_OPTIMIZER_LIBRARY
+      NAMES lingtu_camera_lidar_optimizer liblingtu_camera_lidar_optimizer
+      HINTS "$ENV{LINGTU_CAMERA_LIDAR_OPTIMIZER_LIB_DIR}"
+    )
+  endif()
+  set(
+    LINGTU_CAMERA_LIDAR_OPTIMIZER_LIBRARY
+    "${_LINGTU_CAMERA_LIDAR_PREBUILT_OPTIMIZER_LIBRARY}"
+    CACHE FILEPATH
+    "Optional prebuilt LingTu camera-LiDAR optimizer library. Leave empty to build with cargo."
+  )
+  if(LINGTU_CAMERA_LIDAR_OPTIMIZER_LIBRARY)
+    add_library(lingtu_camera_lidar_optimizer UNKNOWN IMPORTED)
+    set_target_properties(lingtu_camera_lidar_optimizer PROPERTIES
+      IMPORTED_LOCATION "${LINGTU_CAMERA_LIDAR_OPTIMIZER_LIBRARY}"
+    )
+  else()
+    find_program(CARGO_EXECUTABLE cargo REQUIRED)
+    set(CAMERA_LIDAR_OPTIMIZER_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../src/kernels/calibration/camera_lidar_optimizer")
+    set(CAMERA_LIDAR_OPTIMIZER_MANIFEST "${CAMERA_LIDAR_OPTIMIZER_ROOT}/Cargo.toml")
+    set(CAMERA_LIDAR_OPTIMIZER_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/camera_lidar_optimizer_cargo")
+    if(WIN32)
+      if(MSVC)
+        set(CAMERA_LIDAR_OPTIMIZER_STATIC_LIB "${CAMERA_LIDAR_OPTIMIZER_TARGET_DIR}/release/lingtu_camera_lidar_optimizer.lib")
+      else()
+        set(CAMERA_LIDAR_OPTIMIZER_STATIC_LIB "${CAMERA_LIDAR_OPTIMIZER_TARGET_DIR}/release/liblingtu_camera_lidar_optimizer.a")
+      endif()
+    else()
+      set(CAMERA_LIDAR_OPTIMIZER_STATIC_LIB "${CAMERA_LIDAR_OPTIMIZER_TARGET_DIR}/release/liblingtu_camera_lidar_optimizer.a")
+    endif()
+
+    file(GLOB_RECURSE CAMERA_LIDAR_OPTIMIZER_SOURCES CONFIGURE_DEPENDS
+      "${CAMERA_LIDAR_OPTIMIZER_ROOT}/src/*.rs"
+      "${CAMERA_LIDAR_OPTIMIZER_ROOT}/Cargo.lock"
+    )
+
+    add_custom_command(
+      OUTPUT "${CAMERA_LIDAR_OPTIMIZER_STATIC_LIB}"
+      COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${CAMERA_LIDAR_OPTIMIZER_TARGET_DIR}" ${CARGO_EXECUTABLE} build --release --manifest-path "${CAMERA_LIDAR_OPTIMIZER_MANIFEST}"
+      DEPENDS "${CAMERA_LIDAR_OPTIMIZER_MANIFEST}" ${CAMERA_LIDAR_OPTIMIZER_SOURCES}
+      WORKING_DIRECTORY "${CAMERA_LIDAR_OPTIMIZER_ROOT}"
+      VERBATIM
+    )
+    add_custom_target(camera_lidar_optimizer_rust DEPENDS "${CAMERA_LIDAR_OPTIMIZER_STATIC_LIB}")
+    add_library(lingtu_camera_lidar_optimizer STATIC IMPORTED)
+    set_target_properties(lingtu_camera_lidar_optimizer PROPERTIES
+      IMPORTED_LOCATION "${CAMERA_LIDAR_OPTIMIZER_STATIC_LIB}"
+    )
+    add_dependencies(lingtu_camera_lidar_optimizer camera_lidar_optimizer_rust)
+  endif()
+  target_compile_definitions(direct_visual_lidar_calibration PRIVATE LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER)
+  if(LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER)
+    target_compile_definitions(direct_visual_lidar_calibration PRIVATE LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER)
+  endif()
+  target_link_libraries(direct_visual_lidar_calibration lingtu_camera_lidar_optimizer Threads::Threads ${CMAKE_DL_LIBS})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(direct_visual_lidar_calibration m)
+  endif()
+  if(WIN32)
+    target_link_libraries(direct_visual_lidar_calibration kernel32 ntdll userenv ws2_32 dbghelp)
+  endif()
+endif()
 
 
 if($ENV{ROS_VERSION} EQUAL 1)

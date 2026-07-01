@@ -27,7 +27,7 @@ echo "Viz started (PID=$VIZ_PID)"
 echo "Starting terrain_analysis..."
 ros2 run terrain_analysis terrainAnalysis \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cloud_map:=/livox/lidar \
     -r /terrain_map:=/nav/terrain_map \
     -p scanVoxelSize:=0.1 \
@@ -43,7 +43,7 @@ echo "Starting localPlanner..."
 PATHS_DIR=/home/sunrise/data/SLAM/navigation/install/local_planner/share/local_planner/paths
 ros2 run local_planner localPlanner \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cloud_map:=/livox/lidar \
     -r /terrain_map:=/nav/terrain_map \
     -r /way_point:=/nav/way_point \
@@ -63,7 +63,7 @@ sleep 1
 echo "Starting pathFollower..."
 ros2 run local_planner pathFollower \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cmd_vel:=/nav/cmd_vel \
     -p autonomyMode:=true \
     -p autonomySpeed:=1.0 \

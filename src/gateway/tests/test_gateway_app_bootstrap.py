@@ -967,7 +967,7 @@ def test_app_web_events_stream_flushes_live_event_before_heartbeat_delay():
 
 
 def test_app_web_events_stream_filters_runtime_dataflow_topic():
-    from core.msgs.nav import Odometry
+    from runtime.msgs.nav import Odometry
     from gateway.gateway_module import GatewayModule
 
     def decode_payload(chunk):

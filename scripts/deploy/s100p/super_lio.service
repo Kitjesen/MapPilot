@@ -1,4 +1,4 @@
-[Unit]
+﻿[Unit]
 Description=Thunder Super-LIO experimental LIO backend
 After=network.target lidar.service robot-lidar.service
 Wants=lidar.service robot-lidar.service
@@ -13,8 +13,8 @@ WorkingDirectory=/home/sunrise/data/inovxio/lingtu
 Environment=HOME=/home/sunrise
 Environment=ROS_DOMAIN_ID=0
 Environment=SUPER_LIO_WS=/home/sunrise/data/inovxio/super-lio
-Environment=SUPER_LIO_LIDAR_TOPIC=/nav/lidar_scan
-Environment=SUPER_LIO_IMU_TOPIC=/nav/imu
+Environment=SUPER_LIO_LIDAR_TOPIC=/lidar/raw_frame
+Environment=SUPER_LIO_IMU_TOPIC=/imu/raw
 EnvironmentFile=-/etc/lingtu/super_lio.env
 ExecStart=/bin/bash -c '\
   set -eo pipefail; \
@@ -43,8 +43,8 @@ ExecStart=/bin/bash -c '\
     --params-file "$${CONFIG}" \
     -p "lio.ros.lidar_topic:=$${SUPER_LIO_LIDAR_TOPIC}" \
     -p "lio.ros.imu_topic:=$${SUPER_LIO_IMU_TOPIC}" \
-    -r "/lio/odom:=/nav/odometry" \
-    -r "/lio/cloud_world:=/nav/map_cloud" \
+    -r "/lio/odom:=/slam/odometry" \
+    -r "/lio/cloud_world:=/slam/map_cloud" \
     -r "/lio/imu/odom:=/nav/imu_odom" \
     -r "/lio/robo/odom:=/nav/robot_odom"'
 Restart=on-failure

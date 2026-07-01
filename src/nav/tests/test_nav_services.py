@@ -1,7 +1,7 @@
 """Tests for nav service modules, driver modules, and frontier explorer.
 
 Covers:
-  1. MapManagerModule      -- map CRUD, POI operations, persistence
+  1. MapService      -- map CRUD, POI operations, persistence
   2. WavefrontFrontierExplorer -- frontier detection, scoring, health
   3. PatrolManagerModule   -- route CRUD, patrol start/stop
   4. TaskSchedulerModule   -- schedule CRUD, firing logic, deduplication
@@ -32,23 +32,23 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from core.msgs.geometry import Pose
-from core.msgs.nav import Odometry
-from core.msgs.sensor import Image, ImageFormat, PointCloud2
+from runtime.msgs.geometry import Pose
+from runtime.msgs.nav import Odometry
+from runtime.msgs.sensor import Image, ImageFormat, PointCloud2
 
 # ---------------------------------------------------------------------------
-# 1. MapManagerModule
+# 1. MapService
 # ---------------------------------------------------------------------------
 
-class TestMapManagerModule(unittest.TestCase):
+class TestMapService(unittest.TestCase):
     """Test map CRUD, POI operations, and persistence."""
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp()
         self._map_dir = os.path.join(self._tmpdir, "maps")
         self._data_dir = os.path.join(self._tmpdir, "data")
-        from nav.services.map_manager_module import MapManagerModule
-        self.mod = MapManagerModule(
+        from nav.services.maps import MapService
+        self.mod = MapService(
             map_dir=self._map_dir,
             data_dir=self._data_dir,
         )
@@ -89,8 +89,8 @@ class TestMapManagerModule(unittest.TestCase):
             encoding="utf-8",
         )
         tomogram.write_bytes(b"unit-test-tomogram")
-        from core.runtime_interface import TOPICS, topic_default_frame_id
-        from core.same_source_map_artifacts import (
+        from runtime.runtime_interface import TOPICS, topic_default_frame_id
+        from runtime.same_source_map_artifacts import (
             build_saved_map_metadata,
             sha256_file,
         )
@@ -238,8 +238,8 @@ class TestMapManagerModule(unittest.TestCase):
 
     def test_build_occupancy_command_dispatches_snapshot_builder(self):
         with patch.object(
-            self.mod,
-            "_build_occupancy_snapshot",
+            self.mod.pipeline,
+            "build_occupancy_snapshot",
             return_value={
                 "action": "build_occupancy_snapshot",
                 "success": True,
@@ -549,8 +549,8 @@ class TestMapManagerModule(unittest.TestCase):
         map_dir.mkdir()
         pcd_path = map_dir / "map.pcd"
         # Minimal valid ASCII PCD with 4 obstacle-height points forming a 2x2 square
-        # Ground points at z=0.0 (many, so percentile-5 ≈ 0.0),
-        # obstacle points at z=0.5 (within 0.10–2.00 above ground).
+        # Ground points at z=0.0 (many, so percentile-5 閳?0.0),
+        # obstacle points at z=0.5 (within 0.10-1.00 above ground).
         pcd_content = (
             "VERSION 0.7\n"
             "FIELDS x y z\n"
@@ -592,7 +592,7 @@ class TestMapManagerModule(unittest.TestCase):
         self.assertTrue(metadata_path.exists())
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         artifacts = metadata["artifacts"]
-        from core.runtime_interface import TOPICS, topic_default_frame_id
+        from runtime.runtime_interface import TOPICS, topic_default_frame_id
 
         self.assertEqual(
             metadata["frame_id"],
@@ -604,7 +604,7 @@ class TestMapManagerModule(unittest.TestCase):
             artifacts["occupancy_grid"]["source_map_sha256"],
             artifacts["map_pcd"]["sha256"],
         )
-        from core.same_source_map_artifacts import (
+        from runtime.same_source_map_artifacts import (
             validate_same_source_map_metadata,
         )
 
@@ -623,8 +623,8 @@ class TestMapManagerModule(unittest.TestCase):
             f.write(pcd_content)
             fname = f.name
         try:
-            from nav.services.map_manager_module import MapManagerModule
-            pts = MapManagerModule._load_pcd_points(fname)
+            from nav.services.maps import MapService
+            pts = MapService._load_pcd_points(fname)
             self.assertIsNotNone(pts)
             self.assertEqual(pts.shape, (3, 3))
             np.testing.assert_allclose(pts[0], [1.0, 2.0, 0.5], atol=1e-5)
@@ -686,7 +686,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
     """Test frontier discovery, scoring, and health."""
 
     def _make_explorer(self, **kw):
-        from nav.frontier_explorer_module import WavefrontFrontierExplorer
+        from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
         kw.setdefault("min_frontier_size", 2)
         mod = WavefrontFrontierExplorer(**kw)
         mod.setup()
@@ -1190,7 +1190,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         # _make_pose_stamped sets pose position via PoseStamped constructor
         # PoseStamped.x is a read-only property delegating to pose.x
         # The method may use direct pose attribute access; verify frame_id
-        from core.msgs.geometry import Pose, PoseStamped
+        from runtime.msgs.geometry import Pose, PoseStamped
         ps = PoseStamped(pose=Pose(3.0, 4.0, 0.0), frame_id="map")
         self.assertAlmostEqual(ps.x, 3.0)
         self.assertAlmostEqual(ps.y, 4.0)
@@ -1206,7 +1206,7 @@ class TestPatrolManagerModule(unittest.TestCase):
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp()
-        from nav.services.patrol_manager_module import PatrolManagerModule
+        from nav.services.patrol import PatrolManagerModule
         self.mod = PatrolManagerModule(routes_dir=os.path.join(self._tmpdir, "routes"))
         self.mod.setup()
         self._statuses: list[str] = []
@@ -1303,7 +1303,7 @@ class TestTaskSchedulerModule(unittest.TestCase):
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp()
-        from nav.services.task_scheduler_module import TaskSchedulerModule
+        from nav.services.scheduler import TaskSchedulerModule
         self.mod = TaskSchedulerModule(
             schedule_file=os.path.join(self._tmpdir, "sched.yaml")
         )
@@ -1430,7 +1430,7 @@ class TestGeofenceManagerModule(unittest.TestCase):
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp()
-        from nav.services.geofence_manager_module import GeofenceManagerModule
+        from nav.services.geofence import GeofenceManagerModule
         self.mod = GeofenceManagerModule(
             geofence_file=os.path.join(self._tmpdir, "fences.yaml")
         )
@@ -1510,17 +1510,17 @@ class TestGeofenceManagerModule(unittest.TestCase):
     # -- point-in-polygon --
 
     def test_point_in_polygon_inside(self):
-        from nav.services.geofence_manager_module import GeofenceManagerModule
+        from nav.services.geofence import GeofenceManagerModule
         poly = [[0, 0], [10, 0], [10, 10], [0, 10]]
         self.assertTrue(GeofenceManagerModule._point_in_polygon(5, 5, poly))
 
     def test_point_in_polygon_outside(self):
-        from nav.services.geofence_manager_module import GeofenceManagerModule
+        from nav.services.geofence import GeofenceManagerModule
         poly = [[0, 0], [10, 0], [10, 10], [0, 10]]
         self.assertFalse(GeofenceManagerModule._point_in_polygon(15, 15, poly))
 
     def test_point_in_polygon_too_few(self):
-        from nav.services.geofence_manager_module import GeofenceManagerModule
+        from nav.services.geofence import GeofenceManagerModule
         self.assertFalse(GeofenceManagerModule._point_in_polygon(0, 0, [[0, 0]]))
 
     # -- intrusion detection --
@@ -1568,122 +1568,14 @@ class TestGeofenceManagerModule(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 6. CameraBridgeModule
-# ---------------------------------------------------------------------------
-
-class TestCameraBridgeModule(unittest.TestCase):
-    """Test CameraBridgeModule instantiation and stub mode (no rclpy)."""
-
-    def _make_bridge(self, **kw):
-        from compat.ros2.camera_bridge import CameraBridgeModule
-        return CameraBridgeModule(**kw)
-
-    def _make_stub_bridge(self, **kw):
-        mod = self._make_bridge(**kw)
-        mod._create_dds_reader = MagicMock(return_value=False)
-        mod._create_ros2_node = MagicMock(return_value=False)
-        return mod
-
-    def test_instantiation_defaults(self):
-        mod = self._make_bridge()
-        self.assertEqual(mod._color_topic, "/camera/color/image_raw")
-        self.assertEqual(mod._depth_topic, "/camera/depth/image_raw")
-        self.assertIn("/camera/color/camera_info", mod._info_topics)
-        self.assertIn("/camera/depth/camera_info", mod._info_topics)
-        self.assertIn("/camera/camera_info", mod._info_topics)
-        self.assertEqual(mod._preferred_info_topic, "/camera/color/camera_info")
-        self.assertEqual(mod._spin_rate, 30.0)
-
-    def test_instantiation_custom_topics(self):
-        mod = self._make_bridge(
-            color_topic="/rgb",
-            depth_topic="/depth",
-            info_topics=("/rgb/info", "/depth/info"),
-        )
-        self.assertEqual(mod._color_topic, "/rgb")
-        self.assertEqual(mod._depth_topic, "/depth")
-        self.assertEqual(mod._info_topics, ("/rgb/info", "/depth/info"))
-
-    def test_camera_info_topic_precedence_prefers_color(self):
-        mod = self._make_bridge()
-
-        class Info:
-            width = 848
-            height = 480
-            k = [411.0, 0.0, 424.0, 0.0, 411.0, 240.0, 0.0, 0.0, 1.0]
-            d = []
-
-        mod._on_ros2_info(Info(), "/camera/depth/camera_info")
-        self.assertEqual(mod._active_info_topic, "/camera/depth/camera_info")
-
-        Info.width = 1280
-        Info.height = 720
-        Info.k = [693.0, 0.0, 642.0, 0.0, 693.0, 361.0, 0.0, 0.0, 1.0]
-        mod._on_ros2_info(Info(), "/camera/color/camera_info")
-        self.assertEqual(mod._active_info_topic, "/camera/color/camera_info")
-
-        Info.width = 848
-        Info.height = 480
-        Info.k = [411.0, 0.0, 424.0, 0.0, 411.0, 240.0, 0.0, 0.0, 1.0]
-        mod._on_ros2_info(Info(), "/camera/depth/camera_info")
-        self.assertEqual(mod._active_info_topic, "/camera/color/camera_info")
-
-    def test_undistortion_maps_require_matching_image_shape(self):
-        mod = self._make_bridge()
-        map1 = np.zeros((720, 1280, 2), dtype=np.int16)
-        map2 = np.zeros((720, 1280), dtype=np.uint16)
-        mod._undistort_maps = (map1, map2)
-
-        self.assertTrue(mod._undistortion_maps_match(np.zeros((720, 1280, 3))))
-        self.assertFalse(mod._undistortion_maps_match(np.zeros((480, 848))))
-
-    def test_setup_no_rclpy(self):
-        """setup() should not crash when rclpy is not available."""
-        mod = self._make_stub_bridge()
-        mod.setup()  # Should gracefully handle ImportError
-        self.assertEqual(mod._backend, "stub")
-        self.assertFalse(mod._rclpy_available)
-
-    def test_health_no_frames(self):
-        mod = self._make_stub_bridge()
-        mod.setup()
-        h = mod.health()
-        self.assertAlmostEqual(h["fps"], 0.0)
-
-    def test_health_with_timestamp(self):
-        mod = self._make_stub_bridge()
-        mod.setup()
-        mod._last_color_ts = time.time()
-        h = mod.health()
-        # fps will be computed from dt
-        self.assertIn("fps", h)
-
-    def test_start_without_node(self):
-        """start() in stub mode publishes alive=False."""
-        mod = self._make_stub_bridge()
-        mod.setup()
-        published = []
-        mod.alive.subscribe(lambda v: published.append(v))
-        mod.start()
-        self.assertIn(False, published)
-
-    def test_stop_idempotent(self):
-        mod = self._make_stub_bridge()
-        mod.setup()
-        mod.start()
-        mod.stop()
-        mod.stop()  # second stop should not crash
-
-
-# ---------------------------------------------------------------------------
-# 7. TeleopModule
+# 6. TeleopModule
 # ---------------------------------------------------------------------------
 
 class TestTeleopModule(unittest.TestCase):
     """Test joystick scaling, idle release, health, and JPEG encode path."""
 
     def _make_teleop(self, **kw):
-        from drivers.teleop_module import TeleopModule
+        from drivers.real.teleop_module import TeleopModule
         mod = TeleopModule(**kw)
         mod.setup()
         return mod

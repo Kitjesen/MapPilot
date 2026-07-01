@@ -18,7 +18,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_PLANNER = (
     REPO_ROOT
     / "src"
-    / "global_planning"
+    / "nav"
+    / "planning"
+    / "vendor"
     / "pct_planner"
     / "planner"
     / "scripts"

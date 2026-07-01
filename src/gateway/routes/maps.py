@@ -16,15 +16,15 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.responses import HTMLResponse
 
-from core.map_save import (
+from runtime.map_save import (
     MapSaveError,
     save_nav_map_with_adapter,
     save_pgo_map_with_adapter,
+    seed_default_map_save_adapter_plugins,
 )
-from core.msgs.numpy_compat import is_numpy_array, np
-from core.plugin_seed import seed_registered_plugins
-from core.runtime_interface import TOPICS, topic_default_frame_id
-from core.same_source_map_artifacts import (
+from runtime.msgs.numpy_compat import is_numpy_array, np
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.same_source_map_artifacts import (
     validate_saved_map_artifact_dir,
 )
 from gateway.schemas import (
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def _apply_dynamic_filter_step1half(*args: Any, **kwargs: Any) -> Any:
-    from core.dynamic_filter import apply_dynamic_filter_step1half
+    from runtime.dynamic_filter import apply_dynamic_filter_step1half
 
     return apply_dynamic_filter_step1half(*args, **kwargs)
 
@@ -652,10 +652,10 @@ def register_map_routes(app, gw) -> None:
         os.makedirs(save_dir, exist_ok=True)
         pcd_path = os.path.join(save_dir, "map.pcd")
         map_save_adapter = getattr(gw, "_map_save_adapter", None)
-        if map_save_adapter is None:
-            seed_registered_plugins(groups=("map_save_adapter",), reload_loaded=False)
 
         try:
+            if map_save_adapter is None:
+                seed_default_map_save_adapter_plugins()
             save_nav_map_with_adapter(
                 map_save_adapter,
                 pcd_path,

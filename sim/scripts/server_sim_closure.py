@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Summarize LingTu server-side simulation closure reports."""
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ for import_path in (ROOT, SRC):
     if import_path_text not in sys.path:
         sys.path.insert(0, import_path_text)
 
-from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
-from core.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
+from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+from runtime.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
 
 MID360_PATTERN_REL = "sim/assets/livox/mid360.npy"
 MID360_PATTERN_SHA256 = "448821576a658673e8f7929992c8c0d687eb052657d7b584d038729a83da1bfb"
@@ -39,9 +39,9 @@ GAZEBO_NAV_SOURCE_RELS = (
     "sim/planning/terrain_passthrough_node.py",
     "sim/scripts/gazebo_nav_loop_smoke.py",
     "sim/scripts/gazebo_frontier_exploration_smoke.py",
-    "src/global_planning/pct_planner/planner/scripts/global_planner.py",
+    "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/global_planner.py",
 )
-LIVE_NAV_MAP_TOPIC = "/nav/map_cloud"
+LIVE_NAV_MAP_TOPIC = "/slam/map_cloud"
 DEFAULT_REQUIRED_MAX_REPORT_AGE_S = 24.0 * 60.0 * 60.0
 DEFAULT_FRESHNESS_REQUIRED_GATES = frozenset(G4_SERVER_FULL_SIM_REQUIRED_GATES)
 NAVIGATION_REPLAY_DEVIATION_REPORT_REL = "artifacts/server_sim_closure/navigation_replay_deviation/report.json"
@@ -61,6 +61,9 @@ LOCAL_NUMERIC_SIM_HOST_REQUIREMENTS = (
     *LOCAL_NON_MOTION_HOST_REQUIREMENTS,
     "stable NumPy/local simulation runtime; Windows MINGW NumPy builds are not accepted for this gate",
 )
+PRODUCT_LOCAL_PLANNER_BACKEND = "nanobind"
+PRODUCT_PATH_FOLLOWER_BACKEND = "nav_kernel"
+PRODUCT_GLOBAL_PLANNER_BACKEND = "octoplanner3d"
 PCT_NATIVE_HOST_REQUIREMENTS = (
     "Linux host or S100P/aarch64 runtime with PCT native extension modules matching the host architecture",
     "Python ABI matching the built PCT modules; the current checked-good bundled host ABI is CPython 3.10",
@@ -88,10 +91,6 @@ ROS2_FASTLIO2_HOST_REQUIREMENT = (
 ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS = (
     *ROS2_MUJOCO_PCT_HOST_REQUIREMENTS,
     ROS2_FASTLIO2_HOST_REQUIREMENT,
-)
-ROS2_MUJOCO_FASTLIO2_LOCAL_PLANNER_HOST_REQUIREMENTS = (
-    *ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS,
-    ROS2_LOCAL_PLANNER_HOST_REQUIREMENT,
 )
 ROS2_MUJOCO_PCT_LOCAL_PLANNER_HOST_REQUIREMENTS = (
     *ROS2_MUJOCO_PCT_HOST_REQUIREMENTS,
@@ -272,8 +271,8 @@ HOST_CHECK_DIAGNOSTIC_COMMANDS = {
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
     "gazebo_navigation_sources": (
-        "ls -l sim/planning/sim_navigation.launch.py sim/planning/gazebo_line_global_planner.py sim/planning/terrain_passthrough_node.py sim/scripts/gazebo_nav_loop_smoke.py sim/scripts/gazebo_frontier_exploration_smoke.py src/global_planning/pct_planner/planner/scripts/global_planner.py",
-        "python3 -m py_compile sim/planning/sim_navigation.launch.py sim/planning/gazebo_line_global_planner.py sim/planning/terrain_passthrough_node.py sim/scripts/gazebo_nav_loop_smoke.py sim/scripts/gazebo_frontier_exploration_smoke.py src/global_planning/pct_planner/planner/scripts/global_planner.py",
+        "ls -l sim/planning/sim_navigation.launch.py sim/planning/gazebo_line_global_planner.py sim/planning/terrain_passthrough_node.py sim/scripts/gazebo_nav_loop_smoke.py sim/scripts/gazebo_frontier_exploration_smoke.py src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/global_planner.py",
+        "python3 -m py_compile sim/planning/sim_navigation.launch.py sim/planning/gazebo_line_global_planner.py sim/planning/terrain_passthrough_node.py sim/scripts/gazebo_nav_loop_smoke.py sim/scripts/gazebo_frontier_exploration_smoke.py src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/global_planner.py",
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
     "isolated_ros_domain": (
@@ -406,7 +405,7 @@ def _shared_runtime_evidence(
 
     try:
         _ensure_core_import_path()
-        from core.runtime_evidence import validate_runtime_evidence
+        from runtime.runtime_evidence import validate_runtime_evidence
 
         result = validate_runtime_evidence(
             report,
@@ -906,7 +905,7 @@ def _runtime_contract_blockers(
     canonical: dict[str, Any] = {}
     try:
         _ensure_core_import_path()
-        from core.blueprints.simulation_contract import simulation_runtime_contract
+        from runtime.blueprints.simulation_contract import simulation_runtime_contract
 
         canonical = simulation_runtime_contract(expected_name).as_report()
     except Exception as exc:
@@ -1078,7 +1077,10 @@ def _eval_large_terrain(report: dict[str, Any]) -> tuple[bool, list[str], dict[s
         for plan in case.get("planning", [])
         if str(plan.get("planner")).lower() == "pct"
     ]
-    native_pct = any(bool(plan.get("native_backend_used")) for plan in pct_plans)
+    native_pct = any(
+        bool(_first_present(plan.get("native_runtime_used"), plan.get("native_backend_used")))
+        for plan in pct_plans
+    )
     path_safe = all(bool((case.get("path_safety") or {}).get("ok", True)) for case in cases)
     if not pct_plans:
         blockers.append("no PCT planning case found")
@@ -1213,8 +1215,12 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
         blockers.append("reached_goal is not true")
     if str(report.get("planner") or "").lower() != "pct":
         blockers.append("planner is not pct")
-    if report.get("pct_native_backend_used") is not True:
-        blockers.append("pct_native_backend_used is not true")
+    pct_native_runtime_used = _first_present(
+        report.get("pct_native_runtime_used"),
+        report.get("pct_native_backend_used"),
+    )
+    if pct_native_runtime_used is not True:
+        blockers.append("pct_native_runtime_used is not true")
     if report.get("pct_runtime_ok") is not True:
         blockers.append("pct_runtime_ok is not true")
     if _safe_int(report.get("pct_path_count")) < 2:
@@ -1243,8 +1249,12 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
         blockers.append("source_planning_contract.fallback_used is not false")
     if source_contract.get("path_safety_ok") is not True:
         blockers.append("source_planning_contract.path_safety_ok is not true")
-    if source_contract.get("native_backend_used") is not True:
-        blockers.append("source_planning_contract.native_backend_used is not true")
+    source_native_runtime_used = _first_present(
+        source_contract.get("native_runtime_used"),
+        source_contract.get("native_backend_used"),
+    )
+    if source_native_runtime_used is not True:
+        blockers.append("source_planning_contract.native_runtime_used is not true")
     if source_contract.get("tomogram_exists") is not True:
         blockers.append("source_planning_contract.tomogram_exists is not true")
     if not str(source_contract.get("tomogram_sha256") or ""):
@@ -1267,7 +1277,7 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
             "fallback_used": report.get("fallback_used"),
             "global_planner_source": report.get("global_planner_source"),
             "source_planning_contract": source_contract,
-            "pct_native_backend_used": report.get("pct_native_backend_used"),
+            "pct_native_runtime_used": pct_native_runtime_used,
             "pct_runtime_ok": report.get("pct_runtime_ok"),
             "pct_path_count": report.get("pct_path_count"),
             "pct_optimizer": pct_optimizer,
@@ -1303,7 +1313,7 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
             "fallback_used": report.get("fallback_used"),
             "global_planner_source": report.get("global_planner_source"),
             "source_planning_contract": source_contract,
-            "pct_native_backend_used": report.get("pct_native_backend_used"),
+            "pct_native_runtime_used": pct_native_runtime_used,
             "same_source_artifacts": same_source_artifacts,
             "claim_boundary": claim_boundary,
             "native_gate_skipped": report.get("native_gate_skipped"),
@@ -1391,7 +1401,7 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
         "fallback_used": report.get("fallback_used"),
         "global_planner_source": report.get("global_planner_source"),
         "source_planning_contract": source_contract,
-        "pct_native_backend_used": report.get("pct_native_backend_used"),
+        "pct_native_runtime_used": pct_native_runtime_used,
         "pct_optimizer": pct_optimizer,
         "same_source_artifacts": same_source_artifacts,
         "final_distance_m": report.get("final_distance_m"),
@@ -1922,7 +1932,7 @@ def _eval_fastlio2_dynamic_inspection(
     )
 
     true_mapping_path = str(report.get("true_mapping_input_path") or "")
-    for token in ("/points_raw", "/imu_raw", "fastlio2", "/nav/odometry", "/nav/map_cloud"):
+    for token in ("/lidar/raw_frame", "/imu/raw", "fastlio2", "/slam/odometry", "/slam/map_cloud"):
         if token not in true_mapping_path:
             blockers.append(f"true_mapping_input_path missing {token}")
 
@@ -2242,6 +2252,22 @@ def _eval_policy_nav(report: dict[str, Any]) -> tuple[bool, list[str], dict[str,
         blockers.append("full_stack_policy_nav did not pass")
     for nav_check in nav_checks:
         seen = nav_check.get("seen") or {}
+        planner_status = nav_check.get("global_planner_backend_status") or {}
+        planner_backend = str(planner_status.get("configured_backend") or "")
+        local_backend = str(nav_check.get("local_planner_backend_actual") or "")
+        path_backend = str(nav_check.get("path_follower_backend_actual") or "")
+        if planner_backend != PRODUCT_GLOBAL_PLANNER_BACKEND:
+            blockers.append(
+                "full_stack_policy_nav global_planner_backend_status.configured_backend is not octoplanner3d"
+            )
+        if local_backend != PRODUCT_LOCAL_PLANNER_BACKEND:
+            blockers.append(
+                "full_stack_policy_nav local_planner_backend_actual is not nanobind"
+            )
+        if path_backend != PRODUCT_PATH_FOLLOWER_BACKEND:
+            blockers.append(
+                "full_stack_policy_nav path_follower_backend_actual is not nav_kernel"
+            )
         if int(seen.get("direct_fallback", 0)) != 0:
             blockers.append("full_stack_policy_nav used direct_goal_fallback")
         for key in ("local_path", "path_follower_cmd", "mux_cmd", "waypoints"):
@@ -2264,6 +2290,9 @@ def _eval_policy_nav(report: dict[str, Any]) -> tuple[bool, list[str], dict[str,
         "policy_loaded": policy_loaded,
         "nav_passed": nav_passed,
         "policy_paths": [check.get("policy_path") for check in checks if check.get("policy_path")],
+        "global_planner_backend_status": last_nav.get("global_planner_backend_status"),
+        "local_planner_backend_actual": last_nav.get("local_planner_backend_actual"),
+        "path_follower_backend_actual": last_nav.get("path_follower_backend_actual"),
         "nav_seen": last_nav.get("seen") or {},
         "nav_state": last_nav.get("nav_state"),
         "nav_dist_to_goal_m": last_nav.get("dist_to_goal_m"),
@@ -2719,15 +2748,15 @@ def _eval_gazebo_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[
     samples = report.get("topic_samples") or {}
     point_counts = report.get("point_counts") or {}
     expected = {
-        "/nav/map_cloud": "odom",
-        "/nav/registered_cloud": "body",
+        "/slam/map_cloud": "odom",
+        "/slam/registered_cloud": "body",
     }
     for topic, frame in expected.items():
         if int(samples.get(topic) or 0) <= 0:
             blockers.append(f"{topic} samples missing")
         if frames.get(topic) != frame:
             blockers.append(f"{topic} frame is not {frame}")
-    for topic in ("/nav/map_cloud", "/nav/registered_cloud"):
+    for topic in ("/slam/map_cloud", "/slam/registered_cloud"):
         if int(point_counts.get(topic) or 0) <= 0:
             blockers.append(f"{topic} points missing")
 
@@ -2754,7 +2783,7 @@ def _eval_gazebo_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[
     if odom_delta_m < 0.05:
         blockers.append("nav_loop.odom_delta_m < 0.05")
     nav_samples = nav_loop.get("samples") or nav_loop.get("topic_samples") or {}
-    for topic in ("/nav/global_path", "/nav/local_path", "/nav/cmd_vel", "/nav/odometry"):
+    for topic in ("/nav/global_path", "/nav/local_path", "/nav/cmd_vel", "/slam/odometry"):
         if int(nav_samples.get(topic) or 0) <= 0:
             blockers.append(f"nav_loop {topic} samples missing")
     publisher_contract = nav_loop.get("publisher_contract") or {}
@@ -2809,7 +2838,7 @@ def _eval_gazebo_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
-        "/nav/odometry",
+        "/slam/odometry",
         "/nav/terrain_map",
         "/nav/terrain_map_ext",
     ):
@@ -2995,20 +3024,20 @@ def _eval_cmu_unity_sim(report: dict[str, Any]) -> tuple[bool, list[str], dict[s
 
     lingtu = report.get("lingtu_contract") or {}
     remaps = lingtu.get("remaps") or {}
-    if remaps.get("/registered_scan") != "/nav/map_cloud":
-        blockers.append("LingTu /registered_scan remap is not /nav/map_cloud")
-    if remaps.get("/state_estimation") != "/nav/odometry":
-        blockers.append("LingTu /state_estimation remap is not /nav/odometry")
-    if remaps.get("/state_estimation_at_scan") != "/nav/odometry":
-        blockers.append("LingTu /state_estimation_at_scan remap is not /nav/odometry")
+    if remaps.get("/registered_scan") != "/slam/map_cloud":
+        blockers.append("LingTu /registered_scan remap is not /slam/map_cloud")
+    if remaps.get("/state_estimation") != "/slam/odometry":
+        blockers.append("LingTu /state_estimation remap is not /slam/odometry")
+    if remaps.get("/state_estimation_at_scan") != "/slam/odometry":
+        blockers.append("LingTu /state_estimation_at_scan remap is not /slam/odometry")
     if remaps.get("/way_point") != "/exploration/way_point":
         blockers.append("LingTu /way_point remap is not /exploration/way_point")
 
     adapter_required_relays = lingtu.get("adapter_required_relays") or {}
     for relay in (
-        "/state_estimation->/nav/odometry",
-        "/state_estimation_at_scan->/nav/state_estimation_at_scan",
-        "/registered_scan->/nav/map_cloud",
+        "/state_estimation->/slam/odometry",
+        "/state_estimation_at_scan->/slam/state_at_scan",
+        "/registered_scan->/slam/map_cloud",
         "/terrain_map->/nav/terrain_map",
         "/terrain_map_ext->/nav/terrain_map_ext",
         "/way_point->/exploration/way_point",
@@ -3220,14 +3249,14 @@ def _eval_cmu_unity_pct_strict(report: dict[str, Any]) -> tuple[bool, list[str],
             blockers.append(f"{topic} strict path requirement failed")
 
     scan_requirements = report.get("scan_requirements") or {}
-    registered_scan = scan_requirements.get("/nav/registered_cloud") or {}
+    registered_scan = scan_requirements.get("/slam/registered_cloud") or {}
     if registered_scan.get("ok") is not True or int(registered_scan.get("observed_samples") or 0) <= 0:
-        blockers.append("/nav/registered_cloud strict scan requirement failed")
+        blockers.append("/slam/registered_cloud strict scan requirement failed")
 
     map_requirements = report.get("map_requirements") or {}
-    map_cloud = map_requirements.get("/nav/map_cloud") or {}
+    map_cloud = map_requirements.get("/slam/map_cloud") or {}
     if map_cloud.get("ok") is not True or _safe_float(map_cloud.get("observed_area_delta_m2"), default=0.0) <= 0.0:
-        blockers.append("/nav/map_cloud strict map-growth requirement failed")
+        blockers.append("/slam/map_cloud strict map-growth requirement failed")
     terrain_map = map_requirements.get("/nav/terrain_map_ext") or {}
     if terrain_map.get("ok") is not True or _safe_float(terrain_map.get("observed_area_delta_m2"), default=0.0) <= 0.0:
         blockers.append("/nav/terrain_map_ext strict map-growth requirement failed")
@@ -3308,15 +3337,15 @@ def _eval_saved_map_relocalize(report: dict[str, Any]) -> tuple[bool, list[str],
     global_reloc = report.get("global_relocalization_requested") is True
     if service.get("available") is not True:
         blockers.append(
-            "/nav/global_relocalize service was not available"
-            if global_reloc else "/nav/relocalize service was not available"
+            "/slam/global_relocalize service was not available"
+            if global_reloc else "/slam/relocalize service was not available"
         )
     if service.get("success") is not True:
         message = str(service.get("message") or "").lower()
         if not (global_reloc and "already running" in message):
             blockers.append(
-                "/nav/global_relocalize service did not succeed"
-                if global_reloc else "/nav/relocalize service did not succeed"
+                "/slam/global_relocalize service did not succeed"
+                if global_reloc else "/slam/relocalize service did not succeed"
             )
 
     live_feed = report.get("live_feed") if isinstance(report.get("live_feed"), dict) else {}
@@ -3336,9 +3365,9 @@ def _eval_saved_map_relocalize(report: dict[str, Any]) -> tuple[bool, list[str],
     max_xy = _safe_float(thresholds.get("max_map_odom_xy_m"), default=5.0)
     max_z = _safe_float(thresholds.get("max_map_odom_z_abs_m"), default=2.0)
     if int(localizer.get("saved_map_cloud_samples") or 0) <= 0:
-        blockers.append("/nav/saved_map_cloud samples missing")
+        blockers.append("/slam/saved_map_cloud samples missing")
     if int(localizer.get("saved_map_cloud_points_latest") or 0) < min_points:
-        blockers.append("/nav/saved_map_cloud point count below threshold")
+        blockers.append("/slam/saved_map_cloud point count below threshold")
     if int(localizer.get("tracking_health_samples") or 0) < min_tracking:
         blockers.append("localizer tracking health samples below threshold")
     if str(localizer.get("latest_health_state") or "") not in {"LOCKED", "RECOVERED"}:
@@ -3561,7 +3590,7 @@ GATES: tuple[GateSpec, ...] = (
     ),
     GateSpec(
         "dynamic_obstacle_local_planner",
-        "Nanobind LocalPlannerModule replans around changing added_obstacles without hardware cmd_vel",
+        "Nanobind LocalPlanner replans around changing added_obstacles without hardware cmd_vel",
         (
             "artifacts/server_sim_closure/dynamic_obstacle_local_planner/report.json",
             "artifacts/dynamic_obstacle_local_planner*/report.json",
@@ -3624,7 +3653,7 @@ GATES: tuple[GateSpec, ...] = (
         "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
         "bash sim/scripts/launch_mujoco_fastlio2_live.sh inspection-moving-obstacle-video'",
         _eval_fastlio2_dynamic_inspection,
-        host_requirements=ROS2_MUJOCO_FASTLIO2_LOCAL_PLANNER_HOST_REQUIREMENTS,
+        host_requirements=ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS,
     ),
     GateSpec(
         "moving_obstacle_sweep",
@@ -3649,7 +3678,7 @@ GATES: tuple[GateSpec, ...] = (
         "--required-scan-time-profile physical_rolling --require-video-file "
         "--json-out artifacts/server_sim_closure/moving_obstacle_sweep/report.json --strict'",
         _eval_moving_obstacle_sweep,
-        host_requirements=ROS2_MUJOCO_FASTLIO2_LOCAL_PLANNER_HOST_REQUIREMENTS,
+        host_requirements=ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS,
     ),
     GateSpec(
         "large_loop_closure",
@@ -3710,7 +3739,7 @@ GATES: tuple[GateSpec, ...] = (
         "--required-scan-time-profile physical_rolling --require-video-file "
         "--json-out artifacts/server_sim_closure/large_loop_closure/report.json --strict'",
         _eval_large_loop_closure,
-        host_requirements=ROS2_MUJOCO_FASTLIO2_LOCAL_PLANNER_HOST_REQUIREMENTS,
+        host_requirements=ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS,
     ),
     GateSpec(
         "mujoco_tare_exploration",
@@ -3745,7 +3774,8 @@ GATES: tuple[GateSpec, ...] = (
         ),
         "PYTHONPATH=src:. MUJOCO_GL=egl python3 sim/scripts/policy_nav_smoke.py "
         "--direct-duration 4 --goal-distance 0.8 --nav-duration 18 "
-        "--nav-local-planner-backend nanobind --nav-path-follower-backend nav_core "
+        "--nav-planner-backend octoplanner3d "
+        "--nav-local-planner-backend nanobind --nav-path-follower-backend nav_kernel "
         "--nav-costmap-wait 3 --nav-path-min-speed 0.25 --nav-path-max-speed 0.6 "
         "--nav-waypoint-threshold 0.30 --nav-final-waypoint-threshold 0.25 "
         "--nav-path-goal-tolerance 0.25 --max-nav-dist-to-goal 0.35 "
@@ -3886,12 +3916,12 @@ GATES: tuple[GateSpec, ...] = (
         "export LINGTU_CMU_EXPLORATION_AUTO_START=0; "
         "export LINGTU_CMU_ALLOW_DIRECT_GOAL_FALLBACK=0; "
         "export LINGTU_CMU_AUTO_TOMOGRAM=${LINGTU_CMU_AUTO_TOMOGRAM:-1}; "
-        "export LINGTU_CMU_TOMOGRAM_TOPICS=${LINGTU_CMU_TOMOGRAM_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}; "
+        "export LINGTU_CMU_TOMOGRAM_TOPICS=${LINGTU_CMU_TOMOGRAM_TOPICS:-/slam/map_cloud,/nav/terrain_map_ext}; "
         "export LINGTU_CMU_TOMOGRAM_MODE=${LINGTU_CMU_TOMOGRAM_MODE:-official}; "
         "export LINGTU_CMU_TOMOGRAM_DURATION_SEC=${LINGTU_CMU_TOMOGRAM_DURATION_SEC:-20}; "
         "export LINGTU_CMU_GATE_TIMEOUT_SEC=${LINGTU_CMU_GATE_TIMEOUT_SEC:-240}; "
         "export LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS=${LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS:-3}; "
-        "export LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS=${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}; "
+        "export LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS=${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/slam/map_cloud,/nav/terrain_map_ext}; "
         "export LINGTU_CMU_GATE_REQUIRE_PCT=1; "
         "PYTHONPATH=src:.:/opt/ros/humble/local/lib/python3.10/dist-packages:"
         "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
@@ -4523,7 +4553,7 @@ def _file_sha256(path: Path) -> str:
 
 def _inspect_pct_runtime_for_host(machine: str | None) -> dict[str, Any]:
     try:
-        from global_planning.pct_planner_runnable.runtime import inspect_pct_runtime
+        from nav.services.plan.global_planner.algorithm.pct.runtime.api import inspect_pct_runtime
 
         return dict(inspect_pct_runtime(ROOT, machine=machine))
     except Exception as exc:

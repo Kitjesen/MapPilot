@@ -102,7 +102,7 @@ def test_apply_dynamic_filter_off_values(monkeypatch, off_value):
 def test_apply_dynamic_filter_default_enabled(monkeypatch):
     """No env var → default on (1). refilter_map called."""
     monkeypatch.delenv("LINGTU_SAVE_DYNAMIC_FILTER", raising=False)
-    with patch("core.dynamic_filter.refilter_map") as mock_refilter:
+    with patch("runtime.dynamic_filter.refilter_map") as mock_refilter:
         mock_refilter.return_value = {
             "success": True, "orig_count": 100, "clean_count": 95,
             "dropped": 5, "elapsed_s": 0.5,
@@ -117,7 +117,7 @@ def test_apply_dynamic_filter_default_enabled(monkeypatch):
 def test_apply_dynamic_filter_crash_returns_dict(monkeypatch):
     """refilter_map raising → helper swallows, returns success=False dict (never None)."""
     monkeypatch.setenv("LINGTU_SAVE_DYNAMIC_FILTER", "1")
-    with patch("core.dynamic_filter.refilter_map") as mock_refilter:
+    with patch("runtime.dynamic_filter.refilter_map") as mock_refilter:
         mock_refilter.side_effect = RuntimeError("DUFOMap binary not found")
         result = _apply_dynamic_filter_step1half(_FakeSaveDir("m"))
         # Must return a dict (not None) so callers can distinguish "disabled"
@@ -130,7 +130,7 @@ def test_apply_dynamic_filter_crash_returns_dict(monkeypatch):
 def test_apply_dynamic_filter_refilter_returns_failure(monkeypatch):
     """refilter_map returns {'success': False, ...} → helper just passes through."""
     monkeypatch.setenv("LINGTU_SAVE_DYNAMIC_FILTER", "1")
-    with patch("core.dynamic_filter.refilter_map") as mock_refilter:
+    with patch("runtime.dynamic_filter.refilter_map") as mock_refilter:
         mock_refilter.return_value = {
             "success": False, "error": "backup failed: disk full",
             "elapsed_s": 0.01,
@@ -146,7 +146,7 @@ def test_apply_dynamic_filter_passes_save_dir(monkeypatch):
     """save_dir argument must propagate to refilter_map first positional."""
     monkeypatch.setenv("LINGTU_SAVE_DYNAMIC_FILTER", "1")
     save_dir = _FakeSaveDir("propagate")
-    with patch("core.dynamic_filter.refilter_map") as mock_refilter:
+    with patch("runtime.dynamic_filter.refilter_map") as mock_refilter:
         mock_refilter.return_value = {"success": True, "orig_count": 0,
                                        "clean_count": 0, "dropped": 0,
                                        "elapsed_s": 0.0}
@@ -173,7 +173,7 @@ def test_traversal_rejected(malicious: str):
 
 
 def test_helper_importable_from_both_sites():
-    """Both gateway_module and map_manager_module now import
+    """Both gateway_module and nav.services.maps now import
     `_apply_dynamic_filter_step1half`. Verify the helper is the same callable
     (no accidental duplication / drift)."""
     # map_manager imports lazily inside _map_save to avoid circular import,

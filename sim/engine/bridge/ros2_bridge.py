@@ -8,9 +8,9 @@ Published topics (identical to real robot):
   /camera/color/image_raw        sensor_msgs/Image
   /camera/color/camera_info      sensor_msgs/CameraInfo
   /camera/depth/image_raw        sensor_msgs/Image
-  /nav/odometry                  nav_msgs/Odometry
-  /nav/registered_cloud          sensor_msgs/PointCloud2
-  /nav/map_cloud                 sensor_msgs/PointCloud2
+  /slam/odometry                  nav_msgs/Odometry
+  /slam/registered_cloud          sensor_msgs/PointCloud2
+  /slam/map_cloud                 sensor_msgs/PointCloud2
   TF: map -> odom -> body -> camera_link
 
 Subscribed topics:
@@ -22,7 +22,7 @@ from typing import Optional
 
 import numpy as np
 
-from core.runtime_interface import FRAMES, TOPICS
+from runtime.runtime_interface import FRAMES, TOPICS
 
 
 class SimROS2Bridge:
@@ -240,7 +240,7 @@ class SimROS2Bridge:
         self._tf_broadcaster.sendTransform(tf)
 
     def publish_pointcloud(self):
-        """Publish LiDAR point cloud to /nav/map_cloud and /nav/registered_cloud."""
+        """Publish LiDAR point cloud to /slam/map_cloud and /slam/registered_cloud."""
         pts = self._engine.get_lidar_points()  # (N,4) xyzi world frame
         if pts is None or len(pts) == 0:
             return
@@ -254,7 +254,7 @@ class SimROS2Bridge:
         ]
         pts_f32 = pts.astype(np.float32)
 
-        # World frame -> /nav/map_cloud
+        # World frame -> /slam/map_cloud
         msg = self._PointCloud2()
         msg.header.stamp = now
         msg.header.frame_id = FRAMES.odom
@@ -268,7 +268,7 @@ class SimROS2Bridge:
         msg.data = pts_f32.tobytes()
         self._cloud_pub.publish(msg)
 
-        # Body frame -> /nav/registered_cloud
+        # Body frame -> /slam/registered_cloud
         state = self._engine.get_robot_state()
         if state is not None:
             body_pos = state.position

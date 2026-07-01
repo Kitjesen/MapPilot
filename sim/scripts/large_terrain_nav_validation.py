@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Validate large-terrain navigation assets without robot motion."""
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.msgs.numpy_compat import numpy_import_is_safe
+from runtime.msgs.numpy_compat import numpy_import_is_safe
 
 np: Any = None
-GlobalPlannerService: Any = None
+GlobalPlanner: Any = None
 evaluate_plan_safety: Any = None
 grid_from_tomogram: Any = None
 path_distance: Any = None
@@ -42,7 +42,7 @@ _FALSE_ENV_VALUES = {"0", "false", "no", "off"}
 
 
 def _load_runtime() -> None:
-    global GlobalPlannerService
+    global GlobalPlanner
     global build_large_terrain_assets
     global evaluate_plan_safety
     global grid_from_tomogram
@@ -54,12 +54,12 @@ def _load_runtime() -> None:
         import numpy as _np
 
         np = _np
-    if GlobalPlannerService is None:
-        from nav.global_planner_service import GlobalPlannerService as _GlobalPlannerService
+    if GlobalPlanner is None:
+        from nav.services.plan.global_planner.service import GlobalPlanner as _GlobalPlanner
 
-        GlobalPlannerService = _GlobalPlannerService
+        GlobalPlanner = _GlobalPlanner
     if evaluate_plan_safety is None or grid_from_tomogram is None or path_distance is None:
-        from nav.plan_safety import (
+        from nav.safety.plan_safety import (
             evaluate_plan_safety as _evaluate_plan_safety,
             grid_from_tomogram as _grid_from_tomogram,
             path_distance as _path_distance,
@@ -69,7 +69,7 @@ def _load_runtime() -> None:
         grid_from_tomogram = _grid_from_tomogram
         path_distance = _path_distance
     if inspect_pct_runtime is None:
-        from global_planning.pct_planner_runnable.runtime import (
+        from nav.services.plan.global_planner.algorithm.pct.runtime.api import (
             inspect_pct_runtime as _inspect_pct_runtime,
         )
 
@@ -162,7 +162,7 @@ def _pct_runtime_evidence() -> dict[str, Any]:
     global inspect_pct_runtime
 
     if inspect_pct_runtime is None:
-        from global_planning.pct_planner_runnable.runtime import (
+        from nav.services.plan.global_planner.algorithm.pct.runtime.api import (
             inspect_pct_runtime as _inspect_pct_runtime,
         )
 
@@ -460,7 +460,10 @@ def _should_isolate_pct_planner(planner_name: str) -> bool:
         return False
     if os.environ.get("LINGTU_LARGE_TERRAIN_PLAN_CHILD") == "1":
         return False
-    return getattr(GlobalPlannerService, "__module__", "") == "nav.global_planner_service"
+    return getattr(GlobalPlanner, "__module__", "") in {
+        "nav.services.plan.global_planner.service",
+        "nav.services.plan.global_planner.service",
+    }
 
 
 def _tail_text(value: str, *, max_chars: int = 4000) -> str:
@@ -500,7 +503,7 @@ def _pct_child_failure_report(
         "fallback_reason": "",
         "plan_safety_policy": "",
         "rejected_plans": [],
-        "backend_class": "",
+        "planner_class": "",
         "backend_requested_class": "",
         "feasible": False,
         "blocked": True,
@@ -634,7 +637,7 @@ def _plan_with_backend_direct(
         and isinstance(native_runtime, dict)
         and native_runtime.get("ok") is not True
     )
-    svc = GlobalPlannerService(
+    svc = GlobalPlanner(
         planner_name=planner_name,
         tomogram=str(assets.tomogram),
         downsample_dist=0.2,
@@ -650,7 +653,7 @@ def _plan_with_backend_direct(
             "fallback_reason": "",
             "plan_safety_policy": "",
             "rejected_plans": [],
-            "backend_class": "",
+            "planner_class": "",
             "feasible": False,
             "blocked": True,
             "error": str(exc),
@@ -705,7 +708,7 @@ def _plan_with_backend_direct(
         "plan_safety_policy": str(plan_report.get("policy") or ""),
         "rejected_plans": rejected_plans if isinstance(rejected_plans, list) else [],
         "reached_goal": bool(plan_report.get("reached_goal", bool(path))),
-        "backend_class": selected_backend.__class__.__name__ if selected_backend is not None else "",
+        "planner_class": selected_backend.__class__.__name__ if selected_backend is not None else "",
         "backend_requested_class": backend.__class__.__name__ if backend is not None else "",
         "feasible": bool(path),
         "blocked": bool(not path),

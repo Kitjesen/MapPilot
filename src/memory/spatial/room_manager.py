@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from core.msgs.scene import (
+from runtime.msgs.scene import (
     FLOOR_HEIGHT,
     FLOOR_MERGE_TOLERANCE,
     GROUP_KEYWORDS,

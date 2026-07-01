@@ -6,7 +6,7 @@
 
 **Architecture:** Keep Module-First boundaries. Safety and auth fixes land before runtime switching. Runtime backend changes use a two-stage model: restart-time configuration coverage for all backends first, then controlled in-process switching only for low-risk providers while motion backends switch only when the navigation state is idle or explicitly stopped.
 
-**Tech Stack:** Python 3.10, LingTu Module/Blueprint framework, FastAPI/ASGI middleware, pytest, existing `core.registry`, existing `core.backend_status`, existing Dimos/server simulation gates, no new dependencies.
+**Tech Stack:** Python 3.10, LingTu Module/Blueprint framework, FastAPI/ASGI middleware, pytest, existing `runtime.registry`, existing `runtime.backend_status`, existing Dimos/server simulation gates, no new dependencies.
 
 ---
 
@@ -25,11 +25,11 @@
 ## Current Evidence
 
 - Multi-agent safety review found several earlier critical issues already repaired: SafetyRing now republishes current stop level, startup odometry defaults fail-closed, CmdVelMux sanitizes non-finite velocity and publishes zero on timeout, and drift watchdog detects non-finite odometry.
-- Remaining P0 safety risk: `GeofenceManagerModule.stop_cmd` exists, but `src/core/blueprints/full_stack_wiring.py` only wires `SafetyRingModule.stop_cmd` and `GatewayModule.stop_cmd` to driver/navigation stop inputs.
+- Remaining P0 safety risk: `GeofenceManagerModule.stop_cmd` exists, but `src/runtime/blueprints/full_stack_wiring.py` only wires `SafetyRingModule.stop_cmd` and `GatewayModule.stop_cmd` to driver/navigation stop inputs.
 - Remaining P0 security risk: `MCPServerModule` adds `APIKeyMiddleware`, but `APIKeyMiddleware` passes all requests when no key is configured.
 - Hot-swap research found current backend selection is mostly constructor-time: CLI/profile strings flow into stacks and modules, while runtime reconfiguration is not a general contract.
 - Performance research found Dimos gates exist, but current local artifacts are stale or missing for the strict `dimos_benchmark` preset; synthetic benchmarks must not be treated as S100P field performance.
-- Boundary research found `src/core/tests/test_module_boundaries.py` currently covers `gateway` only; `nav`, `semantic`, and `drivers` need equivalent AST guards.
+- Boundary research found `src/runtime/tests/test_module_boundaries.py` currently covers `gateway` only; `nav`, `semantic`, and `drivers` need equivalent AST guards.
 - External references reviewed:
   - ROS 2 Nav2 uses explicit plugin categories for planner, controller, behavior, BT, costmap, and navigator plugins.
   - Quad-SDK separates planning, control, estimation, communication, and simulation/hardware integration.
@@ -38,25 +38,25 @@
 
 ## File Responsibility Map
 
-- `src/core/blueprints/full_stack_wiring.py`: Owns explicit safety-critical full-stack wires.
-- `src/core/tests/test_profile_graph_snapshots.py`: Locks explicit profile graph edges.
-- `src/nav/services/geofence_manager_module.py`: Owns geofence intrusion detection and stop publication.
+- `src/runtime/blueprints/full_stack_wiring.py`: Owns explicit safety-critical full-stack wires.
+- `src/runtime/tests/test_profile_graph_snapshots.py`: Locks explicit profile graph edges.
+- `src/nav/services/geofence.py`: Owns geofence intrusion detection and stop publication.
 - `src/gateway/auth.py`: Owns API-key middleware behavior.
 - `src/gateway/mcp_server.py`: Owns MCP server binding and middleware configuration.
-- `src/nav/safety_ring_module.py`: Owns L0 safety state and stop publication.
-- `src/nav/cmd_vel_mux_module.py`: Owns velocity source arbitration and finite velocity filtering.
-- `src/nav/navigation_module.py`: Owns mission FSM, teleop pause/resume, recovery motion, and planner service calls.
+- `src/nav/services/safety/safety_ring_module.py`: Owns L0 safety state and stop publication.
+- `src/nav/services/safety/cmd_vel_mux_module.py`: Owns velocity source arbitration and finite velocity filtering.
+- `src/nav/mission/navigation_module.py`: Owns mission FSM, teleop pause/resume, recovery motion, and planner service calls.
 - `src/gateway/gateway_module.py`: Owns odometry publication and drift watchdog input path.
-- `src/core/backend_status.py`: Owns backend status payload conventions.
-- `src/semantic/perception/semantic_perception/perception_module.py`: Owns detector/encoder provider lifecycle.
-- `src/nav/global_planner_service.py`: Owns planner/fallback provider selection.
+- `src/runtime/backend_status.py`: Owns backend status payload conventions.
+- `src/perception/semantic_perception/perception_module.py`: Owns detector/encoder provider lifecycle.
+- `src/nav/services/plan/global_planner/service.py`: Owns planner/fallback provider selection.
 - `cli/main.py`: Owns profile and CLI backend override ingestion.
 - `cli/repl.py`: Owns operator commands and map/tomogram reload path.
 - `src/gateway/routes/diagnostics.py`: Owns algorithm benchmark and active backend diagnostics.
 - `sim/scripts/server_sim_closure.py`: Owns strict Dimos gate sequence and freshness evaluation.
 - `tests/benchmark/benchmark_planner.sh`: Owns shell benchmark status reporting.
 - `tests/benchmark/benchmark_planner_structured.py`: Owns structured planner benchmark metadata.
-- `src/core/tests/test_module_boundaries.py`: Owns static import-boundary regression tests.
+- `src/runtime/tests/test_module_boundaries.py`: Owns static import-boundary regression tests.
 
 ## Acceptance Criteria
 
@@ -80,8 +80,8 @@
 ### Task 1: P0 Geofence Hard Stop Wiring
 
 **Files:**
-- Modify: `src/core/blueprints/full_stack_wiring.py`
-- Modify: `src/core/tests/test_profile_graph_snapshots.py`
+- Modify: `src/runtime/blueprints/full_stack_wiring.py`
+- Modify: `src/runtime/tests/test_profile_graph_snapshots.py`
 - Test: `src/nav/tests/test_nav_services.py`
 
 - [ ] **Step 1: Write graph regression test**
@@ -99,7 +99,7 @@ Add assertions to `test_profile_graph_snapshot_locks_safety_gateway_and_mux_edge
 Run:
 
 ```powershell
-python -m pytest src/core/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges -q
 ```
 
 Expected result before code change: FAIL showing the missing `GeofenceManagerModule.stop_cmd` wire.
@@ -127,7 +127,7 @@ In `_apply_required_safety_stop_wires()`, extend the required specs to include g
 Run:
 
 ```powershell
-python -m pytest src/core/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges src/nav/tests/test_nav_services.py::TestGeofenceManagerModule -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges src/nav/tests/test_nav_services.py::TestGeofenceManagerModule -q
 ```
 
 Expected result: PASS.
@@ -265,10 +265,10 @@ Expected result: PASS.
 ### Task 3: Timer-Driven Safety Watchdog and CmdVelMux Locking
 
 **Files:**
-- Modify: `src/nav/safety_ring_module.py`
-- Modify: `src/nav/cmd_vel_mux_module.py`
+- Modify: `src/nav/services/safety/safety_ring_module.py`
+- Modify: `src/nav/services/safety/cmd_vel_mux_module.py`
 - Modify: `src/nav/tests/test_nav_modules.py`
-- Modify: `src/core/tests/test_cmd_vel_mux.py`
+- Modify: `src/runtime/tests/test_cmd_vel_mux.py`
 
 - [ ] **Step 1: Add SafetyRing watchdog regression**
 
@@ -344,7 +344,7 @@ Wrap `_on_source()`, `_check_timeout()`, `_select_active()`, and health source i
 Run:
 
 ```powershell
-python -m pytest src/nav/tests/test_nav_modules.py::TestSafetyRingModule src/core/tests/test_cmd_vel_mux.py -q
+python -m pytest src/nav/tests/test_nav_modules.py::TestSafetyRingModule src/runtime/tests/test_cmd_vel_mux.py -q
 ```
 
 Expected result: PASS.
@@ -352,7 +352,7 @@ Expected result: PASS.
 ### Task 4: Teleop Resume Policy and Recovery Completion Ordering
 
 **Files:**
-- Modify: `src/nav/navigation_module.py`
+- Modify: `src/nav/mission/navigation_module.py`
 - Modify: `src/nav/tests/test_navigation_frame_contract.py`
 - Optionally modify: `cli/repl.py`
 - Optionally modify: `src/gateway/gateway_module.py`
@@ -430,7 +430,7 @@ with:
 Run:
 
 ```powershell
-python -m pytest src/nav/tests/test_navigation_frame_contract.py src/core/tests/test_cmd_vel_mux.py -q
+python -m pytest src/nav/tests/test_navigation_frame_contract.py src/runtime/tests/test_cmd_vel_mux.py -q
 ```
 
 Expected result: PASS.
@@ -480,17 +480,17 @@ Expected result: PASS.
 ### Task 6: Backend Status and Restart-Time Configuration Coverage
 
 **Files:**
-- Modify: `src/semantic/perception/semantic_perception/perception_module.py`
-- Modify: `src/nav/global_planner_service.py`
-- Modify: `src/nav/navigation_module.py`
-- Modify: `src/core/blueprints/stacks/navigation.py`
+- Modify: `src/perception/semantic_perception/perception_module.py`
+- Modify: `src/nav/services/plan/global_planner/service.py`
+- Modify: `src/nav/mission/navigation_module.py`
+- Modify: `src/runtime/blueprints/stacks/navigation.py`
 - Modify: `cli/main.py`
 - Modify: `cli/profiles_data.py`
 - Modify: `cli/repl.py`
 - Modify: `src/gateway/routes/diagnostics.py`
-- Test: `src/core/tests/test_backend_status.py`
-- Test: `src/core/tests/test_perception_factory_registry.py`
-- Test: `src/core/tests/test_nav_chain_efficiency.py`
+- Test: `src/runtime/tests/test_backend_status.py`
+- Test: `src/runtime/tests/test_perception_factory_registry.py`
+- Test: `src/runtime/tests/test_nav_chain_efficiency.py`
 - Test: `src/gateway/tests/test_gateway_runtime_status.py`
 
 - [ ] **Step 1: Add status assertions for perception**
@@ -520,7 +520,7 @@ assert "degraded" in status
 
 - [ ] **Step 3: Implement `BackendStatus` in PerceptionModule**
 
-Use existing `core.backend_status.BackendStatus`. Maintain separate status objects for detector and encoder. On provider creation success, record effective backend. On fallback or import failure, record degraded reason.
+Use existing `runtime.backend_status.BackendStatus`. Maintain separate status objects for detector and encoder. On provider creation success, record effective backend. On fallback or import failure, record degraded reason.
 
 - [ ] **Step 4: Implement planner backend status**
 
@@ -568,7 +568,7 @@ Implement `NavigationModule.reload_planner_tomogram()` by delegating to `GlobalP
 Run:
 
 ```powershell
-python -m pytest src/core/tests/test_backend_status.py src/core/tests/test_perception_factory_registry.py src/core/tests/test_nav_chain_efficiency.py src/gateway/tests/test_gateway_runtime_status.py -q
+python -m pytest src/runtime/tests/test_backend_status.py src/runtime/tests/test_perception_factory_registry.py src/runtime/tests/test_nav_chain_efficiency.py src/gateway/tests/test_gateway_runtime_status.py -q
 ```
 
 Expected result: PASS.
@@ -576,12 +576,12 @@ Expected result: PASS.
 ### Task 7: Runtime Backend Switch MVP
 
 **Files:**
-- Modify: `src/core/module.py`
-- Modify: `src/semantic/perception/semantic_perception/perception_module.py`
-- Modify: `src/semantic/planner/semantic_planner/llm_module.py`
+- Modify: `src/runtime/module.py`
+- Modify: `src/perception/semantic_perception/perception_module.py`
+- Modify: `src/decision/semantic_planner/llm_module.py`
 - Modify: `src/gateway/gateway_module.py`
 - Modify: `src/gateway/mcp_server.py`
-- Create: `src/core/tests/test_runtime_backend_switch.py`
+- Create: `src/runtime/tests/test_runtime_backend_switch.py`
 - Modify: `src/gateway/tests/test_gateway_runtime_status.py`
 
 - [ ] **Step 1: Add default module reconfigure contract**
@@ -600,7 +600,7 @@ Add a conservative default to `Module`:
 
 - [ ] **Step 2: Add perception runtime switch tests**
 
-Create `src/core/tests/test_runtime_backend_switch.py` with:
+Create `src/runtime/tests/test_runtime_backend_switch.py` with:
 
 ```python
 def test_perception_reconfigure_detector_rejects_unknown_backend():
@@ -612,7 +612,7 @@ def test_perception_reconfigure_detector_rejects_unknown_backend():
 
 def test_motion_backend_reconfigure_is_unsupported_by_default():
     mod = Module()
-    result = mod.reconfigure_backend("local_planner", "nav_core")
+    result = mod.reconfigure_backend("local_planner", "nav_kernel")
     assert result["ok"] is False
 ```
 
@@ -657,7 +657,7 @@ if category in {"planner", "local_planner", "path_follower", "terrain", "slam"}:
 Run:
 
 ```powershell
-python -m pytest src/core/tests/test_runtime_backend_switch.py src/gateway/tests/test_gateway_runtime_status.py -q
+python -m pytest src/runtime/tests/test_runtime_backend_switch.py src/gateway/tests/test_gateway_runtime_status.py -q
 ```
 
 Expected result: PASS.
@@ -665,24 +665,24 @@ Expected result: PASS.
 ### Task 8: Efficiency Schema and Dimos Benchmark Credibility
 
 **Files:**
-- Create: `src/core/efficiency_status.py`
-- Create: `src/core/algorithm_gates.py`
-- Modify: `src/nav/navigation_module.py`
-- Modify: `src/base_autonomy/modules/local_planner_module.py`
-- Modify: `src/base_autonomy/modules/path_follower_module.py`
-- Modify: `src/nav/cmd_vel_mux_module.py`
-- Modify: `src/slam/slam_bridge_module.py`
+- Create: `src/runtime/efficiency_status.py`
+- Create: `src/runtime/algorithm_gates.py`
+- Modify: `src/nav/mission/navigation_module.py`
+- Modify: `src/nav/local/local_planner.py`
+- Modify: `src/nav/local/path_follower_module.py`
+- Modify: `src/nav/services/safety/cmd_vel_mux_module.py`
+- Modify: `src/localization/bridge.py`
 - Modify: `src/gateway/routes/diagnostics.py`
 - Modify: `sim/scripts/server_sim_closure.py`
 - Modify: `tests/benchmark/benchmark_planner.sh`
 - Modify: `tests/benchmark/benchmark_planner_structured.py`
-- Test: `src/core/tests/test_nav_chain_efficiency.py`
-- Test: `src/core/tests/test_server_sim_closure.py`
+- Test: `src/runtime/tests/test_nav_chain_efficiency.py`
+- Test: `src/runtime/tests/test_server_sim_closure.py`
 - Test: `src/gateway/tests/test_gateway_runtime_status.py`
 
 - [ ] **Step 1: Add shared efficiency payload helper**
 
-Create `src/core/efficiency_status.py`:
+Create `src/runtime/efficiency_status.py`:
 
 ```python
 from __future__ import annotations
@@ -743,7 +743,7 @@ Add `health()["efficiency"]` to:
 
 - [ ] **Step 4: Unify Dimos gate source**
 
-Create `src/core/algorithm_gates.py` with:
+Create `src/runtime/algorithm_gates.py` with:
 
 ```python
 DIMOS_BENCHMARK_REQUIRED_GATES = (
@@ -765,11 +765,11 @@ Import this constant from both diagnostics and `server_sim_closure.py`.
 
 - [ ] **Step 5: Add anti-drift tests**
 
-In `src/core/tests/test_server_sim_closure.py`, add:
+In `src/runtime/tests/test_server_sim_closure.py`, add:
 
 ```python
 def test_dimos_required_gates_match_gateway_diagnostics():
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
     from gateway.routes.diagnostics import DIMOS_BENCHMARK_REQUIRED_GATES as GATEWAY_GATES
 
     assert GATEWAY_GATES == DIMOS_BENCHMARK_REQUIRED_GATES
@@ -794,7 +794,7 @@ In shell benchmark summaries, report `PASS`, `FAIL`, and `SKIP` separately. A sk
 Run:
 
 ```powershell
-python -m pytest src/core/tests/test_nav_chain_efficiency.py src/core/tests/test_server_sim_closure.py src/gateway/tests/test_gateway_runtime_status.py -q
+python -m pytest src/runtime/tests/test_nav_chain_efficiency.py src/runtime/tests/test_server_sim_closure.py src/gateway/tests/test_gateway_runtime_status.py -q
 python tests/benchmark/benchmark_planner_structured.py --json-out artifacts/benchmark_planner/report_structured.json
 ```
 
@@ -803,7 +803,7 @@ Expected result: tests PASS and structured benchmark emits claim metadata.
 ### Task 9: Module Boundary Enforcement
 
 **Files:**
-- Modify: `src/core/tests/test_module_boundaries.py`
+- Modify: `src/runtime/tests/test_module_boundaries.py`
 - Optionally modify: deprecated blueprint files only if tests expose production violations.
 
 - [ ] **Step 1: Replace single-package boundary test with matrix**
@@ -819,8 +819,8 @@ BOUNDARY_RULES = {
 }
 
 ALLOWED_BRIDGE_FILES = {
-    "core/blueprints/full_stack.py",
-    "core/blueprints/full_stack_wiring.py",
+    "runtime/blueprints/full_stack.py",
+    "runtime/blueprints/full_stack_wiring.py",
 }
 ```
 
@@ -834,7 +834,7 @@ def _is_test_file(path: Path) -> bool:
 
 
 def _is_allowed_bridge(rel: str) -> bool:
-    return rel in ALLOWED_BRIDGE_FILES or rel.startswith("core/blueprints/stacks/")
+    return rel in ALLOWED_BRIDGE_FILES or rel.startswith("runtime/blueprints/stacks/")
 ```
 
 - [ ] **Step 3: Add parametrized AST test**
@@ -859,7 +859,7 @@ def test_package_does_not_import_forbidden_layers_directly(package, forbidden):
 Run:
 
 ```powershell
-python -m pytest src/core/tests/test_module_boundaries.py -q
+python -m pytest src/runtime/tests/test_module_boundaries.py -q
 ```
 
 Expected result: PASS, or FAIL with a concrete list of production imports to move behind `core` helpers, registry, or blueprint stack factories.
@@ -875,13 +875,13 @@ Expected result: PASS, or FAIL with a concrete list of production imports to mov
 - [ ] **Step 1: Run focused Python safety/security/backend tests**
 
 ```powershell
-python -m pytest src/core/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges src/nav/tests/test_nav_modules.py::TestSafetyRingModule src/core/tests/test_cmd_vel_mux.py src/gateway/tests/test_mcp_auth.py -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges src/nav/tests/test_nav_modules.py::TestSafetyRingModule src/runtime/tests/test_cmd_vel_mux.py src/gateway/tests/test_mcp_auth.py -q
 ```
 
 - [ ] **Step 2: Run modularity and backend diagnostics tests**
 
 ```powershell
-python -m pytest src/core/tests/test_module_boundaries.py src/core/tests/test_backend_status.py src/core/tests/test_perception_factory_registry.py src/core/tests/test_nav_chain_efficiency.py src/gateway/tests/test_gateway_runtime_status.py -q
+python -m pytest src/runtime/tests/test_module_boundaries.py src/runtime/tests/test_backend_status.py src/runtime/tests/test_perception_factory_registry.py src/runtime/tests/test_nav_chain_efficiency.py src/gateway/tests/test_gateway_runtime_status.py -q
 ```
 
 - [ ] **Step 3: Run benchmark credibility checks**
@@ -896,7 +896,7 @@ Expected result: structured benchmark completes. Strict Dimos may fail locally i
 - [ ] **Step 4: Run no-ROS framework smoke tests**
 
 ```powershell
-python -m pytest src/core/tests/ -q
+python -m pytest src/runtime/tests/ -q
 ```
 
 Expected result: PASS, except known platform-specific tests that require ROS 2/S100P must be explicitly separated rather than silently skipped as pass.
@@ -915,13 +915,13 @@ Expected result: hard stop path, auth path, backend diagnostics, freshness, and 
 
 ## Parallel Agent Staffing
 
-- Agent 1, safety executor: Tasks 1, 3, and 4. Write scope: `src/core/blueprints/full_stack_wiring.py`, nav safety/navigation modules, safety tests.
+- Agent 1, safety executor: Tasks 1, 3, and 4. Write scope: `src/runtime/blueprints/full_stack_wiring.py`, nav safety/navigation modules, safety tests.
 - Agent 2, security executor: Task 2. Write scope: gateway auth/MCP tests and middleware only.
 - Agent 3, backend executor: Tasks 6 and 7. Write scope: backend status, CLI config, perception/LLM switch, diagnostics.
 - Agent 4, performance executor: Task 8. Write scope: efficiency payloads, Dimos gate source, benchmark metadata.
 - Agent 5, boundary verifier: Task 9 plus final cross-suite verification. Write scope: boundary tests and verification notes.
 
-Each agent must report changed files and test commands. Shared files requiring coordination: `src/gateway/routes/diagnostics.py`, `src/nav/navigation_module.py`, and `cli/main.py`.
+Each agent must report changed files and test commands. Shared files requiring coordination: `src/gateway/routes/diagnostics.py`, `src/nav/mission/navigation_module.py`, and `cli/main.py`.
 
 ## Risks and Mitigations
 
@@ -929,7 +929,7 @@ Each agent must report changed files and test commands. Shared files requiring c
 - Risk: MCP fail-closed can disrupt local dev. Mitigation: localhost stays dev-friendly, LAN exposure requires a key.
 - Risk: SafetyRing monitor thread can duplicate stop publications. Mitigation: repeated STOP is intentional for fail-closed safety; tests lock behavior.
 - Risk: Dimos strict gate may fail in local dev. Mitigation: failed or stale gates are a valid result; they block claims rather than block code review.
-- Risk: AST boundary tests can flag intentional bridges. Mitigation: bridge files are explicitly allowlisted and kept under `core/blueprints`.
+- Risk: AST boundary tests can flag intentional bridges. Mitigation: bridge files are explicitly allowlisted and kept under `runtime/blueprints`.
 
 ## Stop Condition
 

@@ -32,7 +32,7 @@ endpoint native topics
   -> endpoint command adapter
 ```
 
-The interface source of truth is `src/core/runtime_interface.py`.
+The interface source of truth is `src/runtime/runtime_interface.py`.
 `config/topic_contract.yaml` is the human-readable mirror checked against the
 Python manifest. The ownership and simulator boundaries are documented in
 `docs/architecture/SIMULATION_INTEGRATION_CONTRACT.md`.
@@ -58,24 +58,19 @@ Gateway, all `src` modules, or real-robot readiness.
 
 The next refactor target is:
 
-- keep `sim/scripts/mujoco_fastlio2_live_gate.py` as a thin launcher/evidence
+- keep `sim/scripts/mujoco_live_gate.py` as a thin launcher/evidence
   collector/assertion layer;
 - keep same-source map and tomogram writing in
   `src/nav/services/same_source_map_artifacts.py` so the gate only
   calls a reusable service;
 - keep raw MuJoCo LiDAR/IMU message conversion in
-  `src/drivers/sim/mujoco_sensor_bridge.py` so the gate only calls a reusable
+  `src/drivers/sim/mujoco/sensors.py` so the gate only calls a reusable
   sensor bridge;
 - keep MuJoCo live world resolution and engine construction in
-  `src/drivers/sim/mujoco_live_runtime.py` so the gate does not own simulator
+  `src/drivers/sim/mujoco/runtime.py` so the gate does not own simulator
   runtime setup;
-- keep Fast-LIO live config writing and process lifecycle in
-  `src/slam/fastlio2_live_bridge.py` so the gate does not own the SLAM launch
-  behavior;
-- keep Fast-LIO `/Odometry`, `/cloud_registered`, and `/cloud_map`
-  normalization into LingTu `/nav/*` topics in
-  `src/slam/fastlio2_nav_bridge.py` so the gate does not own SLAM-to-nav
-  runtime topic bridging;
+- keep MuJoCo live localization out of the removed portable LIO path; use a
+  real endpoint adapter before treating the gate as closed-loop localization;
 - make `python lingtu.py sim_mujoco_live ...` and
   `python lingtu.py explore --endpoint mujoco_live` enter the same Module graph
   instead of depending on scattered gate logic.
@@ -90,7 +85,7 @@ Each endpoint contract now separates:
   algorithm path, such as an exploration grid or TARE waypoint.
 
 Topic payload formats are also part of the contract. `TOPIC_FORMATS` in
-`src/core/runtime_interface.py` maps source, normalized, and algorithm topics to
+`src/runtime/runtime_interface.py` maps source, normalized, and algorithm topics to
 their message formats; `config/topic_contract.yaml` mirrors that map as
 `topic_formats`.
 
@@ -294,14 +289,14 @@ Current evidence:
   movement `3.582 m`, Fast-LIO Z drift error `0.0218 m`, and
   `sim_realtime_factor=0.1926`.
 - Server run after moving MuJoCo sensor message conversion into
-  `src/drivers/sim/mujoco_sensor_bridge.py`:
+  `src/drivers/sim/mujoco/sensors.py`:
   `artifacts/server_sim_closure/mujoco_live_sensor_bridge_refactor/explore-20260519_132526/report.json`
   passed with `ok=true`, `remaining_gaps=[]`, `imu_acc_mode=finite_difference`,
   Fast-LIO movement `2.710 m`, MuJoCo movement `2.703 m`, Fast-LIO Z drift
   error `0.0272 m`, yaw delta error `0.0078 rad`, `cloud_published=340`,
   `imu_published=1696`, and `sim_realtime_factor=0.1882`.
 - Server smoke after moving Fast-LIO topic normalization into
-  `src/slam/fastlio2_nav_bridge.py`:
+  `src/localization/fastlio2_nav_bridge.py`:
   `artifacts/server_sim_closure/mujoco_nav_bridge_refactor_gate8/gate-20260519_163730/report.json`
   passed with `ok=true`, `canonical_nav_outputs_verified=true`,
   `/nav/odometry=11`, `/nav/registered_cloud=11`, `/nav/map_cloud=11`,
@@ -380,7 +375,7 @@ Latest accepted evidence:
   under GUI load. Treat visible demo as operator review evidence, not the
   acceptance gate.
 - Server run after moving the LingTu frontier stack configuration into
-  `src/drivers/sim/mujoco_lingtu_stack.py`:
+  `src/drivers/sim/mujoco/stack.py`:
   `artifacts/server_sim_closure/mujoco_lingtu_stack_refactor_explore35/explore-20260519_160505/report.json`
   passed with `ok=true`, `remaining_gaps=[]`, `frontier_goal_count=2`,
   `successful_navigation_goal_count=1`, `failed_navigation_goal_count=0`,
@@ -468,21 +463,16 @@ Latest accepted evidence:
   `src/nav/services/same_source_map_artifacts.py`, with the gate
   acting as the caller/evidence collector.
 - Raw MuJoCo LiDAR/IMU ROS message conversion now lives in
-  `src/drivers/sim/mujoco_sensor_bridge.py`; the gate imports that bridge
+  `src/drivers/sim/mujoco/sensors.py`; the gate imports that bridge
   instead of defining sensor message builders itself.
 - MuJoCo live world resolution, MID-360 pattern resolution, start-pose parsing,
   memory patching, and engine construction now live in
-  `src/drivers/sim/mujoco_live_runtime.py`; the gate imports that runtime
+  `src/drivers/sim/mujoco/runtime.py`; the gate imports that runtime
   service instead of defining simulator setup itself.
-- Fast-LIO live config and process lifecycle now live in
-  `src/slam/fastlio2_live_bridge.py`; the gate imports `FastLio2Process`
-  instead of managing the Fast-LIO subprocess directly.
-- Fast-LIO-to-LingTu nav topic normalization now lives in
-  `src/slam/fastlio2_nav_bridge.py`; the gate imports
-  `FastLio2NavBridgeRuntime` instead of defining the `/Odometry` and cloud
-  callback bridge itself.
+- MuJoCo live localization no longer claims the removed portable LIO path. The
+  gate fails closed until a real localization endpoint adapter is wired.
 - LingTu MuJoCo frontier/navigation stack construction now lives in
-  `src/drivers/sim/mujoco_lingtu_stack.py`; the gate calls that builder instead
+  `src/drivers/sim/mujoco/stack.py`; the gate calls that builder instead
   of embedding `full_stack_blueprint(...)` product configuration.
 - Server strict exploration run
   `artifacts/server_sim_closure/mujoco_live_sensor_bridge_refactor/explore-20260519_132526/report.json`
@@ -783,7 +773,7 @@ Boundary:
   `video.frames > 0` are required.
 - 2026-05-20 follow-up: the Fast-LIO live TARE/frontier gate now has its own
   dynamic-obstacle injection path instead of relying only on the saved-map PCT
-  gate. `sim/scripts/mujoco_fastlio2_live_gate.py` can inject
+  gate. `sim/scripts/mujoco_live_gate.py` can inject
   `robot_crossing` moving boxes into the same raw MID-360 cloud before
   Fast-LIO consumes `/points_raw`, records obstacle density/speed parameters,
   published update counts, point-count maxima, trail clearance, and marks the
@@ -793,7 +783,7 @@ Boundary:
   counts. New launcher actions:
   `tare-video`, `tare-moving-obstacle`, and
   `tare-moving-obstacle-video`. Local verification so far:
-  `python -m pytest src/core/tests/test_native_pct_mujoco_gate.py src/core/tests/test_server_sim_closure.py src/core/tests/test_cli_no_repl.py src/core/tests/test_profile_graph_snapshots.py -q`
+  `python -m pytest src/runtime/tests/test_native_pct_mujoco_gate.py src/runtime/tests/test_server_sim_closure.py src/runtime/tests/test_cli_no_repl.py src/runtime/tests/test_profile_graph_snapshots.py -q`
   passed `119`, and the live-gate helper density/speed unit test passed. Full
   server runtime recording for `tare-moving-obstacle-video` is the next
   acceptance run; do not claim it green until that artifact exists.

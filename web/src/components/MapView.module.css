@@ -87,6 +87,46 @@
 
 .stateMsg p { margin: 0; }
 
+.pickPanel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: rgba(0, 255, 136, 0.06);
+}
+
+.pickInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pickTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.pickCoords {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pickActions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 /* ── Map list ── */
 
 /* ── Groups ── */

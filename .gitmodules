@@ -1,0 +1,4 @@
+[submodule "src/drivers/real/camera/OrbbecSDK_ROS2"]
+	path = src/drivers/real/camera/OrbbecSDK_ROS2
+	url = https://github.com/orbbec/OrbbecSDK_ROS2.git
+	ignore = dirty

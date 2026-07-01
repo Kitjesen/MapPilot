@@ -7,8 +7,9 @@ import sys
 import time
 from pathlib import Path
 
-from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from core.dimos_runtime_dataflow import RUNTIME_DATAFLOW_GATES
+from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+from runtime.dimos_runtime_dataflow import RUNTIME_DATAFLOW_GATES
+from runtime.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
 from sim.scripts import dimos_gap_report
 
 
@@ -111,6 +112,75 @@ def _native_pct_dataflow_report(
         }
         report["map_artifacts"] = _same_source_map_artifacts("native_pct")
     return report
+
+
+def _policy_nav_dataflow_report() -> dict:
+    return {
+        "schema_version": "lingtu.policy_nav_smoke.v1",
+        "passed": True,
+        "simulation_only": True,
+        "real_robot_motion": False,
+        "cmd_vel_sent_to_hardware": False,
+        "checks": [
+            {
+                "mode": "direct_policy",
+                "passed": True,
+                "policy_loaded": True,
+                "policy_backend": "onnx",
+                "policy_path": "/tmp/policy.onnx",
+                "cmd_vel_sent_to_hardware": False,
+            },
+            {
+                "mode": "full_stack_policy_nav",
+                "passed": True,
+                "drive_mode": "policy",
+                "simulation_only": True,
+                "real_robot_motion": False,
+                "cmd_vel_sent_to_hardware": False,
+                "policy_loaded": True,
+                "policy_backend": "onnx",
+                "policy_path": "/tmp/policy.onnx",
+                "finite": True,
+                "global_planner_backend_requested": "octoplanner3d",
+                "global_planner_backend_status": {
+                    "configured_backend": "octoplanner3d",
+                    "backend": "octoplanner3d",
+                    "degraded": False,
+                },
+                "local_planner_backend_requested": "nanobind",
+                "local_planner_backend_actual": "nanobind",
+                "path_follower_backend_requested": "nav_kernel",
+                "path_follower_backend_actual": "nav_kernel",
+                "seen": {
+                    "costmap": 1,
+                    "waypoints": 2,
+                    "local_path": 4,
+                    "path_follower_cmd": 5,
+                    "mux_cmd": 5,
+                    "direct_fallback": 0,
+                },
+                "global_path": {"count": 5, "frame_id": "map"},
+                "local_path_nonempty_count": 3,
+                "last_nonempty_local_path": {"count": 4, "frame_id": "map"},
+                "path_follower_cmd_stats": {"nonzero_count": 5},
+                "mux_cmd_stats": {"nonzero_count": 5},
+                "moved_m": 0.4,
+                "success_seen": True,
+                "dist_at_success_m": 0.04,
+                "dist_to_goal_m": 0.04,
+                "nav_state": "SUCCESS",
+                "contacts": {
+                    "foot_contact_sample_count": 20,
+                    "unique_feet_count": 4,
+                    "non_foot_ground_contacts": 0,
+                },
+                "costmap_readiness": {
+                    "planner_has_map": True,
+                    "source": "live_stack_costmap",
+                },
+            },
+        ],
+    }
 
 
 def _pct_saved_map_dataflow_report() -> dict:
@@ -899,7 +969,7 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
     assert native["primary_category"] == "environment_runtime"
     assert native["pipeline_trace"] == [
         "pct_backend",
-        "native_pct_to_ros2_local_planner",
+        "legacy_pct_to_local_autonomy",
         "mujoco_motion_executor",
     ]
     assert native["recommended_action"] == "fix host preflight before running this gate"
@@ -2357,6 +2427,76 @@ def test_dimos_gap_report_keeps_missing_child_without_embedded_evidence(
     flow = rows["moving_obstacle_sweep"]["runtime_dataflow"]
     assert flow["checked"] is False
     assert flow["reason"] == "child_report_missing"
+
+
+def test_runtime_dataflow_summarizes_policy_nav_product_chain(tmp_path: Path):
+    policy = _write_json(
+        tmp_path / "policy_nav" / "report.json",
+        _policy_nav_dataflow_report(),
+    )
+    summary = {
+        "gates": {
+            "policy_nav": {
+                "ok": True,
+                "status": "pass",
+                "path": str(policy),
+            },
+        }
+    }
+
+    dataflow = build_runtime_dataflow_from_summary(
+        summary,
+        root=tmp_path,
+        gates={"policy_nav"},
+    )
+
+    flow = dataflow["policy_nav"]
+    edge_status = {edge["id"]: edge["ok"] for edge in flow["flow"]}
+    assert flow["checked"] is True
+    assert flow["ok"] is True
+    assert flow["schema_detected"] == "policy_nav"
+    assert edge_status["octoplanner3d_backend"] is True
+    assert edge_status["global_path_to_waypoints"] is True
+    assert edge_status["nanobind_local_planner"] is True
+    assert edge_status["nav_kernel_path_follower"] is True
+    assert edge_status["cmd_vel_mux_to_policy_driver"] is True
+    assert flow["claim_boundary"] == "product_octoplanner_inprocess_nav_no_ros2"
+    assert flow["planner_backend"]["configured_backend"] == "octoplanner3d"
+    assert flow["local_planner_backend"] == "nanobind"
+    assert flow["path_follower_backend"] == "nav_kernel"
+
+
+def test_runtime_dataflow_policy_nav_blocks_legacy_backends(tmp_path: Path):
+    payload = _policy_nav_dataflow_report()
+    nav = payload["checks"][1]
+    nav["passed"] = False
+    nav["global_planner_backend_requested"] = "pct"
+    nav["global_planner_backend_status"] = {
+        "configured_backend": "pct",
+        "backend": "pct",
+        "degraded": False,
+    }
+    nav["local_planner_backend_requested"] = "simple"
+    nav["local_planner_backend_actual"] = "simple"
+    nav["path_follower_backend_requested"] = "pid"
+    nav["path_follower_backend_actual"] = "pid"
+    policy = _write_json(tmp_path / "policy_nav" / "report.json", payload)
+    summary = {"gates": {"policy_nav": {"path": str(policy)}}}
+
+    dataflow = build_runtime_dataflow_from_summary(
+        summary,
+        root=tmp_path,
+        gates={"policy_nav"},
+    )
+
+    flow = dataflow["policy_nav"]
+    edge_status = {edge["id"]: edge["ok"] for edge in flow["flow"]}
+    assert flow["checked"] is True
+    assert flow["ok"] is False
+    assert flow["primary_blocker"] == "octoplanner3d_backend"
+    assert edge_status["octoplanner3d_backend"] is False
+    assert edge_status["nanobind_local_planner"] is False
+    assert edge_status["nav_kernel_path_follower"] is False
 
 
 def test_dimos_gap_report_attaches_native_pct_dataflow(tmp_path: Path):

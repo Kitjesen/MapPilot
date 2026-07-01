@@ -346,13 +346,13 @@ def main() -> int:
             path.poses.append(item)
         pub.publish(path)
 
-    node.create_subscription(Odometry, "/nav/odometry", on_odom, 10)
+    node.create_subscription(Odometry, "/slam/odometry", on_odom, 10)
     node.create_subscription(PoseStamped, "/nav/goal_pose", on_goal, 10)
     node.create_subscription(OccupancyGrid, "/nav/exploration_grid", on_grid, 2)
     node.create_timer(1.0 / publish_hz, publish_path)
     node.get_logger().info(
         "Gazebo grid global planner: /nav/exploration_grid + /nav/goal_pose "
-        "+ /nav/odometry -> /nav/global_path"
+        "+ /slam/odometry -> /nav/global_path"
     )
     try:
         rclpy.spin(node)

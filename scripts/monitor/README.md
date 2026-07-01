@@ -1,64 +1,43 @@
-# monitor — 远程监控机器人
+# monitor - remote status bots
 
-通过飞书 / Telegram 远程监控灵途导航状态。
+Feishu/Lark and Telegram monitor bots poll LingTu Gateway REST endpoints by
+default. They do not require ROS2, `rclpy`, or topic subscriptions.
 
-## 文件
+## Files
 
-| 文件 | 说明 |
-|------|------|
-| `feishu_monitor_bot.py` | 飞书监控主程序（ROS2 节点，监听 `/nav/semantic/status`） |
-| `telegram_monitor_bot.py` | Telegram 监控主程序 |
-| `feishu_config_template.py` | 飞书配置模板 |
-| `requirements_feishu.txt` | 飞书 Python 依赖 |
-| `requirements_telegram.txt` | Telegram Python 依赖 |
+| File | Purpose |
+| --- | --- |
+| `gateway_status.py` | Standard-library Gateway status collector and formatter |
+| `feishu_monitor_bot.py` | Feishu/Lark monitor bot |
+| `telegram_monitor_bot.py` | Telegram monitor bot |
+| `feishu_config_template.py` | Environment variable template |
+| `requirements_feishu.txt` | Feishu dependencies |
+| `requirements_telegram.txt` | Telegram dependencies |
 
-## 飞书机器人 (thunder)
-
-### 快速开始
+## Feishu
 
 ```bash
-# 安装依赖（从仓库根目录运行）
 pip3 install -r scripts/monitor/requirements_feishu.txt
 
-# 配置：编辑 scripts/monitor/feishu_monitor_bot.py
-# 填入 APP_ID / APP_SECRET / RECEIVE_ID
+export FEISHU_APP_ID="cli_xxx"
+export FEISHU_APP_SECRET="..."
+export FEISHU_RECEIVE_ID="ou_or_chat_id"
+export FEISHU_RECEIVE_ID_TYPE="open_id"  # or chat_id
+export LINGTU_GATEWAY_URL="http://localhost:5050"
 
-# 运行（需先 source ROS2 环境）
-source /opt/ros/humble/setup.bash
 python3 scripts/monitor/feishu_monitor_bot.py
 ```
 
-### 飞书应用配置
-
-1. 访问 https://open.feishu.cn/ → 创建企业自建应用
-2. 获取 **App ID** 和 **App Secret**
-3. 添加权限: `im:message`、`im:message:send_as_bot`
-4. 发布应用
-5. 获取接收者 **open_id**（`ou_` 开头）或 **chat_id**
-
-### 消息格式
-
-```
-🤖 灵途状态更新 (thunder)
-📍 当前状态: NAVIGATING
-🎯 目标: kitchen
-📏 距离: 2.35m
-⏱️ 时间: 15.2s
-✅ 成功率: 87.5%
-```
-
-### 常见错误
-
-| 错误 | 解决 |
-|------|------|
-| `app_access_token invalid` | 检查 App ID / Secret |
-| `no permission` | 添加 `im:message` 权限并发布 |
-| `invalid receive_id` | 确认 open_id 格式 (`ou_` 开头) |
-| 收不到消息 | 搜索应用并添加为好友 |
-
-## Telegram 机器人
+## Telegram
 
 ```bash
 pip3 install -r scripts/monitor/requirements_telegram.txt
+
+export TELEGRAM_BOT_TOKEN="..."
+export TELEGRAM_CHAT_ID="..."
+export LINGTU_GATEWAY_URL="http://localhost:5050"
+
 python3 scripts/monitor/telegram_monitor_bot.py
 ```
+
+Both bots also honor `LINGTU_MONITOR_POLL_SEC` for the polling interval.

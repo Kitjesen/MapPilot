@@ -1,31 +1,31 @@
 #!/bin/bash
-# test_factory_nova.sh — NOVA Dog (ONNX policy) + 三层工厂全栈导航测试
+# test_factory_nova.sh 鈥?NOVA Dog (ONNX policy) + 涓夊眰宸ュ巶鍏ㄦ爤瀵艰埅娴嬭瘯
 #
-# 架构:
-#   nova_nav_bridge.py (ONNX policy + MuJoCo physics) →
-#   terrain_analysis → localPlanner → pathFollower →
-#   global_planner (ele_planner.so C++ A*) → pct_path_adapter
+# 鏋舵瀯:
+#   nova_nav_bridge.py (ONNX policy + MuJoCo physics) 鈫?
+#   terrain_analysis 鈫?localPlanner 鈫?pathFollower 鈫?
+#   global_planner (ele_planner.so C++ A*) 鈫?pct_path_adapter
 #
-# 前置: 先运行 gen_factory_nova_map.py 生成地图
+# 鍓嶇疆: 鍏堣繍琛?gen_factory_nova_map.py 鐢熸垚鍦板浘
 #   python3 gen_factory_nova_map.py
 #
-# 用法:
+# 鐢ㄦ硶:
 #   bash test_factory_nova.sh [goal_x] [goal_y] [goal_z] [monitor_sec] [viz]
-#   bash test_factory_nova.sh 14 3 0.35 240        # 无头模式
-#   bash test_factory_nova.sh 14 3 0.35 240 viz    # MuJoCo viewer 可视化
-#   bash test_factory_nova.sh 22 10 0.35 240 viz   # 1F 穿内墙门洞 + 可视化
+#   bash test_factory_nova.sh 14 3 0.35 240        # 鏃犲ご妯″紡
+#   bash test_factory_nova.sh 14 3 0.35 240 viz    # MuJoCo viewer 鍙鍖?
+#   bash test_factory_nova.sh 22 10 0.35 240 viz   # 1F 绌垮唴澧欓棬娲?+ 鍙鍖?
 #
-# 注意: goal_z=0.0 会触发 auto-terrain 误判到最高楼层 → A* 失败
-#       1F 请用 z=0.35, 2F 用 z=3.35, 3F 用 z=6.35
+# 娉ㄦ剰: goal_z=0.0 浼氳Е鍙?auto-terrain 璇垽鍒版渶楂樻ゼ灞?鈫?A* 澶辫触
+#       1F 璇风敤 z=0.35, 2F 鐢?z=3.35, 3F 鐢?z=6.35
 set -e
 
 GOAL_X=${1:-14.0}
 GOAL_Y=${2:-3.0}
 GOAL_Z=${3:-0.35}
 MONITOR_SEC=${4:-240}
-VIZ=${5:-}       # "viz" 开启 MuJoCo viewer 可视化 (DISPLAY=:0)
+VIZ=${5:-}       # "viz" 寮€鍚?MuJoCo viewer 鍙鍖?(DISPLAY=:0)
 
-# ── 路径 ─────────────────────────────────────────────────────────
+# 鈹€鈹€ 璺緞 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SIM_DIR=${LINGTU_SIM_DIR:-${REPO_ROOT}/sim}
 BRIDGE_SCRIPT=${LINGTU_NOVA_BRIDGE_SCRIPT:-${REPO_ROOT}/src/drivers/sim/nova_nav_bridge.py}
@@ -33,7 +33,7 @@ SCENE_XML=${LINGTU_NOVA_SCENE_XML:-${SIM_DIR}/robots/nova_dog/robot_with_camera.
 MAP_DIR=${LINGTU_SIM_MAP_DIR:-/tmp/sim_maps}
 MAP_FILE=${LINGTU_FACTORY_MAP_FILE:-${MAP_DIR}/factory_nova}
 
-# ── 检查文件 ─────────────────────────────────────────────────────
+# 鈹€鈹€ 妫€鏌ユ枃浠?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 if [ ! -f "${BRIDGE_SCRIPT}" ]; then
     echo "ERROR: nova_nav_bridge.py not found at ${BRIDGE_SCRIPT}"
     echo "Set LINGTU_NOVA_BRIDGE_SCRIPT or run from the LingTu repository root"
@@ -52,7 +52,7 @@ if [ ! -f "${MAP_FILE}.pickle" ] && [ ! -f "${MAP_FILE}.pcd" ]; then
     exit 1
 fi
 
-# ── 清理已有进程 ─────────────────────────────────────────────────
+# 鈹€鈹€ 娓呯悊宸叉湁杩涚▼ 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "=== Cleaning up existing processes ==="
 pkill -9 -f nova_nav_bridge 2>/dev/null || true
 pkill -9 -f terrainAnalysis 2>/dev/null || true
@@ -77,16 +77,16 @@ echo "  Monitor: ${MONITOR_SEC}s"
 echo "  Mode:    ${VIZ:-headless}"
 echo ""
 
-# ── [1] nova_nav_bridge.py — ONNX policy + MuJoCo physics ────────
+# 鈹€鈹€ [1] nova_nav_bridge.py 鈥?ONNX policy + MuJoCo physics 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[1/6] Starting nova_nav_bridge (ONNX + factory scene) ..."
 if [ "${VIZ}" = "viz" ]; then
-    # 可视化模式: DISPLAY=:0, MuJoCo viewer 窗口
+    # 鍙鍖栨ā寮? DISPLAY=:0, MuJoCo viewer 绐楀彛
     DISPLAY=:0 python3 ${BRIDGE_SCRIPT} \
         --scene ${SCENE_XML} \
         --start 2.0 2.0 0.35 \
         > /tmp/nova_bridge.log 2>&1 &
 else
-    # 无头模式: EGL 软件渲染
+    # 鏃犲ご妯″紡: EGL 杞欢娓叉煋
     MUJOCO_GL=egl python3 ${BRIDGE_SCRIPT} \
         --headless \
         --scene ${SCENE_XML} \
@@ -105,9 +105,9 @@ fi
 echo "  Bridge alive, height check:"
 tail -3 /tmp/nova_bridge.log
 
-# ── [1.5] 静态 TF: map → odom (identity) ────────────────────────
-# bridge 发布 odom→body, global_planner 需要 map→body 链路
-echo "  Publishing static TF: map → odom (identity) ..."
+# 鈹€鈹€ [1.5] 闈欐€?TF: map 鈫?odom (identity) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# bridge 鍙戝竷 odom鈫抌ody, global_planner 闇€瑕?map鈫抌ody 閾捐矾
+echo "  Publishing static TF: map 鈫?odom (identity) ..."
 ros2 run tf2_ros static_transform_publisher \
     --x 0.0 --y 0.0 --z 0.0 \
     --yaw 0.0 --pitch 0.0 --roll 0.0 \
@@ -116,13 +116,13 @@ ros2 run tf2_ros static_transform_publisher \
 TF_PID=$!
 sleep 1
 
-# ── [2] terrain_analysis ─────────────────────────────────────────
+# 鈹€鈹€ [2] terrain_analysis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo ""
 echo "[2/6] Starting terrain_analysis ..."
 ros2 run terrain_analysis terrainAnalysis \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
-    -r /cloud_map:=/nav/map_cloud \
+    -r /Odometry:=/slam/odometry \
+    -r /cloud_map:=/slam/map_cloud \
     -r /terrain_map:=/nav/terrain_map \
     -p scanVoxelSize:=0.1 \
     -p decayTime:=5.0 \
@@ -132,10 +132,10 @@ ros2 run terrain_analysis terrainAnalysis \
 TA_PID=$!
 sleep 2
 
-# ── [3] global_planner — 生产节点 (ele_planner.so C++ A*) ────────
-# 两个修复:
-# 1. VENV_SITE 优先于 ROS2 路径 → 确保 numpy 1.26.4 (不被 ~/.local/2.2.6 覆盖)
-# 2. gp_compat.py 提供 numpy._core 别名 → 可加载 numpy 2.x 格式的 pickle
+# 鈹€鈹€ [3] global_planner 鈥?鐢熶骇鑺傜偣 (ele_planner.so C++ A*) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# 涓や釜淇:
+# 1. VENV_SITE 浼樺厛浜?ROS2 璺緞 鈫?纭繚 numpy 1.26.4 (涓嶈 ~/.local/2.2.6 瑕嗙洊)
+# 2. gp_adapters.py 鎻愪緵 numpy._core 鍒悕 鈫?鍙姞杞?numpy 2.x 鏍煎紡鐨?pickle
 echo "[3/6] Starting global_planner (ele_planner.so C++ A*) ..."
 PCT_SCRIPTS=/home/sunrise/data/SLAM/navigation/install/pct_planner/share/pct_planner/planner/scripts
 VENV_PY=/tmp/venv_np1/bin/python3
@@ -143,7 +143,7 @@ VENV_SITE=$(${VENV_PY} -c "import sysconfig; print(sysconfig.get_path('purelib')
 ROS_PYPATH=$(python3 -c "import sys; print(':'.join(p for p in sys.path if p))")
 COMBINED="${VENV_SITE}:${ROS_PYPATH}"
 
-(cd ${PCT_SCRIPTS} && PYTHONPATH="${COMBINED}" ${VENV_PY} /tmp/gp_compat.py \
+(cd ${PCT_SCRIPTS} && PYTHONPATH="${COMBINED}" ${VENV_PY} /tmp/gp_adapters.py \
     --ros-args \
     -r /goal_pose:=/nav/goal_pose \
     -r /pct_path:=/nav/global_path \
@@ -165,12 +165,12 @@ if ! kill -0 $GP_PID 2>/dev/null; then
 fi
 echo "  global_planner started (PID=$GP_PID)"
 
-# ── [4] pct_path_adapter ─────────────────────────────────────────
+# 鈹€鈹€ [4] pct_path_adapter 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[4/6] Starting pct_path_adapter ..."
 ros2 run pct_adapters pct_path_adapter \
     --ros-args \
     -r /pct_path:=/nav/global_path \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /planner_waypoint:=/nav/way_point \
     -p waypoint_distance:=1.5 \
     -p arrival_threshold:=0.8 \
@@ -180,13 +180,13 @@ ros2 run pct_adapters pct_path_adapter \
 PA_PID=$!
 sleep 1
 
-# ── [5] localPlanner ─────────────────────────────────────────────
+# 鈹€鈹€ [5] localPlanner 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[5/6] Starting localPlanner ..."
 PATHS_DIR=/home/sunrise/data/SLAM/navigation/install/local_planner/share/local_planner/paths
 ros2 run local_planner localPlanner \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
-    -r /cloud_map:=/nav/map_cloud \
+    -r /Odometry:=/slam/odometry \
+    -r /cloud_map:=/slam/map_cloud \
     -r /terrain_map:=/nav/terrain_map \
     -r /way_point:=/nav/way_point \
     -p pathFolder:="$PATHS_DIR" \
@@ -201,11 +201,11 @@ ros2 run local_planner localPlanner \
 LP_PID=$!
 sleep 1
 
-# ── [6] pathFollower ─────────────────────────────────────────────
+# 鈹€鈹€ [6] pathFollower 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[6/6] Starting pathFollower ..."
 ros2 run local_planner pathFollower \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cmd_vel:=/nav/cmd_vel \
     -p autonomyMode:=true \
     -p autonomySpeed:=1.0 \
@@ -219,7 +219,7 @@ echo ""
 echo "All 6 nodes started. Waiting 5s for terrain stabilization ..."
 sleep 5
 
-# ── 发布目标点 ───────────────────────────────────────────────────
+# 鈹€鈹€ 鍙戝竷鐩爣鐐?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "=== Sending goal_pose: ($GOAL_X, $GOAL_Y, $GOAL_Z) ==="
 ros2 topic pub /nav/goal_pose geometry_msgs/msg/PoseStamped \
     "{header: {frame_id: 'map'}, pose: {position: {x: $GOAL_X, y: $GOAL_Y, z: $GOAL_Z}, orientation: {w: 1.0}}}" \
@@ -232,12 +232,12 @@ echo "=== Global Planner Initial Status ==="
 tail -5 /tmp/global_planner.log
 echo ""
 
-# ── 监控 ─────────────────────────────────────────────────────────
+# 鈹€鈹€ 鐩戞帶 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "=== Monitoring for ${MONITOR_SEC}s (checking every 2s) ==="
 for i in $(seq 2 2 $MONITOR_SEC); do
     sleep 2
 
-    # nova bridge 日志: 寻找 h= 行
+    # nova bridge 鏃ュ織: 瀵绘壘 h= 琛?
     POS_LINE=$(tail -5 /tmp/nova_bridge.log 2>/dev/null | grep -oP 't=[\d.]+s\s+h=[\d.]+m\s+cmd_vx=[\d.+-]+' | tail -1)
     ADAPTER_EVENT=$(tail -3 /tmp/pct_adapter.log 2>/dev/null | grep -oP '(Reached Waypoint \d+|Goal Reached|Replan L\d|FAILED|planning failed)' | tail -1)
 
@@ -245,7 +245,7 @@ for i in $(seq 2 2 $MONITOR_SEC); do
         printf "  t=%3ds | %s | adapter: %s\n" "$i" "$POS_LINE" "$ADAPTER_EVENT"
     fi
 
-    # 检查 goal_reached (匹配 "Goal Reached!" 格式)
+    # 妫€鏌?goal_reached (鍖归厤 "Goal Reached!" 鏍煎紡)
     if grep -qi "goal reached" /tmp/pct_adapter.log 2>/dev/null; then
         echo ""
         echo "*** GOAL REACHED! ***"
@@ -254,7 +254,7 @@ for i in $(seq 2 2 $MONITOR_SEC); do
         break
     fi
 
-    # 检查 bridge 是否存活
+    # 妫€鏌?bridge 鏄惁瀛樻椿
     if ! kill -0 $BRIDGE_PID 2>/dev/null; then
         echo "ERROR: nova_nav_bridge died at t=${i}s!"
         tail -10 /tmp/nova_bridge.log
@@ -262,7 +262,7 @@ for i in $(seq 2 2 $MONITOR_SEC); do
     fi
 done
 
-# ── 最终状态 ─────────────────────────────────────────────────────
+# 鈹€鈹€ 鏈€缁堢姸鎬?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo ""
 echo "=== Final Status ==="
 echo "-- nova_bridge --"

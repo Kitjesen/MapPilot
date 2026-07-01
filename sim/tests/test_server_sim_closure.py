@@ -11,8 +11,8 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from core.blueprints.simulation_contract import simulation_runtime_contract
-from core.runtime_interface import resolved_runtime_data_flow
+from runtime.blueprints.simulation_contract import simulation_runtime_contract
+from runtime.runtime_interface import resolved_runtime_data_flow
 from sim.scripts import server_sim_closure
 
 
@@ -263,7 +263,7 @@ def _has_video_decode_gap(gaps: str, prefix: str) -> bool:
 
 
 def test_dimos_required_gates_come_from_core_algorithm_gate_constant():
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
     assert tuple(server_sim_closure.ALGORITHM_PRESETS["dimos_benchmark"]) == tuple(
         DIMOS_BENCHMARK_REQUIRED_GATES
@@ -287,19 +287,31 @@ def _readme_current_full_closure_gates() -> tuple[str, ...]:
 
 
 def test_g4_server_full_sim_required_gates_come_from_core_algorithm_gate_constant():
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-    from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     assert tuple(server_sim_closure.ALGORITHM_PRESETS["g4_server_full_sim"]) == tuple(
         G4_SERVER_FULL_SIM_REQUIRED_GATES
     )
     assert set(G4_SERVER_FULL_SIM_REQUIRED_GATES) == (
-        set(DIMOS_BENCHMARK_REQUIRED_GATES) | {"multifloor_exploration"}
+        (
+            set(DIMOS_BENCHMARK_REQUIRED_GATES)
+            - {"native_pct_mujoco", "pct_saved_map_navigation", "gazebo_runtime"}
+        )
+        | {
+            "multifloor_exploration",
+            "policy_nav",
+            "mujoco_tare_exploration",
+            "gateway_dry_run",
+        }
     )
+    assert "native_pct_mujoco" not in G4_SERVER_FULL_SIM_REQUIRED_GATES
+    assert "pct_saved_map_navigation" not in G4_SERVER_FULL_SIM_REQUIRED_GATES
+    assert "gazebo_runtime" not in G4_SERVER_FULL_SIM_REQUIRED_GATES
 
 
 def test_readme_current_full_closure_gates_match_g4_server_full_sim_preset():
-    from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     assert _readme_current_full_closure_gates() == tuple(
         G4_SERVER_FULL_SIM_REQUIRED_GATES
@@ -319,7 +331,7 @@ def test_readme_full_closure_command_uses_g4_server_full_sim_preset():
 
 
 def test_g4_required_gates_have_report_override_options():
-    from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     parser = server_sim_closure._build_parser()
     option_strings = {
@@ -333,7 +345,7 @@ def test_g4_required_gates_have_report_override_options():
 
 
 def test_g4_summary_required_gate_sequence_preserves_core_order(tmp_path: Path, monkeypatch):
-    from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     monkeypatch.setattr(server_sim_closure, "ROOT", tmp_path)
 
@@ -347,7 +359,7 @@ def test_g4_summary_required_gate_sequence_preserves_core_order(tmp_path: Path, 
 
 
 def test_g4_missing_required_gates_preserve_core_order(tmp_path: Path, monkeypatch):
-    from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     monkeypatch.setattr(server_sim_closure, "ROOT", tmp_path)
 
@@ -364,7 +376,7 @@ def test_g4_missing_required_gates_preserve_core_order(tmp_path: Path, monkeypat
 
 
 def test_g4_required_gates_are_default_freshness_required():
-    from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     assert set(G4_SERVER_FULL_SIM_REQUIRED_GATES) <= set(
         server_sim_closure.DEFAULT_FRESHNESS_REQUIRED_GATES
@@ -372,7 +384,7 @@ def test_g4_required_gates_are_default_freshness_required():
 
 
 def test_dimos_summary_required_gate_sequence_preserves_core_order(tmp_path: Path, monkeypatch):
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
     monkeypatch.setattr(server_sim_closure, "ROOT", tmp_path)
 
@@ -389,7 +401,7 @@ def test_dimos_summary_requires_fresh_reports_for_every_required_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
     monkeypatch.setattr(server_sim_closure, "ROOT", tmp_path)
     stale_gateway_report = _write_json(
@@ -435,7 +447,7 @@ def test_structured_planner_result_marks_unavailable_backend_as_skip(monkeypatch
         def setup(self):
             raise RuntimeError("pct planner unavailable: native backend missing")
 
-    monkeypatch.setattr(benchmark, "GlobalPlannerService", UnavailableService)
+    monkeypatch.setattr(benchmark, "GlobalPlanner", UnavailableService)
 
     result = benchmark.benchmark_planner(
         "pct",
@@ -474,9 +486,9 @@ def test_structured_planner_plan_unavailable_is_skip_not_fail(monkeypatch, tmp_p
             return None
 
         def plan(self, start, goal, safe_goal_tolerance=0.0):
-            raise RuntimeError("GlobalPlannerService: pct planner unavailable")
+            raise RuntimeError("GlobalPlanner: pct planner unavailable")
 
-    monkeypatch.setattr(benchmark, "GlobalPlannerService", UnavailableAtPlanService)
+    monkeypatch.setattr(benchmark, "GlobalPlanner", UnavailableAtPlanService)
 
     result = benchmark.benchmark_planner(
         "pct",
@@ -2037,6 +2049,9 @@ def test_server_sim_closure_policy_nav_command_uses_verified_policy_gait_params(
     spec = next(item for item in server_sim_closure.GATES if item.name == "policy_nav")
 
     assert "--nav-duration 18" in spec.command
+    assert "--nav-planner-backend octoplanner3d" in spec.command
+    assert "--nav-local-planner-backend nanobind" in spec.command
+    assert "--nav-path-follower-backend nav_kernel" in spec.command
     assert "--nav-path-min-speed 0.25" in spec.command
     assert "--nav-path-max-speed 0.6" in spec.command
     assert "--nav-max-angular-z 0.15" in spec.command
@@ -2386,6 +2401,13 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
                     "policy_loaded": True,
                     "policy_path": "/tmp/policy.onnx",
                     "cmd_vel_sent_to_hardware": False,
+                    "global_planner_backend_status": {
+                        "configured_backend": "octoplanner3d",
+                        "backend": "octoplanner3d",
+                        "degraded": False,
+                    },
+                    "local_planner_backend_actual": "nanobind",
+                    "path_follower_backend_actual": "nav_kernel",
                     "contacts": {
                         "foot_contact_sample_count": 20,
                         "unique_feet_count": 4,
@@ -2744,9 +2766,9 @@ def test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports(tmp_
         "exercised_by": "command_flow",
     }
     path_follower_evidence = {
-        "requested": "nav_core",
-        "configured_backend": "nav_core",
-        "backend_actual": "nav_core",
+        "requested": "nav_kernel",
+        "configured_backend": "nav_kernel",
+        "backend_actual": "nav_kernel",
         "native_backend_used": True,
         "exercised_by": "command_flow",
     }
@@ -2833,7 +2855,7 @@ def test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports(tmp_
     assert summary["ok"] is True
     backends = summary["algorithm_backends"]
     assert backends["multifloor_exploration"]["local_planner"]["backend_actual"] == "nanobind"
-    assert backends["multifloor_exploration"]["path_follower"]["backend_actual"] == "nav_core"
+    assert backends["multifloor_exploration"]["path_follower"]["backend_actual"] == "nav_kernel"
     assert backends["large_terrain"]["local_planner"]["status"] == "not_exercised"
     assert backends["dynamic_obstacle_local_planner"]["local_planner"]["backend_actual"] == "nanobind"
     assert backends["dynamic_obstacle_local_planner"]["path_follower"]["status"] == "not_exercised"
@@ -4390,7 +4412,7 @@ def test_server_sim_closure_rejects_non_pct_native_motion_report(tmp_path: Path)
     assert summary["ok"] is False
     assert summary["verified"]["native_pct_mujoco"] is False
     assert any("planner is not pct" in gap for gap in summary["remaining_gaps"])
-    assert any("pct_native_backend_used is not true" in gap for gap in summary["remaining_gaps"])
+    assert any("pct_native_runtime_used is not true" in gap for gap in summary["remaining_gaps"])
 
 
 def test_server_sim_closure_rejects_native_pct_fallback_report(tmp_path: Path):
@@ -4758,7 +4780,7 @@ def test_server_sim_closure_fastlio2_rejects_bad_runtime_data_flow(tmp_path: Pat
 
 
 def test_server_sim_closure_fastlio2_exception_report_keeps_sensor_contract(tmp_path: Path):
-    from sim.scripts.mujoco_fastlio2_live_gate import _gate_exception_report
+    from sim.scripts.mujoco_live_gate import _gate_exception_report
 
     report = _gate_exception_report(
         SimpleNamespace(
@@ -5337,7 +5359,7 @@ def test_server_sim_closure_inspection_mvp_preset_selects_product_gate_set():
 
 
 def test_server_sim_closure_dimos_benchmark_preset_selects_reference_gate_set():
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
     parser = server_sim_closure._build_parser()
     args = parser.parse_args(["--preset", "dimos_benchmark"])
@@ -5346,7 +5368,7 @@ def test_server_sim_closure_dimos_benchmark_preset_selects_reference_gate_set():
 
 
 def test_server_sim_closure_g4_server_full_sim_preset_selects_closure_gate_set():
-    from core.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     parser = server_sim_closure._build_parser()
     args = parser.parse_args(["--preset", "g4_server_full_sim"])
@@ -6248,7 +6270,7 @@ def test_mujoco_live_launcher_writes_red_report_when_runtime_report_missing():
 
     assert 'if [[ ! -f "$run_dir/report.json" ]]; then' in launcher
     assert "runtime_report_missing_after_launcher" in launcher
-    assert "mujoco_fastlio2_live_gate exited without writing report.json" in launcher
+    assert "mujoco_live_gate exited without writing report.json" in launcher
     assert 'partial_path = run_dir / "report.partial.json"' in launcher
     assert '"partial_report": partial' in launcher
     assert '"outputs": partial.get("outputs", {})' in launcher
@@ -7371,8 +7393,6 @@ def test_server_sim_host_preflight_blocks_missing_gazebo_navigation_source():
 
 def test_server_sim_host_preflight_blocks_missing_ros2_fastlio2_runtime():
     def package_executables(package: str) -> list[str]:
-        if package == "local_planner":
-            return ["local_planner localPlanner", "local_planner pathFollower"]
         if package == "fastlio2":
             return []
         return []
@@ -7400,7 +7420,7 @@ def test_server_sim_host_preflight_blocks_missing_ros2_fastlio2_runtime():
     assert report["ok"] is False
     assert report["blocked_gates"] == ["fastlio2_dynamic_inspection"]
     gate = report["gates"]["fastlio2_dynamic_inspection"]
-    assert gate["checks"]["ros2_local_planner"]["ok"] is True
+    assert "ros2_local_planner" not in gate["checks"]
     assert gate["failed_checks"] == ["ros2_fastlio2"]
     check = gate["checks"]["ros2_fastlio2"]
     assert check["ok"] is False
@@ -7419,8 +7439,6 @@ def test_server_sim_host_preflight_blocks_missing_ros2_fastlio2_runtime():
 
 def test_server_sim_host_preflight_accepts_ros2_fastlio2_runtime():
     def package_executables(package: str) -> list[str]:
-        if package == "local_planner":
-            return ["local_planner localPlanner", "local_planner pathFollower"]
         if package == "fastlio2":
             return ["fastlio2 lio_node"]
         return []
@@ -7448,6 +7466,7 @@ def test_server_sim_host_preflight_accepts_ros2_fastlio2_runtime():
     assert report["ok"] is True
     assert report["runnable_gates"] == ["fastlio2_dynamic_inspection"]
     gate = report["gates"]["fastlio2_dynamic_inspection"]
+    assert "ros2_local_planner" not in gate["checks"]
     assert gate["checks"]["ros2_fastlio2"]["ok"] is True
     assert gate["checks"]["ros2_fastlio2"]["evidence"]["executables"] == [
         "fastlio2 lio_node"
@@ -7844,7 +7863,7 @@ def test_server_sim_closure_cli_passes_skip_host_blocked_to_run_missing(
     monkeypatch,
     capsys,
 ):
-    from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
     captured: dict[str, object] = {}
 
@@ -7892,7 +7911,10 @@ def test_server_sim_closure_fastlio2_dynamic_inspection_command_uses_pct_contrac
     moving_sweep = next(
         gate for gate in server_sim_closure.GATES if gate.name == "moving_obstacle_sweep"
     )
-    fastlio_gate = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(
+    fastlio_gate = Path("sim/scripts/mujoco_live_gate.py").read_text(
+        encoding="utf-8"
+    )
+    fastlio_report = Path("sim/scripts/mujoco_live/report.py").read_text(
         encoding="utf-8"
     )
     fastlio_launcher = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(
@@ -7965,8 +7987,8 @@ def test_server_sim_closure_fastlio2_dynamic_inspection_command_uses_pct_contrac
     ) in moving_sweep.command
     assert "--fastlio-lidar-input" in fastlio_gate
     assert 'choices=["livox_custom_msg", "timed_pointcloud2"]' in fastlio_gate
-    assert '"early_success": early_success' in fastlio_gate
-    assert "_inspection_gate_evidence_complete(" in fastlio_gate
+    assert '"early_success": early_success' in fastlio_report
+    assert "_inspection_gate_evidence_complete(" in fastlio_report
     assert "--runtime-motion-fault-min-sim-m" in fastlio_gate
     assert "LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT=livox_custom_msg" in fastlio_launcher
     assert '"--fastlio-lidar-input"' in fastlio_launcher
@@ -8427,6 +8449,13 @@ def test_server_sim_closure_rejects_policy_nav_direct_fallback(tmp_path: Path):
                     "policy_loaded": True,
                     "policy_path": "/tmp/policy.onnx",
                     "cmd_vel_sent_to_hardware": False,
+                    "global_planner_backend_status": {
+                        "configured_backend": "octoplanner3d",
+                        "backend": "octoplanner3d",
+                        "degraded": False,
+                    },
+                    "local_planner_backend_actual": "nanobind",
+                    "path_follower_backend_actual": "nav_kernel",
                     "seen": {
                         "direct_fallback": 1,
                         "local_path": 12,
@@ -8447,6 +8476,73 @@ def test_server_sim_closure_rejects_policy_nav_direct_fallback(tmp_path: Path):
     assert summary["ok"] is False
     assert summary["verified"]["policy_nav"] is False
     assert any("direct_goal_fallback" in gap for gap in summary["remaining_gaps"])
+
+
+def test_server_sim_closure_rejects_policy_nav_legacy_local_backends(tmp_path: Path):
+    policy = _write_json(
+        tmp_path / "policy_legacy_backends.json",
+        {
+            "passed": True,
+            "simulation_only": True,
+            "real_robot_motion": False,
+            "cmd_vel_sent_to_hardware": False,
+            "checks": [
+                {
+                    "mode": "direct_policy",
+                    "passed": True,
+                    "policy_loaded": True,
+                    "policy_path": "/tmp/policy.onnx",
+                    "cmd_vel_sent_to_hardware": False,
+                    "contacts": {
+                        "foot_contact_sample_count": 20,
+                        "unique_feet_count": 4,
+                        "non_foot_ground_contacts": 0,
+                    },
+                },
+                {
+                    "mode": "full_stack_policy_nav",
+                    "passed": True,
+                    "policy_loaded": True,
+                    "policy_path": "/tmp/policy.onnx",
+                    "cmd_vel_sent_to_hardware": False,
+                    "global_planner_backend_status": {
+                        "configured_backend": "astar",
+                        "backend": "astar",
+                        "degraded": False,
+                    },
+                    "local_planner_backend_actual": "cmu_py",
+                    "path_follower_backend_actual": "pid",
+                    "contacts": {
+                        "foot_contact_sample_count": 20,
+                        "unique_feet_count": 4,
+                        "non_foot_ground_contacts": 0,
+                    },
+                    "seen": {
+                        "direct_fallback": 0,
+                        "local_path": 12,
+                        "path_follower_cmd": 12,
+                        "mux_cmd": 12,
+                        "waypoints": 2,
+                    },
+                },
+            ],
+        },
+    )
+
+    summary = server_sim_closure.summarize(
+        report_overrides={"policy_nav": policy},
+        required={"policy_nav"},
+    )
+
+    assert summary["ok"] is False
+    assert summary["verified"]["policy_nav"] is False
+    gaps = "\n".join(summary["remaining_gaps"])
+    assert (
+        "full_stack_policy_nav global_planner_backend_status.configured_backend is not octoplanner3d"
+        in gaps
+    )
+    assert "full_stack_policy_nav local_planner_backend_actual is not nanobind" in gaps
+    assert "full_stack_policy_nav path_follower_backend_actual is not nav_kernel" in gaps
 
 
 def test_server_sim_closure_rejects_policy_nav_without_policy_or_chain_topics(tmp_path: Path):

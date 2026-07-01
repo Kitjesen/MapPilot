@@ -315,7 +315,7 @@ def test_session_start_rejects_invalid_mode_with_stable_contract():
 
 
 def test_session_start_accepts_legacy_map_field(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
     from gateway.gateway_module import GatewayModule
@@ -380,7 +380,7 @@ def test_session_start_accepts_legacy_map_field(monkeypatch):
 
 
 def test_session_start_can_select_super_lio_backend(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -441,7 +441,7 @@ def test_session_start_can_select_super_lio_backend(monkeypatch):
 
 
 def test_session_start_can_select_super_lio_relocation_backend(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     import gateway.routes.session as session_routes
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
@@ -595,7 +595,7 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         assert missing_manager_response.status_code == 503
         assert missing_manager_payload["schema_version"] == 1
         assert missing_manager_payload["ok"] is False
-        assert missing_manager.error == "MapManagerModule not running"
+        assert missing_manager.error == "MapService not running"
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -679,7 +679,7 @@ def test_map_lifecycle_error_responses_use_stable_envelope(monkeypatch, tmp_path
 
 def test_map_save_falls_back_to_super_lio_live_cloud_snapshot(monkeypatch, tmp_path):
     import gateway.routes.maps as map_routes
-    from core.map_save import MapSaveError
+    from runtime.map_save import MapSaveError
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapLifecycleResponse
 
@@ -1238,7 +1238,7 @@ def test_explore_start_rejects_safety_stop_before_backend_start():
 
 
 def test_exploring_session_start_rejects_localization_recovery_blocker(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -1333,7 +1333,7 @@ def test_exploring_session_start_rejects_safety_stop_before_backend_start():
 
 
 def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -1417,7 +1417,7 @@ def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
 
 
 def test_tare_external_session_start_with_none_skips_robot_slam_services(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -1477,7 +1477,7 @@ def test_tare_external_session_start_with_none_skips_robot_slam_services(monkeyp
 
 
 def test_tare_external_session_get_preserves_exploring_with_none_slam(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionResponse
 
@@ -1514,7 +1514,7 @@ def test_tare_external_session_get_preserves_exploring_with_none_slam(monkeypatc
 
 
 def test_slam_status_uses_logical_service_states(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
 
     class _FakeServiceManager:
@@ -1609,7 +1609,7 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
 
 
 def test_slam_switch_can_select_super_lio(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
 
     class _FakeServiceManager:
@@ -1648,7 +1648,7 @@ def test_slam_switch_can_select_super_lio(monkeypatch):
 
 
 def test_slam_switch_can_select_super_lio_relocation(monkeypatch):
-    import core.service_manager as service_manager
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
 
     class _FakeServiceManager:
@@ -1775,7 +1775,7 @@ def test_super_lio_relocation_relocalize_endpoints_fail_fast_without_ros_call(
 def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_path):
     import subprocess
 
-    from core.relocalization import RelocalizationResult
+    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
 
     map_dir = tmp_path / "maps"
@@ -1823,7 +1823,7 @@ def test_auto_relocalize_delegates_to_service_and_preserves_success_payload(
 ):
     import subprocess
 
-    from core.relocalization import RelocalizationResult
+    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
 
     subprocess_calls = []
@@ -1862,7 +1862,7 @@ def test_relocalize_delegates_validated_request_and_persists_on_success(
 ):
     import subprocess
 
-    from core.relocalization import RelocalizationResult
+    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
 
     persisted = []
@@ -1913,7 +1913,7 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
     monkeypatch,
     tmp_path,
 ):
-    from core.relocalization import RelocalizationResult
+    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
 
     persisted = []
@@ -1947,7 +1947,7 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
 
 
 def test_relocalize_service_timeout_maps_to_504_payload(monkeypatch, tmp_path):
-    from core.relocalization import RelocalizationResult
+    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
 
     persisted = []

@@ -11,7 +11,7 @@ the scene graph until it is pruned.
 Source: per-frame 3D detection list (`label`, position, score, optional CLIP
 feature).
 
-For each detection, the tracker (`src/semantic/perception/.../instance_tracker.py`)
+For each detection, the tracker (`src/perception/.../instance_tracker.py`)
 looks for an existing object with:
 
 - the same label, **and**
@@ -85,12 +85,12 @@ fast candidate could be wrong, which is more cautious but more expensive.
 
 | Path | Topic |
 |------|-------|
-| `src/semantic/perception/.../instance_tracker.py` | Match / merge / prune |
-| `src/semantic/perception/.../scg_builder.py` | Scene-graph assembly |
-| `src/semantic/perception/.../room_manager.py` | Region → room inference |
-| `src/semantic/perception/.../keyframe_selector.py` | View selection |
-| `src/semantic/planner/.../fast_path.py` | Fast multi-source matcher |
-| `src/semantic/planner/.../slow_path.py` | LLM reasoning + selective grounding |
+| `src/perception/.../instance_tracker.py` | Match / merge / prune |
+| `src/perception/.../scg_builder.py` | Scene-graph assembly |
+| `src/perception/.../room_manager.py` | Region → room inference |
+| `src/perception/.../keyframe_selector.py` | View selection |
+| `src/decision/.../fast_path.py` | Fast multi-source matcher |
+| `src/decision/.../slow_path.py` | LLM reasoning + selective grounding |
 | `src/memory/modules/semantic_mapper_module.py` | Scene-graph → Room-Object KG + topology |
 | `FAST_SLOW_IMPLEMENTATION.md` | Goal-resolver internals |
 

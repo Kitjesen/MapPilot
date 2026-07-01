@@ -1,15 +1,17 @@
 # LingTu Navigation — build shortcuts
 
-.PHONY: help build nav_core test clean install health benchmark format lint
+.PHONY: help build nav_kernel test clean install health benchmark format lint
 
 .DEFAULT_GOAL := help
+ROS_DISTRO ?= humble
+ROS_SETUP ?= /opt/ros/$(ROS_DISTRO)/setup.bash
 
 help:
 	@echo "LingTu Navigation — available targets"
 	@echo ""
 	@echo "  Build:"
 	@echo "    make build       - colcon build (full workspace, needs ROS2)"
-	@echo "    make nav_core    - build _nav_core.so only (no ROS2 needed)"
+	@echo "    make nav_kernel    - build LingTu native navigation kernel (no ROS2 needed)"
 	@echo "    make build-debug - colcon build in Debug mode"
 	@echo ""
 	@echo "  Test:"
@@ -32,22 +34,22 @@ help:
 
 build:
 	@echo "Building workspace..."
-	@bash -c "source /opt/ros/humble/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
+	@bash -c "source '$(ROS_SETUP)' && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
 	@echo "Done."
 
-nav_core:
-	@echo "Building _nav_core.so (nanobind, no ROS2 needed)..."
-	@bash scripts/build/build_nav_core.sh
+nav_kernel:
+	@echo "Building LingTu native navigation kernel (nanobind, no ROS2 needed)..."
+	@bash scripts/build/build_nav_kernel.sh
 
 build-debug:
 	@echo "Building workspace (Debug)..."
-	@bash -c "source /opt/ros/humble/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Debug"
+	@bash -c "source '$(ROS_SETUP)' && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Debug"
 	@echo "Done."
 
 test:
 	@echo "Running tests..."
-	@bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && colcon test"
-	@bash -c "source /opt/ros/humble/setup.bash && colcon test-result --verbose"
+	@bash -c "source '$(ROS_SETUP)' && source install/setup.bash && colcon test"
+	@bash -c "source '$(ROS_SETUP)' && colcon test-result --verbose"
 
 test-integration:
 	@echo "Running integration tests..."
@@ -76,7 +78,7 @@ format:
 
 lint:
 	@echo "Running clang-tidy..."
-	@bash -c "source /opt/ros/humble/setup.bash && colcon build --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+	@bash -c "source '$(ROS_SETUP)' && colcon build --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
 	@find src -name "*.cpp" | xargs clang-tidy -p build/
 
 py-lint:
@@ -90,10 +92,10 @@ py-fix:
 	@echo "Done."
 
 mapping:
-	@bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && python3 lingtu.py map"
+	@bash -c "source '$(ROS_SETUP)' && source install/setup.bash && python3 lingtu.py map"
 
 navigation:
-	@bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && python3 lingtu.py nav"
+	@bash -c "source '$(ROS_SETUP)' && source install/setup.bash && python3 lingtu.py nav"
 
 sync-version:
 	@bash scripts/deploy/sync_versions.sh

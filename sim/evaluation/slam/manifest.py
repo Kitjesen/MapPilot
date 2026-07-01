@@ -31,8 +31,8 @@ class SlamEvalSensorSuite:
 class SlamEvalBackend:
     name: str
     profile: str
-    odometry_topic: str = "/nav/odometry"
-    map_topic: str = "/nav/map_cloud"
+    odometry_topic: str = "/slam/odometry"
+    map_topic: str = "/slam/map_cloud"
 
 
 @dataclass(frozen=True)

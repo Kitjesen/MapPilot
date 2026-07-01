@@ -35,7 +35,7 @@ import yaml
 
 try:
     import habitat
-    from habitat.core.env import Env
+    from habitat.runtime.env import Env
     from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
 except ImportError:
     print("错误: 需要安装 habitat-lab 和 habitat-sim")

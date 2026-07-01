@@ -1,8 +1,8 @@
 """Structured logging for CLI runs.
 
 Two log sinks per run:
-  1. stderr — human-friendly, filtered (noisy loggers silenced)
-  2. file   — JSON lines (machine-parseable) OR plain text
+  1. stderr 閳?human-friendly, filtered (noisy loggers silenced)
+  2. file   閳?JSON lines (machine-parseable) OR plain text
 
 Set ``log_format="json"`` (or ``--log-format json`` on CLI) to get JSON file logs.
 Default is plain text for backward compatibility.
@@ -25,14 +25,14 @@ _QUIET_PREFIXES = (
     "root",                                     # open_clip / timm model loading
     "timm",
     "open_clip",
-    "core.dds",                                 # DDS reader setup
-    "core.service_manager",                     # systemd service start/stop
-    "core.blueprint",                           # "System started: N modules"
-    "slam.slam_bridge_module",                  # DDS transport choice
-    "semantic.perception.mobileclip_encoder",
-    "semantic.perception.encoder_module",
-    "semantic.perception.perception_module",
-    "semantic.planner.person_tracker",
+    "runtime.dds",                                 # DDS reader setup
+    "runtime.service_manager",                     # systemd service start/stop
+    "runtime.blueprint",                           # "System started: N modules"
+    "localization.bridge",                              # DDS transport choice
+    "perception.mobileclip_encoder",
+    "perception.encoder_module",
+    "perception.perception_module",
+    "decision.vision.person_tracker",
     "drivers.sim.ros2_sim_driver",
     "gateway.mcp_server",
     "memory.modules.vector_memory_module",
@@ -41,12 +41,13 @@ _QUIET_PREFIXES = (
 )
 
 # Loggers whose WARNING/ERROR messages are also not useful on screen.
-# These are "graceful degradation" notices — the system handles them automatically.
+# These are "graceful degradation" notices 閳?the system handles them automatically.
 _MUTE_PREFIXES = (
-    "semantic.planner.llm_client",  # "API key not found"
-    "base_autonomy.modules.terrain_module",           # "_nav_core not available, falling back"
-    "base_autonomy.modules.local_planner_module",     # "_nav_core not available, falling back"
-    "base_autonomy.modules.path_follower_module",     # "_nav_core not available, falling back"
+    "decision.llm.llm_client",  # "API key not found"
+    "nav.local.terrain",           # native kernel unavailable, falling back
+    "nav.services.plan.local_planner",  # native kernel unavailable, falling back
+    "nav.local.local_planner",     # compatibility shim
+    "nav.local.path_follower",     # native kernel unavailable, falling back
 )
 
 
@@ -82,7 +83,7 @@ class _JsonFormatter(logging.Formatter):
         }
         if record.exc_info and record.exc_info[1] is not None:
             obj["exception"] = traceback.format_exception(*record.exc_info)
-        # Extra structured fields — modules can pass extra={"module": ...}
+        # Extra structured fields 閳?modules can pass extra={"module": ...}
         for key in ("module", "port", "latency_ms", "state", "event"):
             val = getattr(record, key, None)
             if val is not None:
@@ -128,7 +129,7 @@ def setup_logging(
 
     # --- secret redaction (applied to all handlers) ---
     try:
-        from core.utils.redact import RedactSecretsFilter
+        from runtime.utils.redact import RedactSecretsFilter
         _redact = RedactSecretsFilter()
         stderr_h.addFilter(_redact)
         file_h.addFilter(_redact)

@@ -25,7 +25,7 @@ import logging
 import time
 from collections import defaultdict
 
-from core.msgs.numpy_compat import np
+from runtime.msgs.numpy_compat import np
 
 from memory.spatial.topology_types import (
     _FRONTIER_BASE_PRIOR,

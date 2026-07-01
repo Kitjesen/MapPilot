@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Map, FolderOpen, Trash2, Star, RefreshCw, Save, Pencil } from 'lucide-react'
 import type { MapInfo, ToastKind } from '../types'
 import * as api from '../services/api'
-import { PointCloudViewer } from './PointCloudViewer'
+import { PointCloudViewer, type PointCloudPick } from './PointCloudViewer'
 import { PromptModal, ConfirmModal } from './Modal'
 import styles from './MapView.module.css'
 
@@ -111,6 +111,7 @@ export function MapView({ showToast }: MapViewProps) {
   const [error,       setError      ] = useState('')
   const [selectedMap, setSelectedMap] = useState<string | null>(null)
   const [splitPct,    setSplitPct   ] = useState(30)
+  const [pickedPoint, setPickedPoint] = useState<PointCloudPick | null>(null)
 
   // Modal state
   const [saveOpen,   setSaveOpen  ] = useState(false)
@@ -164,6 +165,8 @@ export function MapView({ showToast }: MapViewProps) {
 
   useEffect(() => { loadMaps() }, [loadMaps])
 
+  useEffect(() => { setPickedPoint(null) }, [selectedMap])
+
   const handleActivate = (name: string) => setActivateFrom(name)
   const handleDelete = (name: string) => setDeleteFrom(name)
   const handleRename = (name: string) => setRenameFrom(name)
@@ -215,6 +218,26 @@ export function MapView({ showToast }: MapViewProps) {
     }
   }
 
+  const confirmPickedGoal = async () => {
+    if (!pickedPoint) return
+    try {
+      const res = await api.navigateClick(pickedPoint.x, pickedPoint.y, {
+        z: pickedPoint.z,
+        source: 'map_click',
+        target_type: 'map_point',
+        label: 'point_cloud_click',
+        metadata: { map_name: selectedMap, source_view: 'point_cloud' },
+      })
+      showToast(
+        api.formatCommandAck(res, `3D goal (${pickedPoint.x.toFixed(2)}, ${pickedPoint.y.toFixed(2)})`),
+        'success',
+      )
+      setPickedPoint(null)
+    } catch (e: unknown) {
+      showToast(api.formatCommandError(e, '3D point goal failed'), 'error')
+    }
+  }
+
   const nameValidator = (v: string) => {
     if (!/^[a-zA-Z0-9_-]+$/.test(v)) return '仅支持字母、数字、下划线和横线'
     if (v.length > 32) return '名称过长 (最多 32 字符)'
@@ -230,7 +253,7 @@ export function MapView({ showToast }: MapViewProps) {
     <div className={styles.mapTab} ref={containerRef}>
       {/* Left: 3D viewer */}
       <div className={styles.viewerPanel} style={{ width: `${splitPct}%` }}>
-        <PointCloudViewer mapName={selectedMap} />
+        <PointCloudViewer mapName={selectedMap} pickedPoint={pickedPoint} onPick={setPickedPoint} />
       </div>
 
       {/* Drag divider */}
@@ -257,6 +280,21 @@ export function MapView({ showToast }: MapViewProps) {
         {lastSaveSummary && (
           <div className={styles.stateMsg} title={lastSaveSummary}>
             Last save: {lastSaveSummary}
+          </div>
+        )}
+
+        {pickedPoint && (
+          <div className={styles.pickPanel}>
+            <div className={styles.pickInfo}>
+              <span className={styles.pickTitle}>3D 目标点</span>
+              <span className={styles.pickCoords}>
+                x={pickedPoint.x.toFixed(2)} y={pickedPoint.y.toFixed(2)} z={pickedPoint.z.toFixed(2)}
+              </span>
+            </div>
+            <div className={styles.pickActions}>
+              <button className={styles.btnTinyAccent} onClick={confirmPickedGoal}>发送目标</button>
+              <button className={styles.btnTiny} onClick={() => setPickedPoint(null)}>取消</button>
+            </div>
           </div>
         )}
 

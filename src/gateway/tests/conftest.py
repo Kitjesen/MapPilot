@@ -1,4 +1,4 @@
-"""conftest.py for src/gateway/tests/ — add src/ to sys.path for core.* imports."""
+"""conftest.py for src/gateway/tests/ — add src/ to sys.path for runtime.* imports."""
 
 import os
 import sys

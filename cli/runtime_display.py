@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from core.runtime_interface import (
+from runtime.runtime_interface import (
     REAL_RUNTIME_CONTRACT,
     runtime_required_topic_frame_ids,
 )
@@ -64,6 +64,33 @@ def format_runtime_sources(runtime: Any) -> str:
         lidar_profile = _get_attr_or_item(runtime, "lidar_extrinsic_profile") or "none"
         parts.append(f"lidar_extrinsic={lidar_profile}")
     return " ".join(parts)
+
+
+def format_runtime_algorithms(runtime: Any) -> str:
+    global_planner = _get_attr_or_item(runtime, "global_planner") or "unknown"
+    fallback_planners = join_runtime_items(
+        _get_attr_or_item(runtime, "fallback_global_planners")
+    )
+    latency_budget = _get_attr_or_item(runtime, "planner_latency_budget_ms")
+    safety_policy = _get_attr_or_item(runtime, "plan_safety_policy") or "unknown"
+    autonomy = _get_attr_or_item(runtime, "autonomy_backends") or {}
+    if isinstance(autonomy, Mapping):
+        terrain_backend = autonomy.get("terrain_backend", "unknown")
+        local_planner_backend = autonomy.get("local_planner_backend", "unknown")
+        path_follower_backend = autonomy.get("path_follower_backend", "unknown")
+    else:
+        terrain_backend = "unknown"
+        local_planner_backend = "unknown"
+        path_follower_backend = "unknown"
+    return (
+        f"global_planner={global_planner} "
+        f"fallback={fallback_planners} "
+        f"latency_budget_ms={latency_budget if latency_budget is not None else 'unknown'} "
+        f"plan_safety_policy={safety_policy} "
+        f"terrain={terrain_backend} "
+        f"local_planner={local_planner_backend} "
+        f"path_follower={path_follower_backend}"
+    )
 
 
 def format_runtime_frames(runtime: Any) -> str:
@@ -222,7 +249,8 @@ def format_product_acceptance_commands(runtime: Any) -> str:
     if simulation_only:
         return f"{runtime_audit} | {gateway_simulation}"
     real_evidence = (
-        "python lingtu.py real-runtime-evidence --duration-sec 20 "
+        "python lingtu.py real-runtime-evidence --collector gateway "
+        "--gateway-url http://<robot>:5050 --duration-sec 20 "
         "--json-out artifacts/thunder_field_runtime/report.json"
     )
     gateway_field = (
@@ -266,6 +294,14 @@ def format_runtime_switch_plan(payload: Mapping[str, Any]) -> str:
         f"Current frame links: {format_frame_links(current_payload)}",
         f"Target frame links: {format_frame_links(target_payload)}",
     ]
+    product_switch = payload.get("product_mode_switch")
+    if isinstance(product_switch, Mapping):
+        lines.append(
+            "Product mode switch: "
+            f"required_lifecycle={product_switch.get('required_lifecycle', 'unknown')} "
+            f"online_hot_switch_supported={str(bool(product_switch.get('online_hot_switch_supported'))).lower()} "
+            f"reason={product_switch.get('reason', '')}"
+        )
     _append_contract_section(
         lines,
         "Current product acceptance",
@@ -425,6 +461,7 @@ def format_runtime_spec_payload(payload: Mapping[str, Any]) -> str:
             f"robot_preset={spec_payload.get('robot_preset', 'unknown')}"
         ),
         f"Runtime: {format_runtime_boundary(spec_payload)}",
+        f"Algorithms: {format_runtime_algorithms(spec_payload)}",
         f"SLAM: {format_runtime_sources(spec_payload)}",
         f"Product boundary: {format_product_runtime_boundary(spec_payload)}",
         f"Frames: {format_runtime_frames(spec_payload)}",
@@ -435,6 +472,11 @@ def format_runtime_spec_payload(payload: Mapping[str, Any]) -> str:
         "Product acceptance",
         format_product_acceptance_commands(spec_payload),
         separator=" | ",
+    )
+    _append_contract_section(
+        lines,
+        "Startup gates",
+        join_runtime_items(spec_payload.get("startup_gates")),
     )
     _append_contract_section(
         lines,
@@ -844,6 +886,7 @@ def _format_runtime_env(env: Mapping[str, Any]) -> str:
         "LINGTU_RUNTIME_CONTRACT",
         "LINGTU_COMMAND_SINK",
         "LINGTU_SIMULATION_ONLY",
+        "LINGTU_FASTLIO2_PORTABLE_LIB",
     )
     parts: list[str] = []
     for key in keys:

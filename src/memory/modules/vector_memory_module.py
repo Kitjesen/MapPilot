@@ -23,14 +23,14 @@ import os
 import time
 from typing import Any
 
-from core.backend_status import BackendStatus
-from core.encoder_protocol import EncoderProtocol
-from core.module import Module, skill
-from core.msgs.nav import Odometry
-from core.msgs.numpy_compat import np
-from core.msgs.semantic import SceneGraph
-from core.registry import get, register
-from core.stream import In, Out
+from runtime.backend_status import BackendStatus
+from runtime.encoder_protocol import EncoderProtocol
+from runtime.module import Module, skill
+from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.semantic import SceneGraph
+from runtime.registry import get, register
+from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
 
@@ -103,13 +103,13 @@ class VectorMemoryModule(Module, layer=3):
     def _init_registry_encoder(self, backend: str) -> bool:
         """Create an encoder through the core registry instead of importing semantic/.
 
-        The provider may live in semantic.perception, but VectorMemoryModule only
+        The provider may live in perception, but VectorMemoryModule only
         depends on the core registry/protocol boundary. This keeps memory/ from
         growing a direct business dependency on semantic/perception internals.
         """
 
         try:
-            from core.plugin_seed import seed_registered_plugins
+            from runtime.plugin_seed import seed_registered_plugins
 
             seed_registered_plugins(groups=("perception",))
             provider = get("encoder", backend)
@@ -142,8 +142,8 @@ class VectorMemoryModule(Module, layer=3):
         # Attempt 1: MobileCLIP text encoder (preferred for robot text queries).
         # Encoder constructors do not load weights; load_model() is required
         # before encode_text() can produce embeddings. Attempt 2 keeps the older
-        # CLIP backend as a fallback. Both are resolved through core.registry so
-        # memory/ stays decoupled from semantic/perception concrete classes.
+        # CLIP backend as a fallback. Both are resolved through runtime.registry so
+        # memory/ stays decoupled from perception concrete classes.
         if self._init_registry_encoder("mobileclip"):
             return
 

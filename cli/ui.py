@@ -11,7 +11,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from core.runtime.resolver import PROFILE_ALIASES
+from runtime.profiles.resolver import PROFILE_ALIASES
 
 from . import term as T
 from .profiles_data import PROFILES
@@ -46,22 +46,34 @@ _TAGLINE = "  Autonomous Navigation for Quadruped Robots"
 
 # Profile icons and accent colors
 _PROFILE_META = {
+    "teleop": ("T", "Remote control only", T.green),
+    "teleop_avoid": ("A", "Remote control with safety obstacle avoidance", T.green),
     "lite":    ("L", "Lightweight Thunder runtime",                  T.green),
+    "tracking": ("K", "Track supplied path or waypoint", T.green),
+    "inspection": ("I", "Saved-map patrol and semantic inspection", T.green),
     "nav":     ("◉", "Navigate using a saved map",                  T.green),
     "explore": ("◎", "Explore unknown area",                         T.cyan),
     "map":     ("⊕", "Build a new map",                              T.yellow),
     "sim":     ("◈", "MuJoCo simulation",                            T.blue),
+    "portable_mujoco": ("μ", "Portable no-ROS MuJoCo planning + sensors", T.blue),
     "sim_gazebo": ("▣", "Gazebo/GZ ROS-native simulation",            T.blue),
     "sim_mujoco_live": ("M", "MuJoCo MID-360 + Fast-LIO live simulation", T.blue),
-    "sim_mujoco_pct_live": ("P", "MuJoCo Fast-LIO + PCT closed-loop simulation", T.blue),
+    "sim_mujoco_octo_live": ("O", "MuJoCo Fast-LIO + OctoPlanner3D closed-loop simulation", T.blue),
     "sim_industrial": ("#", "Gazebo industrial-yard delivery simulation", T.blue),
     "sim_cmu_tare": ("C", "CMU Unity + external TARE simulation",      T.blue),
     "dev":     ("◇", "Test perception & planning without a robot",   T.navy),
     "stub":    ("○", "Framework testing only",                       T.dim),
 }
 
-_PRODUCT_PROFILE_NAMES = ("lite", "map", "nav", "explore")
-_ADVANCED_PROFILE_NAMES = ("tare_explore",)
+_PRODUCT_PROFILE_NAMES = (
+    "teleop",
+    "teleop_avoid",
+    "map",
+    "tracking",
+    "nav",
+    "inspection",
+)
+_ADVANCED_PROFILE_NAMES = ("explore", "tare_explore")
 _EXPERIMENTAL_PROFILE_NAMES = ("super_lio", "super_lio_relocation")
 _PROFILE_ALIASES_BY_CANONICAL: dict[str, tuple[str, ...]] = {}
 for _alias, _canonical in PROFILE_ALIASES.items():
@@ -99,13 +111,18 @@ def _profile_alias_note(name: str) -> str:
 # Keys: "semantic", "gateway", "teleop"
 _PROFILE_WIZARD: dict[str, tuple[bool, bool, bool]] = {
     #                  semantic  gateway  teleop
+    "teleop":  (False, True,  True),
+    "teleop_avoid": (False, True, True),
     "nav":     (True,  True,  True),   # full stack
+    "tracking": (False, True, False),
+    "inspection": (True, True, False),
     "explore": (True,  True,  False),  # exploring — no joystick needed
-    "map":     (False, True,  False),  # mapping — no semantics, no joystick
+    "map":     (False, True,  True),   # mapping needs teleop to move while saving map
     "sim":     (True,  True,  True),   # full stack in sim
+    "portable_mujoco": (False, False, False),  # no-ROS/no-gateway desktop gate
     "sim_gazebo": (True, True, True),  # ROS-native Gazebo simulation
     "sim_mujoco_live": (False, True, False),  # external MuJoCo/Fast-LIO live gate
-    "sim_mujoco_pct_live": (False, True, False),  # external MuJoCo/Fast-LIO/PCT gate
+    "sim_mujoco_octo_live": (False, True, False),  # external MuJoCo/Fast-LIO/OctoPlanner3D gate
     "sim_industrial": (True, True, False),  # ROS-native delivery simulation
     "sim_cmu_tare": (False, True, False),  # external CMU Unity/TARE graph
     "dev":     (True,  True,  False),  # no robot → no teleop
@@ -488,8 +505,26 @@ def cmd_status_external(as_json: bool = False) -> None:
     print()
 
 
-def cmd_show_config_external(profile_name: str, cfg: dict, as_json: bool = False) -> None:
+_PUBLIC_RESOLVED_METADATA = {
+    "_runtime_endpoint": "runtime_endpoint",
+    "_endpoint_data_source": "endpoint_data_source",
+    "_runtime_contract": "runtime_contract",
+    "_endpoint_contract": "endpoint_contract",
+    "_module_transport": "module_transport",
+    "_endpoint_transport": "endpoint_transport",
+}
+
+
+def _public_resolved_config(cfg: dict) -> dict:
     resolved = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    for private_key, public_key in _PUBLIC_RESOLVED_METADATA.items():
+        if private_key in cfg and public_key not in resolved:
+            resolved[public_key] = cfg[private_key]
+    return resolved
+
+
+def cmd_show_config_external(profile_name: str, cfg: dict, as_json: bool = False) -> None:
+    resolved = _public_resolved_config(cfg)
     if as_json:
         print(json.dumps(resolved, indent=2, ensure_ascii=False, sort_keys=True, default=str))
         return

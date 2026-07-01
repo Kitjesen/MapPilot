@@ -25,7 +25,7 @@ Usage:
 LingTu profile contract: sim_mujoco_live / mujoco_fastlio2_live.
 
 Commands:
-  gate     Raw MID-360 + IMU -> Fast-LIO -> /nav/* mapping/localization gate.
+  gate     Raw MID-360 + IMU live gate. Disabled until a real localization backend is wired.
   explore  Same source path, with LingTu frontier/navigation driving /nav/cmd_vel.
   tare     Same source path, with native TARE selecting exploration goals.
   tare-video
@@ -35,7 +35,7 @@ Commands:
   tare-moving-obstacle-video
            Same live TARE dynamic-obstacle gate with MP4 evidence output enabled.
   inspection
-           Fast-LIO live mapping plus LingTu NavigationModule patrol checkpoints.
+           Fast-LIO live mapping plus LingTu Navigation patrol checkpoints.
   inspection-video
            Inspection patrol gate plus MP4 evidence output.
   inspection-loop-video
@@ -90,6 +90,7 @@ Environment overrides:
   LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START=0.0
   LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE=1.0
   LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME=15000
+  LINGTU_MUJOCO_LIVE_LOCALIZATION_BACKEND=  # no default; portable_lio was removed
   LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_FILTER_NUM=4
   LINGTU_MUJOCO_LIVE_FASTLIO_SCAN_RESOLUTION=0.15
   LINGTU_MUJOCO_LIVE_FASTLIO_MAP_RESOLUTION=0.3
@@ -406,7 +407,7 @@ run_gate() {
   echo "inspection_downsample_dist=${LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST:-$inspection_downsample_dist_default} inspection_waypoint_threshold=${LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD:-$inspection_waypoint_threshold_default} inspection_final_waypoint_threshold=${LINGTU_MUJOCO_LIVE_INSPECTION_FINAL_WAYPOINT_THRESHOLD:-$inspection_final_waypoint_threshold_default} inspection_complete_path_on_goal_proximity=${LINGTU_MUJOCO_LIVE_INSPECTION_COMPLETE_PATH_ON_GOAL_PROXIMITY:-$inspection_complete_path_on_goal_proximity_default} inspection_goal_proximity_completion_threshold=${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_PROXIMITY_COMPLETION_THRESHOLD:-$inspection_goal_proximity_completion_threshold_default} inspection_path_lookahead=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD:-$inspection_path_lookahead_default} inspection_path_yaw_rate_gain=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN:-$inspection_path_yaw_rate_gain_default} inspection_path_dir_diff_thre=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE:-$inspection_path_dir_diff_thre_default}" | tee -a "$run_dir/status.txt"
 
   local cmd=(
-    "$python_bin" "$root/sim/scripts/mujoco_fastlio2_live_gate.py"
+    "$python_bin" "$root/sim/scripts/mujoco_live_gate.py"
     "--world" "$world"
     "--duration" "$duration"
     "--duration-clock" "$duration_clock"
@@ -443,6 +444,7 @@ run_gate() {
     "--inspection-path-stop-yaw-rate-gain" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_STOP_YAW_RATE_GAIN:-$inspection_path_stop_yaw_rate_gain_default}"
     "--inspection-path-dir-diff-thre" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE:-$inspection_path_dir_diff_thre_default}"
     "--mid360-samples-per-frame" "${LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME:-15000}"
+    "--localization-backend" "${LINGTU_MUJOCO_LIVE_LOCALIZATION_BACKEND:-}"
     "--fastlio-lidar-input" "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT:-livox_custom_msg}"
     "--fastlio-lidar-filter-num" "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_FILTER_NUM:-4}"
     "--fastlio-scan-resolution" "${LINGTU_MUJOCO_LIVE_FASTLIO_SCAN_RESOLUTION:-0.15}"
@@ -569,7 +571,7 @@ report = {
         "ok": False,
         "mode": mode,
         "returncode": rc,
-        "reason": "mujoco_fastlio2_live_gate exited without writing report.json",
+        "reason": "mujoco_live_gate exited without writing report.json",
         "run_dir": str(run_dir),
         "command": str(run_dir / "command.txt"),
         "gate_log": str(run_dir / "gate.log"),
@@ -796,14 +798,14 @@ run_demo() {
   echo "gate_pid=$gate_pid"
 
   wait_for_topics 45 \
-    /points_raw \
-    /imu_raw \
+    /lidar/raw_frame \
+    /imu/raw \
     /cloud_registered \
     /cloud_map \
     /Odometry \
-    /nav/odometry \
-    /nav/registered_cloud \
-    /nav/map_cloud \
+    /slam/odometry \
+    /slam/registered_cloud \
+    /slam/map_cloud \
     /nav/cmd_vel \
     /nav/exploration_grid \
     /nav/global_path \
@@ -819,11 +821,11 @@ status_demo() {
   if [[ -f "$run_root/latest.txt" ]]; then
     cat "$run_root/latest.txt"
   fi
-  pgrep -af "mujoco_fastlio2_live_gate.py" || true
+  pgrep -af "mujoco_live_gate.py" || true
 }
 
 stop_demo() {
-  pkill -f "mujoco_fastlio2_live_gate.py" >/dev/null 2>&1 || true
+  pkill -f "mujoco_live_gate.py" >/dev/null 2>&1 || true
   pkill -f "fastlio.*mujoco_fastlio2_live" >/dev/null 2>&1 || true
   pkill -f "mujoco_fastlio2_live.rviz" >/dev/null 2>&1 || true
   echo "Stopped LingTu MuJoCo Fast-LIO live gate processes."

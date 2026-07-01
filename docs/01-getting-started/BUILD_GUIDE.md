@@ -1,4 +1,4 @@
-﻿# Build Guide
+# Build Guide
 
 What to install on a fresh machine before LingTu can compile and start.
 
@@ -6,8 +6,9 @@ What to install on a fresh machine before LingTu can compile and start.
 
 - Ubuntu 22.04 (aarch64 on the S100P; x86_64 supported for `dev` / `sim` /
   CI)
-- ROS 2 Humble Desktop (only required for the C++ stack 鈥?Python tests
-  do not need it)
+- ROS 2 Humble Desktop is optional. It is only required for legacy
+  ROS-compatible SLAM/service packages; the default LingTu Python/C++ runtime,
+  `nav_kernel`, and OctoPlanner3D builds do not need ROS2.
 - 鈮?8 GB RAM, 鈮?4 CPU cores
 
 `$NAV_DIR` below stands for the workspace root. On the S100P it is
@@ -19,9 +20,6 @@ the repo was cloned.
 
 ```bash
 sudo apt update && sudo apt install -y \
-    ros-humble-desktop \
-    ros-humble-pcl-conversions \
-    ros-humble-tf2-geometry-msgs \
     libpcl-dev \
     libeigen3-dev \
     libboost-all-dev \
@@ -37,6 +35,7 @@ Optional system packages:
 
 | Package | Used by |
 |---------|---------|
+| `ros-humble-desktop`, `ros-humble-pcl-conversions`, `ros-humble-tf2-geometry-msgs` | Legacy ROS-compatible SLAM/services only |
 | `libgrpc++-dev`, `protobuf-compiler-grpc` | `remote_monitoring` (C++ gRPC gateway) |
 | `libssl-dev`, `libcurl4-openssl-dev` | OTA daemon |
 | `ros-humble-joy` | Physical joystick teleop |
@@ -56,10 +55,10 @@ make -j$(nproc) && sudo make install
 
 ### 2. GTSAM 4.1.1 (PCT global planner, required)
 
-GTSAM is vendored under `src/global_planning/pct_planner/planner/lib/3rdparty/`.
+GTSAM is vendored under `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/`.
 
 ```bash
-cd $NAV_DIR/src/global_planning/pct_planner/planner/lib/3rdparty/gtsam-4.1.1
+cd $NAV_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/gtsam-4.1.1
 mkdir build && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=../install \
     -DGTSAM_BUILD_TESTS=OFF \
@@ -71,7 +70,7 @@ make -j$(nproc) && make install
 Add the install prefix to `LD_LIBRARY_PATH`:
 
 ```bash
-echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:$NAV_DIR/src/global_planning/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib" >> ~/.bashrc
+echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:$NAV_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib" >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -105,80 +104,82 @@ The Lingtu helper script `scripts/build/build_dufomap.sh` builds the DUFOMap
 binary used by the offline post-mapping cleaner; rerun it on first
 install.
 
-### 6. TARE planner (only for `tare_explore` profile)
+### 6. TARE exploration
 
-```bash
-bash scripts/build/fetch_ortools.sh
-bash scripts/build/build_tare.sh
-```
+The product `tare_explore` profile uses LingTu's in-process TARE policy and
+does not require the CMU TARE source tree, OR-Tools, or `tare_planner_node`.
+External CMU benchmark runs must provide their own CMU workspace.
 
-`exploration("tare")` raises if the binary is not present, which makes a
-broken setup visible immediately.
+## Build the runtime
 
-## Build the workspace
-
-### Full build
+### Product default: native planner kernels, no ROS2
 
 ```bash
 cd $NAV_DIR
-make build           # source ROS Humble + colcon build (Release)
-source install/setup.bash
+bash scripts/build/build_nav_kernel.sh --clean
+bash scripts/build/build_octoplanner3d.sh
+python -m pytest src/runtime/tests/test_terrain_local_planner_contract.py -q
+python lingtu.py runtime-audit
 ```
 
-`make build` is `colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release`
-inside a ROS Humble shell. Use `make build-debug` for `-DCMAKE_BUILD_TYPE=Debug`.
+`build_nav_kernel.sh` produces `_nav_kernel.so`, the nanobind backend used by
+`LocalPlannerModule` and `PathFollowerModule`. `build_octoplanner3d.sh`
+builds the headless C++ global-planner executable used by the product navigation
+profiles.
 
-### Native nav_core only (no ROS2 needed)
+### Native nav_kernel convenience target
 
 ```bash
-make nav_core
+make nav_kernel
 ```
-
-This drives `scripts/build/build_nav_core.sh` to produce `_nav_core.so` (the
-nanobind backend used by `LocalPlannerModule` / `PathFollowerModule`).
 
 ### Subsets
 
 ```bash
-# Base autonomy without SLAM
-colcon build --packages-select \
-    local_planner terrain_analysis terrain_analysis_ext visualization_tools
+# Local autonomy kernel without ROS2
+bash scripts/build/build_nav_kernel.sh --clean
 
-# Global planner only
-colcon build --packages-select pct_planner pct_adapters
+# Product global planner only, no ROS2 workspace needed
+bash scripts/build/build_octoplanner3d.sh
 
-# Remote monitoring only
-colcon build --packages-select remote_monitoring
-
-# SLAM only
-colcon build --packages-select fastlio2 hba pgo
+# ROS compatibility workspace only
+bash scripts/build/build_ros_workspace.sh
 ```
+
+`make build` remains a compatibility shortcut for the ROS/colcon workspace.
+Do not use it as the default product build unless you are intentionally working
+on ROS-backed SLAM/service packages.
 
 ## Tests
 
 ```bash
 # Framework tests 鈥?Python only, no ROS2, no hardware
-python -m pytest src/core/tests/ -q
+python -m pytest src/runtime/tests/ -q
 
-# Colcon tests
+# ROS compatibility tests
 make test
 
-# Standalone C++ nav_core tests
-cd src/nav/core && mkdir -p build && cd build
+# Standalone C++ nav_kernel tests
+cd src/nav/kernel && mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
-./test_local_planner_core
 ./test_path_follower_core
 ./test_benchmark
+
+# Standalone C++ local planner tests
+cd ../../services/plan/local_planner/cpp
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
+cmake --build build -j$(nproc)
+./build/test_local_planner_core
 ```
 
 ## Verifying the build
 
 ```bash
-# C++ ROS2 nodes are discoverable
-ros2 pkg list | grep -E "fastlio2|local_planner|pct_planner|remote_monitoring"
+# Product global planner wrapper is available
+python3 -c "from nav.services.plan.global_planner.backends.octoplanner3d.backend import OctoPlanner3DBackend; print('Success')"
 
-# PCT C++ Python wrapper imports
-python3 -c "from planner_py import OfflineElePlanner; print('Success')"
+# Optional ROS2 compatibility nodes are discoverable after the ROS workspace build
+ros2 pkg list | grep -E "fastlio2|remote_monitoring"
 
 # `lingtu` CLI is on PATH after `pip install -e .`
 lingtu --version
@@ -192,21 +193,20 @@ python lingtu.py stub
 
 | Symptom | Fix |
 |---------|-----|
-| `GTSAM not found` | `ls $NAV_DIR/src/global_planning/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib/libgtsam.so.4` and re-run the install step |
+| `GTSAM not found` | `ls $NAV_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib/libgtsam.so.4` and re-run the install step |
 | `libgtsam.so.4: cannot open shared object file` | `LD_LIBRARY_PATH` is missing the GTSAM install prefix; re-source `~/.bashrc` |
-| `ModuleNotFoundError: planner_py` | `colcon build --packages-select pct_planner` then `source install/setup.bash` |
+| `ModuleNotFoundError: planner_py` | PCT legacy compatibility was not built; prefer OctoPlanner3D for product runtime, or run the explicit PCT compatibility setup before parity tests. |
 | `Livox SDK2 not found` | `ls /usr/local/lib/liblivox_lidar_sdk_shared.so`, rerun the SDK install |
 | Sophus complains about `fmt` | re-run `cmake .. -DSOPHUS_USE_BASIC_LOGGING=ON` and rebuild |
-| `tare_planner_node` missing on `tare_explore` start | Run `scripts/build/fetch_ortools.sh` and `scripts/build/build_tare.sh` |
-| `ele_planner.so` import fails on x86 | Expected 鈥?the binary is aarch64-only. Use `--planner astar` on dev machines. |
+| `ele_planner.so` import fails on x86 | Expected for legacy PCT native binaries. Use the default `octoplanner3d` backend on dev machines, or `--planner pct` only when validating PCT compatibility. |
 
 ## Approximate build times
 
 | Package | Dependencies | Time |
 |---------|--------------|------|
-| `local_planner` | PCL, Eigen | ~30 s |
-| `terrain_analysis` | PCL | ~20 s |
-| `pct_planner` | GTSAM, pybind11 | ~1 min |
+| `nav_kernel` | Eigen, nanobind | ~30 s |
+| `octoplanner3d` | CMake, OctoMap artifact | ~1 min |
+| `pct_planner` compatibility | GTSAM, pybind11 | ~1 min |
 | `remote_monitoring` | gRPC, libdatachannel (optional) | ~1 min |
 | `fastlio2` | Sophus, Livox SDK2 | ~2 min |
 | GTSAM 4.1.1 | Boost, Eigen | ~10 min (one-time) |

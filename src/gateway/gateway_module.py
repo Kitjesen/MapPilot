@@ -1,16 +1,16 @@
-"""GatewayModule — enterprise-grade FastAPI gateway.
+"""GatewayModule -enterprise-grade FastAPI gateway.
 
 Single uvicorn process, shared port 5050.  All external interfaces live here:
-  REST API   — typed Pydantic v2 request/response models, validation errors → 422
-  SSE        — thread-safe asyncio.Queue fan-out, one queue per connected client
-  WebSocket  — teleop joystick + camera stream (replaces separate TeleopModule WS)
-  MCP        — JSON-RPC 2.0 endpoint (served by MCPServerModule on port 8090)
+  REST API   -typed Pydantic v2 request/response models, validation errors ->422
+  SSE        -thread-safe asyncio.Queue fan-out, one queue per connected client
+  WebSocket  -teleop joystick + camera stream (replaces separate TeleopModule WS)
+  MCP        -JSON-RPC 2.0 endpoint (served by MCPServerModule on port 8090)
 
 Architecture
 ------------
 Module threads write to _state (protected by RLock) and push events via
 push_event() (thread-safe).  FastAPI coroutines read _state and dequeue
-events — no shared mutable state between threads and coroutines except
+events -no shared mutable state between threads and coroutines except
 through the explicit synchronisation primitives below.
 
 Endpoints
@@ -35,9 +35,9 @@ SSE
 WebSocket
   WS   /ws/teleop            {type:joy, lx,ly,az} | {type:stop}
   WS   /ws/camera            binary JPEG frames
-                             ← binary JPEG camera frames
-  WS   /ws/cloud             ← binary point-cloud frames (quantized int16,
-                                see core.utils.binary_codec)
+                             ->binary JPEG camera frames
+  WS   /ws/cloud             ->binary point-cloud frames (quantized int16,
+                                see runtime.utils.binary_codec)
 
 Blueprint usage::
 
@@ -58,17 +58,23 @@ import time
 from pathlib import Path as FilePath
 from typing import Any, Callable
 
-from core.map_save import MapSaveAdapter, MapSaveError, save_nav_map_with_adapter
-from core.module import Module
-from core.msgs.geometry import PoseStamped, Twist, Vector3
-from core.msgs.nav import Odometry, Path
-from core.msgs.numpy_compat import np
-from core.msgs.semantic import ExecutionEval, SafetyState, SceneGraph
-from core.msgs.sensor import PointCloud2
-from core.plugin_seed import seed_registered_plugins
-from core.registry import register
-from core.relocalization import RelocalizationService
-from core.stream import In, Out
+from runtime.map_save import (
+    MapSaveAdapter,
+    MapSaveError,
+    save_nav_map_with_adapter,
+    seed_default_map_save_adapter_plugins,
+)
+from runtime.tf import FrameTree
+from runtime.module import Module
+from runtime.msgs.geometry import PoseStamped, Quaternion, Transform, Twist, Vector3
+from runtime.msgs.nav import Odometry, Path
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.semantic import ExecutionEval, SafetyState, SceneGraph
+from runtime.msgs.sensor import PointCloud2
+from runtime.registry import register
+from runtime.relocalization import RelocalizationService
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.stream import In, Out
 from gateway.schemas import (
     DriverSwapRequest,
     DriverSwapResponse,
@@ -120,11 +126,11 @@ _BACKEND_RECONFIGURE_TARGETS = {
     "encoder": ("PerceptionModule",),
     "llm": ("LLMModule",),
     "llm_client": ("LLMModule",),
-    "planner": ("NavigationModule",),
-    "local_planner": ("LocalPlannerModule",),
-    "path_follower": ("PathFollowerModule",),
-    "terrain": ("TerrainModule",),
-    "slam": ("SlamBridgeModule", "SLAMModule", "SlamModule"),
+    "planner": ("nav.mission",),
+    "local_planner": ("nav.local_planner",),
+    "path_follower": ("nav.path_follower",),
+    "terrain": ("nav.terrain",),
+    "slam": ("SlamBridgeModule", "SlamModule"),
 }
 
 
@@ -177,10 +183,10 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Convenience aliases — canonical implementations in gateway.services.map_safety
+# Convenience aliases -canonical implementations in gateway.services.map_safety
 _safe_map_name = _map_safe_map_name
 def _apply_dynamic_filter_step1half(*args: Any, **kwargs: Any) -> Any:
-    from core.dynamic_filter import apply_dynamic_filter_step1half
+    from runtime.dynamic_filter import apply_dynamic_filter_step1half
 
     return apply_dynamic_filter_step1half(*args, **kwargs)
 
@@ -244,34 +250,35 @@ class GatewayModule(Module, layer=6):
     """HTTP/WebSocket gateway with typed APIs and thread-safe telemetry.
 
     In:  odometry, scene_graph, safety_state, mission_status,
-         execution_eval, dialogue_state
+         execution_eval, dialogue_state, map_event
     Out: goal_pose, cmd_vel, stop_cmd, cancel, instruction, mode_cmd
     """
 
     _run_in_main: bool = True
 
-    # -- Inputs (module → cache) --------------------------------------------
+    # -- Inputs (module ->cache) --------------------------------------------
     odometry:       In[Odometry]
     map_cloud:      In[PointCloud2]
     saved_map:      In[PointCloud2]  # refined static map from localizer (map frame)
-    localization_quality: In[float]  # ICP fitness from SlamBridge — lower=better
-    map_odom_tf:    In[dict]         # from SlamBridge — {tx,ty,tz,qx,qy,qz,qw,valid} for map→odom
+    localization_quality: In[float]  # ICP fitness from SlamBridge -lower=better
+    map_odom_tf:    In[dict]         # from SlamBridge -{tx,ty,tz,qx,qy,qz,qw,valid} for map->odom
     scene_graph:    In[SceneGraph]
     safety_state:   In[SafetyState]
     mission_status: In[dict]
+    map_event:      In[dict]
     execution_eval: In[ExecutionEval]
     dialogue_state: In[dict]
-    global_path:    In[list]  # from NavigationModule — list of np.ndarray [x,y,z]
-    local_path:     In[Path]  # from LocalPlannerModule — obstacle-free local path
-    costmap:        In[dict]  # from TraversabilityCostModule — fused cost grid
-    slope_grid:     In[dict]  # from TraversabilityCostModule — slope in degrees
-    agent_message:  In[dict]  # from SemanticPlanner — chat-facing messages
-    gnss_fusion_health: In[dict]  # from SlamBridgeModule — GNSS/SLAM alignment diag
-    localization_status: In[dict] # from SlamBridgeModule — full SLAM health (cov_trace, iter_num, ...)
-    tare_stats:         In[dict]  # from TAREExplorerModule — exploration diag
-    supervisor_state:   In[dict]  # from ExplorationSupervisorModule — watchdog
+    global_path:    In[Path]  # from Navigation
+    local_path:     In[Path]  # from LocalPlanner -obstacle-free local path
+    costmap:        In[dict]  # from TraversabilityCostModule -fused cost grid
+    slope_grid:     In[dict]  # from TraversabilityCostModule -slope in degrees
+    agent_message:  In[dict]  # from SemanticPlanner -chat-facing messages
+    gnss_fusion_health: In[dict]  # from SlamBridgeModule -GNSS/SLAM alignment diag
+    localization_status: In[dict] # from SlamBridgeModule -full SLAM health (cov_trace, iter_num, ...)
+    tare_stats:         In[dict]  # from TAREExplorerModule -exploration diag
+    supervisor_state:   In[dict]  # from ExplorationSupervisorModule -watchdog
 
-    # -- Outputs (client commands → modules) --------------------------------
+    # -- Outputs (client commands ->modules) --------------------------------
     traversable_frontiers: In[list]  # read-only TraversableFrontierModule candidates
     frontier_candidate:    In[dict]  # read-only best traversable frontier
 
@@ -287,7 +294,7 @@ class GatewayModule(Module, layer=6):
         self._port = port
         self._host = host
 
-        # Cached state — written by Module callbacks, read by HTTP handlers.
+        # Cached state -written by Module callbacks, read by HTTP handlers.
         # Protected by RLock so callbacks and HTTP handler threads don't race.
         self._state_lock = threading.RLock()
         self._odom:     dict | None = None
@@ -299,11 +306,12 @@ class GatewayModule(Module, layer=6):
         self._dialogue: dict | None = None
         self._mode: str = "manual"
         self._last_path: list[dict] = []
+        self._last_local_path: list[dict] = []
 
         self._lease = _Lease()
         self._command_journal = CommandJournal()
 
-        # SSE fan-out — one asyncio.Queue per connected client.
+        # SSE fan-out -one asyncio.Queue per connected client.
         # Written from Module threads via push_event() (thread-safe).
         self._sse_lock:   threading.Lock = threading.Lock()
         self._sse_queues: list[asyncio.Queue] = []
@@ -332,17 +340,20 @@ class GatewayModule(Module, layer=6):
         self._latest_jpeg_seq: int = 0
         self._jpeg_lock: threading.Lock = threading.Lock()
 
-        # Reference to MapManagerModule (set by on_system_modules)
+        # Reference to MapService (set by on_system_modules)
         self._map_mgr = None
         # Read-only module inventory for status, readiness, diagnostics, and
         # runtime dataflow views. Backend mutation paths must use the explicit
         # adapter caches below instead of reaching through this full graph.
         self._all_modules: dict[str, Any] = {}
-        self._navigation_module = None
+        self._navigation = None
         self._cmd_vel_mux = None
         self._backend_reconfigure_modules: dict[str, Any] = {}
         self._relocalization_service: RelocalizationService | None = None
         self._map_save_adapter: MapSaveAdapter | None = kw.get("map_save_adapter")
+        self._manage_session_services: bool = bool(
+            kw.get("manage_session_services", True)
+        )
 
         # rosbag recording state
         self._bag_proc: Any = None       # subprocess.Popen
@@ -357,20 +368,20 @@ class GatewayModule(Module, layer=6):
         self._map_voxel_size: float = 0.15
         self._inv_map_voxel_size: float = 1.0 / 0.15
 
-        # Dynamic-obstacle removal — hit-count voting per voxel.
+        # Dynamic-obstacle removal -hit-count voting per voxel.
         # Phase 1 of docs/05-specialized/dynamic_obstacle_removal.md.
-        # 同一 voxel 被多少帧观测到 = hit count。墙被扫 30-100 次,人走过每
-        # 位置只 1-3 次。发送到 Web 时过滤 hit < min_hits 的格子,动态残影
-        # 自然消失。只在 mapping / exploring 模式下生效。
+        # Static geometry is seen many times; transient people/noise are seen
+        # only a few times. Web output filters voxels with hit < min_hits.
         self._voxel_hits: dict[int, int] = {}
         self._voxel_min_hits: int = int(os.environ.get("LINGTU_MAP_MIN_HITS", "3"))
         self._voxel_key_offset: int = 1 << 19  # pad to keep packed keys non-negative
 
-        # map→odom TF (from localizer via SlamBridge). Applied to odom-frame
+        # map->odom TF (from localizer via SlamBridge). Applied to odom-frame
         # map_cloud before SSE so the frontend sees it overlaid with saved_map
         # (which is already in map frame). Identity until localizer converges.
         self._T_map_odom: np.ndarray | None = None
         self._has_map_odom_tf: bool = False
+        self._frame_tree = kw.get("frame_tree") or FrameTree.from_robot_config()
 
         # WebRTCStreamModule reference (set by on_system_modules).  Kept as
         # an attribute so the /api/v1/webrtc/offer route can check presence
@@ -381,8 +392,8 @@ class GatewayModule(Module, layer=6):
             "http://127.0.0.1:1984",
         )
 
-        # Binary cloud channel — one frame buffer + per-client asyncio.Queue.
-        # Points are quantized int16 (see core.utils.binary_codec) so a 60k
+        # Binary cloud channel -one frame buffer + per-client asyncio.Queue.
+        # Points are quantized int16 (see runtime.utils.binary_codec) so a 60k
         # cloud is ~360 KB instead of ~1.4 MB JSON, and the browser decodes
         # it as a zero-copy Int16Array.  See /ws/cloud endpoint.
         self._cloud_lock = threading.Lock()
@@ -398,7 +409,7 @@ class GatewayModule(Module, layer=6):
         # Odometry rate tracking (sliding window for SLAM Hz display)
         self._odom_timestamps: list = []  # last 20 timestamps
 
-        # Lazy TemporalStore handle — shared file with TemporalMemoryModule
+        # Lazy TemporalStore handle -shared file with TemporalMemoryModule
         self._temporal_store: Any = None
 
         # Costmap SSE throttle (publish at ~2Hz regardless of OccupancyGridModule rate)
@@ -411,7 +422,7 @@ class GatewayModule(Module, layer=6):
         self._slam_status_throttle: int = 0
 
         # Cached SLAM profile (fastlio2 / localizer / super_lio / stopped)
-        self._cached_slam_profile: str = "—"
+        self._cached_slam_profile: str = ""
         self._slam_profile_ts: float = 0.0
         self._brainstem_health_lock = threading.Lock()
         self._brainstem_health_cache: dict[str, Any] | None = None
@@ -423,11 +434,14 @@ class GatewayModule(Module, layer=6):
             _env_float("LINGTU_BRAINSTEM_HEALTH_CACHE_S", 2.0),
         )
 
-        # SLAM drift watchdog — 兜底 Fast-LIO2 静置 IEKF 溢出 (xy 飞到万亿米级).
-        # 每 interval 秒查 odom, 超阈值自动 stop+ensure slam.service 重置 IEKF.
-        # 详见 docs/05-specialized/slam_drift_watchdog.md (TBD) + memory.
-        self._drift_watchdog_enabled: bool = os.environ.get(
-            "LINGTU_DRIFT_WATCHDOG", "1") not in ("0", "false", "False")
+        # SLAM drift watchdog - guard against Fast-LIO2 static IEKF runaway
+        # where odometry can jump to unrealistic xy ranges. The loop samples
+        # odom periodically and restarts SLAM services after threshold breach.
+        self._drift_watchdog_enabled: bool = (
+            self._manage_session_services
+            and os.environ.get("LINGTU_DRIFT_WATCHDOG", "1")
+            not in ("0", "false", "False")
+        )
         self._drift_watchdog_interval: float = float(
             os.environ.get("LINGTU_DRIFT_WATCHDOG_INTERVAL", "5"))
         self._drift_watchdog_xy_limit: float = float(
@@ -445,10 +459,10 @@ class GatewayModule(Module, layer=6):
         # Crash-time black box. Records the gateway's view of the world (odom,
         # slam_diag, gnss_fusion, map_odom_tf) and dumps to disk before the
         # watchdog stops services, so we can attribute divergences offline.
-        from core.utils.blackbox_recorder import BlackBoxRecorder
+        from runtime.utils.blackbox_recorder import BlackBoxRecorder
         self._blackbox = BlackBoxRecorder.from_env()
 
-        # ── Session state machine (single source of truth) ─────────────────
+        # Session state machine (single source of truth)
         # Every mode transition must go through /api/v1/session/start|end.
         # Frontend Topbar/Panel render from this state; no other code path
         # should invoke svc.ensure/stop directly (deprecated /slam/switch
@@ -483,7 +497,7 @@ class GatewayModule(Module, layer=6):
         self._client_http_prewarm_thread: threading.Thread | None = None
         self._saved_map_loader_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._defer_server: bool = False  # True → main thread runs uvicorn
+        self._defer_server: bool = False  # True ->main thread runs uvicorn
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -500,6 +514,7 @@ class GatewayModule(Module, layer=6):
         self.scene_graph.subscribe(self._on_scene_graph)
         self.safety_state.subscribe(self._on_safety)
         self.mission_status.subscribe(self._on_mission)
+        self.map_event.subscribe(self._on_map_event)
         self.execution_eval.subscribe(self._on_eval)
         self.dialogue_state.subscribe(self._on_dialogue)
         self.global_path.subscribe(self._on_global_path)
@@ -541,7 +556,7 @@ class GatewayModule(Module, layer=6):
             self._server_thread.start()
             self._start_client_http_prewarm(stop_event, timeout_s=15.0)
         # Background: load active map.pcd from disk and push as saved_map
-        # event so the frontend底图 always has the stored map regardless of
+        # event so the frontend map view always has the stored map regardless of
         # whether localizer has converged. Re-pushes periodically so late-
         # connecting SSE clients also get it.
         if (
@@ -556,7 +571,7 @@ class GatewayModule(Module, layer=6):
             )
             self._saved_map_loader_thread.start()
 
-        # Drift watchdog — 兜底 Fast-LIO2 静置 IEKF 溢出.
+        # Drift watchdog - guard against Fast-LIO2 static IEKF runaway.
         if (
             self._drift_watchdog_enabled
             and (
@@ -705,7 +720,7 @@ class GatewayModule(Module, layer=6):
 
         Cooldown: at most one restart per LINGTU_DRIFT_WATCHDOG_COOLDOWN
         seconds (default 5 min). If we're still flapping after that, most
-        likely a real hardware/SLAM bug — keep triggering but log warning.
+        likely a real hardware/SLAM bug -keep triggering but log warning.
         """
         xy_lim = self._drift_watchdog_xy_limit
         v_lim  = self._drift_watchdog_v_limit
@@ -726,12 +741,12 @@ class GatewayModule(Module, layer=6):
                 if since < self._drift_watchdog_cooldown:
                     logger.warning(
                         "drift_watchdog: still diverged (xy=%.0f,%.0f v=%.1f) but "
-                        "cooldown (%.0fs) not elapsed — skipping restart",
+                        "cooldown (%.0fs) not elapsed -skipping restart",
                         x, y, v, self._drift_watchdog_cooldown - since,
                     )
                     continue
                 logger.error(
-                    "drift_watchdog: IEKF DIVERGED xy=(%.0f,%.0f) z=%.0f v=%.1f — "
+                    "drift_watchdog: IEKF DIVERGED xy=(%.0f,%.0f) z=%.0f v=%.1f -"
                     "restarting SLAM services + session companions",
                     x, y, z, v,
                 )
@@ -757,10 +772,12 @@ class GatewayModule(Module, layer=6):
         services back up. Pushes SSE event so Web shows a banner.
         """
         stop_event = stop_event or self._stop_event
+        if not self._manage_session_services:
+            return
         if stop_event.is_set():
             return
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
             svc = get_service_manager()
         except Exception as e:
             logger.error("drift_watchdog: service_manager unavailable: %s", e)
@@ -820,7 +837,7 @@ class GatewayModule(Module, layer=6):
         except Exception as e:
             logger.warning("drift_watchdog: svc.stop failed (continuing): %s", e)
 
-        # Clear stale odom — prevents downstream modules acting on trillion-meter
+        # Clear stale odom -prevents downstream modules acting on trillion-meter
         # coordinates while slam re-initialises.
         with self._state_lock:
             self._odom = {}
@@ -879,7 +896,7 @@ class GatewayModule(Module, layer=6):
 
         Previous behaviour: push every 10 s for "new clients". But the
         frontend rebuilds the entire 80k-point Three.js mesh on every
-        saved_map event → satellite flicker / GPU churn. Better: push only
+        saved_map event ->satellite flicker / GPU churn. Better: push only
         when the active map actually changes, and cache `_last_saved_map`
         so new SSE connections get it once from the snapshot.
         """
@@ -905,7 +922,7 @@ class GatewayModule(Module, layer=6):
                             }
                             self.push_event(self._last_saved_map_event)
                             logger.info(
-                                "saved_map loader: loaded %s (%d pts) — pushed once",
+                                "saved_map loader: loaded %s (%d pts) -pushed once",
                                 target, count)
             except Exception as e:
                 logger.debug("saved_map loader error: %s", e)
@@ -913,7 +930,7 @@ class GatewayModule(Module, layer=6):
 
     @staticmethod
     def _load_pcd_xyz(path: str) -> np.ndarray | None:
-        """Minimal PCD XYZ loader — supports ascii and binary little-endian."""
+        """Minimal PCD XYZ loader -supports ascii and binary little-endian."""
         try:
             with open(path, "rb") as f:
                 head_bytes = b""
@@ -1013,26 +1030,10 @@ class GatewayModule(Module, layer=6):
         super().stop()
 
     def on_system_modules(self, modules: dict[str, Any]) -> None:
-        self._map_mgr = modules.get("MapManagerModule")
+        self._map_mgr = modules.get("nav.maps")
         self._all_modules = dict(modules)
-        self._navigation_module = modules.get("NavigationModule")
-        self._cmd_vel_mux = (
-            modules.get("CmdVelMux")
-            or modules.get("CmdVelMuxModule")
-            or next(
-                (
-                    module
-                    for name, module in modules.items()
-                    if (
-                        "cmdvelmux" in str(name).lower()
-                        or "cmd_vel_mux" in str(name).lower()
-                        or "cmdvelmux" in module.__class__.__name__.lower()
-                        or "cmd_vel_mux" in module.__class__.__name__.lower()
-                    )
-                ),
-                None,
-            )
-        )
+        self._navigation = modules.get("nav.mission")
+        self._cmd_vel_mux = modules.get("nav.velocity_mux")
         self._backend_reconfigure_modules = {
             module_name: modules.get(module_name)
             for module_names in _BACKEND_RECONFIGURE_TARGETS.values()
@@ -1044,7 +1045,6 @@ class GatewayModule(Module, layer=6):
                 module
                 for name in (
                     "SlamBridgeModule",
-                    "SLAMModule",
                     "SlamModule",
                 )
                 for module in (modules.get(name),)
@@ -1118,7 +1118,7 @@ class GatewayModule(Module, layer=6):
         **config: Any,
     ) -> dict[str, Any]:
         if category in _MOTION_BACKEND_CATEGORIES:
-            state = _navigation_state(self._navigation_module)
+            state = _navigation_state(self._navigation)
             if state != "IDLE":
                 return {
                     "ok": False,
@@ -1137,7 +1137,7 @@ class GatewayModule(Module, layer=6):
         return super().reconfigure_backend(category, backend, **config)
 
     # ------------------------------------------------------------------
-    # Driver swap — delegates to SwapManager when registered
+    # Driver swap -delegates to SwapManager when registered
     # ------------------------------------------------------------------
 
     def _on_driver_swap(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1152,7 +1152,7 @@ class GatewayModule(Module, layer=6):
         if swap is None:
             return {
                 "success": False,
-                "message": "SwapManager not available — driver swap requires a running SwapManager",
+                "message": "SwapManager not available -driver swap requires a running SwapManager",
                 "swap_time_ms": 0.0,
             }
 
@@ -1375,7 +1375,7 @@ class GatewayModule(Module, layer=6):
         max_yaw: float,
         release_timeout: float,
     ) -> None:
-        """Called by TeleopModule during setup() — config stored for display."""
+        """Called by TeleopModule during setup() -config stored for display."""
         self._teleop_max_speed = max_speed
         self._teleop_max_yaw   = max_yaw
         self._teleop_release_timeout = release_timeout
@@ -1389,10 +1389,10 @@ class GatewayModule(Module, layer=6):
     # -- Module subscription callbacks -------------------------------------
 
     def _on_odometry(self, odom: Odometry) -> None:
-        # SlamBridge now applies map→odom TF on its publish side, so the
+        # SlamBridge now applies map->odom TF on its publish side, so the
         # odom that reaches Gateway is already in map frame. Re-applying
         # the TF here would double-transform and push the frontend cursor
-        # ~2m off from where it actually is (observed: 顶栏 -3.42,-0.46 vs
+        # ~2m off from where it actually is (observed: approx -3.42,-0.46 vs
         # PCT start -1.27,-2.24). Pass through as-is.
         d = {
             "x":  float(odom.x),
@@ -1452,7 +1452,7 @@ class GatewayModule(Module, layer=6):
         except Exception as e:
             logger.debug("_on_icp_quality: failed to convert %r: %s", q, e)
 
-    # ── Last-known-pose persistence (auto-relocalize on session/start) ────
+    # Last-known-pose persistence (auto-relocalize on session/start)
     # Keeps a tiny JSON snapshot of the last *successful* relocalize call so
     # that a daemon restart doesn't force the operator to Shift+click again.
     # Only written when the user explicitly relocalized and the localizer
@@ -1506,7 +1506,7 @@ class GatewayModule(Module, layer=6):
         """Fire-and-forget: if we have a persisted pose for this map, replay
         it as a /relocalize service call ~2s after localizer comes up.
 
-        Runs in a daemon thread so session/start returns immediately — the
+        Runs in a daemon thread so session/start returns immediately -the
         operator sees mode=navigating right away, and the ICP converges in
         the background using the last known pose instead of (0,0,0).
         """
@@ -1543,7 +1543,7 @@ class GatewayModule(Module, layer=6):
         ).start()
 
     def _on_map_odom_tf(self, tf: dict) -> None:
-        """Cache localizer's map→odom transform as a 4x4 matrix.
+        """Cache localizer's map->odom transform as a 4x4 matrix.
 
         Applied to Fast-LIO2's odom-frame map_cloud before SSE push so the
         frontend renders it in the same frame as saved_map (which is already
@@ -1557,29 +1557,29 @@ class GatewayModule(Module, layer=6):
             tx, ty, tz = float(tf["tx"]), float(tf["ty"]), float(tf["tz"])
             qx, qy, qz, qw = (float(tf["qx"]), float(tf["qy"]),
                               float(tf["qz"]), float(tf["qw"]))
-            # Quaternion → 3x3 rotation (Hamilton convention, right-handed)
-            xx, yy, zz = qx * qx, qy * qy, qz * qz
-            xy, xz, yz = qx * qy, qx * qz, qy * qz
-            wx, wy, wz = qw * qx, qw * qy, qw * qz
-            R = np.array([
-                [1 - 2 * (yy + zz),     2 * (xy - wz),     2 * (xz + wy)],
-                [    2 * (xy + wz), 1 - 2 * (xx + zz),     2 * (yz - wx)],
-                [    2 * (xz - wy),     2 * (yz + wx), 1 - 2 * (xx + yy)],
-            ], dtype=np.float64)
-            T = np.eye(4, dtype=np.float64)
-            T[:3, :3] = R
-            T[:3, 3] = [tx, ty, tz]
-            self._T_map_odom = T
+            ts = float(tf.get("ts") or time.time())
+            transform = Transform(
+                translation=Vector3(tx, ty, tz),
+                rotation=Quaternion(qx, qy, qz, qw),
+                frame_id=topic_default_frame_id(TOPICS.map_cloud),
+                child_frame_id=topic_default_frame_id(TOPICS.odometry),
+                ts=ts,
+            )
+            self._frame_tree.set_transform(transform)
+            # Matrix cache kept for existing viewer code; FrameTree owns semantics.
+            self._T_map_odom = transform.to_matrix()
             self._has_map_odom_tf = True
         except Exception as e:
             logger.debug("gateway: _on_map_odom_tf parse failed: %s", e)
 
-    # ── Session state helpers ─────────────────────────────────────────────
+    # Session state helpers
 
     def _session_detect_current_mode(self) -> tuple[str, str | None]:
         """Reflect what's actually running into session state (truth vs claim)."""
+        if not self._manage_session_services:
+            return self._session_mode, self._session_active_map_name()
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
             svc = get_service_manager()
             status = svc.status(
                 "slam",
@@ -1781,29 +1781,29 @@ class GatewayModule(Module, layer=6):
         }
 
     def _on_saved_map(self, cloud: PointCloud2) -> None:
-        """DDS-stream saved-map — intentionally ignored.
+        """DDS-stream saved-map -intentionally ignored.
 
         Localizer publishes a refined saved_map every tick (~10 Hz). That
         previously got downsampled and re-pushed every 10 frames, but the
-        frontend rebuilds the whole 80k-pt mesh on each event → flicker.
+        frontend rebuilds the whole 80k-pt mesh on each event ->flicker.
         The on-disk PCD pushed once by _saved_map_loader_loop is stable
-        enough for visualization — the localizer's runtime refinement
-        doesn't change the底图 meaningfully for the operator view.
+        enough for visualization -the localizer's runtime refinement
+        doesn't change the base map meaningfully for the operator view.
         """
         return
 
     def _on_map_cloud(self, cloud: PointCloud2) -> None:
         """Mode-aware cloud handling.
 
-        mapping / exploring  → accumulate with voxel dedup (growing global map)
-        navigating           → replace every frame, no accumulation
-            Rationale: in navigating mode the map→odom TF keeps micro-adjusting
+        mapping / exploring  ->accumulate with voxel dedup (growing global map)
+        navigating           ->replace every frame, no accumulation
+            Rationale: in navigating mode the map->odom TF keeps micro-adjusting
             while ICP converges. Accumulating odom-frame points then transforming
             on every send makes the *whole* accumulated cloud drift as TF shifts,
             producing the "flying" ghost effect. Replacing per frame makes the
             live scan track the robot cleanly, while saved_map carries the
-            stable底图 layer.
-        idle                 → keep latest, don't grow
+            stable base-map layer.
+        idle                 ->keep latest, don't grow
         """
         self._map_cloud_count += 1
         pts = cloud.points  # (N, 3) float32
@@ -1821,34 +1821,33 @@ class GatewayModule(Module, layer=6):
         mode = self._session_mode
         with self._map_cloud_lock:
             if mode in ("navigating", "idle") or self._map_points is None:
-                # Replace — latest scan only, no accumulation
+                # Replace -latest scan only, no accumulation
                 self._map_points = pts
             else:
-                # mapping / exploring — grow the global map via voxel dedup
+                # mapping / exploring -grow the global map via voxel dedup
                 combined = np.concatenate([self._map_points, pts], axis=0)
                 combined = self._voxel_downsample(combined, self._map_voxel_size)
                 self._map_points = combined
                 # Increment per-voxel hit count using this frame's unique voxels
                 # (pre-accumulation). Loop over ~500 unique voxels per frame
-                # costs <1ms in Python — negligible vs numpy concat cost above.
+                # costs <1ms in Python -negligible vs numpy concat cost above.
                 frame_keys = np.unique(self._pack_voxel_keys(pts))
                 for k in frame_keys:
                     self._voxel_hits[int(k)] = self._voxel_hits.get(int(k), 0) + 1
 
                 # GC: prevent unbounded dict growth on long mapping runs (4h+).
-                # 当 dict 超 200k 条时, 淘汰 hit==1 的瞬态 voxel (保留 >=2 的真实观测)。
-                # 典型 8k voxel/min × 60min = 480k, 建图 25+min 就会触发一次。
+                # If the dict grows too large, prune one-hit voxels and keep stable observations.
                 if len(self._voxel_hits) > 200_000:
                     before = len(self._voxel_hits)
                     self._voxel_hits = {
                         k: c for k, c in self._voxel_hits.items() if c >= 2
                     }
                     logger.info(
-                        "voxel_hits GC: %d → %d entries (dropped hit==1)",
+                        "voxel_hits GC: %d ->%d entries (dropped hit==1)",
                         before, len(self._voxel_hits),
                     )
 
-        # Push to SSE at ~0.5Hz (every 2 frames) — often enough to look
+        # Push to SSE at ~0.5Hz (every 2 frames) -often enough to look
         # "live accumulating" without flooding the browser.
         if self._map_cloud_count % 2 != 0:
             return
@@ -1860,22 +1859,20 @@ class GatewayModule(Module, layer=6):
 
         # Adaptive voxel: if still too many points after base voxel, grow
         # the voxel size so the send list stays in [30k, 60k] range and
-        # stable across frames (same voxel grid → same point set).
+        # stable across frames (same voxel grid ->same point set).
         MAX_SEND = 60_000
         if len(pts_all) > MAX_SEND:
             scale = (len(pts_all) / MAX_SEND) ** (1 / 3)
             coarse_voxel = self._map_voxel_size * max(1.0, scale)
             pts_send = self._voxel_downsample(pts_all, coarse_voxel)
-            # Final hard cap — deterministic stride, not random
+            # Final hard cap -deterministic stride, not random
             if len(pts_send) > MAX_SEND:
                 stride = max(1, len(pts_send) // MAX_SEND)
                 pts_send = pts_send[::stride][:MAX_SEND]
         else:
             pts_send = pts_all
 
-        # Dynamic-obstacle filter — drop voxels hit fewer than min_hits times
-        # in mapping / exploring modes. 动态物体 (行人) 只在几帧内命中一个
-        # voxel,墙/家具长期命中数十帧。阈值一卡残影即散。
+        # Dynamic-obstacle filter: keep voxels observed often enough in mapping/exploring.
         if (
             mode in ("mapping", "exploring")
             and self._voxel_min_hits > 1
@@ -1891,20 +1888,20 @@ class GatewayModule(Module, layer=6):
                 mask = np.isin(all_keys, stable_arr)
                 pts_send = pts_send[mask]
 
-        # NOTE: SlamBridge now applies map→odom TF on the points before
+        # NOTE: SlamBridge now applies map->odom TF on the points before
         # publishing (commit d79c409). Re-transforming here would double-
-        # shift the cloud and make it fly away from the saved_map底图 every
+        # shift the cloud and make it fly away from the saved_map base layer every
         # time the localizer refines TF. Points arrive already in map frame.
 
-        # Binary path — encode once, fan out to /ws/cloud subscribers.
+        # Binary path -encode once, fan out to /ws/cloud subscribers.
         # The old JSON SSE event would allocate ~180k Python floats per frame
         # (60k * 3 .tolist()) and serialize ~1.4 MB of text; the binary frame
         # is 6 bytes/point + 28 byte header.
-        from core.utils.binary_codec import encode_pointcloud
+        from runtime.utils.binary_codec import encode_pointcloud
         buf = encode_pointcloud(pts_send[:, :3])
         self._publish_cloud_frame(buf)
         # Tiny SSE meta event so legacy UI bits (status bar, point count)
-        # still see "map updated" — payload stays under 100 B.
+        # still see "map updated" -payload stays under 100 B.
         self.push_event({
             "type": "map_cloud",
             "count": int(len(pts_send)),
@@ -1914,12 +1911,22 @@ class GatewayModule(Module, layer=6):
 
     def _get_slam_profile(self) -> str:
         """Return current SLAM profile (cached 5s)."""
+        if not self._manage_session_services:
+            localization_status = self._localization_status or {}
+            profile = str(
+                localization_status.get("backend")
+                or self._session_slam_profile
+                or self._cached_slam_profile
+                or "stopped"
+            ).lower()
+            self._cached_slam_profile = profile
+            return profile
         now = time.time()
         if now - self._slam_profile_ts < 5.0:
             return self._cached_slam_profile
         self._slam_profile_ts = now
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
             svc = get_service_manager()
             services = svc.status(
                 "super_lio_relocation",
@@ -1959,9 +1966,9 @@ class GatewayModule(Module, layer=6):
     def _pack_voxel_keys(self, pts_xyz: np.ndarray) -> np.ndarray:
         """Pack (x,y,z) voxel coords into int64 keys for dict lookup.
 
-        Uses 20-bit axis coord (±524k after offset) packed into one int64
-        so voxel_hits can be a fast int→int dict instead of a tuple-key dict.
-        At voxel_size=0.15m this covers ±78km world range. Handles negative
+        Uses 20-bit axis coord (+/-524k after offset) packed into one int64
+        so voxel_hits can be a fast int->int dict instead of a tuple-key dict.
+        At voxel_size=0.15m this covers +/-78km world range. Handles negative
         coords via self._voxel_key_offset.
         """
         k = (pts_xyz[:, :3] * self._inv_map_voxel_size).astype(np.int64)
@@ -2011,6 +2018,10 @@ class GatewayModule(Module, layer=6):
         except Exception as e:
             logger.debug("_on_mission: build_navigation_status failed: %s", e)
 
+    def _on_map_event(self, event: dict) -> None:
+        d = event if isinstance(event, dict) else {"raw": str(event)}
+        self.push_event({"type": "map_event", "data": d})
+
     def _on_eval(self, ev: ExecutionEval) -> None:
         d = ev.to_dict() if hasattr(ev, "to_dict") else {"raw": str(ev)}
         with self._state_lock:
@@ -2040,7 +2051,7 @@ class GatewayModule(Module, layer=6):
             return
         d = dict(state)
         profile = self._get_slam_profile()
-        if profile and profile != "—":
+        if profile and profile != "unknown":
             d["backend"] = profile
         capability_defaults = backend_capability_defaults(profile)
         if profile in {"super_lio", "super_lio_relocation"}:
@@ -2138,15 +2149,35 @@ class GatewayModule(Module, layer=6):
             self._last_frontier_candidate = dict(data) if isinstance(data, dict) else {"raw": str(data)}
         self.push_event({"type": "frontier_candidate", "data": data})
 
-    def _on_global_path(self, path: list) -> None:
-        # path is list of np.ndarray [x, y, z] from NavigationModule
-        points = [
-            {"x": float(p[0]), "y": float(p[1]), "z": float(p[2]) if len(p) > 2 else 0.0}
-            for p in path
-        ]
+    def _on_global_path(self, path: Path | list) -> None:
+        points = []
+        for point in getattr(path, "poses", path) or []:
+            xyz = self._xyz_point(point)
+            if xyz is not None:
+                points.append({"x": xyz[0], "y": xyz[1], "z": xyz[2]})
         with self._state_lock:
             self._last_path = points
         self.push_event({"type": "global_path", "points": points})
+
+    @staticmethod
+    def _xyz_point(point: Any) -> tuple[float, float, float] | None:
+        if hasattr(point, "x") and hasattr(point, "y"):
+            return (
+                float(getattr(point, "x", 0.0)),
+                float(getattr(point, "y", 0.0)),
+                float(getattr(point, "z", 0.0)),
+            )
+        try:
+            values = list(point)
+        except TypeError:
+            return None
+        if len(values) < 2:
+            return None
+        return (
+            float(values[0]),
+            float(values[1]),
+            float(values[2]) if len(values) > 2 else 0.0,
+        )
 
     def _on_local_path(self, path: Path) -> None:
         """Push local planner path as SSE (updated at ~10Hz, throttle to ~2Hz)."""
@@ -2158,6 +2189,8 @@ class GatewayModule(Module, layer=6):
                 {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
                 for p in path.poses
             ] if hasattr(path, 'poses') else []
+            with self._state_lock:
+                self._last_local_path = points
             self.push_event({"type": "local_path", "points": points})
         except Exception as e:
             logger.debug("_on_local_path: failed to build points: %s", e)
@@ -2167,9 +2200,9 @@ class GatewayModule(Module, layer=6):
 
         Costmap is generated in odom frame (OccupancyGridModule). When
         navigating, shift the grid origin into map frame so it overlays the
-        saved map底图. Grid cells stay axis-aligned — if map→odom has
+        saved map base layer. Grid cells stay axis-aligned - if map->odom has
         significant yaw, cells will be slightly skewed; acceptable for
-        short-term ICP tracking (yaw error typically < 5°).
+        short-term ICP tracking (yaw error typically < 5 deg).
         """
         self._costmap_throttle += 1
         if self._costmap_throttle % 5 != 0:
@@ -2186,10 +2219,10 @@ class GatewayModule(Module, layer=6):
             cols = int(g.shape[1]) if g.ndim >= 2 else rows
             origin = [float(v) for v in cm.get("origin", [0.0, 0.0])]
             # OccupancyGridModule now ingests map-frame odom (SlamBridge applies
-            # TF before publish), so its grid.origin is already map-frame — no
+            # TF before publish), so its grid.origin is already map-frame -no
             # Gateway re-transform. Re-applying TF here double-shifted and
             # caused costmap to orbit the robot each time the localizer
-            # refined map→odom. Leave yaw=0 since no rotation left to apply.
+            # refined map->odom. Leave yaw=0 since no rotation left to apply.
             yaw = 0.0
             self.push_event({
                 "type":       "costmap",
@@ -2207,7 +2240,7 @@ class GatewayModule(Module, layer=6):
         """Push slope grid as SSE event for web visualization.
 
         Same origin-shift as _on_costmap so the slope overlay aligns with
-        the map底图 in navigating mode.
+        the map base layer in navigating mode.
         """
         grid = data.get("grid")
         if grid is None:
@@ -2220,7 +2253,7 @@ class GatewayModule(Module, layer=6):
             rows = int(arr.shape[0])
             cols = int(arr.shape[1]) if arr.ndim >= 2 else rows
             origin = [float(v) for v in data.get("origin", [0.0, 0.0])]
-            # Same reasoning as _on_costmap — slope grid origin is already in
+            # Same reasoning as _on_costmap -slope grid origin is already in
             # map frame since SlamBridge upstream.
             yaw = 0.0
             event: dict[str, Any] = {
@@ -2527,7 +2560,7 @@ class GatewayModule(Module, layer=6):
             from fastapi.middleware.cors import CORSMiddleware
             from fastapi.responses import JSONResponse
         except ImportError:
-            logger.error("FastAPI not installed — run: pip install fastapi uvicorn")
+            logger.error("FastAPI not installed -run: pip install fastapi uvicorn")
             return None
 
         cors_origins = os.environ.get(
@@ -2622,9 +2655,9 @@ class GatewayModule(Module, layer=6):
         register_session_routes(app, gw)
         register_command_routes(app, gw)
 
-        # ── Mode ───────────────────────────────────────────────────────────
+        # Mode
 
-        # ── Map management ─────────────────────────────────────────────────
+        # Map management
 
         @app.post(
             "/api/v1/maps",
@@ -2638,7 +2671,7 @@ class GatewayModule(Module, layer=6):
         async def post_maps(body: MapRequest):
             mgr = gw._map_mgr
             if mgr is None:
-                message = "MapManagerModule not running"
+                message = "MapService not running"
                 return JSONResponse(
                     status_code=503,
                     content=GatewayErrorResponse(
@@ -2717,7 +2750,7 @@ class GatewayModule(Module, layer=6):
             import uvicorn as _uv
             uvicorn = _uv
         except ImportError:
-            logger.error("uvicorn not installed — run: pip install 'uvicorn[standard]'")
+            logger.error("uvicorn not installed -run: pip install 'uvicorn[standard]'")
             return False
         server = None
         try:
@@ -2732,7 +2765,7 @@ class GatewayModule(Module, layer=6):
                 ws="auto",
                 lifespan="off",
                 timeout_keep_alive=30,
-                ws_max_size=2 * 1024 * 1024,  # 2 MB — enough for 1080p JPEG
+                ws_max_size=2 * 1024 * 1024,  # 2 MB -enough for 1080p JPEG
             )
             server = uvicorn.Server(config)
             self._server = server
@@ -2806,10 +2839,7 @@ class GatewayModule(Module, layer=6):
         tmp = os.path.join(tempfile.gettempdir(), "lingtu_live_snapshot.pcd")
         try:
             if self._map_save_adapter is None:
-                seed_registered_plugins(
-                    groups=("map_save_adapter",),
-                    reload_loaded=False,
-                )
+                seed_default_map_save_adapter_plugins()
             save_nav_map_with_adapter(
                 self._map_save_adapter,
                 tmp,
@@ -2843,8 +2873,8 @@ class GatewayModule(Module, layer=6):
         else:
             return (
                 "<html><body style='background:#0a0a0f;color:#fff;"
-                "font-family:monospace;padding:40px'><h2>暂无地图数据</h2>"
-                "<p>开始建图并移动机器人后刷新。</p></body></html>"
+                "font-family:monospace;padding:40px'><h2>No map data</h2>"
+                "<p>Start mapping, move the robot, then refresh.</p></body></html>"
             )
 
     def _generate_viewer_from_pcd(self, map_name: str) -> str:
@@ -2853,8 +2883,8 @@ class GatewayModule(Module, layer=6):
         if not os.path.isfile(pcd_path):
             return (
                 f"<html><body style='background:#0a0a0f;color:#fff;"
-                f"font-family:monospace;padding:40px'><h2>地图不存在: {map_name}</h2>"
-                f"<p>找不到 {pcd_path}</p></body></html>"
+                f"font-family:monospace;padding:40px'><h2>Map not found: {map_name}</h2>"
+                f"<p>Missing file: {pcd_path}</p></body></html>"
             )
 
         # Parse PCD binary

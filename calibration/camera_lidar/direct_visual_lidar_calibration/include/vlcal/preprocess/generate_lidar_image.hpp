@@ -1,6 +1,6 @@
 #pragma once
 
-#include <opencv2/core.hpp>
+#include <opencv2/runtime.hpp>
 #include <vlcal/common/frame.hpp>
 #include <camera/generic_camera_base.hpp>
 

@@ -11,9 +11,9 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from core.msgs.geometry import Vector3
-from core.msgs.nav import Odometry, Pose
-from core.msgs.semantic import Detection3D, Region, SceneGraph
+from runtime.msgs.geometry import Vector3
+from runtime.msgs.nav import Odometry, Pose
+from runtime.msgs.semantic import Detection3D, Region, SceneGraph
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,13 +84,13 @@ class TestSemanticMapperPorts(unittest.TestCase):
         return SemanticMapperModule(**kw)
 
     def test_input_ports_exist(self):
-        from core.stream import In
+        from runtime.stream import In
         m = self._make()
         self.assertIsInstance(m.scene_graph, In)
         self.assertIsInstance(m.odometry, In)
 
     def test_output_ports_exist(self):
-        from core.stream import Out
+        from runtime.stream import Out
         m = self._make()
         self.assertIsInstance(m.topo_summary, Out)
         self.assertIsInstance(m.room_graph, Out)

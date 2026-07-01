@@ -29,7 +29,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from drivers.sim.mujoco_scene_metadata import write_scene_obstacle_metadata  # noqa: E402
+from drivers.sim.mujoco.scene import write_obstacle_metadata  # noqa: E402
 
 DEFAULT_SAVED_MAP_GOAL = [4.5, 3.0]
 DEFAULT_RELOCALIZE_REPORT_MAX_AGE_S = 86_400.0
@@ -343,7 +343,7 @@ def _validate_relocalization(report: dict[str, Any]) -> tuple[bool, list[str], d
     if report.get("runtime_relocalization_validated") is not True:
         blockers.append("runtime_relocalization_validated is not true")
     if service.get("success") is not True:
-        blockers.append("/nav/relocalize service did not succeed")
+        blockers.append("/slam/relocalize service did not succeed")
     if str(localizer.get("latest_health_state") or "").upper() != "LOCKED":
         blockers.append("localizer latest_health_state is not LOCKED")
     if int(localizer.get("saved_map_cloud_points_latest") or 0) < 1000:
@@ -397,7 +397,7 @@ def _mark_relocalization_prerequisite_failed(
         "map_pcd_matches_relocalization": None,
         "scene_xml_matches_saved_map": None,
         "pct_no_fallback": None,
-        "pct_native_backend_used": None,
+        "pct_native_runtime_used": None,
         "pct_native_runtime_ok": None,
         "pct_optimizer_disabled": None,
         "pct_native_raw_path": None,
@@ -555,8 +555,8 @@ def _build_source_report(
                 "planning": [
                     {
                         "planner": "pct",
-                        "backend_class": case.get("backend_class") or body.get("backend_class") or "_PCTBackend",
-                        "native_backend_used": bool(pct_runtime.get("ok", True)),
+                        "planner_class": case.get("planner_class") or body.get("planner_class") or "PCTPlanner",
+                        "native_runtime_used": bool(pct_runtime.get("ok", True)),
                         "native_runtime": pct_runtime or {"ok": True},
                         **pct_mode,
                         "plan_ms": body.get("plan_ms"),
@@ -723,7 +723,7 @@ def _validate_source_identity(
                 route.scene_xml, scene_xml
             ),
             "pct_no_fallback": not source_contract["fallback_used"],
-            "pct_native_backend_used": source_contract["native_backend_used"],
+            "pct_native_runtime_used": source_contract["native_runtime_used"],
             "pct_native_runtime_ok": source_contract["native_runtime_ok"],
             "pct_optimizer_disabled": (
                 source_contract.get("pct_optimizer_enabled") is False
@@ -865,7 +865,7 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                 "execution_mode": "contract_only",
                 "selected_planner": source_contract["selected_planner"],
                 "fallback_used": source_contract["fallback_used"],
-                "pct_native_backend_used": source_contract["native_backend_used"],
+                "pct_native_runtime_used": source_contract["native_runtime_used"],
                 "pct_runtime_ok": source_contract["native_runtime_ok"],
                 "reached_goal": False,
                 "claim_boundary": "contract_only_no_mujoco_motion",
@@ -888,7 +888,7 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                     route.scene_xml, scene_xml
                 ),
                 "pct_no_fallback": not source_contract["fallback_used"],
-                "pct_native_backend_used": source_contract["native_backend_used"],
+                "pct_native_runtime_used": source_contract["native_runtime_used"],
                 "pct_native_runtime_ok": source_contract["native_runtime_ok"],
                 "pct_optimizer_disabled": (
                     source_contract.get("pct_optimizer_enabled") is False
@@ -914,7 +914,7 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
             "map_pcd_matches_relocalization": False,
             "scene_xml_matches_saved_map": False,
             "pct_no_fallback": False,
-            "pct_native_backend_used": None,
+            "pct_native_runtime_used": None,
             "pct_native_runtime_ok": None,
             "pct_optimizer_disabled": None,
             "pct_native_raw_path": None,
@@ -990,7 +990,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         )
 
         obstacle_metadata_path = run_dir / "scene_obstacles.json"
-        obstacle_metadata = write_scene_obstacle_metadata(
+        obstacle_metadata = write_obstacle_metadata(
             scene_xml=scene_xml,
             source_map_metadata=map_metadata,
             output=obstacle_metadata_path,

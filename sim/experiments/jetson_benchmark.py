@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 HSG-Nav Jetson Orin NX performance benchmark.
 
@@ -183,7 +183,7 @@ def benchmark_yolo_world(iterations: int = 100, warmup: int = 10) -> BenchmarkRe
     )
 
     try:
-        from semantic.perception.detector_yolo_world import YOLOWorldDetector
+        from perception.detector_yolo_world import YOLOWorldDetector
         import numpy as np
 
         detector = YOLOWorldDetector(model_size="l", confidence=0.3)
@@ -223,7 +223,7 @@ def benchmark_clip_encoding(iterations: int = 100, warmup: int = 10) -> Benchmar
     )
 
     try:
-        from semantic.perception.clip_encoder import CLIPEncoder
+        from perception.clip_encoder import CLIPEncoder
         import numpy as np
 
         encoder = CLIPEncoder(model_name="ViT-B/32")
@@ -262,8 +262,8 @@ def benchmark_scene_graph(iterations: int = 50, warmup: int = 5) -> BenchmarkRes
     )
 
     try:
-        from semantic.perception.instance_tracker import InstanceTracker
-        from semantic.perception.projection import Detection3D
+        from perception.instance_tracker import InstanceTracker
+        from perception.projection import Detection3D
         import numpy as np
 
         tracker = InstanceTracker(max_objects=200)
@@ -312,8 +312,8 @@ def benchmark_fast_path(iterations: int = 30, warmup: int = 5) -> BenchmarkResul
     )
 
     try:
-        from semantic.planner.goal_resolver import GoalResolver
-        from semantic.planner.llm_client import LLMConfig
+        from decision.goal_resolver import GoalResolver
+        from decision.llm_client import LLMConfig
         import numpy as np
 
         config = LLMConfig(backend="openai", model="gpt-4o-mini")

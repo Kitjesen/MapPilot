@@ -1,0 +1,108 @@
+{
+  "schema": "lingtu.pct.preview.golden.v1",
+  "case": "rust_process_synthetic_gn_smoke",
+  "source": "tools/bench/pct_rust_process_smoke.py synthetic tomogram --nonlinear-optimizer gauss_newton",
+  "actual_schema": "lingtu.pct.preview.actual.v2",
+  "input": {
+    "tomogram_data_shape": [5, 1, 13, 15],
+    "tomogram_data_dtype": "float32",
+    "start": [-5.0, 0.0, 0.0],
+    "goal": [5.0, 3.0, 0.0],
+    "obstacle_thr": 49.9
+  },
+  "expected": {
+    "ok": true,
+    "planner": "pct",
+    "path_count": {
+      "nominal": 91,
+      "min": 89,
+      "max": 93
+    },
+    "path_distance_m": {
+      "target": 10.5795,
+      "abs_tol": 0.05
+    },
+    "goal_error_m": {
+      "target": 0.0,
+      "max": 0.001
+    },
+    "path": {
+      "finite": true,
+      "min_columns": 3,
+      "count_matches_path_count": true
+    }
+  },
+  "expected_diagnostics": {
+    "last_path_mode": "rust_optimized_trajectory",
+    "last_optimizer_enabled": true,
+    "last_optimizer_attempted": true,
+    "last_optimizer_accepted": true,
+    "last_optimizer_nonlinear_optimizer": "gauss_newton",
+    "last_optimizer_linear_solver": "block_tridiagonal",
+    "last_optimizer_linear_solve_fallbacks": 0,
+    "last_optimizer_input_states": 11,
+    "last_optimizer_output_states": 91,
+    "last_optimizer_trajectory_expanded": true,
+    "last_optimizer_interpolation_steps": 8,
+    "last_optimizer_call_mode": "ffi",
+    "last_raw_path_count": 11
+  },
+  "expected_optimizer_accessors": {
+    "available": true,
+    "native_wrapper_compatible": true,
+    "finite": true,
+    "row_count": 91,
+    "state_dim": 6,
+    "result_matrix_shape": [91, 6],
+    "layers_shape": [91],
+    "heights_shape": [91],
+    "ceilings_shape": [91],
+    "opt_init_value_shape": [6, 91],
+    "opt_init_layer_shape": [91],
+    "heading_rate_shape": [91]
+  },
+  "required_fields": [
+    "runtime",
+    "first",
+    "last",
+    "path",
+    "path_samples",
+    "diagnostics",
+    "optimizer_accessors"
+  ],
+  "required_diagnostics": [
+    "last_path_mode",
+    "last_optimizer_enabled",
+    "last_optimizer_attempted",
+    "last_optimizer_accepted",
+    "last_optimizer_nonlinear_optimizer",
+    "last_optimizer_linear_solver",
+    "last_optimizer_linear_solve_fallbacks",
+    "last_optimizer_call_mode"
+  ],
+  "path_samples": [
+    {
+      "index": 0,
+      "point": [-5.0, 0.0, 0.0],
+      "abs_tol": 0.001
+    },
+    {
+      "index": 45,
+      "point": [0.0, 1.5, 0.0],
+      "abs_tol": 0.02
+    },
+    {
+      "index": 90,
+      "point": [5.0, 3.0, 0.0],
+      "abs_tol": 0.001
+    }
+  ],
+  "tolerances": {
+    "point_abs_tol": 1e-6,
+    "sample_point_abs_tol": 0.02
+  },
+  "notes": [
+    "This fixture is intentionally synthetic and Windows-safe. It proves that rust_process can select the Rust Gauss-Newton optimizer through the in-process C ABI, smooth a small trajectory, return expanded trajectory output, and preserve native-like wrapper accessors.",
+    "It does not replace the Linux native building2_9 golden parity gate."
+  ]
+}

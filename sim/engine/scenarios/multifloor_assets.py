@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from core.same_source_map_artifacts import build_saved_map_metadata, sha256_file
+from runtime.same_source_map_artifacts import build_saved_map_metadata, sha256_file
 
 
 @dataclass(frozen=True)

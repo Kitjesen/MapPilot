@@ -1,5 +1,5 @@
-"""Tests for nav/ modules — WaypointTracker, GlobalPlannerService,
-OccupancyGridModule, ElevationMapModule, ESDFModule, SafetyRingModule.
+﻿"""Tests for nav/ modules: WaypointTracker, GlobalPlanner,
+OccupancyGridModule, ElevationMapModule, ESDFModule, nav.services.safety.
 
 All tests are pure-Python, no ROS2 / hardware / MuJoCo required.
 """
@@ -27,15 +27,15 @@ try:
 except ImportError:
     _scipy_available = False
 
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
-from core.msgs.nav import OccupancyGrid, Odometry, Path
-from core.msgs.sensor import PointCloud2
-from core.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.nav import OccupancyGrid, Odometry, Path
+from runtime.msgs.sensor import PointCloud2
+from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
 
 # ---------------------------------------------------------------------------
 # 1. WaypointTracker
 # ---------------------------------------------------------------------------
-from nav.waypoint_tracker import (
+from nav.mission.tracking.waypoint_tracker import (
     EV_PATH_COMPLETE,
     EV_STUCK,
     EV_STUCK_WARN,
@@ -134,21 +134,37 @@ class TestWaypointTracker(unittest.TestCase):
 
     def test_movement_resets_stuck(self):
         """Moving >= stuck_dist resets stuck timer."""
-        tracker = WaypointTracker(threshold=1.0, stuck_timeout=0.1, stuck_dist=0.15)
+        tracker = WaypointTracker(threshold=1.0, stuck_timeout=0.2, stuck_dist=0.15)
         wp = np.array([10.0, 0.0, 0.0])
         pos = np.array([0.0, 0.0, 0.0])
         tracker.reset([wp], pos)
 
-        time.sleep(0.06)  # past 50% of timeout
+        time.sleep(0.11)  # past 50% of timeout
         # Move far enough to reset
         moved = np.array([0.2, 0.0, 0.0])
         status = tracker.update(moved)
         self.assertIsNone(status.event)
 
-        # Wait again — no warn because timer was reset
+        # Wait again - no warn because timer was reset
         time.sleep(0.04)
         status = tracker.update(moved)
         self.assertIsNone(status.event)
+
+    def test_accelerate_stuck_check_shortens_remaining_timeout(self):
+        tracker = WaypointTracker(threshold=1.0, stuck_timeout=1.0, stuck_dist=0.15)
+        tracker.reset([np.array([10.0, 0.0, 0.0])], np.array([0.0, 0.0, 0.0]))
+
+        self.assertTrue(tracker.accelerate_stuck_check(max_remaining_s=0.01))
+        time.sleep(0.02)
+
+        self.assertEqual(
+            tracker.update(np.array([0.0, 0.0, 0.0])).event,
+            EV_STUCK_WARN,
+        )
+        self.assertEqual(
+            tracker.update(np.array([0.0, 0.0, 0.0])).event,
+            EV_STUCK,
+        )
 
     def test_empty_path_no_event(self):
         """Update with no path returns no event."""
@@ -182,10 +198,10 @@ class TestWaypointTracker(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2. GlobalPlannerService
+# 2. GlobalPlanner
 # ---------------------------------------------------------------------------
 
-from nav.global_planner_service import GlobalPlannerService
+from nav.services.plan.global_planner.service import GlobalPlanner
 
 
 class _MockBackend:
@@ -203,11 +219,11 @@ class _MockBackend:
         self._grid = grid
 
 
-class TestGlobalPlannerService(unittest.TestCase):
-    """Tests for GlobalPlannerService (pure Python, not a Module)."""
+class TestGlobalPlanner(unittest.TestCase):
+    """Tests for GlobalPlanner (pure Python, not a Module)."""
 
     def _make_service(self, grid, resolution=0.2, origin=None):
-        svc = GlobalPlannerService(planner_name="mock", downsample_dist=2.0)
+        svc = GlobalPlanner(planner_name="mock", downsample_dist=2.0)
         svc._backend = _MockBackend(grid, resolution, origin)
         return svc
 
@@ -223,7 +239,7 @@ class TestGlobalPlannerService(unittest.TestCase):
         np.testing.assert_array_almost_equal(result[:2], goal[:2])
 
     def test_find_safe_goal_on_obstacle(self):
-        """Goal on obstacle cell — BFS finds nearest free cell."""
+        """Goal on obstacle cell - BFS finds nearest free cell."""
         grid = np.zeros((20, 20), dtype=np.int8)
         # Mark goal cell (5,5) as obstacle
         grid[5, 5] = 100
@@ -239,13 +255,13 @@ class TestGlobalPlannerService(unittest.TestCase):
 
     def test_find_safe_goal_no_map(self):
         """No backend returns None."""
-        svc = GlobalPlannerService(planner_name="mock")
+        svc = GlobalPlanner(planner_name="mock")
         svc._backend = None
         result = svc._find_safe_goal(np.array([0.0, 0.0, 0.0]))
         self.assertIsNone(result)
 
     def test_pct_saved_map_artifact_gate_uses_configured_expected_frame(self):
-        from core.same_source_map_artifacts import (
+        from runtime.same_source_map_artifacts import (
             build_saved_map_metadata,
             sha256_file,
         )
@@ -291,7 +307,7 @@ class TestGlobalPlannerService(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            svc = GlobalPlannerService(
+            svc = GlobalPlanner(
                 planner_name="pct",
                 tomogram=str(tomogram),
                 expected_saved_map_frame_id="odom",
@@ -302,10 +318,10 @@ class TestGlobalPlannerService(unittest.TestCase):
             self.assertTrue(gate["ok"], gate["blockers"])
             self.assertEqual(gate["expected_frame_id"], "odom")
 
-    def test_navigation_module_can_separate_planning_and_saved_map_frames(self):
-        from nav.navigation_module import NavigationModule
+    def test_navigation_can_separate_planning_and_saved_map_frames(self):
+        from nav.mission.navigation import Navigation
 
-        module = NavigationModule(
+        module = Navigation(
             planner="pct",
             planning_frame_id="odom",
             expected_saved_map_frame_id="map",
@@ -318,7 +334,7 @@ class TestGlobalPlannerService(unittest.TestCase):
 
     def test_downsample_preserves_goal(self):
         """Last point of downsampled path is always the goal."""
-        svc = GlobalPlannerService(downsample_dist=2.0)
+        svc = GlobalPlanner(downsample_dist=2.0)
         path = [np.array([0, 0, 0]), np.array([1, 0, 0]),
                 np.array([2, 0, 0]), np.array([3, 0, 0]),
                 np.array([5, 0, 0]), np.array([7, 0, 0])]
@@ -327,7 +343,7 @@ class TestGlobalPlannerService(unittest.TestCase):
         np.testing.assert_array_almost_equal(result[-1], goal)
 
     def test_downsample_keeps_precise_goal_near_grid_center(self):
-        svc = GlobalPlannerService(downsample_dist=2.0)
+        svc = GlobalPlanner(downsample_dist=2.0)
         path = [np.array([0.0, 0.0, 0.0]), np.array([0.95, 0.0, 0.0])]
         goal = np.array([1.0, 0.0, 0.0])
 
@@ -338,7 +354,7 @@ class TestGlobalPlannerService(unittest.TestCase):
     def test_downsample_spacing(self):
         """Consecutive points in downsampled path are >= downsample_dist apart
         (except possibly the last segment to the goal)."""
-        svc = GlobalPlannerService(downsample_dist=2.0)
+        svc = GlobalPlanner(downsample_dist=2.0)
         path = [np.array([float(i), 0, 0]) for i in range(20)]
         goal = np.array([19.0, 0.0, 0.0])
         result = svc._downsample(path, goal)
@@ -350,10 +366,10 @@ class TestGlobalPlannerService(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 3. PathFollowerModule
+# 3. PathFollower
 # ---------------------------------------------------------------------------
 
-class _FakeNavCore:
+class _FakeNavKernel:
     class Vec3:
         def __init__(self, x, y, z):
             self.x = float(x)
@@ -378,33 +394,39 @@ class _FakeNavCore:
 
     @staticmethod
     def compute_control(*_args):
-        return _FakeNavCore.ControlOut(_FakeNavCore.Cmd(1.0, 0.0, 0.4))
+        return _FakeNavKernel.ControlOut(_FakeNavKernel.Cmd(1.0, 0.0, 0.4))
 
 
-class TestPathFollowerModule(unittest.TestCase):
+class TestPathFollower(unittest.TestCase):
 
-    def test_nav_core_uses_configured_control_gains(self):
-        from base_autonomy.modules import path_follower_module
+    def test_nav_kernel_uses_configured_control_gains(self):
+        from nav.local import path_follower
+        from nav.local import path_follower_runtime
 
-        class FakeNavCoreWithParams(_FakeNavCore):
+        class FakeNavKernelWithParams(_FakeNavKernel):
             class PathFollowerParams:
                 pass
 
-        original = path_follower_module.try_import_nav_core
+        original = path_follower_runtime.create_nav_kernel_path_follower_adapter_from_tuning
         try:
-            path_follower_module.try_import_nav_core = lambda *_args: FakeNavCoreWithParams
-            module = path_follower_module.PathFollowerModule(
-                backend="nav_core",
+            path_follower_runtime.create_nav_kernel_path_follower_adapter_from_tuning = (
+                lambda **tuning: original(
+                    **tuning,
+                    importer=lambda *_args: FakeNavKernelWithParams,
+                )
+            )
+            module = path_follower.PathFollower(
+                backend="nav_kernel",
                 yaw_rate_gain=2.5,
                 stop_yaw_rate_gain=2.25,
                 dir_diff_thre=0.35,
             )
 
-            module._setup_nav_core()
+            module._setup_native_kernel()
         finally:
-            path_follower_module.try_import_nav_core = original
+            path_follower_runtime.create_nav_kernel_path_follower_adapter_from_tuning = original
 
-        self.assertEqual(module._backend, "nav_core")
+        self.assertEqual(module._backend, "nav_kernel")
         self.assertAlmostEqual(module._nc_params.yaw_rate_gain, 2.5)
         self.assertAlmostEqual(module._nc_params.stop_yaw_rate_gain, 2.25)
         self.assertAlmostEqual(module._nc_params.dir_diff_thre, 0.35)
@@ -413,11 +435,11 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertAlmostEqual(health["stop_yaw_rate_gain"], 2.25)
         self.assertAlmostEqual(health["dir_diff_thre"], 0.35)
 
-    def test_nav_core_keeps_fixed_frame_paths_in_world_reference(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+    def test_nav_kernel_keeps_fixed_frame_paths_in_world_reference(self):
+        from nav.local.path_follower import PathFollower
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = _FakeNavCore
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
 
         yaw = math.pi / 2.0
         m._on_odom(
@@ -452,11 +474,11 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._y_rec, 0.0)
         self.assertEqual(m._yaw_rec, 0.0)
 
-    def test_nav_core_normalizes_fixed_frame_path_id(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+    def test_nav_kernel_normalizes_fixed_frame_path_id(self):
+        from nav.local.path_follower import PathFollower
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = _FakeNavCore
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
 
         m._on_odom(
             Odometry(
@@ -481,11 +503,11 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._y_rec, 0.0)
         self.assertEqual(m._yaw_rec, 0.0)
 
-    def test_nav_core_keeps_simulator_world_path_in_fixed_reference(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+    def test_nav_kernel_keeps_simulator_world_path_in_fixed_reference(self):
+        from nav.local.path_follower import PathFollower
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = _FakeNavCore
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
 
         m._on_odom(
             Odometry(
@@ -510,11 +532,11 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._y_rec, 0.0)
         self.assertEqual(m._yaw_rec, 0.0)
 
-    def test_nav_core_records_body_frame_path_in_receipt_reference_frame(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+    def test_nav_kernel_records_body_frame_path_in_receipt_reference_frame(self):
+        from nav.local.path_follower import PathFollower
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = _FakeNavCore
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
 
         yaw = math.pi / 2.0
         m._on_odom(
@@ -548,13 +570,13 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._y_rec, -2.0)
         self.assertAlmostEqual(m._yaw_rec, yaw)
 
-    def test_nav_core_publishes_zero_when_path_is_cleared(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+    def test_nav_kernel_publishes_zero_when_path_is_cleared(self):
+        from nav.local.path_follower import PathFollower
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = _FakeNavCore
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
         m._nc_params = object()
-        m._nc_state = _FakeNavCore.PathFollowerState()
+        m._nc_state = _FakeNavKernel.PathFollowerState()
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
@@ -583,13 +605,13 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._nc_state.nav_fwd, 0)
         self.assertEqual(m._nc_state.pathPointID, 0)
 
-    def test_nav_core_resets_follower_state_when_new_path_arrives(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+    def test_nav_kernel_resets_follower_state_when_new_path_arrives(self):
+        from nav.local.path_follower import PathFollower
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = _FakeNavCore
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
         m._nc_params = object()
-        m._nc_state = _FakeNavCore.PathFollowerState()
+        m._nc_state = _FakeNavKernel.PathFollowerState()
         m._nc_state.vehicle_speed = 1.7
         m._nc_state.nav_fwd = 1
         m._nc_state.pathPointID = 5
@@ -608,23 +630,23 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._nc_state.pathPointID, 0)
         self.assertEqual(len(m._nc_path), 2)
 
-    def test_nav_core_applies_local_planner_control_hint(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+    def test_nav_kernel_applies_local_planner_control_hint(self):
+        from nav.local.path_follower import PathFollower
 
-        class RecordingNavCore(_FakeNavCore):
+        class RecordingNavKernel(_FakeNavKernel):
             last_slow_factor = None
             last_safety_stop = None
 
             @staticmethod
             def compute_control(*args):
-                RecordingNavCore.last_slow_factor = args[5]
-                RecordingNavCore.last_safety_stop = args[6]
-                return _FakeNavCore.ControlOut(_FakeNavCore.Cmd(1.0, 0.0, 0.4))
+                RecordingNavKernel.last_slow_factor = args[5]
+                RecordingNavKernel.last_safety_stop = args[6]
+                return _FakeNavKernel.ControlOut(_FakeNavKernel.Cmd(1.0, 0.0, 0.4))
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = RecordingNavCore
+        m = PathFollower(backend="nav_kernel")
+        m._nc = RecordingNavKernel
         m._nc_params = object()
-        m._nc_state = RecordingNavCore.PathFollowerState()
+        m._nc_state = RecordingNavKernel.PathFollowerState()
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
@@ -639,8 +661,15 @@ class TestPathFollowerModule(unittest.TestCase):
         m._on_control_hint({"slow_down": 2, "ts": time.time(), "reason": "test"})
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.1, 0.0, 0.0)), ts=1.1))
 
-        self.assertEqual(RecordingNavCore.last_slow_factor, 0.40)
-        self.assertEqual(RecordingNavCore.last_safety_stop, 0)
+        self.assertEqual(RecordingNavKernel.last_slow_factor, 0.5)
+        self.assertEqual(RecordingNavKernel.last_safety_stop, 0)
+        self.assertGreater(outputs[-1].linear.x, 0.0)
+
+        m._on_control_hint({"slow_down": 3, "ts": time.time(), "reason": "test"})
+        m._on_odom(Odometry(pose=Pose(position=Vector3(0.15, 0.0, 0.0)), ts=1.15))
+
+        self.assertEqual(RecordingNavKernel.last_slow_factor, 0.75)
+        self.assertEqual(RecordingNavKernel.last_safety_stop, 0)
         self.assertGreater(outputs[-1].linear.x, 0.0)
 
         m._on_control_hint({
@@ -651,13 +680,14 @@ class TestPathFollowerModule(unittest.TestCase):
         })
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.2, 0.0, 0.0)), ts=1.2))
 
-        self.assertEqual(RecordingNavCore.last_safety_stop, 0)
+        self.assertEqual(RecordingNavKernel.last_safety_stop, 0)
         self.assertFalse(m.health()["path_follower"]["control_hint"]["safety_stop"])
         self.assertGreater(outputs[-1].linear.x, 0.0)
 
         m._on_control_hint({
             "near_field_stop": True,
             "safety_stop": True,
+            "safety_stop_level": 2,
             "ts": time.time(),
             "reason": "near_field",
         })
@@ -665,14 +695,107 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(outputs[-1].linear.x, 0.0)
         self.assertEqual(outputs[-1].angular.z, 0.0)
         self.assertTrue(m.health()["path_follower"]["control_hint"]["safety_stop"])
+        self.assertEqual(
+            m.health()["path_follower"]["control_hint"]["safety_stop_level"],
+            2,
+        )
 
-    def test_nav_core_resets_path_reference_on_map_frame_jump(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+        for _ in range(2):
+            m._on_control_hint({
+                "safety_stop": False,
+                "safety_stop_level": 0,
+                "ts": time.time(),
+                "reason": "clear",
+            })
+            self.assertEqual(
+                m.health()["path_follower"]["control_hint"]["safety_stop_level"],
+                2,
+            )
 
-        m = PathFollowerModule(backend="nav_core")
-        m._nc = _FakeNavCore
+        m._on_control_hint({
+            "safety_stop": False,
+            "safety_stop_level": 0,
+            "ts": time.time(),
+            "reason": "clear",
+        })
+        self.assertFalse(m.health()["path_follower"]["control_hint"]["safety_stop"])
+
+        m._on_control_hint({
+            "safety_stop": True,
+            "safety_stop_level": 1,
+            "ts": time.time(),
+            "reason": "linear_only_stop",
+        })
+        m._on_odom(Odometry(pose=Pose(position=Vector3(0.3, 0.0, 0.0)), ts=1.3))
+
+        self.assertEqual(RecordingNavKernel.last_safety_stop, 1)
+        self.assertEqual(
+            m.health()["path_follower"]["control_hint"]["safety_stop_level"],
+            1,
+        )
+
+    def test_nav_kernel_applies_incline_slow_and_stop_guards(self):
+        from nav.local.path_follower import PathFollower
+
+        class RecordingNavKernel(_FakeNavKernel):
+            last_slow_factor = None
+
+            @staticmethod
+            def compute_control(*args):
+                RecordingNavKernel.last_slow_factor = args[5]
+                return _FakeNavKernel.ControlOut(_FakeNavKernel.Cmd(1.0, 0.0, 0.4))
+
+        m = PathFollower(
+            backend="nav_kernel",
+            use_incl_rate_to_slow=True,
+            incl_rate_thre=10.0,
+            slow_rate_1=0.25,
+            use_incl_to_stop=True,
+            incl_thre=10.0,
+            stop_time=5.0,
+        )
+        m._nc = RecordingNavKernel
         m._nc_params = object()
-        m._nc_state = _FakeNavCore.PathFollowerState()
+        m._nc_state = RecordingNavKernel.PathFollowerState()
+        outputs = []
+        m.cmd_vel._add_callback(outputs.append)
+
+        m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)), ts=1.0))
+        m._on_path(Path(
+            poses=[
+                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+            ],
+            frame_id="map",
+        ))
+        m._on_odom(Odometry(
+            pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
+            twist=Twist(angular=Vector3(1.0, 0.0, 0.0)),
+            ts=1.1,
+        ))
+
+        self.assertEqual(RecordingNavKernel.last_slow_factor, 0.25)
+        self.assertGreater(outputs[-1].linear.x, 0.0)
+
+        m._on_odom(Odometry(
+            pose=Pose(
+                position=Vector3(0.2, 0.0, 0.0),
+                orientation=Quaternion.from_euler(math.radians(20.0), 0.0, 0.0),
+            ),
+            ts=1.2,
+        ))
+
+        self.assertEqual(outputs[-1].linear.x, 0.0)
+        self.assertEqual(outputs[-1].angular.z, 0.0)
+        self.assertTrue(m.health()["path_follower"]["incline_guard"]["stop_active"])
+
+    def test_nav_kernel_resets_path_reference_on_map_frame_jump(self):
+        from nav.local.path_follower import PathFollower
+
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
+        m._nc_params = object()
+        m._nc_state = _FakeNavKernel.PathFollowerState()
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
@@ -705,9 +828,9 @@ class TestPathFollowerModule(unittest.TestCase):
         self.assertEqual(m._nc_state.pathPointID, 0)
 
     def test_pid_publishes_zero_when_path_is_cleared(self):
-        from base_autonomy.modules.path_follower_module import PathFollowerModule
+        from nav.local.path_follower import PathFollower
 
-        m = PathFollowerModule(backend="pid")
+        m = PathFollower(backend="pid")
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
@@ -735,7 +858,7 @@ class TestPathFollowerModule(unittest.TestCase):
 # 4. OccupancyGridModule
 # ---------------------------------------------------------------------------
 
-from nav.occupancy_grid_module import OccupancyGridModule
+from nav.services.map_layers.occupancy_grid_module import OccupancyGridModule
 
 
 @unittest.skipUnless(_scipy_available, "scipy not installed in this environment")
@@ -828,7 +951,7 @@ class TestOccupancyGridModule(unittest.TestCase):
                                    orientation=Quaternion(0, 0, 0, 1)))
         m.odometry._deliver(odom)
 
-        # Points very close to robot — within clear radius
+        # Points very close to robot - within clear radius
         pts = np.array([
             [0.1, 0.1, 0.5],
             [0.2, 0.2, 0.5],
@@ -972,6 +1095,12 @@ class _FakeROSHeader:
         self.stamp = None
 
 
+class _FakeROSStamp:
+    def __init__(self, sec=0, nanosec=0):
+        self.sec = sec
+        self.nanosec = nanosec
+
+
 class _FakeROSPoint:
     def __init__(self):
         self.x = 0.0
@@ -1005,6 +1134,24 @@ class _FakeROSPath:
         self.poses = []
 
 
+class _FakeROSPointStamped:
+    def __init__(self):
+        self.header = _FakeROSHeader()
+        self.point = _FakeROSPoint()
+
+
+class _FakeROSTwist:
+    def __init__(self):
+        self.linear = _FakeROSPoint()
+        self.angular = _FakeROSPoint()
+
+
+class _FakeROSTwistStamped:
+    def __init__(self):
+        self.header = _FakeROSHeader()
+        self.twist = _FakeROSTwist()
+
+
 class _FakeROSMapMetaData:
     def __init__(self):
         self.resolution = 0.0
@@ -1021,11 +1168,98 @@ class _FakeROSOccupancyGrid:
 
 
 @pytest.mark.ros2
-class TestROS2PathBridgeModule(unittest.TestCase):
-    def test_defaults_come_from_runtime_topic_contract(self):
-        from compat.ros2.nav.path_bridge import ROS2PathBridgeModule
+class TestROS2NavInModule(unittest.TestCase):
+    def test_nav_in_converts_ros2_commands_to_lingtu_ports(self):
+        from nav.adapters.ros2.nav.nav_in import ROS2NavInModule
 
-        bridge = ROS2PathBridgeModule()
+        bridge = ROS2NavInModule(default_frame_id="map")
+        goals = []
+        cancels = []
+        instructions = []
+        bridge.goal_pose.subscribe(goals.append)
+        bridge.cancel.subscribe(cancels.append)
+        bridge.instruction.subscribe(instructions.append)
+
+        goal = _FakeROSPoseStamped()
+        goal.header.frame_id = "odom"
+        goal.header.stamp = _FakeROSStamp(12, 500_000_000)
+        goal.pose.position.x = 1.0
+        goal.pose.position.y = 2.0
+        goal.pose.position.z = 0.3
+        goal.pose.orientation.z = 0.1
+        goal.pose.orientation.w = 0.995
+
+        bridge._on_goal_pose(goal)
+        bridge._on_cancel(types.SimpleNamespace(data="operator_cancel"))
+        bridge._on_instruction(types.SimpleNamespace(data="inspect gate"))
+
+        self.assertEqual(goals[-1].frame_id, "odom")
+        self.assertEqual(goals[-1].ts, 12.5)
+        self.assertEqual(goals[-1].x, 1.0)
+        self.assertEqual(goals[-1].y, 2.0)
+        self.assertEqual(goals[-1].orientation.z, 0.1)
+        self.assertEqual(cancels, ["operator_cancel"])
+        self.assertEqual(instructions, ["inspect gate"])
+        self.assertEqual(
+            bridge.health()["message_counts"],
+            {
+                TOPICS.goal_pose: 1,
+                TOPICS.cancel: 1,
+                TOPICS.semantic_instruction: 1,
+            },
+        )
+
+    def test_nav_in_uses_runtime_default_frame_when_ros_frame_is_empty(self):
+        from nav.adapters.ros2.nav.nav_in import ROS2NavInModule
+
+        bridge = ROS2NavInModule(default_frame_id="map")
+        goal = _FakeROSPoseStamped()
+
+        converted = bridge._from_ros_pose_stamped(goal)
+
+        self.assertEqual(converted.frame_id, "map")
+        self.assertEqual(bridge._goal_pose_topic, TOPICS.goal_pose)
+        self.assertEqual(bridge._cancel_topic, TOPICS.cancel)
+        self.assertEqual(
+            bridge._instruction_topic,
+            TOPICS.semantic_instruction,
+        )
+
+
+@pytest.mark.ros2
+class TestROS2NavOutModule(unittest.TestCase):
+    def test_new_nav_out_name_exports_all_navigation_outputs(self):
+        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
+
+        fake_geometry_msgs = types.SimpleNamespace(
+            PoseStamped=_FakeROSPoseStamped,
+            TwistStamped=_FakeROSTwistStamped,
+        )
+        fake_modules = {
+            "geometry_msgs": types.SimpleNamespace(msg=fake_geometry_msgs),
+            "geometry_msgs.msg": fake_geometry_msgs,
+        }
+        bridge = ROS2NavOutModule(default_frame_id="map")
+
+        with patch.dict(sys.modules, fake_modules):
+            waypoint = bridge._to_ros_waypoint(
+                PoseStamped(pose=Pose(1.0, 2.0, 0.3), frame_id="map")
+            )
+            twist = bridge._to_ros_twist(
+                Twist(linear=Vector3(0.4, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.2))
+            )
+
+        self.assertEqual(waypoint.header.frame_id, "map")
+        self.assertEqual(waypoint.pose.position.x, 1.0)
+        self.assertEqual(waypoint.pose.position.y, 2.0)
+        self.assertEqual(twist.header.frame_id, body_frame_id())
+        self.assertEqual(twist.twist.linear.x, 0.4)
+        self.assertEqual(twist.twist.angular.z, 0.2)
+
+    def test_defaults_come_from_runtime_topic_contract(self):
+        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
+
+        bridge = ROS2NavOutModule()
 
         self.assertEqual(bridge._global_path_topic, TOPICS.global_path)
         self.assertEqual(bridge._local_path_topic, TOPICS.local_path)
@@ -1039,15 +1273,15 @@ class TestROS2PathBridgeModule(unittest.TestCase):
         )
 
     def test_explicit_default_frame_applies_to_both_path_topics(self):
-        from compat.ros2.nav.path_bridge import ROS2PathBridgeModule
+        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
 
-        bridge = ROS2PathBridgeModule(default_frame_id="odom")
+        bridge = ROS2NavOutModule(default_frame_id="odom")
 
         self.assertEqual(bridge._global_default_frame_id, "odom")
         self.assertEqual(bridge._local_default_frame_id, "odom")
 
     def test_global_path_conversion_uses_global_topic_frame_default(self):
-        from compat.ros2.nav.path_bridge import ROS2PathBridgeModule
+        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
 
         fake_nav_msgs = types.SimpleNamespace(Path=_FakeROSPath)
         fake_geometry_msgs = types.SimpleNamespace(PoseStamped=_FakeROSPoseStamped)
@@ -1057,7 +1291,7 @@ class TestROS2PathBridgeModule(unittest.TestCase):
             "geometry_msgs": types.SimpleNamespace(msg=fake_geometry_msgs),
             "geometry_msgs.msg": fake_geometry_msgs,
         }
-        bridge = ROS2PathBridgeModule()
+        bridge = ROS2NavOutModule()
 
         with patch.dict(sys.modules, fake_modules):
             msg = bridge._to_ros_path(
@@ -1072,11 +1306,11 @@ class TestROS2PathBridgeModule(unittest.TestCase):
 
 
 @pytest.mark.ros2
-class TestROS2GridBridgeModule(unittest.TestCase):
+class TestROS2MapOutModule(unittest.TestCase):
     def test_default_frame_comes_from_exploration_grid_contract(self):
-        from compat.ros2.nav.grid_bridge import ROS2GridBridgeModule
+        from nav.adapters.ros2.nav.map_out import ROS2MapOutModule
 
-        bridge = ROS2GridBridgeModule()
+        bridge = ROS2MapOutModule()
 
         self.assertEqual(bridge._exploration_grid_topic, TOPICS.exploration_grid)
         self.assertEqual(
@@ -1085,14 +1319,14 @@ class TestROS2GridBridgeModule(unittest.TestCase):
         )
 
     def test_grid_conversion_uses_contract_frame_when_input_lacks_frame(self):
-        from compat.ros2.nav.grid_bridge import ROS2GridBridgeModule
+        from nav.adapters.ros2.nav.map_out import ROS2MapOutModule
 
         fake_nav_msgs = types.SimpleNamespace(OccupancyGrid=_FakeROSOccupancyGrid)
         fake_modules = {
             "nav_msgs": types.SimpleNamespace(msg=fake_nav_msgs),
             "nav_msgs.msg": fake_nav_msgs,
         }
-        bridge = ROS2GridBridgeModule()
+        bridge = ROS2MapOutModule()
         grid = {
             "grid": np.array([[0, 100]], dtype=np.int16),
             "resolution": 0.5,
@@ -1113,14 +1347,14 @@ class TestROS2GridBridgeModule(unittest.TestCase):
         self.assertEqual(msg.data, [0, 100])
 
     def test_grid_conversion_preserves_explicit_input_frame(self):
-        from compat.ros2.nav.grid_bridge import ROS2GridBridgeModule
+        from nav.adapters.ros2.nav.map_out import ROS2MapOutModule
 
         fake_nav_msgs = types.SimpleNamespace(OccupancyGrid=_FakeROSOccupancyGrid)
         fake_modules = {
             "nav_msgs": types.SimpleNamespace(msg=fake_nav_msgs),
             "nav_msgs.msg": fake_nav_msgs,
         }
-        bridge = ROS2GridBridgeModule()
+        bridge = ROS2MapOutModule()
         grid = {
             "grid": np.array([[0]], dtype=np.int16),
             "frame_id": "odom",
@@ -1136,7 +1370,7 @@ class TestROS2GridBridgeModule(unittest.TestCase):
 # 4. VoxelGridModule
 # ---------------------------------------------------------------------------
 
-from nav.voxel_grid_module import VoxelGridModule
+from nav.services.map_layers.voxel_grid_module import VoxelGridModule
 
 
 class TestVoxelGridModule(unittest.TestCase):
@@ -1241,7 +1475,7 @@ class TestVoxelGridModule(unittest.TestCase):
 # 5. ElevationMapModule
 # ---------------------------------------------------------------------------
 
-from nav.elevation_map_module import ElevationMapModule
+from nav.services.map_layers.elevation_map_module import ElevationMapModule
 
 
 class TestElevationMapModule(unittest.TestCase):
@@ -1332,12 +1566,36 @@ class TestElevationMapModule(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["frame_id"], "odom")
 
+    def test_elevation_grid_uses_row_y_col_x(self):
+        m = self._make_module()
+        m.odometry._deliver(
+            Odometry(
+                pose=Pose(
+                    position=Vector3(0, 0, 0),
+                    orientation=Quaternion(0, 0, 0, 1),
+                )
+            )
+        )
+        cloud = PointCloud2.from_numpy(
+            np.array([[2.0, 1.0, 0.5]], dtype=np.float32),
+            frame_id="map",
+        )
+
+        results = []
+        m.elevation_map._add_callback(results.append)
+        m.map_cloud._deliver(cloud)
+
+        self.assertEqual(len(results), 1)
+        # origin=(-5,-5), res=1: x=2 -> col 7, y=1 -> row 6.
+        self.assertTrue(results[0]["valid"][6, 7])
+        self.assertFalse(results[0]["valid"][7, 6])
+
 
 # ---------------------------------------------------------------------------
 # 6. ESDFModule
 # ---------------------------------------------------------------------------
 
-from nav.esdf_module import ESDFModule
+from nav.services.map_layers.esdf_module import ESDFModule
 
 
 class TestESDFModule(unittest.TestCase):
@@ -1395,20 +1653,39 @@ class TestESDFModule(unittest.TestCase):
         self.assertLess(sdf[5, 5], 0.0,
                         "Interior obstacle cell should have negative ESDF distance")
 
+    def test_esdf_gradient_axes_match_xy(self):
+        """Obstacle column on the left should produce an x-gradient, not y."""
+        pytest = __import__("pytest")
+        pytest.importorskip("scipy")
+
+        m = self._make_module()
+        grid = np.zeros((5, 5), dtype=np.int8)
+        grid[:, 0] = 100
+        origin = Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1))
+        og = OccupancyGrid(grid=grid, resolution=1.0, origin=origin, frame_id="map")
+
+        results = []
+        m.esdf._add_callback(results.append)
+        m.occupancy_grid._deliver(og)
+
+        self.assertEqual(len(results), 1)
+        self.assertGreater(abs(float(results[0]["grad_x"][2, 2])), 0.5)
+        self.assertLess(abs(float(results[0]["grad_y"][2, 2])), 0.1)
+
 
 # ---------------------------------------------------------------------------
-# 7. SafetyRingModule
+# 7. SafetyRing
 # ---------------------------------------------------------------------------
 
-from nav.safety_ring_module import SafetyRingModule
+from nav.services.safety.safety_ring import SafetyRing
 
 
-class TestSafetyRingModule(unittest.TestCase):
+class TestSafetyRing(unittest.TestCase):
 
     def _make_module(self, **kw):
         defaults = dict(odom_timeout_ms=100.0, cmd_vel_timeout_ms=100.0)
         defaults.update(kw)
-        m = SafetyRingModule(**defaults)
+        m = SafetyRing(**defaults)
         m.setup()
         return m
 
@@ -1430,7 +1707,7 @@ class TestSafetyRingModule(unittest.TestCase):
 
         time.sleep(0.06)  # exceed 50ms timeout
 
-        # Deliver another odom — this triggers _publish_safety which
+        # Deliver another odom - this triggers _publish_safety which
         # checks odom age. But the odom delivery itself updates _last_odom_time.
         # So we need to trigger a check WITHOUT delivering odom.
         # Deliver localization_status to trigger _publish_safety.
@@ -1448,7 +1725,7 @@ class TestSafetyRingModule(unittest.TestCase):
 
     def test_safety_ring_times_out_without_new_callbacks(self):
         """The watchdog must fail closed even when no input callback fires."""
-        m = SafetyRingModule(odom_timeout_ms=40, cmd_vel_timeout_ms=40)
+        m = SafetyRing(odom_timeout_ms=40, cmd_vel_timeout_ms=40)
         stops = []
         m.stop_cmd._add_callback(stops.append)
         m.setup()

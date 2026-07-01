@@ -3,9 +3,9 @@
 This launch file is a legacy ROS launch entry for native MuJoCo/PCT smoke
 tests.  It now follows the canonical LingTu runtime contract:
 
-- /nav/registered_cloud is the current body-frame scan.
-- /nav/map_cloud is the odom/map-frame accumulated world cloud.
-- Native terrain and local planner nodes consume /nav/map_cloud through their
+- /slam/registered_cloud is the current body-frame scan.
+- /slam/map_cloud is the odom/map-frame accumulated world cloud.
+- Native terrain and local planner nodes consume /slam/map_cloud through their
   legacy /cloud_map input.
 """
 
@@ -26,7 +26,7 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from core.runtime_interface import FRAMES, TOPICS
+from runtime.runtime_interface import FRAMES, TOPICS
 
 
 def generate_launch_description():

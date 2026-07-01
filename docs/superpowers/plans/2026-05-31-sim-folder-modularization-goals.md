@@ -37,7 +37,7 @@ motion command claim must preserve `simulation_only=true`,
 | `sim/datasets/` | Offline datasets and metadata. | Boundary README added; keep dataset/large-file policy locked. |
 | `sim/output/` | Generated local outputs. | Prefer `artifacts/` for reproducible evidence. |
 | `sim/external_scenes/` | External/license-constrained scene placeholders. | Keep. |
-| `sim/meshes/` | Legacy mesh path. | Removed 2026-05-31 — duplicates of sim/assets/meshes/. No code references. |
+| `sim/meshes/` | Legacy mesh path. | Removed 2026-05-31 �?duplicates of sim/assets/meshes/. No code references. |
 | `sim/maps/`, `sim/configs/` | Reserved placeholders. | Keep only if referenced; otherwise prune later. |
 | `sim/semantic/` | Legacy semantic simulation residue. | Move to tests or mark experimental later. |
 
@@ -120,7 +120,7 @@ P2: observability and evidence
 PCT and A* are global planner backends. Current `nav`, `explore`, and
 `tare_explore` style profiles keep `enable_native=False`, so local planning and
 tracking use the in-process CMU-style chain:
-`LocalPlannerModule(backend="nanobind") -> PathFollowerModule(backend="nav_core")
+`LocalPlannerModule(backend="nanobind") -> PathFollowerModule(backend="nav_kernel")
 -> CmdVelMux -> driver`.
 
 The external CMU ROS 2 `localPlanner/pathFollower` chain is still available for
@@ -238,7 +238,7 @@ G7. Done in the current continuation: order `missing_or_failed`,
 `remaining_gaps`, optional gaps, and generated missing-gate commands by
 canonical gate order instead of alphabetic order.
 
-G8. Done in the current continuation: add `core.plugin_seed` as the central
+G8. Done in the current continuation: add `runtime.plugin_seed` as the central
 built-in plugin registration seed for safe core surfaces. Only pure registration
 triggers are wired through it now (`driver` stack, `GlobalPlannerService`, and
 CLI backend validation). Gateway/WebRTC/visualization remain explicit opt-in
@@ -289,10 +289,10 @@ the queue.
 Fresh checks from this pass:
 
 ```bash
-python -m pytest src/core/tests/test_plugin_seed.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/core/tests/test_server_sim_closure.py::test_server_sim_closure_multifloor_surfaces_pct_runtime_blocker src/core/tests/test_multifloor_sim_validation.py::test_partial_global_plan_is_kept_for_diagnostics_but_not_feasible src/core/tests/test_multifloor_sim_validation.py::test_far_projected_safe_goal_is_not_counted_as_requested_goal -q
+python -m pytest src/runtime/tests/test_plugin_seed.py src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/runtime/tests/test_server_sim_closure.py::test_server_sim_closure_multifloor_surfaces_pct_runtime_blocker src/runtime/tests/test_multifloor_sim_validation.py::test_partial_global_plan_is_kept_for_diagnostics_but_not_feasible src/runtime/tests/test_multifloor_sim_validation.py::test_far_projected_safe_goal_is_not_counted_as_requested_goal -q
 # 10 passed
 
-python -m py_compile src/core/blueprints/stacks/_registry.py src/core/blueprints/stacks/safety.py src/core/blueprints/stacks/lidar.py src/core/blueprints/stacks/gateway.py src/drivers/real/lidar/lidar_module.py src/nav/cmd_vel_mux_module.py src/nav/services/geofence_manager_module.py sim/scripts/multifloor_nav_validation.py sim/scripts/server_sim_closure.py
+python -m py_compile src/runtime/blueprints/stacks/_registry.py src/runtime/blueprints/stacks/safety.py src/runtime/blueprints/stacks/lidar.py src/runtime/blueprints/stacks/gateway.py src/drivers/real/lidar/lidar_module.py src/nav/services/safety/cmd_vel_mux_module.py src/nav/services/geofence.py sim/scripts/multifloor_nav_validation.py sim/scripts/server_sim_closure.py
 # passed
 
 PYTHONPATH=src:. python sim/scripts/large_terrain_nav_validation.py --output-dir artifacts/server_sim_closure/large_terrain --planners pct,astar --json-out artifacts/server_sim_closure/large_terrain/report.json
@@ -306,22 +306,22 @@ PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_ful
 # large_terrain now surface environment_runtime/planning_tracking blockers;
 # next_actions and missing_required_commands include host_requirements.
 
-python -m pytest src/core/tests/test_server_sim_closure.py::test_server_sim_closure_summary_lists_missing_required_commands src/core/tests/test_server_sim_closure.py::test_server_sim_closure_next_actions_separate_runtime_blocker_from_missing_report -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py::test_server_sim_closure_summary_lists_missing_required_commands src/runtime/tests/test_server_sim_closure.py::test_server_sim_closure_next_actions_separate_runtime_blocker_from_missing_report -q
 # 2 passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q
 # 121 passed
 
-python -m pytest src/core/tests/test_plugin_seed.py src/core/tests/test_backend_status.py src/core/tests/test_registry.py -q
+python -m pytest src/runtime/tests/test_plugin_seed.py src/runtime/tests/test_backend_status.py src/runtime/tests/test_registry.py -q
 # 28 passed
 
-python -m pytest src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/core/tests/test_sim_runtime_compat.py::test_legacy_nova_nav_bridge_uses_current_robot_paths src/core/tests/test_sim_runtime_compat.py::test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux src/core/tests/test_sim_runtime_compat.py::test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd -q
+python -m pytest src/runtime/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/runtime/tests/test_sim_runtime_compat.py::test_legacy_nova_nav_bridge_uses_current_robot_paths src/runtime/tests/test_sim_runtime_compat.py::test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux src/runtime/tests/test_sim_runtime_compat.py::test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd -q
 # 4 passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py -q -k "g4_summary_required_gate_sequence_preserves_core_order or g4_missing_required_gates_preserve_core_order or g4_required_gates_are_default_freshness_required or readme_current_full_closure_gates_match_g4_server_full_sim_preset or readme_full_closure_command_uses_g4_server_full_sim_preset or server_sim_closure_g4_server_full_sim_preset_selects_closure_gate_set"
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q -k "g4_summary_required_gate_sequence_preserves_core_order or g4_missing_required_gates_preserve_core_order or g4_required_gates_are_default_freshness_required or readme_current_full_closure_gates_match_g4_server_full_sim_preset or readme_full_closure_command_uses_g4_server_full_sim_preset or server_sim_closure_g4_server_full_sim_preset_selects_closure_gate_set"
 # 6 passed, 114 deselected
 
-python -m py_compile src/core/plugin_seed.py cli/main.py src/core/blueprints/stacks/driver.py src/nav/global_planner_service.py sim/scripts/server_sim_closure.py
+python -m py_compile src/runtime/plugin_seed.py cli/main.py src/runtime/blueprints/stacks/driver.py src/nav/services/plan/global_planner/service.py sim/scripts/server_sim_closure.py
 # passed
 
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_full_sim --json-out artifacts/server_sim_closure_summary_g4_current.json
@@ -336,7 +336,7 @@ PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_ful
 python -m pytest src/gateway/tests/test_gateway_runtime_acceptance.py::test_gateway_runtime_acceptance_passes_non_motion_without_ros2_topic src/gateway/tests/test_gateway_runtime_acceptance.py::test_gateway_runtime_acceptance_non_motion_exposes_top_level_sim_safety_flags src/gateway/tests/test_gateway_runtime_acceptance.py::test_gateway_runtime_acceptance_non_motion_uses_local_stub_when_gateway_is_down src/gateway/tests/test_gateway_runtime_acceptance.py::test_gateway_runtime_acceptance_field_does_not_use_local_stub_when_gateway_is_down src/gateway/tests/test_gateway_runtime_acceptance.py::test_gateway_runtime_acceptance_in_process_stub_stays_non_motion src/gateway/tests/test_gateway_runtime_acceptance.py::test_gateway_runtime_acceptance_simulation_passes_without_real_runtime_evidence src/gateway/tests/test_gateway_runtime_acceptance.py::test_gateway_runtime_acceptance_field_passes_with_live_samples -q
 # 7 passed
 
-python -m py_compile src/core/gateway_runtime_acceptance.py src/gateway/tests/test_gateway_runtime_acceptance.py
+python -m py_compile src/runtime/gateway_runtime_acceptance.py src/gateway/tests/test_gateway_runtime_acceptance.py
 # passed
 
 PYTHONPATH=src:. python lingtu.py gateway-runtime-acceptance --acceptance-mode non_motion --json-out artifacts/server_sim_closure/gateway_runtime_acceptance/report.json
@@ -347,40 +347,40 @@ PYTHONPATH=src:. python lingtu.py gateway-runtime-acceptance --acceptance-mode n
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --required gateway_runtime_acceptance --required-only --gateway-runtime-acceptance-report artifacts/server_sim_closure/gateway_runtime_acceptance/report.json --json-out artifacts/server_sim_closure_gateway_runtime_acceptance_check.json --strict
 # exited 0; gateway_runtime_acceptance passed as a single required gate
 
-python -m pytest src/core/tests/test_server_sim_closure.py -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q
 # 119 passed
 
-python -m pytest src/core/tests/test_backend_status.py -q
+python -m pytest src/runtime/tests/test_backend_status.py -q
 # 13 passed
 
-python -m pytest src/core/tests/test_runtime_backend_switch.py -q
+python -m pytest src/runtime/tests/test_runtime_backend_switch.py -q
 # 7 passed
 
 python -m pytest src/gateway/tests/test_gateway_runtime_status.py -q
 # 78 passed
 
-python -m pytest src/core/tests/test_profile_graph_snapshots.py -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py -q
 # 33 passed
 
-python -m py_compile src/core/algorithm_gates.py sim/scripts/server_sim_closure.py src/base_autonomy/modules/terrain_module.py src/gateway/routes/diagnostics.py
+python -m py_compile src/runtime/algorithm_gates.py sim/scripts/server_sim_closure.py src/nav/local/terrain_module.py src/gateway/routes/diagnostics.py
 # passed
 
-python -m pytest src/core/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py::test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges -q
 # 1 passed
 
-python -m pytest src/core/tests/test_sim_runtime_compat.py::test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux src/core/tests/test_sim_runtime_compat.py::test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd -q
+python -m pytest src/runtime/tests/test_sim_runtime_compat.py::test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux src/runtime/tests/test_sim_runtime_compat.py::test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd -q
 # 2 passed
 
 python -m pytest src/gateway/tests/test_gateway_runtime_status.py::test_gateway_and_mcp_backend_route_tables_stay_in_parity src/gateway/tests/test_gateway_runtime_status.py::test_mcp_backend_switch_tool_uses_gateway_guard src/gateway/tests/test_gateway_runtime_status.py::test_mcp_backend_switch_tool_guards_motion_without_gateway_module src/gateway/tests/test_gateway_runtime_status.py::test_mcp_backend_switch_reads_nested_navigation_state_without_gateway_module -q
 # 4 passed
 
-python -m pytest src/core/tests/test_sim_runtime_compat.py::test_legacy_nova_nav_bridge_uses_current_robot_paths -q
+python -m pytest src/runtime/tests/test_sim_runtime_compat.py::test_legacy_nova_nav_bridge_uses_current_robot_paths -q
 # 1 passed
 
 python -m py_compile sim/bridge/nova_nav_bridge.py
 # passed
 
-python -m pytest src/core/tests/test_new_modules.py::TestMCPServerModule::test_set_mode_via_skill src/core/tests/test_new_modules.py::TestMCPServerModule::test_set_mode_estop_publishes_stop_and_zero_twist src/core/tests/test_new_modules.py::TestMCPServerModule::test_set_mode_invalid -q
+python -m pytest src/runtime/tests/test_new_modules.py::TestMCPServerModule::test_set_mode_via_skill src/runtime/tests/test_new_modules.py::TestMCPServerModule::test_set_mode_estop_publishes_stop_and_zero_twist src/runtime/tests/test_new_modules.py::TestMCPServerModule::test_set_mode_invalid -q
 # 3 passed
 
 python -m pytest src/gateway/tests/test_gateway_runtime_status.py::test_gateway_and_mcp_backend_route_tables_stay_in_parity src/gateway/tests/test_mcp_auth.py -q
@@ -389,46 +389,46 @@ python -m pytest src/gateway/tests/test_gateway_runtime_status.py::test_gateway_
 python -m py_compile src/gateway/mcp_server.py
 # passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py -q -k "dimos_required_gates_come_from_core_algorithm_gate_constant or g4_server_full_sim_required_gates_come_from_core_algorithm_gate_constant or readme_current_full_closure_gates_match_g4_server_full_sim_preset or readme_full_closure_command_uses_g4_server_full_sim_preset or g4_summary_required_gate_sequence_preserves_core_order or g4_required_gates_are_default_freshness_required or dimos_summary_required_gate_sequence_preserves_core_order or server_sim_closure_g4_server_full_sim_preset_selects_closure_gate_set"
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q -k "dimos_required_gates_come_from_core_algorithm_gate_constant or g4_server_full_sim_required_gates_come_from_core_algorithm_gate_constant or readme_current_full_closure_gates_match_g4_server_full_sim_preset or readme_full_closure_command_uses_g4_server_full_sim_preset or g4_summary_required_gate_sequence_preserves_core_order or g4_required_gates_are_default_freshness_required or dimos_summary_required_gate_sequence_preserves_core_order or server_sim_closure_g4_server_full_sim_preset_selects_closure_gate_set"
 # 8 passed, 111 deselected
 
-python -m pytest src/core/tests/test_backend_status.py::test_autonomy_backend_registry_names_are_visible src/core/tests/test_backend_status.py::test_autonomy_backend_allowlists_match_registry_catalog src/core/tests/test_backend_status.py::test_terrain_cmu_backend_uses_native_setup -q
+python -m pytest src/runtime/tests/test_backend_status.py::test_autonomy_backend_registry_names_are_visible src/runtime/tests/test_backend_status.py::test_autonomy_backend_allowlists_match_registry_catalog src/runtime/tests/test_backend_status.py::test_terrain_cmu_backend_uses_native_setup -q
 # 3 passed
 
 python -m pytest src/gateway/tests/test_gateway_runtime_status.py::test_diagnostics_plugin_catalog_route_exposes_active_backend_status -q
 # 1 passed
 
-python -m py_compile src/base_autonomy/modules/terrain_module.py src/gateway/routes/diagnostics.py
+python -m py_compile src/nav/local/terrain_module.py src/gateway/routes/diagnostics.py
 # passed
 
-python -m pytest src/core/tests/test_perception_module.py::TestDetectorConfiguration::test_constructor_accepts_registered_detector_and_encoder_plugins src/core/tests/test_perception_module.py::TestDetectorConfiguration::test_unknown_perception_backend_fails_fast src/core/tests/test_perception_module.py::TestDetectorConfiguration::test_perception_backend_registry_names_are_visible -q
+python -m pytest src/runtime/tests/test_perception_module.py::TestDetectorConfiguration::test_constructor_accepts_registered_detector_and_encoder_plugins src/runtime/tests/test_perception_module.py::TestDetectorConfiguration::test_unknown_perception_backend_fails_fast src/runtime/tests/test_perception_module.py::TestDetectorConfiguration::test_perception_backend_registry_names_are_visible -q
 # 3 passed
 
-python -m pytest src/core/tests/test_runtime_backend_switch.py::test_perception_reconfigure_detector_rejects_unknown_backend src/core/tests/test_runtime_backend_switch.py::test_perception_reconfigure_detector_updates_health_status src/core/tests/test_runtime_backend_switch.py::test_perception_reconfigure_encoder_updates_health_status -q
+python -m pytest src/runtime/tests/test_runtime_backend_switch.py::test_perception_reconfigure_detector_rejects_unknown_backend src/runtime/tests/test_runtime_backend_switch.py::test_perception_reconfigure_detector_updates_health_status src/runtime/tests/test_runtime_backend_switch.py::test_perception_reconfigure_encoder_updates_health_status -q
 # 3 passed
 
-python -m py_compile src/semantic/perception/semantic_perception/perception_module.py
+python -m py_compile src/perception/semantic_perception/perception_module.py
 # passed
 
-python -m pytest src/core/tests/test_runtime_backend_switch.py::test_motion_modules_reconfigure_backend_fails_closed -q
+python -m pytest src/runtime/tests/test_runtime_backend_switch.py::test_motion_modules_reconfigure_backend_fails_closed -q
 # 5 passed
 
-python -m pytest src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts -q
+python -m pytest src/runtime/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts -q
 # 1 passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py::test_g4_missing_required_gates_preserve_core_order -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py::test_g4_missing_required_gates_preserve_core_order -q
 # 1 passed
 
-python -m pytest src/core/tests/test_runtime_backend_switch.py -q
+python -m pytest src/runtime/tests/test_runtime_backend_switch.py -q
 # 12 passed
 
-python -m pytest src/core/tests/test_backend_status.py -q
+python -m pytest src/runtime/tests/test_backend_status.py -q
 # 13 passed
 
-python -m pytest src/core/tests/test_perception_module.py::TestDetectorConfiguration -q
+python -m pytest src/runtime/tests/test_perception_module.py::TestDetectorConfiguration -q
 # 10 passed
 
-python -m pytest src/core/tests/test_sim_runtime_compat.py::test_legacy_nova_nav_bridge_uses_current_robot_paths src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/core/tests/test_sim_runtime_compat.py::test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux src/core/tests/test_sim_runtime_compat.py::test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd -q
+python -m pytest src/runtime/tests/test_sim_runtime_compat.py::test_legacy_nova_nav_bridge_uses_current_robot_paths src/runtime/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/runtime/tests/test_sim_runtime_compat.py::test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux src/runtime/tests/test_sim_runtime_compat.py::test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd -q
 # 4 passed
 
 python -m pytest src/gateway/tests/test_gateway_runtime_status.py::test_gateway_and_mcp_backend_route_tables_stay_in_parity src/gateway/tests/test_gateway_runtime_status.py::test_mcp_backend_switch_tool_uses_gateway_guard src/gateway/tests/test_gateway_runtime_status.py::test_mcp_backend_switch_tool_guards_motion_without_gateway_module src/gateway/tests/test_gateway_runtime_status.py::test_mcp_backend_switch_reads_nested_navigation_state_without_gateway_module src/gateway/tests/test_gateway_runtime_status.py::test_diagnostics_plugin_catalog_route_exposes_active_backend_status -q
@@ -471,22 +471,22 @@ string contracts stable when a local backend is swapped instantly.
 Latest safe validation evidence:
 
 ```bash
-python -m py_compile sim/scripts/server_sim_closure.py sim/scripts/multifloor_nav_validation.py src/core/blueprints/stacks/safety.py src/core/blueprints/stacks/lidar.py src/core/blueprints/stacks/gateway.py src/core/blueprints/stacks/navigation.py src/core/blueprints/stacks/exploration.py src/core/blueprints/stacks/perception.py src/semantic/perception/semantic_perception/perception_module.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py src/core/tests/test_server_sim_closure.py src/core/tests/test_sim_runtime_compat.py
+python -m py_compile sim/scripts/server_sim_closure.py sim/scripts/multifloor_nav_validation.py src/runtime/blueprints/stacks/safety.py src/runtime/blueprints/stacks/lidar.py src/runtime/blueprints/stacks/gateway.py src/runtime/blueprints/stacks/navigation.py src/runtime/blueprints/stacks/exploration.py src/runtime/blueprints/stacks/perception.py src/perception/semantic_perception/perception_module.py src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_plugin_seed.py src/runtime/tests/test_server_sim_closure.py src/runtime/tests/test_sim_runtime_compat.py
 # passed
 
-python -m pytest src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_plugin_seed.py -q
 # 9 passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q
 # 124 passed
 
-python -m pytest src/core/tests/test_multifloor_sim_validation.py -q
+python -m pytest src/runtime/tests/test_multifloor_sim_validation.py -q
 # 26 passed
 
-python -m pytest src/core/tests/test_tare_exploration.py src/core/tests/test_traversable_frontier_module.py::test_full_stack_can_add_traversable_frontier_without_wiring_it_to_control src/core/tests/test_sim_runtime_compat.py::test_full_stack_wires_frontier_exploration_goal_to_navigation -q
+python -m pytest src/runtime/tests/test_tare_exploration.py src/runtime/tests/test_traversable_frontier_module.py::test_full_stack_can_add_traversable_frontier_without_wiring_it_to_control src/runtime/tests/test_sim_runtime_compat.py::test_full_stack_wires_frontier_exploration_goal_to_navigation -q
 # 42 passed
 
-python -m pytest src/core/tests/test_sim_semantic_pipeline_blueprint.py src/core/tests/test_perception_factory_registry.py src/core/tests/test_perception_module.py::TestDetectorConfiguration -q
+python -m pytest src/runtime/tests/test_sim_semantic_pipeline_blueprint.py src/runtime/tests/test_perception_factory_registry.py src/runtime/tests/test_perception_module.py::TestDetectorConfiguration -q
 # 18 passed
 
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_full_sim --required-only --json-out artifacts/server_sim_closure_summary_g4_current.json
@@ -518,25 +518,25 @@ safety/navigation/perception work while keeping full-stack wire names stable.
 Latest safe validation evidence for G16:
 
 ```bash
-python -m pytest src/core/tests/test_stack_registry_resolution.py::test_maps_stack_prefers_registered_modules_with_canonical_aliases src/core/tests/test_stack_registry_resolution.py::test_planner_stack_prefers_registered_modules_with_canonical_aliases src/core/tests/test_stack_registry_resolution.py::test_memory_stack_prefers_registered_modules_with_canonical_aliases -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py::test_maps_stack_prefers_registered_modules_with_canonical_aliases src/runtime/tests/test_stack_registry_resolution.py::test_planner_stack_prefers_registered_modules_with_canonical_aliases src/runtime/tests/test_stack_registry_resolution.py::test_memory_stack_prefers_registered_modules_with_canonical_aliases -q
 # RED before implementation: 3 failed because maps/planner/memory ignored registry replacements.
 
-python -m py_compile src/core/blueprints/stacks/maps.py src/core/blueprints/stacks/planner.py src/core/blueprints/stacks/memory.py src/nav/services/map_manager_module.py src/nav/ros2_grid_bridge_module.py src/core/plugin_seed.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py
+python -m py_compile src/runtime/blueprints/stacks/maps.py src/runtime/blueprints/stacks/planner.py src/runtime/blueprints/stacks/memory.py src/nav/services/maps.py src/compat/ros2/nav/grid_bridge.py src/runtime/plugin_seed.py src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_plugin_seed.py
 # passed
 
-python -m pytest src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_plugin_seed.py -q
 # 12 passed
 
-python -m pytest src/core/tests/test_profile_graph_snapshots.py -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py -q
 # 33 passed
 
-python -m pytest src/core/tests/test_sim_semantic_pipeline_blueprint.py -q
+python -m pytest src/runtime/tests/test_sim_semantic_pipeline_blueprint.py -q
 # 4 passed
 
-python -m pytest src/core/tests/test_cross_module_integration.py -q
+python -m pytest src/runtime/tests/test_cross_module_integration.py -q
 # 1 passed; emitted existing nanobind refleak diagnostics after pytest success.
 
-python -m pytest src/core/tests/test_sim_nav_e2e.py -q
+python -m pytest src/runtime/tests/test_sim_nav_e2e.py -q
 # 4 passed
 
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_full_sim --required-only --json-out artifacts/server_sim_closure_summary_g4_current.json
@@ -560,22 +560,22 @@ rewiring downstream map/planning modules.
 Latest safe validation evidence for G17:
 
 ```bash
-python -m pytest src/core/tests/test_stack_registry_resolution.py::test_slam_stack_prefers_registered_bridge_and_visual_odom_modules src/core/tests/test_stack_registry_resolution.py::test_sim_lidar_stack_prefers_registered_pointcloud_provider -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py::test_slam_stack_prefers_registered_bridge_and_visual_odom_modules src/runtime/tests/test_stack_registry_resolution.py::test_sim_lidar_stack_prefers_registered_pointcloud_provider -q
 # RED before implementation: 2 failed because slam/sim_lidar ignored registry replacements.
 
-python -m py_compile src/core/blueprints/stacks/slam.py src/core/blueprints/stacks/sim_lidar.py src/slam/depth_visual_odom_module.py src/drivers/sim/sim_pointcloud_provider.py src/core/plugin_seed.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py
+python -m py_compile src/runtime/blueprints/stacks/slam.py src/runtime/blueprints/stacks/sim_lidar.py src/localization/depth_visual_odom_module.py src/drivers/sim/pointcloud.py src/runtime/plugin_seed.py src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_plugin_seed.py
 # passed
 
-python -m pytest src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_plugin_seed.py -q
 # 14 passed
 
-python -m pytest src/core/tests/test_profile_graph_snapshots.py -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py -q
 # 33 passed
 
-python -m pytest src/core/tests/test_sim_nav_e2e.py -q
+python -m pytest src/runtime/tests/test_sim_nav_e2e.py -q
 # 4 passed
 
-python -m pytest src/core/tests/test_localization_health.py src/slam/tests/test_slam_backend_status.py src/slam/tests/test_slam_gnss_fusion.py -q
+python -m pytest src/runtime/tests/test_localization_health.py src/localization/tests/test_slam_backend_status.py src/localization/tests/test_slam_gnss_fusion.py -q
 # 121 passed
 
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_full_sim --required-only --json-out artifacts/server_sim_closure_summary_g4_current.json
@@ -621,59 +621,59 @@ built-in siblings are still filled in.
 Latest safe validation evidence for G18-G21:
 
 ```bash
-python -m pytest src/core/tests/test_stack_registry_resolution.py::test_perception_optional_tool_modules_prefer_registered_modules src/core/tests/test_stack_registry_resolution.py::test_navigation_optional_ros2_path_bridge_prefers_registered_module src/core/tests/test_plugin_seed.py::test_reconstruction_plugin_seed_registers_optional_modules src/core/tests/test_plugin_seed.py::test_navigation_plugin_seed_registers_ros2_path_bridge -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py::test_perception_optional_tool_modules_prefer_registered_modules src/runtime/tests/test_stack_registry_resolution.py::test_navigation_optional_ros2_path_bridge_prefers_registered_module src/runtime/tests/test_plugin_seed.py::test_reconstruction_plugin_seed_registers_optional_modules src/runtime/tests/test_plugin_seed.py::test_navigation_plugin_seed_registers_ros2_path_bridge -q
 # RED before implementation: optional perception/reconstruction and ROS2 path
 # bridge surfaces ignored registry replacements or were missing seed entries.
 
-python -m pytest src/core/tests/test_stack_registry_resolution.py::test_exploration_local_tare_prefers_registered_modules_with_canonical_aliases -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py::test_exploration_local_tare_prefers_registered_modules_with_canonical_aliases -q
 # RED before implementation: local TARE used direct imports and ignored registry
 # replacements.
 
-python -m pytest src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/core/tests/test_server_sim_closure.py::test_server_sim_closure_summary_only_mode_is_explicit -q
+python -m pytest src/runtime/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/runtime/tests/test_server_sim_closure.py::test_server_sim_closure_summary_only_mode_is_explicit -q
 # RED before implementation: simulation boundary docs lacked launch/safety
 # contracts and summary-only closure output did not expose explicit execution
 # fields.
 
-python -m pytest src/core/tests/test_stack_registry_resolution.py::test_autonomy_stack_prefers_registered_modules_with_canonical_aliases -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py::test_autonomy_stack_prefers_registered_modules_with_canonical_aliases -q
 # RED before implementation: add_autonomy_stack used eager concrete class
 # imports and ignored registry replacements.
 
-python -m pytest src/core/tests/test_plugin_seed.py::test_builtin_plugin_seed_preserves_preexisting_plugin_registrations -q
+python -m pytest src/runtime/tests/test_plugin_seed.py::test_builtin_plugin_seed_preserves_preexisting_plugin_registrations -q
 # RED before implementation: built-in plugin seeding overwrote a pre-existing
 # plugin registration for the same category/name.
 
-python -m py_compile src/core/registry.py src/core/plugin_seed.py src/core/blueprints/stacks/exploration.py src/core/blueprints/stacks/perception.py src/core/blueprints/stacks/navigation.py src/base_autonomy/modules/__init__.py src/base_autonomy/modules/autonomy_module.py src/core/tests/test_plugin_seed.py src/core/tests/test_stack_registry_resolution.py src/core/tests/test_server_sim_closure.py src/core/tests/test_sim_runtime_compat.py
+python -m py_compile src/runtime/registry.py src/runtime/plugin_seed.py src/runtime/blueprints/stacks/exploration.py src/runtime/blueprints/stacks/perception.py src/runtime/blueprints/stacks/navigation.py src/nav/local/__init__.py src/nav/local/autonomy_module.py src/runtime/tests/test_plugin_seed.py src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_server_sim_closure.py src/runtime/tests/test_sim_runtime_compat.py
 # passed
 
-python -m pytest src/core/tests/test_stack_registry_resolution.py src/core/tests/test_plugin_seed.py -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py src/runtime/tests/test_plugin_seed.py -q
 # 19 passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q
 # 124 passed
 
-python -m pytest src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/core/tests/test_tare_exploration.py::TestExplorationStackFactory -q
+python -m pytest src/runtime/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts src/runtime/tests/test_tare_exploration.py::TestExplorationStackFactory -q
 # 13 passed
 
-python -m pytest src/core/tests/test_profile_graph_snapshots.py -q
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py -q
 # 33 passed
 
-python -m pytest src/core/tests/test_sim_nav_e2e.py -q
+python -m pytest src/runtime/tests/test_sim_nav_e2e.py -q
 # 4 passed
 
-python -m pytest src/core/tests/test_cross_module_integration.py -q
+python -m pytest src/runtime/tests/test_cross_module_integration.py -q
 # 1 passed; emitted existing nanobind refleak diagnostics and deprecation
 # warnings after pytest success.
 
-python -m pytest src/base_autonomy/tests/test_autonomy_modules.py -q
+python -m pytest src/nav/tests/local/test_autonomy_modules.py -q
 # 18 passed
 
-python -m pytest src/core/tests/test_backend_status.py src/core/tests/test_runtime_backend_switch.py -q
+python -m pytest src/runtime/tests/test_backend_status.py src/runtime/tests/test_runtime_backend_switch.py -q
 # 25 passed
 
-python -m pytest src/core/tests/test_sim_semantic_pipeline_blueprint.py src/core/tests/test_perception_factory_registry.py src/core/tests/test_perception_module.py::TestDetectorConfiguration -q
+python -m pytest src/runtime/tests/test_sim_semantic_pipeline_blueprint.py src/runtime/tests/test_perception_factory_registry.py src/runtime/tests/test_perception_module.py::TestDetectorConfiguration -q
 # 18 passed
 
-python -m pytest src/core/tests/test_multifloor_sim_validation.py -q
+python -m pytest src/runtime/tests/test_multifloor_sim_validation.py -q
 # 26 passed
 
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_full_sim --required-only --json-out artifacts/server_sim_closure_summary_g4_current.json
@@ -683,7 +683,7 @@ PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_ful
 
 PYTHONPATH=src:. python sim/scripts/multifloor_nav_validation.py --skip-mujoco
 # exited 0; non-motion report refreshed. Synthetic LiDAR localization and
-# nav_core tracking replay passed; production PCT native runtime remains
+# nav_kernel tracking replay passed; production PCT native runtime remains
 # unavailable on this Windows / Python 3.13 host.
 ```
 
@@ -746,20 +746,20 @@ subscribers.
 Latest safe validation evidence for G22-G24:
 
 ```bash
-python -m pytest src/core/tests/test_plugin_seed.py::test_driver_plugin_seed_does_not_mutate_sys_path src/core/tests/test_plugin_seed.py::test_slam_plugin_seed_does_not_import_cv2_for_registration_only -q
+python -m pytest src/runtime/tests/test_plugin_seed.py::test_driver_plugin_seed_does_not_mutate_sys_path src/runtime/tests/test_plugin_seed.py::test_slam_plugin_seed_does_not_import_cv2_for_registration_only -q
 # RED before implementation: 2 failed because driver seeding mutated sys.path
 # and SLAM seeding imported cv2. After implementation: 2 passed.
 
-python -m py_compile src/drivers/real/thunder/__init__.py src/drivers/real/thunder/blueprints.py src/drivers/real/thunder/connection.py src/slam/depth_visual_odom_module.py src/core/tests/test_plugin_seed.py
+python -m py_compile src/drivers/real/thunder/__init__.py src/drivers/real/thunder/blueprints.py src/drivers/real/thunder/connection.py src/localization/depth_visual_odom_module.py src/runtime/tests/test_plugin_seed.py
 # passed
 
-python -m pytest src/core/tests/test_plugin_seed.py -q
+python -m pytest src/runtime/tests/test_plugin_seed.py -q
 # 6 passed
 
-python -m pytest src/core/tests/test_han_dog_module.py src/drivers/tests/test_driver_spec.py -q
+python -m pytest src/runtime/tests/test_han_dog_module.py src/drivers/tests/test_driver_spec.py -q
 # 22 passed
 
-python -m pytest src/core/tests/test_stack_registry_resolution.py::test_slam_stack_prefers_registered_bridge_and_visual_odom_modules src/core/tests/test_stack_registry_resolution.py::test_slam_stack_visual_backup_does_not_import_cv2_at_build_time src/core/tests/test_plugin_seed.py::test_slam_plugin_seed_does_not_import_cv2_for_registration_only src/slam/tests/test_slam_backend_status.py src/slam/tests/test_slam_gnss_fusion.py -q
+python -m pytest src/runtime/tests/test_stack_registry_resolution.py::test_slam_stack_prefers_registered_bridge_and_visual_odom_modules src/runtime/tests/test_stack_registry_resolution.py::test_slam_stack_visual_backup_does_not_import_cv2_at_build_time src/runtime/tests/test_plugin_seed.py::test_slam_plugin_seed_does_not_import_cv2_for_registration_only src/localization/tests/test_slam_backend_status.py src/localization/tests/test_slam_gnss_fusion.py -q
 # 41 passed
 ```
 
@@ -813,16 +813,16 @@ Primary blockers on this host:
 Latest safe validation evidence for G26:
 
 ```bash
-python -m pytest src/core/tests/test_server_sim_closure.py::test_server_sim_host_preflight_blocks_pct_gate_on_wrong_host src/core/tests/test_server_sim_closure.py::test_server_sim_host_preflight_accepts_local_non_motion_gate src/core/tests/test_server_sim_closure.py::test_server_sim_host_preflight_requires_isolated_ros_domain_and_hardware_audit -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py::test_server_sim_host_preflight_blocks_pct_gate_on_wrong_host src/runtime/tests/test_server_sim_closure.py::test_server_sim_host_preflight_accepts_local_non_motion_gate src/runtime/tests/test_server_sim_closure.py::test_server_sim_host_preflight_requires_isolated_ros_domain_and_hardware_audit -q
 # 3 passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py::test_server_sim_host_preflight_cli_writes_read_only_report src/core/tests/test_server_sim_closure.py::test_server_sim_host_preflight_rejects_run_missing_mix -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py::test_server_sim_host_preflight_cli_writes_read_only_report src/runtime/tests/test_server_sim_closure.py::test_server_sim_host_preflight_rejects_run_missing_mix -q
 # 2 passed
 
-python -m py_compile sim/scripts/server_sim_closure.py src/core/tests/test_server_sim_closure.py
+python -m py_compile sim/scripts/server_sim_closure.py src/runtime/tests/test_server_sim_closure.py
 # passed
 
-python -m pytest src/core/tests/test_server_sim_closure.py -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py -q
 # 130 passed
 
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --host-preflight --preset g4_server_full_sim --required-only --json-out artifacts/server_sim_closure_host_preflight_g4_current.json
@@ -870,14 +870,14 @@ Next execution goals from this checkpoint:
 - G34: either implement runtime reconfigure for `TerrainModule`,
   `LocalPlannerModule`, and `PathFollowerModule`, or remove those unsupported
   targets from the Gateway backend-switch surface.
-- G35: add a runtime evidence gate that records whether `_nav_core` actually
-  loaded on the target host. The configuration can say `nanobind/nav_core`,
+- G35: add a runtime evidence gate that records whether `_nav_kernel` actually
+  loaded on the target host. The configuration can say `nanobind/nav_kernel`,
   but the current modules may fall back to `cmu_py/pid` if native bindings are
   missing; full simulation evidence must record the backend that actually ran.
 - G36: document the algorithm chain in the closure evidence:
   `LiDAR/SLAM -> SlamBridgeModule -> maps/Terrain -> TraversabilityCost +
-  NavigationModule(PCT/A*) -> LocalPlannerModule(nav_core/CMU) ->
-  PathFollowerModule(nav_core) -> CmdVelMux -> Driver/SafetyRing`.
+  NavigationModule(PCT/A*) -> LocalPlannerModule(nav_kernel/CMU) ->
+  PathFollowerModule(nav_kernel) -> CmdVelMux -> Driver/SafetyRing`.
 - G37: do not claim a DIMOS or external-method performance win until the same
   scene, seed, map/tomogram, planner inputs, and hardware/runtime envelope have
   fresh metrics for coverage, path length, time-to-goal, collision clearance,
@@ -899,7 +899,7 @@ Parallel-agent findings merged into this checkpoint:
   shared lock and can block frame processing; standalone Detector/Encoder
   modules still have direct backend branches; motion backend reconfigure is
   advertised by Gateway but not implemented in all motion modules.
-- Algorithm chain: current local planning is CMU/nav_core style point-cloud
+- Algorithm chain: current local planning is CMU/nav_kernel style point-cloud
   voxel scoring through `LocalPlannerModule`, not DWA/TEB and not ESDF-first.
   `TARE` enters through exploration; `wavefront` is enabled inside the
   navigation stack for the `explore` profile. DIMOS comparison remains an
@@ -955,7 +955,7 @@ G36. Done in this continuation pass: the algorithm chain is documented in this
 plan, validation scripts expose requested-versus-actual backend evidence, and
 `server_sim_closure` now lifts per-gate `algorithm_backends` into one
 top-level closure table. This lets the G4 summary show which gates actually ran
-`nanobind`/`nav_core`, which gates only exercised global planning, and which
+`nanobind`/`nav_kernel`, which gates only exercised global planning, and which
 motion stages remain `not_exercised` without digging into each raw report.
 
 G37. Still open: no DIMOS or external-method performance win is claimed. The
@@ -967,19 +967,19 @@ closure, and moving-obstacle behavior.
 Latest safe validation evidence for G31-G35:
 
 ```bash
-python -m pytest src/core/tests/test_dynamic_obstacle_local_planner_gate.py src/core/tests/test_multifloor_sim_validation.py::test_command_flow_reports_requested_and_effective_algorithm_backends src/core/tests/test_multifloor_sim_validation.py::test_pct_global_plan_reports_effective_planner_after_fallback src/core/tests/test_large_terrain_scenario.py::test_large_terrain_validation_report_is_non_motion_and_route_safe src/core/tests/test_large_terrain_scenario.py::test_large_terrain_validation_records_effective_global_planner_when_service_falls_back src/core/tests/test_sim_runtime_compat.py::test_legacy_sim_launch_global_planner_entrypoint_exists_and_is_guarded src/core/tests/test_sim_runtime_compat.py::test_legacy_manual_nova_scripts_default_to_current_robot_asset_paths src/core/tests/test_sim_runtime_compat.py::test_optional_go1_asset_contract_has_placeholder_readme src/core/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts -q
+python -m pytest src/runtime/tests/test_dynamic_obstacle_local_planner_gate.py src/runtime/tests/test_multifloor_sim_validation.py::test_command_flow_reports_requested_and_effective_algorithm_backends src/runtime/tests/test_multifloor_sim_validation.py::test_pct_global_plan_reports_effective_planner_after_fallback src/runtime/tests/test_large_terrain_scenario.py::test_large_terrain_validation_report_is_non_motion_and_route_safe src/runtime/tests/test_large_terrain_scenario.py::test_large_terrain_validation_records_effective_global_planner_when_service_falls_back src/runtime/tests/test_sim_runtime_compat.py::test_legacy_sim_launch_global_planner_entrypoint_exists_and_is_guarded src/runtime/tests/test_sim_runtime_compat.py::test_legacy_manual_nova_scripts_default_to_current_robot_asset_paths src/runtime/tests/test_sim_runtime_compat.py::test_optional_go1_asset_contract_has_placeholder_readme src/runtime/tests/test_sim_runtime_compat.py::test_sim_boundary_indexes_document_stable_contracts -q
 # 10 passed
 
-python -m pytest src/core/tests/test_runtime_backend_switch.py src/core/tests/test_perception_decoupled.py -q
+python -m pytest src/runtime/tests/test_runtime_backend_switch.py src/runtime/tests/test_perception_decoupled.py -q
 # 33 passed
 
-python -m py_compile sim/scripts/run_global_planner.py sim/scripts/dynamic_obstacle_local_planner_gate.py sim/scripts/multifloor_nav_validation.py sim/scripts/large_terrain_nav_validation.py src/semantic/perception/semantic_perception/perception_module.py src/semantic/perception/semantic_perception/detector_module.py src/semantic/perception/semantic_perception/encoder_module.py
+python -m py_compile sim/scripts/run_global_planner.py sim/scripts/dynamic_obstacle_local_planner_gate.py sim/scripts/multifloor_nav_validation.py sim/scripts/large_terrain_nav_validation.py src/perception/semantic_perception/perception_module.py src/perception/semantic_perception/detector_module.py src/perception/semantic_perception/encoder_module.py
 # passed
 
-python -m pytest src/core/tests/test_multifloor_sim_validation.py -q
+python -m pytest src/runtime/tests/test_multifloor_sim_validation.py -q
 # 28 passed
 
-python -m pytest src/core/tests/test_large_terrain_scenario.py -q
+python -m pytest src/runtime/tests/test_large_terrain_scenario.py -q
 # 11 passed
 
 PYTHONPATH=src:. python sim/scripts/dynamic_obstacle_local_planner_gate.py --json-out artifacts/server_sim_closure/dynamic_obstacle_local_planner/report.json
@@ -999,14 +999,14 @@ PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_ful
 # simulation_only=true, real_robot_motion=false,
 # cmd_vel_sent_to_hardware=false.
 
-python -m pytest src/core/tests/test_server_sim_closure.py::test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py::test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports -q
 # RED before implementation: KeyError on summary["algorithm_backends"].
 # After implementation: 1 passed.
 
-python -m pytest src/core/tests/test_server_sim_closure.py::test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports src/core/tests/test_server_sim_closure.py::test_server_sim_closure_can_summarize_required_only src/core/tests/test_dynamic_obstacle_local_planner_gate.py src/core/tests/test_multifloor_sim_validation.py::test_command_flow_reports_requested_and_effective_algorithm_backends src/core/tests/test_multifloor_sim_validation.py::test_pct_global_plan_reports_effective_planner_after_fallback src/core/tests/test_large_terrain_scenario.py::test_large_terrain_validation_report_is_non_motion_and_route_safe src/core/tests/test_large_terrain_scenario.py::test_large_terrain_validation_records_effective_global_planner_when_service_falls_back -q
+python -m pytest src/runtime/tests/test_server_sim_closure.py::test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports src/runtime/tests/test_server_sim_closure.py::test_server_sim_closure_can_summarize_required_only src/runtime/tests/test_dynamic_obstacle_local_planner_gate.py src/runtime/tests/test_multifloor_sim_validation.py::test_command_flow_reports_requested_and_effective_algorithm_backends src/runtime/tests/test_multifloor_sim_validation.py::test_pct_global_plan_reports_effective_planner_after_fallback src/runtime/tests/test_large_terrain_scenario.py::test_large_terrain_validation_report_is_non_motion_and_route_safe src/runtime/tests/test_large_terrain_scenario.py::test_large_terrain_validation_records_effective_global_planner_when_service_falls_back -q
 # 8 passed
 
-python -m py_compile sim/scripts/server_sim_closure.py src/core/tests/test_server_sim_closure.py
+python -m py_compile sim/scripts/server_sim_closure.py src/runtime/tests/test_server_sim_closure.py
 # passed
 
 PYTHONPATH=src:. python sim/scripts/server_sim_closure.py --preset g4_server_full_sim --required-only --json-out artifacts/server_sim_closure_summary_g4_current.json

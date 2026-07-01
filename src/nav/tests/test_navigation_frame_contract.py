@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import json
 import time
 
 import numpy as np
 
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from core.msgs.nav import Odometry
-from nav.navigation_module import MissionState, NavigationModule
-from nav.waypoint_tracker import EV_STUCK, TrackerStatus
+from nav.mission.navigation import MissionState, Navigation
+from nav.mission.tracking.waypoint_tracker import EV_STUCK, TrackerStatus
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+from runtime.msgs.nav import Odometry
 
 
 class _RecordingPlanner:
@@ -36,6 +37,50 @@ class _RecordingPlanner:
             "resolution": resolution,
             "origin": origin,
         })
+
+
+class _PublicOnlyPlannerService:
+    is_ready = True
+    has_map = True
+
+    def __init__(self) -> None:
+        self._last_plan_report = {
+            "primary_planner": "pct",
+            "selected_planner": "astar",
+            "policy": "fallback_astar",
+            "fallback_reason": "pct path_safety failed",
+            "rejected_plans": [{"planner": "pct", "reason": "blocked"}],
+            "selected_path_safety": {"ok": False},
+            "reached_goal": True,
+        }
+
+    def __getattr__(self, name: str):
+        if name in {"_planner_name", "_plan_safety_policy", "_fallback_planner_name"}:
+            raise AssertionError(f"Navigation touched private planner field: {name}")
+        raise AttributeError(name)
+
+    @property
+    def last_plan_report(self):
+        return dict(self._last_plan_report)
+
+    @property
+    def map_artifact_gate(self):
+        return {"required": False, "ok": True}
+
+    def backend_status(self):
+        return {
+            "configured_backend": "pct",
+            "backend": "astar",
+            "fallback_backend": "astar",
+            "degraded": True,
+            "degraded_reason": "pct path_safety failed",
+        }
+
+    def plan(self, start: np.ndarray, goal: np.ndarray, **kwargs):
+        return [start.copy(), goal.copy()], 0.0
+
+    def update_map(self, grid, resolution=0.2, origin=None) -> None:
+        return None
 
 
 class _FlatZPlanner(_RecordingPlanner):
@@ -125,7 +170,7 @@ class _EmptyThenPathPlanner:
     def __init__(
         self,
         first_error: str = (
-            "GlobalPlannerService: primary planner returned empty path"
+            "GlobalPlanner: primary planner returned empty path"
         ),
     ) -> None:
         self.calls = 0
@@ -217,7 +262,7 @@ class _StuckTracker:
 
 
 def test_navigation_stop_releases_lifecycle_resources() -> None:
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation(planner="direct")
     nav.setup()
     nav.start()
 
@@ -228,13 +273,38 @@ def test_navigation_stop_releases_lifecycle_resources() -> None:
 
     assert nav.running is False
     assert nav.goal_pose._callback is None
-    assert nav._preview_executor._shutdown is True
+    assert nav._plan_preview.closed is True
 
     nav.stop()
 
 
+def test_navigation_status_uses_public_planner_service_contract() -> None:
+    nav = Navigation()
+    nav._planner_svc = _PublicOnlyPlannerService()
+    nav._odom_frame_id = "map"
+    nav._costmap_frame_id = "map"
+
+    try:
+        preview = nav.preview_plan(1.0, 0.0)
+        status = json.loads(nav.get_navigation_status())
+        health = nav.health()
+    finally:
+        nav.stop()
+
+    assert preview["planner"] == "astar"
+    assert preview["selected_planner"] == "astar"
+    assert preview["plan_safety_policy"] == "fallback_astar"
+    assert preview["fallback_reason"] == "pct path_safety failed"
+    assert status["plan_safety_policy"] == "fallback_astar"
+    assert status["last_plan_report"]["selected_planner"] == "astar"
+    assert health["planner_backend"]["configured_backend"] == "pct"
+    assert health["planner_backend"]["backend"] == "astar"
+    assert health["planner_backend"]["fallback_backend"] == "astar"
+    assert health["navigation"]["last_plan_report"]["policy"] == "fallback_astar"
+
+
 def test_navigation_reports_frame_mismatch_when_odometry_is_not_in_planning_frame():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     events: list[dict] = []
     nav.adapter_status._add_callback(events.append)
 
@@ -252,7 +322,7 @@ def test_navigation_reports_frame_mismatch_when_odometry_is_not_in_planning_fram
 
 
 def test_navigation_reports_frame_mismatch_when_costmap_is_not_in_planning_frame():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     nav._planner_svc = _RecordingPlanner()
     events: list[dict] = []
     nav.adapter_status._add_callback(events.append)
@@ -273,7 +343,7 @@ def test_navigation_reports_frame_mismatch_when_costmap_is_not_in_planning_frame
 
 
 def test_pct_navigation_does_not_global_replan_from_costmap_by_default():
-    nav = NavigationModule(planner="pct", enable_ros2_bridge=False)
+    nav = Navigation(planner="pct")
     planner = _RecordingPlanner()
     nav._planner_svc = planner
     mission_statuses: list[dict] = []
@@ -301,7 +371,7 @@ def test_pct_navigation_does_not_global_replan_from_costmap_by_default():
 
 
 def test_astar_navigation_can_still_replan_from_costmap_update():
-    nav = NavigationModule(planner="astar", enable_ros2_bridge=False)
+    nav = Navigation(planner="astar")
     planner = _RecordingPlanner()
     nav._planner_svc = planner
     nav._state = "EXECUTING"
@@ -321,9 +391,7 @@ def test_astar_navigation_can_still_replan_from_costmap_update():
 
 
 def test_navigation_anchors_planner_start_height_to_current_odom():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.35,
+    nav = Navigation(waypoint_threshold=0.35,
         final_waypoint_threshold=0.15,
     )
     nav._planner_svc = _FlatZPlanner()
@@ -350,10 +418,9 @@ def test_navigation_anchors_planner_start_height_to_current_odom():
 
 
 def test_navigation_inserts_robot_pose_before_projected_planner_start():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.2,
+    nav = Navigation(waypoint_threshold=0.2,
         final_waypoint_threshold=0.2,
+        allow_path_start_insert=True,
     )
     nav._planner_svc = _ProjectedStartPlanner()
     waypoints: list[PoseStamped] = []
@@ -381,9 +448,7 @@ def test_navigation_inserts_robot_pose_before_projected_planner_start():
 
 
 def test_navigation_goal_proximity_completion_is_disabled_by_default():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.2,
+    nav = Navigation(waypoint_threshold=0.2,
         final_waypoint_threshold=0.2,
     )
     assert nav._complete_path_on_goal_proximity is False
@@ -416,9 +481,7 @@ def test_navigation_goal_proximity_completion_is_disabled_by_default():
 
 
 def test_navigation_goal_proximity_completion_advances_patrol_when_enabled():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.2,
+    nav = Navigation(waypoint_threshold=0.2,
         final_waypoint_threshold=0.2,
         complete_path_on_goal_proximity=True,
         goal_proximity_completion_threshold=0.25,
@@ -438,7 +501,8 @@ def test_navigation_goal_proximity_completion_advances_patrol_when_enabled():
         {"x": 2.0, "y": 0.0, "z": 0.0},
         {"x": 4.0, "y": 0.0, "z": 0.0},
     ])
-    assert nav._state == "PATROLLING"
+    assert nav._state == "EXECUTING"
+    assert nav._mission_mode == "PATROL"
     assert nav._patrol_index == 0
     assert nav._tracker.wp_index == 1
 
@@ -447,7 +511,8 @@ def test_navigation_goal_proximity_completion_advances_patrol_when_enabled():
         frame_id="map",
     ))
 
-    assert nav._state == "PATROLLING"
+    assert nav._state == "EXECUTING"
+    assert nav._mission_mode == "PATROL"
     assert nav._patrol_index == 1
     assert np.allclose(nav._goal, np.array([4.0, 0.0, 0.0]))
     assert planner.plan_calls == 2
@@ -461,7 +526,7 @@ def test_navigation_goal_proximity_completion_advances_patrol_when_enabled():
 
 
 def test_navigation_accepts_map_frame_odometry_without_frame_mismatch_report():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     events: list[dict] = []
     nav.adapter_status._add_callback(events.append)
 
@@ -475,9 +540,7 @@ def test_navigation_accepts_map_frame_odometry_without_frame_mismatch_report():
 
 
 def test_navigation_defers_empty_path_until_costmap_retry_succeeds():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        defer_empty_path_planning_failure=True,
+    nav = Navigation(defer_empty_path_planning_failure=True,
         empty_path_retry_interval_s=0.1,
         empty_path_retry_timeout_s=5.0,
     )
@@ -526,9 +589,7 @@ def test_navigation_defers_empty_path_until_costmap_retry_succeeds():
 
 
 def test_navigation_patrol_keeps_patrolling_after_deferred_empty_path_retry():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        defer_empty_path_planning_failure=True,
+    nav = Navigation(defer_empty_path_planning_failure=True,
         empty_path_retry_interval_s=0.1,
         empty_path_retry_timeout_s=5.0,
         waypoint_threshold=0.15,
@@ -558,7 +619,8 @@ def test_navigation_patrol_keeps_patrolling_after_deferred_empty_path_retry():
     })
 
     assert planner.calls == 2
-    assert nav._state == "PATROLLING"
+    assert nav._state == "EXECUTING"
+    assert nav._mission_mode == "PATROL"
     assert nav._patrol_index == 0
 
     nav._on_odom(Odometry(
@@ -566,15 +628,14 @@ def test_navigation_patrol_keeps_patrolling_after_deferred_empty_path_retry():
         frame_id="map",
     ))
 
-    assert nav._state == "PATROLLING"
+    assert nav._state == "EXECUTING"
+    assert nav._mission_mode == "PATROL"
     assert nav._patrol_index == 1
     assert np.allclose(nav._goal, np.array([2.0, 0.0, 0.0]))
 
 
 def test_navigation_patrol_recovery_from_failed_empty_path_keeps_patrolling():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        defer_empty_path_planning_failure=True,
+    nav = Navigation(defer_empty_path_planning_failure=True,
         empty_path_retry_interval_s=0.1,
         empty_path_retry_timeout_s=0.2,
         waypoint_threshold=0.15,
@@ -618,20 +679,18 @@ def test_navigation_patrol_recovery_from_failed_empty_path_keeps_patrolling():
         "frame_id": "map",
     })
 
-    assert planner.calls == 2  # unchanged — no auto-recovery from FAILED
+    assert planner.calls == 2  # unchanged - no auto-recovery from FAILED
     assert nav._state == "FAILED"
     assert nav._patrol_index == 0
 
 
 def test_navigation_defers_unreachable_safe_goal_until_costmap_retry_succeeds():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        defer_empty_path_planning_failure=True,
+    nav = Navigation(defer_empty_path_planning_failure=True,
         empty_path_retry_interval_s=0.1,
         empty_path_retry_timeout_s=5.0,
     )
     planner = _EmptyThenPathPlanner(
-        "GlobalPlannerService: goal has no reachable free cell within 6.0m"
+        "GlobalPlanner: goal has no reachable free cell within 6.0m"
     )
     nav._planner_svc = planner
     mission_statuses: list[dict] = []
@@ -665,7 +724,7 @@ def test_navigation_defers_unreachable_safe_goal_until_costmap_retry_succeeds():
 
 
 def test_navigation_blocks_goal_when_odometry_is_not_in_planning_frame():
-    nav = NavigationModule(enable_ros2_bridge=False, allow_direct_goal_fallback=True)
+    nav = Navigation(allow_direct_goal_fallback=True)
     nav._planner_svc = _RecordingPlanner()
     events: list[dict] = []
     waypoints: list[PoseStamped] = []
@@ -689,7 +748,7 @@ def test_navigation_blocks_goal_when_odometry_is_not_in_planning_frame():
 
 
 def test_navigation_clears_motion_when_active_odometry_frame_mismatches():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     events: list[dict] = []
     clears: list[bool] = []
     zeros = []
@@ -718,7 +777,7 @@ def test_navigation_clears_motion_when_active_odometry_frame_mismatches():
 
 
 def test_navigation_clears_motion_when_active_costmap_frame_mismatches():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     nav._planner_svc = _RecordingPlanner()
     events: list[dict] = []
     clears: list[bool] = []
@@ -750,7 +809,7 @@ def test_navigation_clears_motion_when_active_costmap_frame_mismatches():
 
 
 def test_navigation_clears_motion_before_replanning_after_map_frame_jump():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     nav._planner_svc = _RecordingPlanner()
     clears: list[bool] = []
     zeros = []
@@ -780,7 +839,7 @@ def test_navigation_clears_motion_before_replanning_after_map_frame_jump():
 
 
 def test_navigation_passes_safe_goal_tolerance_to_planner_service():
-    nav = NavigationModule(enable_ros2_bridge=False, safe_goal_tolerance=0.0)
+    nav = Navigation(safe_goal_tolerance=0.0)
     planner = _RecordingPlanner()
     nav._planner_svc = planner
     nav._on_odom(Odometry(
@@ -797,9 +856,7 @@ def test_navigation_passes_safe_goal_tolerance_to_planner_service():
 
 
 def test_navigation_patrol_mode_survives_planning_and_advances_goals():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.15,
+    nav = Navigation(waypoint_threshold=0.15,
         final_waypoint_threshold=0.15,
     )
     planner = _RecordingPlanner()
@@ -814,7 +871,8 @@ def test_navigation_patrol_mode_survives_planning_and_advances_goals():
         {"x": 2.0, "y": 0.0, "z": 0.0},
     ])
 
-    assert nav._state == "PATROLLING"
+    assert nav._state == "EXECUTING"
+    assert nav._mission_mode == "PATROL"
     assert nav._patrol_index == 0
     assert np.allclose(nav._goal, np.array([1.0, 0.0, 0.0]))
 
@@ -823,14 +881,15 @@ def test_navigation_patrol_mode_survives_planning_and_advances_goals():
         frame_id="map",
     ))
 
-    assert nav._state == "PATROLLING"
+    assert nav._state == "EXECUTING"
+    assert nav._mission_mode == "PATROL"
     assert nav._patrol_index == 1
     assert np.allclose(nav._goal, np.array([2.0, 0.0, 0.0]))
     assert len(planner.safe_goal_tolerances) == 2
 
 
 def test_navigation_clears_motion_when_path_completes():
-    nav = NavigationModule(enable_ros2_bridge=False, waypoint_threshold=0.35)
+    nav = Navigation(waypoint_threshold=0.35)
     clears: list[bool] = []
     zeros = []
     nav.clear_path._add_callback(clears.append)
@@ -851,9 +910,7 @@ def test_navigation_clears_motion_when_path_completes():
 
 
 def test_navigation_replans_after_reaching_pct_repaired_partial_goal():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.15,
+    nav = Navigation(waypoint_threshold=0.15,
         final_waypoint_threshold=0.15,
     )
     planner = _PartialThenFullPlanner()
@@ -889,9 +946,7 @@ def test_navigation_replans_after_reaching_pct_repaired_partial_goal():
 
 
 def test_navigation_can_accept_repaired_partial_goal_as_exploration_progress():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.15,
+    nav = Navigation(waypoint_threshold=0.15,
         final_waypoint_threshold=0.15,
         accept_partial_goal_progress=True,
     )
@@ -935,9 +990,7 @@ def test_navigation_can_accept_repaired_partial_goal_as_exploration_progress():
 
 
 def test_navigation_partial_goal_repeat_ignore_expires_for_rolling_exploration():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        waypoint_threshold=0.15,
+    nav = Navigation(waypoint_threshold=0.15,
         final_waypoint_threshold=0.15,
         accept_partial_goal_progress=True,
         partial_goal_repeat_ignore_window_s=0.01,
@@ -970,7 +1023,7 @@ def test_navigation_partial_goal_repeat_ignore_expires_for_rolling_exploration()
 
 
 def test_navigation_soft_stop_holds_mission_without_clearing_path():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     events: list[dict] = []
     clears: list[bool] = []
     zeros = []
@@ -993,7 +1046,7 @@ def test_navigation_soft_stop_holds_mission_without_clearing_path():
 
 
 def test_navigation_hard_stop_clears_active_mission_path():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     events: list[dict] = []
     clears: list[bool] = []
     zeros = []
@@ -1007,6 +1060,8 @@ def test_navigation_hard_stop_clears_active_mission_path():
     nav._on_stop(2)
 
     assert nav._state == "IDLE"
+    assert nav._goal is None
+    assert nav._goal_frame_id is None
     assert nav._tracker.path_length == 0
     assert clears == [True]
     assert zeros[-1].linear.x == 0.0
@@ -1015,8 +1070,29 @@ def test_navigation_hard_stop_clears_active_mission_path():
     assert events[-1]["action"] == "mission_cleared"
 
 
+def test_navigation_timeout_stops_motion_and_clears_path():
+    nav = Navigation()
+    clears: list[bool] = []
+    zeros = []
+    nav.clear_path._add_callback(clears.append)
+    nav.recovery_cmd_vel._add_callback(zeros.append)
+    nav._state = MissionState.EXECUTING
+    nav._mission_start_time = time.time() - 10.0
+    nav._mission_timeout = 1.0
+    nav._goal = np.array([5.0, 0.0, 0.0])
+    nav._tracker.reset([np.array([2.0, 0.0, 0.0]), np.array([5.0, 0.0, 0.0])], nav._robot_pos)
+
+    nav._check_mission_timeout()
+
+    assert nav._state == MissionState.FAILED
+    assert nav._tracker.path_length == 0
+    assert clears == [True]
+    assert zeros[-1].linear.x == 0.0
+    assert zeros[-1].angular.z == 0.0
+
+
 def test_navigation_cancel_is_idempotent_motion_cleanup_while_idle():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     clears: list[bool] = []
     zeros = []
     nav.clear_path._add_callback(clears.append)
@@ -1036,7 +1112,7 @@ def test_navigation_cancel_is_idempotent_motion_cleanup_while_idle():
 
 
 def test_teleop_release_does_not_auto_resume_without_explicit_resume(monkeypatch):
-    nav = NavigationModule(enable_ros2_bridge=False, auto_resume_after_teleop=False)
+    nav = Navigation(auto_resume_after_teleop=False)
     nav._state = MissionState.EXECUTING
     nav._goal = np.array([1.0, 2.0, 0.0], dtype=float)
     planned: list[bool] = []
@@ -1048,13 +1124,13 @@ def test_teleop_release_does_not_auto_resume_without_explicit_resume(monkeypatch
     nav._on_teleop_active(False)
 
     assert planned == []
-    assert nav._state == MissionState.IDLE
+    assert nav._state == MissionState.PAUSED
     assert nav._pre_teleop_goal is None
     assert events[-1]["event"] == "teleop_release_resume_required"
 
 
 def test_external_strategy_stuck_recovery_defers_post_action_until_thread_done(monkeypatch):
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     nav._state = MissionState.EXECUTING
     nav._using_external_strategy_path = True
     nav._tracker = _StuckTracker()
@@ -1079,7 +1155,7 @@ def test_external_strategy_stuck_recovery_defers_post_action_until_thread_done(m
 
 
 def test_navigation_preview_rejects_non_map_odometry_frame():
-    nav = NavigationModule(enable_ros2_bridge=False)
+    nav = Navigation()
     nav._planner_svc = _RecordingPlanner()
     nav._on_odom(Odometry(
         pose=Pose(position=Vector3(1.0, 2.0, 0.0), orientation=Quaternion()),
@@ -1094,9 +1170,7 @@ def test_navigation_preview_rejects_non_map_odometry_frame():
 
 
 def test_external_strategy_path_reanchors_near_current_odometry():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        external_strategy_path_control=True,
+    nav = Navigation(external_strategy_path_control=True,
         external_strategy_start_tolerance_m=1.0,
     )
     global_paths: list[list[np.ndarray]] = []
@@ -1122,9 +1196,7 @@ def test_external_strategy_path_reanchors_near_current_odometry():
 
 
 def test_external_strategy_path_rejects_unanchored_paths():
-    nav = NavigationModule(
-        enable_ros2_bridge=False,
-        external_strategy_path_control=True,
+    nav = Navigation(external_strategy_path_control=True,
         external_strategy_start_tolerance_m=0.5,
     )
     global_paths: list[list[np.ndarray]] = []

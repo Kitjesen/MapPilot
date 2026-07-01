@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-# Prepare and verify a Linux server for LingTu ROS2/PCT/MuJoCo gates.
+# Prepare and verify a Linux server for LingTu portable planning/MuJoCo gates.
 #
 # This script is intentionally non-motion: it builds and validates software
 # gates only. It does not send robot goals, cmd_vel, or service commands to
@@ -9,11 +9,16 @@ set -euo pipefail
 #
 # Common usage on a server:
 #   cd /path/to/lingtu
-#   LINGTU_INSTALL_ROS2=1 LINGTU_CONDA_ENV=thunder2 \
+#   LINGTU_CONDA_ENV=thunder2 bash scripts/deploy/setup_server_ros_pct.sh
+#
+# Optional ROS2 compatibility lane, for legacy SLAM parity only:
+#   LINGTU_INSTALL_ROS2=1 LINGTU_RUN_ROS2_FASTLIO2=1 \
 #     bash scripts/deploy/setup_server_ros_pct.sh
 #
-# Optional FishROS path, when official apt setup is blocked in China:
-#   LINGTU_INSTALL_ROS2=1 LINGTU_USE_FISHROS=1 bash scripts/deploy/setup_server_ros_pct.sh
+# Optional FishROS path for that compatibility lane, when official apt setup is
+# blocked in China:
+#   LINGTU_INSTALL_ROS2=1 LINGTU_USE_FISHROS=1 \
+#     LINGTU_RUN_ROS2_FASTLIO2=1 bash scripts/deploy/setup_server_ros_pct.sh
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
@@ -25,10 +30,11 @@ CONDA_ENV="${LINGTU_CONDA_ENV:-}"
 SKIP_APT="${LINGTU_SKIP_APT:-0}"
 RUN_MUJOCO="${LINGTU_RUN_MUJOCO:-1}"
 RUN_PCT="${LINGTU_RUN_PCT:-1}"
+PCT_BUILD_LEGACY_NATIVE="${LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE:-0}"
 RUN_MULTIFLOOR="${LINGTU_RUN_MULTIFLOOR:-1}"
-RUN_NAV_CORE="${LINGTU_RUN_NAV_CORE:-1}"
-RUN_ROS2_LOCAL_PLANNER="${LINGTU_RUN_ROS2_LOCAL_PLANNER:-1}"
-RUN_ROS2_FASTLIO2="${LINGTU_RUN_ROS2_FASTLIO2:-1}"
+RUN_NAV_KERNEL="${LINGTU_RUN_NAV_KERNEL:-1}"
+RUN_ROS2_LOCAL_PLANNER="${LINGTU_RUN_ROS2_LOCAL_PLANNER:-0}"
+RUN_ROS2_FASTLIO2="${LINGTU_RUN_ROS2_FASTLIO2:-0}"
 RUN_ROUTECHECK_PREFLIGHT="${LINGTU_RUN_ROUTECHECK_PREFLIGHT:-1}"
 SETUP_CLOSURE_MAX_REPORT_AGE_S="${LINGTU_SETUP_CLOSURE_MAX_REPORT_AGE_S:-21600}"
 INSTALL_SYSTEM_DEPS="${LINGTU_INSTALL_SYSTEM_DEPS:-1}"
@@ -66,6 +72,11 @@ need_sudo() {
     return 0
   fi
   [[ -n "${SUDO_PASSWORD}" ]]
+}
+
+ros_compat_requested() {
+  [[ "${INSTALL_ROS2}" == "1" \
+    || "${RUN_ROS2_FASTLIO2}" == "1" ]]
 }
 
 sudo_cmd() {
@@ -182,12 +193,16 @@ install_system_deps() {
 
   log "installing base build/runtime dependencies"
   apt_get update
-  apt_get install -y \
+  local packages=(
     curl gnupg lsb-release software-properties-common \
-    build-essential cmake git python3-pip python3-venv \
-    python3-colcon-common-extensions python3-rosdep \
+    build-essential cmake git cargo python3-dev python3-pip python3-venv \
     libboost-all-dev libeigen3-dev libpcl-dev libyaml-cpp-dev \
     libopencv-dev patchelf
+  )
+  if ros_compat_requested; then
+    packages+=(python3-colcon-common-extensions python3-rosdep)
+  fi
+  apt_get install -y "${packages[@]}"
 }
 
 install_ros2_fishros() {
@@ -227,6 +242,7 @@ print_environment() {
   printf 'root=%s\n' "${ROOT}"
   printf 'python=%s\n' "$(python3 --version 2>&1)"
   printf 'python_path=%s\n' "$(command -v python3 || true)"
+  printf 'ros_compat_requested=%s\n' "$(ros_compat_requested && printf '1' || printf '0')"
   printf 'ros2=%s\n' "$(command -v ros2 || true)"
   printf 'colcon=%s\n' "$(command -v colcon || true)"
   printf 'cmake=%s\n' "$(cmake --version 2>/dev/null | head -1 || true)"
@@ -278,17 +294,38 @@ build_pct_runtime() {
   if [[ "${RUN_PCT}" != "1" ]]; then
     return
   fi
-  log "building PCT native runtime for this host Python ABI"
-  JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}" \
-    bash "${ROOT}/src/global_planning/pct_planner_runnable/build_host_x86_64.sh"
-}
-
-build_nav_core_runtime() {
-  if [[ "${RUN_NAV_CORE}" != "1" ]]; then
+  if [[ "${PCT_BUILD_LEGACY_NATIVE}" == "1" ]]; then
+    log "building PCT legacy native/GTSAM runtime for parity baselines"
+    LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE=1 \
+      JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}" \
+      bash "${ROOT}/src/nav/services/plan/global_planner/algorithm/pct/runtime/build_legacy_native_x86_64.sh"
     return
   fi
-  log "building nav_core nanobind runtime for production local planning"
-  bash "${ROOT}/scripts/build/build_nav_core.sh" --clean
+
+  log "building PCT Rust GPMP runtime"
+  python3 scripts/build/build_rust_kernels.py --target gpmp_trajectory_optimizer --release
+
+  local arch
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x86_64" ;;
+    aarch64|arm64) arch="aarch64" ;;
+    *) arch="$(uname -m)" ;;
+  esac
+  local release_dir="${ROOT}/src/kernels/planning/gpmp_trajectory_optimizer/target/release"
+  local out_dir="${ROOT}/src/nav/services/plan/global_planner/algorithm/pct/runtime/rust/${arch}"
+  mkdir -p "${out_dir}"
+  cp -a "${release_dir}/gpmp_optimize" "${out_dir}/"
+  cp -a "${release_dir}/liblingtu_gpmp_trajectory_optimizer.so" "${out_dir}/"
+  chmod +x "${out_dir}/gpmp_optimize"
+  log "PCT Rust GPMP runtime artifacts installed to ${out_dir}"
+}
+
+build_nav_kernel_runtime() {
+  if [[ "${RUN_NAV_KERNEL}" != "1" ]]; then
+    return
+  fi
+  log "building nav_kernel nanobind runtime for production local planning"
+  bash "${ROOT}/scripts/build/build_nav_kernel.sh" --clean
 }
 
 verify_mid360_pattern_asset() {
@@ -315,44 +352,11 @@ print(f"MID-360 pattern ok: {path} {digest}")
 PY
 }
 
-verify_ros2_local_planner_runtime() {
+warn_deprecated_ros2_local_planner_setup() {
   if [[ "${RUN_ROS2_LOCAL_PLANNER}" != "1" ]]; then
     return
   fi
-  if ! have ros2; then
-    log "ros2 is unavailable; cannot verify local_planner executables"
-    return 1
-  fi
-
-  log "verifying ROS2 local_planner executables"
-  local executables
-  if ! executables="$(ros2 pkg executables local_planner 2>&1)"; then
-    printf '%s\n' "${executables}" >&2
-    log "local_planner package is not visible; source install/setup.bash or rerun the colcon build"
-    return 1
-  fi
-
-  local required
-  for required in localPlanner pathFollower; do
-    if ! grep -Eq "^[[:space:]]*local_planner[[:space:]]+${required}([[:space:]]|\$)" <<<"${executables}"; then
-      printf '%s\n' "${executables}" >&2
-      log "local_planner executable missing: ${required}"
-      return 1
-    fi
-  done
-
-  log "verifying ROS2 pct_adapters executable"
-  local adapter_executables
-  if ! adapter_executables="$(ros2 pkg executables pct_adapters 2>&1)"; then
-    printf '%s\n' "${adapter_executables}" >&2
-    log "pct_adapters package is not visible; source install/setup.bash or rerun the colcon build"
-    return 1
-  fi
-  if ! grep -Eq "^[[:space:]]*pct_adapters[[:space:]]+pct_path_adapter([[:space:]]|\$)" <<<"${adapter_executables}"; then
-    printf '%s\n' "${adapter_executables}" >&2
-    log "pct_adapters executable missing: pct_path_adapter"
-    return 1
-  fi
+  log "LINGTU_RUN_ROS2_LOCAL_PLANNER=1 is deprecated and ignored; nav_kernel/nanobind is the production local-planning runtime"
 }
 
 verify_ros2_fastlio2_runtime() {
@@ -383,34 +387,19 @@ verify_ros2_fastlio2_runtime() {
   fi
 }
 
-build_ros2_local_planner_runtime() {
-  local distro="$1"
+build_ros2_local_planner_setup() {
+  local _distro="$1"
   if [[ "${RUN_ROS2_LOCAL_PLANNER}" != "1" ]]; then
-    log "LINGTU_RUN_ROS2_LOCAL_PLANNER=0; skipping ROS2 local_planner build"
+    log "skipping legacy ROS2 local_planner build; nav_kernel/nanobind is the production local-planning runtime"
     return
   fi
-  if ! have ros2; then
-    log "ros2 is unavailable; cannot build ROS2 local_planner package"
-    return 1
-  fi
-  if ! have colcon; then
-    log "colcon is unavailable; install python3-colcon-common-extensions first"
-    return 1
-  fi
-
-  log "building ROS2 local_planner package and dependencies"
-  colcon build \
-    --packages-up-to local_planner pct_adapters \
-    --merge-install \
-    --cmake-args -DBUILD_TESTING=OFF
-  source_ros_if_present "${distro}"
-  verify_ros2_local_planner_runtime
+  warn_deprecated_ros2_local_planner_setup
 }
 
 build_ros2_fastlio2_runtime() {
   local distro="$1"
   if [[ "${RUN_ROS2_FASTLIO2}" != "1" ]]; then
-    log "LINGTU_RUN_ROS2_FASTLIO2=0; skipping ROS2 fastlio2 build"
+    log "LINGTU_RUN_ROS2_FASTLIO2=0; skipping optional ROS2 fastlio2 build"
     return
   fi
   if ! have ros2; then
@@ -447,7 +436,7 @@ run_verification() {
   if [[ "${RUN_PCT}" == "1" ]]; then
     log "PCT runtime inspection"
     python3 - <<'PY'
-from global_planning.pct_planner_runnable.runtime import inspect_pct_runtime
+from nav.services.plan.global_planner.algorithm.pct.runtime.api import inspect_pct_runtime
 import json
 print(json.dumps(inspect_pct_runtime(), indent=2, ensure_ascii=False))
 PY
@@ -455,14 +444,14 @@ PY
 
   log "focused API/runtime tests"
   local focused_tests=(
-    src/core/tests/test_gateway_commands.py
-    src/core/tests/test_gateway_route_split.py
+    src/runtime/tests/test_gateway_commands.py
+    src/runtime/tests/test_gateway_route_split.py
   )
   if [[ "${RUN_PCT}" == "1" ]]; then
-    focused_tests+=(src/core/tests/test_pct_runnable_runtime.py)
+    focused_tests+=(src/runtime/tests/test_pct_runtime.py)
   fi
   if [[ "${RUN_MUJOCO}" == "1" ]]; then
-    focused_tests+=(src/core/tests/test_sim_runtime_compat.py)
+    focused_tests+=(src/runtime/tests/test_sim_runtime_adapters.py)
   fi
   local existing_tests=()
   local test_path
@@ -556,8 +545,8 @@ main() {
   install_system_deps
   install_python_deps
   build_pct_runtime
-  build_nav_core_runtime
-  build_ros2_local_planner_runtime "${distro}"
+  build_nav_kernel_runtime
+  build_ros2_local_planner_setup "${distro}"
   build_ros2_fastlio2_runtime "${distro}"
   verify_mid360_pattern_asset
   run_verification

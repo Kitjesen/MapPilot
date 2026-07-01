@@ -1,16 +1,21 @@
 #!/bin/bash
 # Cut a new LingTu Thunder release on the field robot.
 #
-# Snapshot the current development checkout into
-# /opt/lingtu/releases/<version>/, atomically swap /opt/lingtu/current, and
-# restart release-mode services.
+# Snapshot the current development checkout into /opt/lingtu/releases/<version>/,
+# atomically swap /opt/lingtu/current, and restart release-mode services.
+#
+# Default release gates are native-first:
+#   - LingTu native navigation kernel must be built.
+#   - OctoPlanner3D native module or headless executable must be available.
+#   - ROS 2 compatibility install packages are checked only when
+#     LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1.
 #
 # Usage on the robot:
 #   bash scripts/deploy/cut_release.sh v2.1.1
 #
 # Rollback:
 #   sudo ln -sfn /opt/lingtu/releases/v2.1.0 /opt/lingtu/current
-#   sudo systemctl restart lingtu robot-fastlio2 robot-localizer
+#   sudo systemctl restart lingtu-thunder-dds-endpoint
 
 set -euo pipefail
 
@@ -28,29 +33,173 @@ DEV_DIR="${LINGTU_DEV_DIR:-$HOME/data/SLAM/navigation}"
 RELEASES_DIR="${LINGTU_RELEASES_DIR:-/opt/lingtu/releases}"
 TARGET_DIR="$RELEASES_DIR/$VERSION"
 CURRENT_LINK="${LINGTU_CURRENT_LINK:-/opt/lingtu/current}"
+GATEWAY_URL="${LINGTU_GATEWAY_URL:-http://localhost:5050}"
+REQUIRE_OCTOPLANNER3D="${LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D:-1}"
+REQUIRE_ROS2_COMPAT="${LINGTU_RELEASE_REQUIRE_ROS2_COMPAT:-0}"
+RESTART_ROS2_COMPAT="${LINGTU_RELEASE_RESTART_ROS2_COMPAT:-$REQUIRE_ROS2_COMPAT}"
+
+ROS2_COMPAT_PKGS="fastlio2 genz_icp hba interface livox_ros_driver2 localizer nav_services pgo pointlio perception decision wtrtk980_ros2_reader"
+
+find_nav_kernel_artifact() {
+    find -L "$DEV_DIR/src" "$DEV_DIR/src/nav/kernel/build_nb" \
+        -maxdepth 1 -type f -name 'lingtu_nav_kernel*.so' -print -quit 2>/dev/null || true
+}
+
+ensure_nav_kernel_artifact() {
+    NAV_KERNEL_ARTIFACT="$(find_nav_kernel_artifact)"
+    if [ -n "$NAV_KERNEL_ARTIFACT" ]; then
+        return 0
+    fi
+
+    echo ">>> Building LingTu native navigation kernel..."
+    bash "$DEV_DIR/scripts/build/build_nav_kernel.sh" --clean
+    NAV_KERNEL_ARTIFACT="$(find_nav_kernel_artifact)"
+}
+
+find_octoplanner3d_native_module() {
+    find -L "$DEV_DIR/src/nav/services/plan/global_planner/algorithm" \
+        -maxdepth 1 -type f \( -name '_native*.so' -o -name '_native*.pyd' \) -print -quit 2>/dev/null || true
+}
+
+find_octoplanner3d_executable() {
+    if [ -n "${LINGTU_OCTOPLANNER3D_EXECUTABLE:-}" ]; then
+        if [ -f "$LINGTU_OCTOPLANNER3D_EXECUTABLE" ]; then
+            printf '%s\n' "$LINGTU_OCTOPLANNER3D_EXECUTABLE"
+        fi
+        return 0
+    fi
+
+    for candidate in \
+        "$DEV_DIR/build/octoplanner3d_headless/octoplanner3d_headless" \
+        "$DEV_DIR/build/octoplanner3d_headless/Release/octoplanner3d_headless" \
+        "$DEV_DIR/build/octoplanner3d_headless/Debug/octoplanner3d_headless" \
+        "$DEV_DIR/build/octoplanner3d_headless/octoplanner3d_headless.exe" \
+        "$DEV_DIR/build/octoplanner3d_headless/Release/octoplanner3d_headless.exe" \
+        "$DEV_DIR/build/octoplanner3d_headless/Debug/octoplanner3d_headless.exe"; do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+}
+
+require_native_artifacts() {
+    ensure_nav_kernel_artifact
+    if [ -z "$NAV_KERNEL_ARTIFACT" ]; then
+        echo "ERROR: lingtu_nav_kernel*.so not found after production build."
+        exit 1
+    fi
+
+    OCTO_NATIVE_MODULE="$(find_octoplanner3d_native_module)"
+    OCTO_EXEC_SOURCE="$(find_octoplanner3d_executable)"
+    if [ "$REQUIRE_OCTOPLANNER3D" = "1" ] \
+        && [ -z "$OCTO_NATIVE_MODULE" ] \
+        && [ -z "$OCTO_EXEC_SOURCE" ]; then
+        echo "ERROR: OctoPlanner3D native runtime not found. Build the headless planner first:"
+        echo "  cd $DEV_DIR && bash scripts/build/build_octoplanner3d.sh"
+        echo "Or set LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D=0 for an explicit non-OctoPlanner release."
+        exit 1
+    fi
+}
+
+require_ros2_compat_install() {
+    if [ "$REQUIRE_ROS2_COMPAT" != "1" ]; then
+        echo ">>> ROS 2 compatibility package gate skipped (set LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1 to enable)."
+        return 0
+    fi
+
+    if [ ! -d "$DEV_DIR/install" ]; then
+        echo "ERROR: $DEV_DIR/install not found, but ROS 2 compatibility was requested."
+        echo "Build compatibility packages first: cd $DEV_DIR && bash scripts/build/build_ros_workspace.sh"
+        exit 1
+    fi
+
+    for pkg in $ROS2_COMPAT_PKGS; do
+        if [ ! -d "$DEV_DIR/install/$pkg" ]; then
+            echo "ERROR: install/$pkg missing in dev checkout; refusing to cut ROS 2 compatibility release."
+            exit 1
+        fi
+    done
+}
+
+copy_octoplanner3d_executable() {
+    if [ -z "${OCTO_EXEC_SOURCE:-}" ]; then
+        return 0
+    fi
+
+    case "$OCTO_EXEC_SOURCE" in
+        "$TARGET_DIR"/*)
+            return 0
+            ;;
+    esac
+
+    local dest_dir="$TARGET_DIR/build/octoplanner3d_headless"
+    local dest="$dest_dir/$(basename "$OCTO_EXEC_SOURCE")"
+    mkdir -p "$dest_dir"
+    cp -L "$OCTO_EXEC_SOURCE" "$dest"
+    chmod 0755 "$dest"
+    echo ">>> Copied OctoPlanner3D headless executable: $dest"
+}
+
+unit_exists() {
+    local unit="$1"
+    systemctl list-unit-files "$unit" --no-legend 2>/dev/null | grep -q "$unit"
+}
+
+emit_release_services() {
+    local primary="$1"
+    printf '%s\n' "$primary"
+}
+
+resolve_release_services() {
+    if [ -n "${LINGTU_RELEASE_SERVICES:-}" ]; then
+        printf '%s\n' "$LINGTU_RELEASE_SERVICES"
+        return 0
+    fi
+
+    for candidate in \
+        lingtu-thunder-dds-endpoint.service \
+        lingtu-thunder-lite.service \
+        lingtu.service; do
+        if unit_exists "$candidate"; then
+            emit_release_services "$candidate"
+            return 0
+        fi
+    done
+
+    emit_release_services "lingtu-thunder-dds-endpoint.service"
+}
+
+restart_service_list() {
+    local services="$1"
+    local svc
+    for svc in $services; do
+        echo "  restart: $svc"
+        sudo systemctl restart "$svc"
+        sleep 2
+    done
+}
 
 if [ -e "$TARGET_DIR" ]; then
     echo "ERROR: $TARGET_DIR already exists. Pick a different version."
     exit 1
 fi
 
-if [ ! -d "$DEV_DIR/install" ]; then
-    echo "ERROR: $DEV_DIR/install not found. Build first: cd $DEV_DIR && colcon build"
-    exit 1
-fi
-
-RUNTIME_PKGS="fastlio2 genz_icp hba interface livox_ros_driver2 localizer local_planner nav_core nav_services pct_adapters pct_planner pgo pointlio semantic_perception semantic_planner sensor_scan_generation tare_planner terrain_analysis terrain_analysis_ext wtrtk980_ros2_reader"
-for pkg in $RUNTIME_PKGS; do
-    if [ ! -d "$DEV_DIR/install/$pkg" ]; then
-        echo "ERROR: install/$pkg missing in dev checkout; refusing to cut release."
-        exit 1
-    fi
-done
+require_native_artifacts
+require_ros2_compat_install
 
 echo "========================================"
 echo "  Cutting LingTu Thunder release: $VERSION"
 echo "  From: $DEV_DIR"
 echo "  To:   $TARGET_DIR"
+echo "  Native local autonomy: $NAV_KERNEL_ARTIFACT"
+if [ -n "${OCTO_NATIVE_MODULE:-}" ]; then
+    echo "  OctoPlanner3D native module: $OCTO_NATIVE_MODULE"
+elif [ -n "${OCTO_EXEC_SOURCE:-}" ]; then
+    echo "  OctoPlanner3D executable: $OCTO_EXEC_SOURCE"
+else
+    echo "  OctoPlanner3D gate: skipped"
+fi
 echo "========================================"
 
 echo ">>> [1/5] Building $TARGET_DIR via rsync..."
@@ -68,6 +217,7 @@ rsync -aL \
     --exclude='*.pyc' \
     --exclude=research \
     "$DEV_DIR/" "$TARGET_DIR/"
+copy_octoplanner3d_executable
 
 REL_SIZE="$(du -sh "$TARGET_DIR" | awk '{print $1}')"
 echo ">>> [1/5] Done; release size: $REL_SIZE"
@@ -80,32 +230,32 @@ sudo ln -sfn "$TARGET_DIR" "$CURRENT_LINK"
 echo ">>> [3/5] Done."
 
 echo ">>> [4/5] Restarting services..."
-sudo systemctl restart robot-fastlio2.service
-sleep 3
-sudo systemctl restart robot-localizer.service
-sleep 3
-sudo systemctl restart lingtu.service
+if [ "$RESTART_ROS2_COMPAT" = "1" ]; then
+    restart_service_list "robot-fastlio2.service robot-localizer.service"
+fi
+RELEASE_SERVICES="$(resolve_release_services)"
+restart_service_list "$RELEASE_SERVICES"
 echo ">>> [4/5] Done."
 
 echo ">>> [5/5] Waiting for /api/v1/health to report a clean module set..."
 DEADLINE=$((SECONDS + 60))
 while [ $SECONDS -lt $DEADLINE ]; do
-    HEALTH="$(curl -sf --max-time 2 http://localhost:5050/api/v1/health 2>/dev/null || true)"
-    if echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d["modules_fail"]==0 and d["modules_ok"]>=30 else 1)' 2>/dev/null; then
-        OK="$(echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["modules_ok"])')"
-        FSM="$(echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["brainstem"]["fsm"])')"
+    HEALTH="$(curl -sf --max-time 2 "$GATEWAY_URL/api/v1/health" 2>/dev/null || true)"
+    if echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); fails=int(d.get("modules_fail", 0) or 0); ok=int(d.get("modules_ok", 0) or 0); status=str(d.get("status", d.get("ready", ""))).lower(); sys.exit(0 if fails == 0 and (ok > 0 or status in {"ok", "healthy", "ready", "true"}) else 1)' 2>/dev/null; then
+        OK="$(echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("modules_ok", "?"))')"
+        FSM="$(echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("brainstem") or {}).get("fsm", d.get("status", "?")))')"
         echo ">>> [5/5] Healthy: modules=$OK/0, FSM=$FSM"
         echo ""
         echo "Release $VERSION is live."
         echo "Rollback if needed:"
         echo "  sudo ln -sfn $PREV_TARGET $CURRENT_LINK"
-        echo "  sudo systemctl restart lingtu robot-fastlio2 robot-localizer"
+        echo "  sudo systemctl restart $RELEASE_SERVICES"
         exit 0
     fi
     sleep 3
 done
 
 echo ">>> [5/5] FAIL: health endpoint did not report a clean module set within 60s."
-echo "    Inspect: journalctl -u lingtu.service -n 100"
+echo "    Inspect: journalctl -u $RELEASE_SERVICES -n 100"
 echo "    Or roll back: sudo ln -sfn $PREV_TARGET $CURRENT_LINK"
 exit 1

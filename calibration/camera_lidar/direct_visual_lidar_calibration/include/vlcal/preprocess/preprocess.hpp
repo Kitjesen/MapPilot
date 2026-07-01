@@ -2,7 +2,7 @@
 
 #include <string>
 #include <vector>
-#include <opencv2/core.hpp>
+#include <opencv2/runtime.hpp>
 #include <boost/program_options.hpp>
 #include <vlcal/common/frame.hpp>
 #include <vlcal/common/raw_points.hpp>

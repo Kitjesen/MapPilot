@@ -1,4 +1,4 @@
-"""Go1 autonomous navigation — 3D MuJoCo demo with full Blueprint pipeline.
+"""Go1 autonomous navigation 閳?3D MuJoCo demo with full Blueprint pipeline.
 
 Professional navigation demo showing:
   - Go1 RL walking in 3D MuJoCo scene
@@ -9,8 +9,8 @@ Professional navigation demo showing:
   - INFO text panel (top-left)
 
 Module pipeline:
-  Go1SimDriverModule -> LiveMapper -> NavigationModule (A*)
-  -> LocalPlannerModule -> PathFollowerModule -> Go1SimDriverModule (closed loop)
+  Go1SimDriverModule -> LiveMapper -> Navigation (A*)
+  -> LocalPlanner -> PathFollower -> Go1SimDriverModule (closed loop)
 
 Run on Windows (GPU, MuJoCo viewer works):
   cd D:\\inovxio\\brain\\lingtu
@@ -33,10 +33,10 @@ from typing import List, Optional
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Path setup — Windows local, NOT S100P
+# Path setup 閳?Windows local, NOT S100P
 # ---------------------------------------------------------------------------
 
-# Remove any leftover EGL override — on Windows we use WGL (default)
+# Remove any leftover EGL override 閳?on Windows we use WGL (default)
 os.environ.pop("MUJOCO_GL", None)
 
 # Repo root is two levels up from sim/scripts/
@@ -62,23 +62,23 @@ logger = logging.getLogger("go1_nav_full")
 # Module framework imports
 # ---------------------------------------------------------------------------
 
-from core.module import Module
-from core.blueprint import Blueprint
-from core.stream import In, Out
-from core.msgs.geometry import PoseStamped, Pose, Vector3, Quaternion
-from core.msgs.nav import Odometry
-from core.msgs.sensor import PointCloud
+from runtime.module import Module
+from runtime.blueprint import Blueprint
+from runtime.stream import In, Out
+from runtime.msgs.geometry import PoseStamped, Pose, Vector3, Quaternion
+from runtime.msgs.nav import Odometry
+from runtime.msgs.sensor import PointCloud
 
 from drivers.sim.go1_sim_driver import Go1SimDriverModule
-from nav.navigation_module import NavigationModule, MissionState
-from base_autonomy.modules.local_planner_module import LocalPlannerModule
-from base_autonomy.modules.path_follower_module import PathFollowerModule
-from base_autonomy.modules.terrain_module import TerrainModule
+from nav.mission.navigation import Navigation, MissionState
+from nav.services.plan.local_planner.service import LocalPlanner
+from nav.local.path_follower import PathFollower
+from nav.local.terrain import Terrain
 
 from sim.engine.core.world import ObstacleConfig
 
 # ---------------------------------------------------------------------------
-# LiveMapper — inline Module (layer 3)
+# LiveMapper 閳?inline Module (layer 3)
 # ---------------------------------------------------------------------------
 
 class LiveMapper(Module, layer=3):
@@ -209,7 +209,7 @@ GOAL_XY = (6.0, 1.5)
 # Build & start the Blueprint pipeline
 # ---------------------------------------------------------------------------
 
-logger.info("=== Go1 3D Navigation Demo — LingTu Blueprint ===")
+logger.info("=== Go1 3D Navigation Demo 閳?LingTu Blueprint ===")
 
 bp = Blueprint()
 
@@ -221,11 +221,11 @@ bp.add(Go1SimDriverModule,
 
 bp.add(LiveMapper, goal_xy=GOAL_XY, goal_delay=3.0)
 
-bp.add(TerrainModule, backend="simple")
-bp.add(LocalPlannerModule, backend="cmu_py")
-bp.add(PathFollowerModule, backend="pid", max_speed=0.4, lookahead=1.5)
+bp.add(Terrain, backend="simple")
+bp.add(LocalPlanner, backend="cmu_py")
+bp.add(PathFollower, backend="pid", max_speed=0.4, lookahead=1.5)
 
-bp.add(NavigationModule,
+bp.add(Navigation,
        planner="astar",
        waypoint_threshold=2.0,
        downsample_dist=1.0,
@@ -233,30 +233,30 @@ bp.add(NavigationModule,
        max_replan_count=3)
 
 # Closed-loop wiring
-bp.wire("Go1SimDriverModule", "odometry",    "NavigationModule",   "odometry")
-bp.wire("Go1SimDriverModule", "odometry",    "LocalPlannerModule", "odometry")
-bp.wire("Go1SimDriverModule", "odometry",    "PathFollowerModule", "odometry")
+bp.wire("Go1SimDriverModule", "odometry",    "nav.mission",   "odometry")
+bp.wire("Go1SimDriverModule", "odometry",    "nav.local_planner", "odometry")
+bp.wire("Go1SimDriverModule", "odometry",    "nav.path_follower", "odometry")
 bp.wire("Go1SimDriverModule", "odometry",    "LiveMapper",         "odom_in")
 bp.wire("Go1SimDriverModule", "lidar_cloud", "LiveMapper",         "lidar_in")
-bp.wire("Go1SimDriverModule", "lidar_cloud", "TerrainModule",      "map_cloud")
-bp.wire("Go1SimDriverModule", "odometry",    "TerrainModule",      "odometry")
-bp.wire("TerrainModule",      "terrain_map", "LocalPlannerModule", "terrain_map")
-bp.wire("LiveMapper",         "costmap_out", "NavigationModule",   "costmap")
-bp.wire("LiveMapper",         "goal_cmd",    "NavigationModule",   "goal_pose")
-bp.wire("NavigationModule",   "waypoint",    "LocalPlannerModule", "waypoint")
-bp.wire("LocalPlannerModule", "local_path",  "PathFollowerModule", "local_path")
-bp.wire("PathFollowerModule", "cmd_vel",     "Go1SimDriverModule", "cmd_vel")
+bp.wire("Go1SimDriverModule", "lidar_cloud", "nav.terrain",      "map_cloud")
+bp.wire("Go1SimDriverModule", "odometry",    "nav.terrain",      "odometry")
+bp.wire("nav.terrain",      "terrain_map", "nav.local_planner", "terrain_map")
+bp.wire("LiveMapper",         "costmap_out", "nav.mission",   "costmap")
+bp.wire("LiveMapper",         "goal_cmd",    "nav.mission",   "goal_pose")
+bp.wire("nav.mission",   "waypoint",    "nav.local_planner", "waypoint")
+bp.wire("nav.local_planner", "local_path",  "nav.path_follower", "local_path")
+bp.wire("nav.path_follower", "cmd_vel",     "Go1SimDriverModule", "cmd_vel")
 
 system = bp.build()
 
 # Grab module references before start (refs are stable)
 driver: Go1SimDriverModule = system.get_module("Go1SimDriverModule")
 mapper: LiveMapper          = system.get_module("LiveMapper")
-nav: NavigationModule       = system.get_module("NavigationModule")
+nav: Navigation       = system.get_module("nav.mission")
 
 logger.info("Starting Module pipeline (sim thread launches inside driver)...")
 system.start()
-logger.info("Pipeline running — main thread entering render loop.")
+logger.info("Pipeline running 閳?main thread entering render loop.")
 
 # ---------------------------------------------------------------------------
 # Renderer setup (main thread only)
@@ -271,7 +271,7 @@ while driver._model is None and _t_wait < 15.0:
     time.sleep(0.1)
     _t_wait += 0.1
 if driver._model is None:
-    logger.error("Driver model not loaded after 15s — aborting.")
+    logger.error("Driver model not loaded after 15s 閳?aborting.")
     system.stop()
     sys.exit(1)
 
@@ -330,7 +330,7 @@ def _inject_3d_overlays(
     scn,
     lidar_pts: np.ndarray,     # Nx3 world-frame LiDAR hit positions
     global_path: list,         # list of np.ndarray [x,y,z] waypoints
-    trail: list,               # list of (x,y) tuples — robot history
+    trail: list,               # list of (x,y) tuples 閳?robot history
     robot_z: float,            # robot Z for trail elevation
     goal: tuple,               # (x, y) goal position
     goal_z: float = 0.15,
@@ -504,7 +504,7 @@ frame_idx    = 0
 t_render_start = time.time()
 spf = 1.0 / FPS
 
-logger.info("Recording up to %ds @ %d fps → %s", MAX_S, FPS, OUTPUT)
+logger.info("Recording up to %ds @ %d fps 閳?%s", MAX_S, FPS, OUTPUT)
 
 while frame_idx < max_frames:
     t_frame_start = time.monotonic()
@@ -534,7 +534,7 @@ while frame_idx < max_frames:
         trail_snap = list(mapper.trail)
         scans_snap = mapper.scans
 
-    # Snapshot global path from NavigationModule
+    # Snapshot global path from Navigation
     nav_path_snap = list(nav._path) if nav._path else []
 
     # --- Camera: smoothly follow robot ---

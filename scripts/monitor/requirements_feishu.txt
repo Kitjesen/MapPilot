@@ -1,8 +1,2 @@
-# 飞书机器人 thunder 依赖包
-# 安装: pip3 install -r requirements_feishu.txt
-
-# 飞书官方 SDK
+# Feishu/Lark monitor bot dependencies.
 lark-oapi>=1.5.3
-
-# ROS2 Python 客户端 (通常已随 ROS2 安装)
-# rclpy  # 如果未安装，取消注释此行

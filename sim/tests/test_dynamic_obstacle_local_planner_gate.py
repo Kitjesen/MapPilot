@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import subprocess
@@ -9,8 +9,8 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from core.msgs.geometry import Pose, PoseStamped, Vector3
-from core.msgs.nav import Path as NavPath
+from runtime.msgs.geometry import Pose, PoseStamped, Vector3
+from runtime.msgs.nav import Path as NavPath
 from sim.scripts import dynamic_obstacle_local_planner_gate
 from sim.scripts.dynamic_obstacle_local_planner_gate import run_gate
 
@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def test_dynamic_obstacle_local_planner_gate_blocks_unsupported_windows_host(
     monkeypatch,
 ):
-    monkeypatch.setattr(dynamic_obstacle_local_planner_gate, "LocalPlannerModule", None)
+    monkeypatch.setattr(dynamic_obstacle_local_planner_gate, "nav.local_planner", None)
 
     def fail_load_runtime():
         raise AssertionError("unsupported Windows guard should run before runtime import")
@@ -79,7 +79,7 @@ def test_dynamic_obstacle_local_planner_gate_cli_writes_red_report_on_windows(tm
 def test_dynamic_obstacle_local_planner_gate_replans_without_hardware_cmd_vel():
     if sys.platform.startswith("win"):
         pytest.skip("Windows/MINGW NumPy local planner runtime is intentionally blocked")
-    pytest.importorskip("_nav_core")
+    pytest.importorskip("lingtu_nav_kernel")
 
     report = run_gate(backend="nanobind")
 
@@ -130,7 +130,7 @@ def test_dynamic_obstacle_local_planner_gate_reports_effective_backend_after_fal
                 {
                     "configured": backend,
                     "degraded": self._backend != backend,
-                    "degraded_reason": "compatible _nav_core missing"
+                    "degraded_reason": "compatible LingTu native navigation kernel missing"
                     if self._backend != backend
                     else "",
                 },
@@ -174,7 +174,7 @@ def test_dynamic_obstacle_local_planner_gate_reports_effective_backend_after_fal
 
     monkeypatch.setattr(
         dynamic_obstacle_local_planner_gate,
-        "LocalPlannerModule",
+        "nav.local_planner",
         FakeLocalPlanner,
     )
 
@@ -190,7 +190,7 @@ def test_dynamic_obstacle_local_planner_gate_reports_effective_backend_after_fal
     assert report["algorithm_backends"]["local_planner"]["degraded"] is True
     assert (
         report["algorithm_backends"]["local_planner"]["degraded_reason"]
-        == "compatible _nav_core missing"
+        == "compatible LingTu native navigation kernel missing"
     )
     assert report["algorithm_backends"]["local_planner"]["exercised_by"] == "dynamic_obstacle"
     assert report["algorithm_backends"]["path_follower"]["status"] == "not_exercised"

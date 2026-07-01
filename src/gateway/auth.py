@@ -93,7 +93,7 @@ def _get_configured_key() -> str | None:
     if key:
         return key
     try:
-        from core.config import get_config
+        from runtime.config import get_config
         cfg = get_config()
         key = cfg.raw.get("gateway", {}).get("api_key")
         if key:

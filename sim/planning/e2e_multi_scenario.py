@@ -108,8 +108,8 @@ class MultiScenarioNode(Node):
         self._pub_static_tf()
 
         # Pubs
-        self.pub_odom    = self.create_publisher(Odometry,    '/nav/odometry',    10)
-        self.pub_cloud   = self.create_publisher(PointCloud2, '/nav/map_cloud',   10)
+        self.pub_odom    = self.create_publisher(Odometry,    '/slam/odometry',    10)
+        self.pub_cloud   = self.create_publisher(PointCloud2, '/slam/map_cloud',   10)
         self.pub_terrain = self.create_publisher(PointCloud2, '/nav/terrain_map', 10)
         self.pub_path    = self.create_publisher(Path,        '/nav/global_path', 10)
 

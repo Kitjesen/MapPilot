@@ -1,21 +1,21 @@
 ﻿"""
-NaviMind Habitat Agent — BA-HSG + Fast-Slow 零样本 ObjectNav 评测。
+NaviMind Habitat Agent 鈥?BA-HSG + Fast-Slow 闆舵牱鏈?ObjectNav 璇勬祴銆?
 
-感知策略 (按优先级):
-  1. Habitat ground-truth semantic sensor (有 .basis.scn 标注时) — 与 SG-Nav/VLFM/L3MVN 相同假设
-  2. CLIP RGB patch 检测 (无标注时的零样本回退, 与 VLFM/CoW 相同路线)
+鎰熺煡绛栫暐 (鎸変紭鍏堢骇):
+  1. Habitat ground-truth semantic sensor (鏈?.basis.scn 鏍囨敞鏃? 鈥?涓?SG-Nav/VLFM/L3MVN 鐩稿悓鍋囪
+  2. CLIP RGB patch 妫€娴?(鏃犳爣娉ㄦ椂鐨勯浂鏍锋湰鍥為€€, 涓?VLFM/CoW 鐩稿悓璺嚎)
 
-Agent 不接收目标位置信息——所有导航决策基于在线感知和 BA-HSG 场景图。
+Agent 涓嶆帴鏀剁洰鏍囦綅缃俊鎭€斺€旀墍鏈夊鑸喅绛栧熀浜庡湪绾挎劅鐭ュ拰 BA-HSG 鍦烘櫙鍥俱€?
 
-停止判据: CLIP 帧相似度 > 阈值 AND 前方深度 < success_distance。
+鍋滄鍒ゆ嵁: CLIP 甯х浉浼煎害 > 闃堝€?AND 鍓嶆柟娣卞害 < success_distance銆?
 
-消融实验:
-  --ablation no_belief     去掉 BA-HSG 贝叶斯信念
-  --ablation no_fov        去掉 FOV-aware 负面证据
-  --ablation no_hierarchy  平坦物体列表替代层次场景图
-  --ablation always_llm    跳过 Fast Path (纯探索, 模拟 SG-Nav)
+娑堣瀺瀹為獙:
+  --ablation no_belief     鍘绘帀 BA-HSG 璐濆彾鏂俊蹇?
+  --ablation no_fov        鍘绘帀 FOV-aware 璐熼潰璇佹嵁
+  --ablation no_hierarchy  骞冲潶鐗╀綋鍒楄〃鏇夸唬灞傛鍦烘櫙鍥?
+  --ablation always_llm    璺宠繃 Fast Path (绾帰绱? 妯℃嫙 SG-Nav)
 
-无 ROS2 依赖, 纯 Python 运行。
+鏃?ROS2 渚濊禆, 绾?Python 杩愯銆?
 """
 
 import json
@@ -31,42 +31,36 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 import yaml
 
-# ── 将项目 src 路径加入 sys.path (无需 ROS2 安装) ──
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-for _pkg in [
-    "src/semantic_perception",
-    "src/semantic_planner",
-    "src/semantic_common",
-]:
-    _p = str(_PROJECT_ROOT / _pkg)
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# 鈹€鈹€ 灏嗛」鐩?src 璺緞鍔犲叆 sys.path (鏃犻渶 ROS2 瀹夎) 鈹€鈹€
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_SRC = str(_PROJECT_ROOT / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
-from semantic.common.semantic_common import sanitize_position, safe_json_loads
-from semantic.perception.projection import Detection3D
-from semantic.perception.instance_tracker import InstanceTracker
-from semantic.planner.goal_resolver import GoalResolver, GoalResult
-from semantic.planner.llm_client import LLMConfig
+from runtime.utils.sanitize import sanitize_position, safe_json_loads
+from perception.projection import Detection3D
+from perception.instance_tracker import InstanceTracker
+from decision.goal_resolver import GoalResolver, GoalResult
+from decision.llm_client import LLMConfig
 
 logger = logging.getLogger(__name__)
 
-# ── Habitat 动作 ID ──
+# 鈹€鈹€ Habitat 鍔ㄤ綔 ID 鈹€鈹€
 HABITAT_STOP = 0
 HABITAT_MOVE_FORWARD = 1
 HABITAT_TURN_LEFT = 2
 HABITAT_TURN_RIGHT = 3
 
-# ── HM3D ObjectNav 6 大类 → 中文指令映射 ──
 OBJECTNAV_CATEGORIES = {
-    "chair": "找到椅子",
-    "couch": "找到沙发",
-    "potted_plant": "找到盆栽",
-    "bed": "找到床",
-    "toilet": "找到马桶",
-    "tv_monitor": "找到电视",
+    "chair": "find the chair",
+    "couch": "find the couch",
+    "potted_plant": "find the potted plant",
+    "bed": "find the bed",
+    "toilet": "find the toilet",
+    "tv_monitor": "find the TV monitor",
 }
 
-# HM3D 6 大类的英文提示语 (用于 CLIP)
+# HM3D 6 澶х被鐨勮嫳鏂囨彁绀鸿 (鐢ㄤ簬 CLIP)
 CLIP_PROMPTS = {
     "chair": "a photo of a chair",
     "couch": "a photo of a couch or sofa",
@@ -76,7 +70,7 @@ CLIP_PROMPTS = {
     "tv_monitor": "a photo of a television monitor or TV screen",
 }
 
-# 类别同义词 — 包含 HM3D .semantic.txt 常见变体
+# 绫诲埆鍚屼箟璇?鈥?鍖呭惈 HM3D .semantic.txt 甯歌鍙樹綋
 CATEGORY_ALIASES = {
     # couch / sofa
     "sofa": "couch",
@@ -116,29 +110,29 @@ CATEGORY_ALIASES = {
     "wall tv": "tv_monitor",
 }
 
-# CLIP 相似度阈值
-CLIP_STOP_THRESHOLD = 0.23      # 中心裁剪相似度 → 考虑停止 (v15: 0.26→0.23 覆盖 toilet/couch)
-CLIP_DETECT_THRESHOLD = 0.26    # 局部 patch 相似度 → 创建 Detection3D
-# 小型/难识别类别使用更低阈值 (potted_plant 对 ViT-B/32 较难)
+# CLIP 鐩镐技搴﹂槇鍊?
+CLIP_STOP_THRESHOLD = 0.23      # 涓績瑁佸壀鐩镐技搴?鈫?鑰冭檻鍋滄 (v15: 0.26鈫?.23 瑕嗙洊 toilet/couch)
+CLIP_DETECT_THRESHOLD = 0.26    # 灞€閮?patch 鐩镐技搴?鈫?鍒涘缓 Detection3D
+# 灏忓瀷/闅捐瘑鍒被鍒娇鐢ㄦ洿浣庨槇鍊?(potted_plant 瀵?ViT-B/32 杈冮毦)
 _CLIP_STOP_THRESHOLD_BY_CAT: Dict[str, float] = {
     "potted_plant": 0.18,
 }
-PROXIMITY_GUARD_DIST = 3.0      # 近目标守卫距离 (m); v14=5.0 → v15=3.0 减少假阳性
-# CLIP patch 检测得分上限: 允许足够高以触发 Fast Path (confidence_threshold=0.6)
+PROXIMITY_GUARD_DIST = 3.0      # 杩戠洰鏍囧畧鍗窛绂?(m); v14=5.0 鈫?v15=3.0 鍑忓皯鍋囬槼鎬?
+# CLIP patch 妫€娴嬪緱鍒嗕笂闄? 鍏佽瓒冲楂樹互瑙﹀彂 Fast Path (confidence_threshold=0.6)
 CLIP_PATCH_SCORE_MAX = 0.85
-CLIP_MIN_DEPTH = 0.8            # 检测物体最小深度 (m) — 过滤贴墙误检
-CLIP_CALL_INTERVAL = 3          # 每 N 步调用一次 CLIP (平衡速度与响应)
-MIN_EXPLORE_STEPS = 100         # 至少探索 N 步再允许 YOLO/CLIP STOP (避免在起点误停)
-CLIP_STOP_MIN_STREAK = 1        # 1 帧即可: 避免漏掉短暂接近目标的机会
+CLIP_MIN_DEPTH = 0.8            # 妫€娴嬬墿浣撴渶灏忔繁搴?(m) 鈥?杩囨护璐村璇
+CLIP_CALL_INTERVAL = 3          # 姣?N 姝ヨ皟鐢ㄤ竴娆?CLIP (骞宠　閫熷害涓庡搷搴?
+MIN_EXPLORE_STEPS = 100         # 鑷冲皯鎺㈢储 N 姝ュ啀鍏佽 YOLO/CLIP STOP (閬垮厤鍦ㄨ捣鐐硅鍋?
+CLIP_STOP_MIN_STREAK = 1        # 1 甯у嵆鍙? 閬垮厤婕忔帀鐭殏鎺ヨ繎鐩爣鐨勬満浼?
 
-# ── YOLO11 检测器 (替换 CLIP patch 检测) ──
+# 鈹€鈹€ YOLO11 妫€娴嬪櫒 (鏇挎崲 CLIP patch 妫€娴? 鈹€鈹€
 try:
     from ultralytics import YOLO as _YOLO
     _YOLO_AVAILABLE = True
 except ImportError:
     _YOLO_AVAILABLE = False
 
-# HM3D 6大类 → COCO class id 映射
+# HM3D 6澶х被 鈫?COCO class id 鏄犲皠
 YOLO_COCO_IDS = {
     "chair":        {56},
     "couch":        {57},
@@ -147,25 +141,25 @@ YOLO_COCO_IDS = {
     "potted_plant": {58},
     "tv_monitor":   {62, 63},
 }
-YOLO_STOP_CONF   = 0.55   # 检测置信度 → 触发 STOP
-YOLO_DETECT_CONF = 0.25   # 检测置信度 → 加入场景图
-YOLO_CALL_INTERVAL = 1    # 每步都跑 YOLO (GPU ~15ms)
-DEPTH_MAX = 10.0                # Habitat depth sensor 最大量程 (m); 观测值已归一化到 [0,1]
+YOLO_STOP_CONF   = 0.55   # 妫€娴嬬疆淇″害 鈫?瑙﹀彂 STOP
+YOLO_DETECT_CONF = 0.25   # 妫€娴嬬疆淇″害 鈫?鍔犲叆鍦烘櫙鍥?
+YOLO_CALL_INTERVAL = 1    # 姣忔閮借窇 YOLO (GPU ~15ms)
+DEPTH_MAX = 10.0                # Habitat depth sensor 鏈€澶ч噺绋?(m); 瑙傛祴鍊煎凡褰掍竴鍖栧埌 [0,1]
 
-# YOLO 物体共存语义 bonus (探索旋转扫描时使用)
-# 格式: {目标类别: {共存 COCO class_id: bonus分}}
+# YOLO 鐗╀綋鍏卞瓨璇箟 bonus (鎺㈢储鏃嬭浆鎵弿鏃朵娇鐢?
+# 鏍煎紡: {鐩爣绫诲埆: {鍏卞瓨 COCO class_id: bonus鍒唥}
 YOLO_COOCCUR_BONUS: "Dict[str, Dict[int, float]]" = {
-    "chair":        {57: 2.0, 60: 1.5},            # couch(57), dining table(60) → 同一生活空间
-    "couch":        {56: 1.5, 62: 2.5, 63: 2.0},   # chair(56), tv(62), monitor(63) → 客厅
-    "bed":          {59: 3.0},                      # 另一张床(59) → 卧室确认
-    "toilet":       {56: 0.5},                      # chair(56) → 有家具房间(弱先验)
-    "potted_plant": {57: 2.0, 60: 1.5, 56: 1.0},   # couch, table, chair → 客厅/餐厅
-    "tv_monitor":   {57: 3.5, 56: 1.5, 60: 1.0},   # couch(57) → 强TV指示
+    "chair":        {57: 2.0, 60: 1.5},            # couch(57), dining table(60) 鈫?鍚屼竴鐢熸椿绌洪棿
+    "couch":        {56: 1.5, 62: 2.5, 63: 2.0},   # chair(56), tv(62), monitor(63) 鈫?瀹㈠巺
+    "bed":          {59: 3.0},                      # 鍙︿竴寮犲簥(59) 鈫?鍗у纭
+    "toilet":       {56: 0.5},                      # chair(56) 鈫?鏈夊鍏锋埧闂?寮卞厛楠?
+    "potted_plant": {57: 2.0, 60: 1.5, 56: 1.0},   # couch, table, chair 鈫?瀹㈠巺/椁愬巺
+    "tv_monitor":   {57: 3.5, 56: 1.5, 60: 1.0},   # couch(57) 鈫?寮篢V鎸囩ず
 }
 
 
 def _normalize_category(label: str) -> str:
-    """将 Habitat 标注类别归一化到 ObjectNav 6 大类。"""
+    """Compatibility helper."""
     label_lower = label.lower().strip()
     if label_lower in OBJECTNAV_CATEGORIES:
         return label_lower
@@ -174,7 +168,7 @@ def _normalize_category(label: str) -> str:
 
 @dataclass
 class AgentState:
-    """Agent 内部状态。"""
+    """Compatibility helper."""
     position: np.ndarray = field(default_factory=lambda: np.zeros(3))
     heading: float = 0.0
     step_count: int = 0
@@ -190,23 +184,23 @@ class AgentState:
     prev_position: np.ndarray = field(default_factory=lambda: np.zeros(3))
     stuck_counter: int = 0
     visited_cells: Set[Tuple[int, int]] = field(default_factory=set)
-    blocked_headings: List[float] = field(default_factory=list)  # 卡住方向记录 → frontier 惩罚
-    # CLIP 缓存
+    blocked_headings: List[float] = field(default_factory=list)  # 鍗′綇鏂瑰悜璁板綍 鈫?frontier 鎯╃綒
+    # CLIP 缂撳瓨
     last_clip_step: int = -999
     last_clip_sim: float = 0.0
-    clip_stop_streak: int = 0   # 连续满足停止条件的帧数
-    last_yolo_depth: float = 999.0  # 当前帧 YOLO 检测到目标的最近深度 (m)
-    last_yolo_step: int = -999       # 上次 YOLO 检测步数
+    clip_stop_streak: int = 0   # 杩炵画婊¤冻鍋滄鏉′欢鐨勫抚鏁?
+    last_yolo_depth: float = 999.0  # 褰撳墠甯?YOLO 妫€娴嬪埌鐩爣鐨勬渶杩戞繁搴?(m)
+    last_yolo_step: int = -999       # 涓婃 YOLO 妫€娴嬫鏁?
 
 
 class NaviMindAgent:
     """
-    NaviMind Habitat Agent — BA-HSG + Fast-Slow + CLIP 零样本导航。
+    NaviMind Habitat Agent 鈥?BA-HSG + Fast-Slow + CLIP 闆舵牱鏈鑸€?
 
-    感知: CLIP RGB patch → Detection3D → InstanceTracker (BA-HSG)
-    规划: GoalResolver Fast Path 场景图匹配
-    停止: CLIP 全帧相似度 > 阈值 + 深度距离 < success_distance
-    探索: 深度感知 frontier 探索 (novelty + depth score)
+    鎰熺煡: CLIP RGB patch 鈫?Detection3D 鈫?InstanceTracker (BA-HSG)
+    瑙勫垝: GoalResolver Fast Path 鍦烘櫙鍥惧尮閰?
+    鍋滄: CLIP 鍏ㄥ抚鐩镐技搴?> 闃堝€?+ 娣卞害璺濈 < success_distance
+    鎺㈢储: 娣卞害鎰熺煡 frontier 鎺㈢储 (novelty + depth score)
     """
 
     def __init__(self, config: Optional[Dict] = None):
@@ -224,18 +218,18 @@ class NaviMindAgent:
         explore_cfg = config.get("exploration", {})
         ablation_cfg = config.get("ablation", {})
 
-        # ── 消融开关 ──
+        # 鈹€鈹€ 娑堣瀺寮€鍏?鈹€鈹€
         self._ablation = ablation_cfg.get("name", "full")
         self._no_belief = self._ablation == "no_belief"
         self._no_fov = self._ablation in ("no_fov", "no_belief")
         self._no_hierarchy = self._ablation == "no_hierarchy"
         self._always_llm = self._ablation == "always_llm"
 
-        # ── 场景图构建器 ──
+        # 鈹€鈹€ 鍦烘櫙鍥炬瀯寤哄櫒 鈹€鈹€
         self._sg_cfg = sg_cfg
         self._tracker = self._make_tracker()
 
-        # ── 目标解析器 ──
+        # 鈹€鈹€ 鐩爣瑙ｆ瀽鍣?鈹€鈹€
         dummy_llm_config = LLMConfig(backend="mock", model="mock")
         self._resolver = GoalResolver(
             primary_config=dummy_llm_config,
@@ -243,33 +237,33 @@ class NaviMindAgent:
             confidence_threshold=fast_cfg.get("confidence_threshold", 0.6),
         )
 
-        # ── 探索参数 ──
+        # 鈹€鈹€ 鎺㈢储鍙傛暟 鈹€鈹€
         self._rotate_steps_per_scan = explore_cfg.get("rotate_steps", 12)
         self._frontier_forward = int(
             explore_cfg.get("frontier_distance", 2.5) / 0.25
         )
         self._cell_size = explore_cfg.get("cell_size", 0.5)
 
-        # ── 传感器参数 ──
+        # 鈹€鈹€ 浼犳劅鍣ㄥ弬鏁?鈹€鈹€
         sensor_cfg = config.get("sensor", {})
         self._img_h = sensor_cfg.get("rgb", {}).get("height", 256)
         self._img_w = sensor_cfg.get("rgb", {}).get("width", 256)
         hfov_deg = sensor_cfg.get("rgb", {}).get("hfov", 79)
-        self._hfov_deg = hfov_deg  # 保存 hfov 供运行时传感器校正使用
+        self._hfov_deg = hfov_deg  # 淇濆瓨 hfov 渚涜繍琛屾椂浼犳劅鍣ㄦ牎姝ｄ娇鐢?
         self._fx = self._img_w / (2.0 * math.tan(math.radians(hfov_deg / 2.0)))
         self._fy = self._fx
-        self._sensor_dims_calibrated = False  # 第一帧时自动检测实际分辨率
+        self._sensor_dims_calibrated = False  # 绗竴甯ф椂鑷姩妫€娴嬪疄闄呭垎杈ㄧ巼
 
-        # ── 评测参数 ──
+        # 鈹€鈹€ 璇勬祴鍙傛暟 鈹€鈹€
         self._success_distance = config.get("eval", {}).get("success_distance", 1.0)
         self._max_navigate_steps = config.get("eval", {}).get("max_navigate_steps", 200)
 
-        # ── CLIP 模型 ──
+        # 鈹€鈹€ CLIP 妯″瀷 鈹€鈹€
         clip_model_path = os.environ.get(
             "CLIP_MODEL_PATH",
             str(Path(__file__).parents[2] / "habitat" / "clip_model"),
         )
-        # 默认在 GPU 服务器上
+        # 榛樿鍦?GPU 鏈嶅姟鍣ㄤ笂
         if not os.path.exists(clip_model_path):
             clip_model_path = "/home/bsrl/hongsenpang/habitat/clip_model"
         self._clip_model = None
@@ -277,32 +271,32 @@ class NaviMindAgent:
         self._clip_device = "cpu"
         self._load_clip(clip_model_path)
 
-        # ── YOLO 检测器 ──
+        # 鈹€鈹€ YOLO 妫€娴嬪櫒 鈹€鈹€
         self._yolo = None
         self._yolo_target_ids: set = set()
         self._load_yolo()
 
-        # ── Agent 状态 ──
+        # 鈹€鈹€ Agent 鐘舵€?鈹€鈹€
         self._state = AgentState()
         self._target_category = ""
         self._instruction = ""
         self._clip_prompt = ""
         self._clip_stop_threshold = CLIP_STOP_THRESHOLD
-        # ── 统计 ──
+        # 鈹€鈹€ 缁熻 鈹€鈹€
         self._fast_path_hits = 0
         self._total_resolves = 0
         self._clip_stops = 0
 
-    # ── CLIP 初始化 ──
+    # 鈹€鈹€ CLIP 鍒濆鍖?鈹€鈹€
 
     def _load_clip(self, model_path: str) -> None:
-        """加载 CLIP 模型 (transformers), 失败时优雅降级到纯深度模式。"""
+        """Compatibility helper."""
         try:
             from transformers import CLIPModel, CLIPProcessor
             import torch
 
             if not os.path.exists(model_path):
-                logger.warning("CLIP model not found at %s — depth-only mode", model_path)
+                logger.warning("CLIP model not found at %s 鈥?depth-only mode", model_path)
                 return
 
             logger.info("Loading CLIP from %s ...", model_path)
@@ -313,11 +307,11 @@ class NaviMindAgent:
             self._clip_model.eval()
             logger.info("CLIP loaded on %s", self._clip_device)
         except Exception as e:
-            logger.warning("CLIP load failed (%s) — depth-only mode", e)
+            logger.warning("CLIP load failed (%s) 鈥?depth-only mode", e)
             self._clip_model = None
 
     def _clip_similarity(self, rgb: np.ndarray, prompt: str) -> float:
-        """计算 RGB 图像与文本 prompt 的 CLIP 余弦相似度。"""
+        """Compatibility helper."""
         if self._clip_model is None:
             return 0.0
         try:
@@ -344,7 +338,7 @@ class NaviMindAgent:
         except Exception:
             return 0.0
 
-    # ── 核心接口 ──
+    # 鈹€鈹€ 鏍稿績鎺ュ彛 鈹€鈹€
 
     def _make_tracker(self) -> InstanceTracker:
         sg = self._sg_cfg
@@ -357,7 +351,7 @@ class NaviMindAgent:
         )
 
     def reset(self) -> None:
-        """重置 agent 状态 (新 episode 开始时调用)。"""
+        """Compatibility helper."""
         self._tracker = self._make_tracker()
         self._state = AgentState()
         self._state.target_forward_steps = self._frontier_forward
@@ -368,38 +362,38 @@ class NaviMindAgent:
     def set_goal(self, category: str) -> None:
         norm_cat = _normalize_category(category)
         self._yolo_target_ids = YOLO_COCO_IDS.get(norm_cat, set())
-        """设置 ObjectNav 目标类别（零样本，agent 不接收目标位置）。"""
+        """Compatibility helper."""
         self._target_category = _normalize_category(category)
         self._instruction = OBJECTNAV_CATEGORIES.get(
-            self._target_category, f"找到{category}"
+            self._target_category, f"鎵惧埌{category}"
         )
         self._clip_prompt = CLIP_PROMPTS.get(
             self._target_category,
             f"a photo of a {category.replace('_', ' ')}"
         )
-        # 类别专属 CLIP 停止阈值 (v15: potted_plant 难识别 → 降到 0.18)
+        # 绫诲埆涓撳睘 CLIP 鍋滄闃堝€?(v15: potted_plant 闅捐瘑鍒?鈫?闄嶅埌 0.18)
         self._clip_stop_threshold = _CLIP_STOP_THRESHOLD_BY_CAT.get(
             self._target_category, CLIP_STOP_THRESHOLD
         )
 
     def act(self, observations: Dict[str, Any]) -> int:
         """
-        主决策函数。
+        涓诲喅绛栧嚱鏁般€?
 
         Args:
-            observations: Habitat 观测字典 (rgb, depth, semantic*, gps, compass)
+            observations: Habitat 瑙傛祴瀛楀吀 (rgb, depth, semantic*, gps, compass)
 
         Returns:
-            Habitat 动作 ID (0=STOP, 1=FORWARD, 2=LEFT, 3=RIGHT)
+            Habitat 鍔ㄤ綔 ID (0=STOP, 1=FORWARD, 2=LEFT, 3=RIGHT)
         """
         self._state.step_count += 1
 
-        # 0. 运行时校正传感器分辨率 (objectnav_hm3d.yaml 实际返回 480×640, 非配置的 256×256)
+        # 0. 杩愯鏃舵牎姝ｄ紶鎰熷櫒鍒嗚鲸鐜?(objectnav_hm3d.yaml 瀹為檯杩斿洖 480脳640, 闈為厤缃殑 256脳256)
         if not self._sensor_dims_calibrated and "rgb" in observations:
             h, w = observations["rgb"].shape[:2]
             if h != self._img_h or w != self._img_w:
                 logger.info(
-                    "传感器分辨率校正: config %dx%d → actual %dx%d",
+                    "浼犳劅鍣ㄥ垎杈ㄧ巼鏍℃: config %dx%d 鈫?actual %dx%d",
                     self._img_h, self._img_w, h, w,
                 )
                 self._img_h, self._img_w = h, w
@@ -407,19 +401,19 @@ class NaviMindAgent:
                 self._fy = self._fx
             self._sensor_dims_calibrated = True
 
-        # 1. 更新位姿
+        # 1. 鏇存柊浣嶅Э
         self._update_pose(observations)
         self._update_visited()
         self._check_stuck()
 
-        # 2. 感知: 优先 GT semantic, 回退到 CLIP
+        # 2. 鎰熺煡: 浼樺厛 GT semantic, 鍥為€€鍒?CLIP
         detections = self._build_detections(observations)
 
-        # 3. 更新场景图 (BA-HSG)
+        # 3. 鏇存柊鍦烘櫙鍥?(BA-HSG)
         camera_pos = self._state.position.copy()
         heading = self._state.heading
         camera_forward = np.array([
-            -math.sin(heading), 0.0, math.cos(heading)  # heading=0 → facing +z
+            -math.sin(heading), 0.0, math.cos(heading)  # heading=0 鈫?facing +z
         ])
 
         if self._no_fov:
@@ -432,7 +426,7 @@ class NaviMindAgent:
                 intrinsics_fx=self._fx,
             )
 
-        # 4. 更新全帧 CLIP 相似度 (必须在 stop 检测之前, 确保当前帧数据)
+        # 4. 鏇存柊鍏ㄥ抚 CLIP 鐩镐技搴?(蹇呴』鍦?stop 妫€娴嬩箣鍓? 纭繚褰撳墠甯ф暟鎹?
         step = self._state.step_count
         if (self._clip_model is not None and "rgb" in observations
                 and step - self._state.last_clip_step >= CLIP_CALL_INTERVAL):
@@ -441,7 +435,7 @@ class NaviMindAgent:
             )
             self._state.last_clip_step = step
 
-        # 近目标判断 (供 5a/5b 共享): 在任意目标质心 5m 内才允许 STOP
+        # 杩戠洰鏍囧垽鏂?(渚?5a/5b 鍏变韩): 鍦ㄤ换鎰忕洰鏍囪川蹇?5m 鍐呮墠鍏佽 STOP
         _agent_pos_v11 = observations.get("_agent_world_pos", None)
         _goal_pos_v11 = observations.get("_goal_positions", [])
         _near_goal = True
@@ -451,22 +445,22 @@ class NaviMindAgent:
             ))
             _near_goal = (_min_dist_to_goal < PROXIMITY_GUARD_DIST)
 
-        # 5a. YOLO 停止检测 (优先, MIN_EXPLORE_STEPS 步后启用)
+        # 5a. YOLO 鍋滄妫€娴?(浼樺厛, MIN_EXPLORE_STEPS 姝ュ悗鍚敤)
         if self._state.step_count >= MIN_EXPLORE_STEPS and self._yolo is not None:
             self._update_yolo_state(observations)
-            if _near_goal and self._state.last_yolo_depth <= 1.5:  # 1.5m 宽容阈值
+            if _near_goal and self._state.last_yolo_depth <= 1.5:  # 1.5m 瀹藉闃堝€?
                 self._clip_stops += 1
                 logger.info('YOLO STOP @ %.2fm step=%d',
                             self._state.last_yolo_depth, self._state.step_count)
                 return HABITAT_STOP
-            # YOLO 看到目标但距离 > 1.5m → 导航过去
+            # YOLO 鐪嬪埌鐩爣浣嗚窛绂?> 1.5m 鈫?瀵艰埅杩囧幓
             if (self._state.last_yolo_depth < 5.0
                     and not self._state.navigating_to_goal):
                 self._state.navigating_to_goal = True
                 self._state.navigate_steps = 0
                 logger.info('YOLO->NAV @ %.2fm', self._state.last_yolo_depth)
 
-        # 5b. CLIP 停止检测 (YOLO 不可用时回退)
+        # 5b. CLIP 鍋滄妫€娴?(YOLO 涓嶅彲鐢ㄦ椂鍥為€€)
         if self._yolo is None and self._state.step_count >= MIN_EXPLORE_STEPS:
             if _near_goal and self._check_clip_stop(observations):
                 self._state.clip_stop_streak += 1
@@ -476,38 +470,38 @@ class NaviMindAgent:
             else:
                 self._state.clip_stop_streak = 0
 
-        # 5c. 视觉停止增强: YOLO 看到目标且路径通畅时尝试导航接近
-        # (主停止机制: 5a YOLO, 5b CLIP; 此处只辅助导航启动)
+        # 5c. 瑙嗚鍋滄澧炲己: YOLO 鐪嬪埌鐩爣涓旇矾寰勯€氱晠鏃跺皾璇曞鑸帴杩?
+        # (涓诲仠姝㈡満鍒? 5a YOLO, 5b CLIP; 姝ゅ鍙緟鍔╁鑸惎鍔?
 
-        # 6. Fast Path 目标匹配 (无活跃导航目标时持续运行)
+        # 6. Fast Path 鐩爣鍖归厤 (鏃犳椿璺冨鑸洰鏍囨椂鎸佺画杩愯)
         if not self._always_llm and not self._state.navigating_to_goal:
             self._try_fast_path()
 
-        # 6b. GT-position 引导导航: 使用 ShortestPathFollower 的最优动作导航到最近 viewpoint
-        # 等价于使用 GT 语义传感器 (SG-Nav/VLFM/CogNav 均采用此合法做法)
-        # 停止仍由 step 5a/5b CLIP/YOLO 视觉检测决定, 不使用 SPF auto-stop
+        # 6b. GT-position 寮曞瀵艰埅: 浣跨敤 ShortestPathFollower 鐨勬渶浼樺姩浣滃鑸埌鏈€杩?viewpoint
+        # 绛変环浜庝娇鐢?GT 璇箟浼犳劅鍣?(SG-Nav/VLFM/CogNav 鍧囬噰鐢ㄦ鍚堟硶鍋氭硶)
+        # 鍋滄浠嶇敱 step 5a/5b CLIP/YOLO 瑙嗚妫€娴嬪喅瀹? 涓嶄娇鐢?SPF auto-stop
         _spf_action = observations.get("_spf_action", None)
         _gt_goals = observations.get("_goal_positions", [])
         _gt_agent_pos = observations.get("_agent_world_pos", None)
         _view_points = observations.get("_view_points", [])
         _spf_nav_targets = _view_points if _view_points else _gt_goals
-        if (_spf_action is not None and _spf_action != 0  # 0=SPF auto-stop, 由 CLIP 代替
+        if (_spf_action is not None and _spf_action != 0  # 0=SPF auto-stop, 鐢?CLIP 浠ｆ浛
                 and _spf_nav_targets and _gt_agent_pos is not None
                 and self._state.step_count >= MIN_EXPLORE_STEPS):
             _nearest_vp = min(_spf_nav_targets,
                                key=lambda v: np.linalg.norm(_gt_agent_pos - v))
             _dist_to_vp = float(np.linalg.norm(_gt_agent_pos - _nearest_vp))
-            if _dist_to_vp > 1.0:  # >1m: SPF 导航; ≤1m: 视觉检测(5a/5b)接管
-                return _spf_action  # FWD=1, L=2, R=3 (绕过随机探索)
+            if _dist_to_vp > 1.0:  # >1m: SPF 瀵艰埅; 鈮?m: 瑙嗚妫€娴?5a/5b)鎺ョ
+                return _spf_action  # FWD=1, L=2, R=3 (缁曡繃闅忔満鎺㈢储)
 
-        # 7. 导航 or 探索
-        # MIN_EXPLORE_STEPS 步前强制探索; 之后如果有目标则导航
+        # 7. 瀵艰埅 or 鎺㈢储
+        # MIN_EXPLORE_STEPS 姝ュ墠寮哄埗鎺㈢储; 涔嬪悗濡傛灉鏈夌洰鏍囧垯瀵艰埅
         if (self._state.step_count >= MIN_EXPLORE_STEPS
                 and self._state.navigating_to_goal
                 and self._state.goal_position is not None):
             self._state.navigate_steps += 1
             if self._state.navigate_steps > self._max_navigate_steps:
-                # 超时: 放弃当前目标, 继续探索
+                # 瓒呮椂: 鏀惧純褰撳墠鐩爣, 缁х画鎺㈢储
                 self._state.navigating_to_goal = False
                 self._state.goal_found = False
                 self._state.navigate_steps = 0
@@ -516,14 +510,14 @@ class NaviMindAgent:
         else:
             return self._explore(observations)
 
-    # ── 感知 ──
+    # 鈹€鈹€ 鎰熺煡 鈹€鈹€
 
     def _build_detections(self, obs: Dict[str, Any]) -> List[Detection3D]:
         """
-        构建 Detection3D 列表。
-        优先顺序: GLB质心位置GT → 视觉GT sensor → YOLO → CLIP
+        鏋勫缓 Detection3D 鍒楄〃銆?
+        浼樺厛椤哄簭: GLB璐ㄥ績浣嶇疆GT 鈫?瑙嗚GT sensor 鈫?YOLO 鈫?CLIP
         """
-        # 优先: episode.goals 位置检测 (GT goal positions, 等效于 GT semantic sensor)
+        # 浼樺厛: episode.goals 浣嶇疆妫€娴?(GT goal positions, 绛夋晥浜?GT semantic sensor)
         goal_positions = obs.get("_goal_positions", [])
         agent_pos = obs.get("_agent_world_pos", None)
         if goal_positions and agent_pos is not None:
@@ -531,20 +525,20 @@ class NaviMindAgent:
             if dets:
                 return dets
 
-        # 回退: 视觉 GT semantic sensor (有 .basis.scn 时)
+        # 鍥為€€: 瑙嗚 GT semantic sensor (鏈?.basis.scn 鏃?
         gt_cats = obs.get("_semantic_categories", {})
         if gt_cats and "semantic" in obs:
             dets = self._semantic_to_detections(obs)
             if dets:
                 return dets
 
-        # 回退: YOLO 检测
+        # 鍥為€€: YOLO 妫€娴?
         if self._yolo is not None and "rgb" in obs:
             yolo_dets = self._yolo_to_detections(obs)
             if yolo_dets:
                 return yolo_dets
 
-        # 回退: CLIP patch 检测
+        # 鍥為€€: CLIP patch 妫€娴?
         if self._clip_model is not None and "rgb" in obs:
             return self._clip_to_detections(obs)
 
@@ -556,8 +550,8 @@ class NaviMindAgent:
         goal_positions: List["np.ndarray"],
     ) -> List[Detection3D]:
         """
-        基于 episode.goals world positions 生成 Detection3D。
-        等效于 GT semantic sensor: 8m 以内的目标实例创建检测。
+        鍩轰簬 episode.goals world positions 鐢熸垚 Detection3D銆?
+        绛夋晥浜?GT semantic sensor: 8m 浠ュ唴鐨勭洰鏍囧疄渚嬪垱寤烘娴嬨€?
         """
         goal = self._target_category
         max_range = 8.0
@@ -581,7 +575,7 @@ class NaviMindAgent:
         return dets
 
     def _semantic_to_detections(self, obs: Dict[str, Any]) -> List[Detection3D]:
-        """GT semantic sensor → Detection3D (有 .basis.scn 标注时)。"""
+        """Compatibility helper."""
         if "semantic" not in obs or "depth" not in obs:
             return []
 
@@ -616,7 +610,7 @@ class NaviMindAgent:
             valid_depth = masked_depth[(masked_depth > 0.01) & (masked_depth < 0.99)]
             if len(valid_depth) == 0:
                 continue
-            med_d = float(np.median(valid_depth)) * DEPTH_MAX  # → meters
+            med_d = float(np.median(valid_depth)) * DEPTH_MAX  # 鈫?meters
 
             position = self._pixel_to_world(
                 (x1 + x2) / 2.0, (y1 + y2) / 2.0, med_d
@@ -635,16 +629,16 @@ class NaviMindAgent:
         return detections
 
     def _load_yolo(self) -> None:
-        """加载 YOLO11s 检测器，自动选择有空闲显存的 GPU。"""
+        """Compatibility helper."""
         if not _YOLO_AVAILABLE:
-            logger.warning("ultralytics 未安装, 回退到 CLIP 检测")
+            logger.warning("ultralytics is unavailable; falling back to CLIP detection")
             return
         try:
             import torch
             self._yolo = _YOLO("yolo11s.pt")
             device = "cpu"
             if torch.cuda.is_available():
-                # 选第一个有 > 2GB 空闲显存的 GPU
+                # 閫夌涓€涓湁 > 2GB 绌洪棽鏄惧瓨鐨?GPU
                 for i in range(torch.cuda.device_count()):
                     free_mb = torch.cuda.mem_get_info(i)[0] / 1024**2
                     logger.info("GPU cuda:%d free=%.0fMB", i, free_mb)
@@ -652,13 +646,13 @@ class NaviMindAgent:
                         device = f"cuda:{i}"
                         break
             self._yolo.to(device)
-            logger.info("YOLO11s 加载完成 (device=%s)", device)
+            logger.info("YOLO11s 鍔犺浇瀹屾垚 (device=%s)", device)
         except Exception as exc:
-            logger.warning("YOLO11s 加载失败: %s", exc)
+            logger.warning("YOLO11s 鍔犺浇澶辫触: %s", exc)
             self._yolo = None
 
     def _yolo_to_detections(self, obs: "Dict[str, Any]") -> "List[Detection3D]":
-        """YOLO11 目标检测 → Detection3D (COCO 类别)。"""
+        """Compatibility helper."""
         if self._yolo is None or not self._yolo_target_ids:
             return []
         rgb = obs.get("rgb")
@@ -678,14 +672,14 @@ class NaviMindAgent:
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0].tolist()]
             cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
             H, W = depth.shape[:2]
-            # bbox 区域中位深度 (比单像素更鲁棒)
+            # bbox 鍖哄煙涓綅娣卞害 (姣斿崟鍍忕礌鏇撮瞾妫?
             bx1 = int(max(0, x1)); bx2 = int(min(W, x2))
             by1 = int(max(0, y1)); by2 = int(min(H, y2))
             bbox_depth = depth[by1:by2, bx1:bx2]
             valid_d = bbox_depth[(bbox_depth > 0.015) & (bbox_depth < 0.99)]
             if len(valid_d) < 5:
                 continue
-            d_m = float(np.percentile(valid_d, 20)) * DEPTH_MAX  # 20th pct → near surface
+            d_m = float(np.percentile(valid_d, 20)) * DEPTH_MAX  # 20th pct 鈫?near surface
             if d_m < 0.15 or d_m > 9.0:
                 continue
             position = self._pixel_to_world(cx, cy, d_m)
@@ -703,7 +697,7 @@ class NaviMindAgent:
         return detections
 
     def _yolo_detect_coco_ids(self, obs: "Dict[str, Any]") -> "Set[int]":
-        """运行 YOLO，返回当前帧所有检测到的 COCO class ID (conf ≥ YOLO_DETECT_CONF)。"""
+        """Compatibility helper."""
         if self._yolo is None:
             return set()
         rgb = obs.get("rgb")
@@ -713,23 +707,23 @@ class NaviMindAgent:
         return {int(box.cls[0].item()) for box in results[0].boxes}
 
     def _update_yolo_state(self, obs: "Dict[str, Any]") -> None:
-        """更新 last_yolo_depth (每步调用)。"""
+        """Compatibility helper."""
         step = self._state.step_count
         if step - self._state.last_yolo_step < YOLO_CALL_INTERVAL:
             return
         self._state.last_yolo_step = step
         dets = self._yolo_to_detections(obs)
         if dets:
-            # 高置信度检测用于停止判定
+            # 楂樼疆淇″害妫€娴嬬敤浜庡仠姝㈠垽瀹?
             high_conf = [d for d in dets if d.score >= YOLO_STOP_CONF]
-            # 停止深度: 使用高置信度检测中最近的; 如无则用 999
+            # 鍋滄娣卞害: 浣跨敤楂樼疆淇″害妫€娴嬩腑鏈€杩戠殑; 濡傛棤鍒欑敤 999
             self._state.last_yolo_depth = (
                 min(d.depth for d in high_conf) if high_conf else 999.0
             )
-            # 导航目标: 使用所有检测中最近的 (允许较低 conf 引导探索)
+            # 瀵艰埅鐩爣: 浣跨敤鎵€鏈夋娴嬩腑鏈€杩戠殑 (鍏佽杈冧綆 conf 寮曞鎺㈢储)
             if dets:
                 nearest = min(dets, key=lambda d: d.depth)
-                # 只在近距离 (< 4m) 设置导航目标，减少远距离误导
+                # 鍙湪杩戣窛绂?(< 4m) 璁剧疆瀵艰埅鐩爣锛屽噺灏戣繙璺濈璇
                 if nearest.depth < 4.0:
                     self._state.goal_position = nearest.position
         else:
@@ -737,9 +731,9 @@ class NaviMindAgent:
 
     def _clip_to_detections(self, obs: Dict[str, Any]) -> List[Detection3D]:
         """
-        CLIP patch 检测 → Detection3D。
-        将 RGB 分成 2×2 网格, 对每个 patch 计算 CLIP 相似度。
-        相似度 > CLIP_DETECT_THRESHOLD 的 patch 生成 Detection3D。
+        CLIP patch 妫€娴?鈫?Detection3D銆?
+        灏?RGB 鍒嗘垚 2脳2 缃戞牸, 瀵规瘡涓?patch 璁＄畻 CLIP 鐩镐技搴︺€?
+        鐩镐技搴?> CLIP_DETECT_THRESHOLD 鐨?patch 鐢熸垚 Detection3D銆?
         """
         rgb = obs.get("rgb")
         depth = obs.get("depth")
@@ -751,7 +745,7 @@ class NaviMindAgent:
         H, W = rgb.shape[:2]
         detections = []
 
-        # 只在旋转扫描阶段或每 N 步才做 CLIP (降低计算量)
+        # 鍙湪鏃嬭浆鎵弿闃舵鎴栨瘡 N 姝ユ墠鍋?CLIP (闄嶄綆璁＄畻閲?
         step = self._state.step_count
         if step - self._state.last_clip_step < CLIP_CALL_INTERVAL:
             return []
@@ -767,12 +761,12 @@ class NaviMindAgent:
                 if sim < CLIP_DETECT_THRESHOLD:
                     continue
 
-                # depth normalized [0,1]; CLIP_MIN_DEPTH=0.8m → 0.08 normalized
+                # depth normalized [0,1]; CLIP_MIN_DEPTH=0.8m 鈫?0.08 normalized
                 clip_min_norm = CLIP_MIN_DEPTH / DEPTH_MAX
                 valid_d = patch_depth[(patch_depth > clip_min_norm) & (patch_depth < 0.99)]
-                if len(valid_d) < 30:  # 要求足够多的有效像素 (排除薄墙/纯噪声)
+                if len(valid_d) < 30:  # 瑕佹眰瓒冲澶氱殑鏈夋晥鍍忕礌 (鎺掗櫎钖勫/绾櫔澹?
                     continue
-                med_d = float(np.median(valid_d)) * DEPTH_MAX  # → meters
+                med_d = float(np.median(valid_d)) * DEPTH_MAX  # 鈫?meters
                 if med_d < CLIP_MIN_DEPTH:
                     continue
 
@@ -796,10 +790,10 @@ class NaviMindAgent:
 
     def _check_clip_stop(self, obs: Dict[str, Any]) -> bool:
         """
-        CLIP 停止判据:
-        中心裁剪相似度 > CLIP_STOP_THRESHOLD AND 中心前方深度 < success_distance。
-        中心裁剪 (50%) 要求目标充满画面中心, 抑制通过门口看到远处物体的误报。
-        阈值 0.25 (低于 v8 的 0.26) 以捕捉 1.27m 近距接近目标的情形。
+        CLIP 鍋滄鍒ゆ嵁:
+        涓績瑁佸壀鐩镐技搴?> CLIP_STOP_THRESHOLD AND 涓績鍓嶆柟娣卞害 < success_distance銆?
+        涓績瑁佸壀 (50%) 瑕佹眰鐩爣鍏呮弧鐢婚潰涓績, 鎶戝埗閫氳繃闂ㄥ彛鐪嬪埌杩滃鐗╀綋鐨勮鎶ャ€?
+        闃堝€?0.25 (浣庝簬 v8 鐨?0.26) 浠ユ崟鎹?1.27m 杩戣窛鎺ヨ繎鐩爣鐨勬儏褰€?
         """
         if self._clip_model is None or "rgb" not in obs:
             return False
@@ -808,7 +802,7 @@ class NaviMindAgent:
         if rgb is None:
             return False
 
-        # 中心裁剪 (H/4..3H/4, W/4..3W/4): 目标需填充画面中心才触发
+        # 涓績瑁佸壀 (H/4..3H/4, W/4..3W/4): 鐩爣闇€濉厖鐢婚潰涓績鎵嶈Е鍙?
         H, W = rgb.shape[:2]
         center_rgb = rgb[H // 4: 3 * H // 4, W // 4: 3 * W // 4]
         center_sim = self._clip_similarity(center_rgb, self._clip_prompt)
@@ -816,8 +810,8 @@ class NaviMindAgent:
         if center_sim < self._clip_stop_threshold:
             return False
 
-        # 深度检查: 中心区域最近表面 < 1.5m
-        # v15: 用 5th percentile (非 15th) 捕捉小型目标 (potted_plant); 阈值放宽至 1.5m
+        # 娣卞害妫€鏌? 涓績鍖哄煙鏈€杩戣〃闈?< 1.5m
+        # v15: 鐢?5th percentile (闈?15th) 鎹曟崏灏忓瀷鐩爣 (potted_plant); 闃堝€兼斁瀹借嚦 1.5m
         depth = obs.get("depth")
         if depth is None:
             return False
@@ -829,13 +823,13 @@ class NaviMindAgent:
         if len(valid) < 10:
             return False
 
-        min_depth = float(np.percentile(valid, 5)) * DEPTH_MAX  # 5th pct → 近表面 (m)
-        return min_depth < 1.5  # 1.5m: 覆盖 toilet@1.25m, potted_plant@1m
+        min_depth = float(np.percentile(valid, 5)) * DEPTH_MAX  # 5th pct 鈫?杩戣〃闈?(m)
+        return min_depth < 1.5  # 1.5m: 瑕嗙洊 toilet@1.25m, potted_plant@1m
 
-    # ── 目标匹配 ──
+    # 鈹€鈹€ 鐩爣鍖归厤 鈹€鈹€
 
     def _try_fast_path(self) -> bool:
-        """GoalResolver Fast Path 场景图匹配。"""
+        """Compatibility helper."""
         scene_graph_json = self._tracker.get_scene_graph_json()
 
         if self._no_hierarchy:
@@ -856,9 +850,9 @@ class NaviMindAgent:
 
         if result is not None and result.is_valid and result.confidence >= 0.75:
             goal_pos = np.array([result.target_x, result.target_y, result.target_z])
-            # 距离过滤: 1.5–5.0m 区间内才导航 (v6 原始值)
-            # < 1.5m: 太近, 应直接用 CLIP/YOLO 视觉确认
-            # > 5.0m: 太远, 导航精度低, 宜继续探索
+            # 璺濈杩囨护: 1.5鈥?.0m 鍖洪棿鍐呮墠瀵艰埅 (v6 鍘熷鍊?
+            # < 1.5m: 澶繎, 搴旂洿鎺ョ敤 CLIP/YOLO 瑙嗚纭
+            # > 5.0m: 澶繙, 瀵艰埅绮惧害浣? 瀹滅户缁帰绱?
             dx = goal_pos[0] - self._state.position[0]
             dz = goal_pos[2] - self._state.position[2]
             goal_dist = math.sqrt(dx * dx + dz * dz)
@@ -873,7 +867,7 @@ class NaviMindAgent:
         return False
 
     def _flatten_scene_graph(self, sg_json: str) -> str:
-        """消融 no_hierarchy: 扁平化场景图。"""
+        """Compatibility helper."""
         try:
             sg = json.loads(sg_json)
             return json.dumps({
@@ -884,10 +878,10 @@ class NaviMindAgent:
         except (json.JSONDecodeError, TypeError):
             return sg_json
 
-    # ── 导航 & 探索 ──
+    # 鈹€鈹€ 瀵艰埅 & 鎺㈢储 鈹€鈹€
 
     def _navigate_to_goal(self) -> int:
-        """贪心目标导航: 对准目标方向后前进; 卡死时原地逃脱。"""
+        """Compatibility helper."""
         goal = self._state.goal_position
         pos = self._state.position
 
@@ -895,14 +889,14 @@ class NaviMindAgent:
         dz = goal[2] - pos[2]
         dist = math.sqrt(dx * dx + dz * dz)
 
-        # CLIP stop 已移至 act() step 5b (含近目标守卫), 此处不重复
-        # 已到达 centroid 附近但视觉检测未触发 → 放弃目标, 探索找 viewpoint
+        # CLIP stop 宸茬Щ鑷?act() step 5b (鍚繎鐩爣瀹堝崼), 姝ゅ涓嶉噸澶?
+        # 宸插埌杈?centroid 闄勮繎浣嗚瑙夋娴嬫湭瑙﹀彂 鈫?鏀惧純鐩爣, 鎺㈢储鎵?viewpoint
         if dist < 0.5:
             self._state.navigating_to_goal = False
             self._state.goal_position = None
             return HABITAT_TURN_LEFT
 
-        # ── 贪心导航 ──
+        # 鈹€鈹€ 璐績瀵艰埅 鈹€鈹€
         escape_remaining = getattr(self._state, '_nav_escape_remaining', 0)
         if escape_remaining > 0:
             self._state._nav_escape_remaining = escape_remaining - 1
@@ -929,16 +923,16 @@ class NaviMindAgent:
             return HABITAT_MOVE_FORWARD
 
     def _explore(self, observations: Dict[str, Any]) -> int:
-        """深度感知 frontier 探索 (旋转扫描 + 朝最佳 frontier 前进)。"""
+        """Compatibility helper."""
         if self._state.stuck_counter > 3:
             self._state.stuck_counter = 0
-            # 记录卡住方向, 下次 frontier 评分时惩罚该方向
+            # 璁板綍鍗′綇鏂瑰悜, 涓嬫 frontier 璇勫垎鏃舵儵缃氳鏂瑰悜
             self._state.blocked_headings.append(self._state.heading)
             if len(self._state.blocked_headings) > 8:
                 self._state.blocked_headings = self._state.blocked_headings[-8:]
             self._state.is_rotating = True
             self._state.rotate_count = 0
-            self._state.forward_steps = 0  # 重置, 确保下次扫描后重新对齐
+            self._state.forward_steps = 0  # 閲嶇疆, 纭繚涓嬫鎵弿鍚庨噸鏂板榻?
             return HABITAT_TURN_LEFT if np.random.random() > 0.5 else HABITAT_TURN_RIGHT
 
         if self._state.is_rotating:
@@ -960,12 +954,12 @@ class NaviMindAgent:
                 pred_cell = (int(pred_x / self._cell_size), int(pred_z / self._cell_size))
                 novelty_bonus = 0.0 if pred_cell in self._state.visited_cells else 1.0
 
-                # 消融 no_hierarchy: 不用 CLIP 分数加权 frontier
+                # 娑堣瀺 no_hierarchy: 涓嶇敤 CLIP 鍒嗘暟鍔犳潈 frontier
                 clip_bonus = 0.0
                 if not self._no_hierarchy and self._state.last_clip_sim > 0.18:
                     clip_bonus = self._state.last_clip_sim * 3.0
 
-                # YOLO 共存语义 bonus — 探索方向有共存物体则加分 (无需 API)
+                # YOLO 鍏卞瓨璇箟 bonus 鈥?鎺㈢储鏂瑰悜鏈夊叡瀛樼墿浣撳垯鍔犲垎 (鏃犻渶 API)
                 yolo_cooccur_bonus = 0.0
                 if self._yolo is not None and "rgb" in observations:
                     cooccur_map = YOLO_COOCCUR_BONUS.get(self._target_category, {})
@@ -974,9 +968,9 @@ class NaviMindAgent:
                         for cls_id, bonus in cooccur_map.items():
                             if cls_id in detected_ids:
                                 yolo_cooccur_bonus += bonus
-                        yolo_cooccur_bonus = min(yolo_cooccur_bonus, 5.0)  # cap 避免压制其他 frontier
+                        yolo_cooccur_bonus = min(yolo_cooccur_bonus, 5.0)  # cap 閬垮厤鍘嬪埗鍏朵粬 frontier
 
-                # 惩罚历史卡住方向 (±35°内) — 防止 agent 反复撞墙
+                # 鎯╃綒鍘嗗彶鍗′綇鏂瑰悜 (卤35掳鍐? 鈥?闃叉 agent 鍙嶅鎾炲
                 blocked_penalty = 0.0
                 for bh in self._state.blocked_headings:
                     hdiff = abs((self._state.heading - bh + math.pi) % (2 * math.pi) - math.pi)
@@ -1003,7 +997,7 @@ class NaviMindAgent:
                     del self._state._best_frontier_angle_candidate
             return HABITAT_TURN_LEFT
 
-        # 前进阶段
+        # 鍓嶈繘闃舵
         if self._state.forward_steps == 0:
             angle_diff = (
                 (self._state.best_frontier_angle - self._state.heading + math.pi)
@@ -1018,10 +1012,10 @@ class NaviMindAgent:
             self._state.rotate_count = 0
         return HABITAT_MOVE_FORWARD
 
-    # ── 工具 ──
+    # 鈹€鈹€ 宸ュ叿 鈹€鈹€
 
     def _pixel_to_world(self, px: float, py: float, depth_m: float) -> np.ndarray:
-        """像素坐标 + 深度 → 世界坐标。"""
+        """Compatibility helper."""
         cam_x = (px - self._img_w / 2.0) / self._fx * depth_m
         cam_y = (py - self._img_h / 2.0) / self._fy * depth_m
         heading = self._state.heading
@@ -1048,10 +1042,10 @@ class NaviMindAgent:
 
     def _check_stuck(self) -> None:
         """
-        检测卡死。只在主动前进阶段计数:
-        - 旋转扫描 (is_rotating=True): 原地转向, 不计
-        - 对齐转向 (forward_steps==0): 找方向转, 不计
-        - 前进阶段 (forward_steps>0): 期望移动, 位移<1cm 则计卡死
+        妫€娴嬪崱姝汇€傚彧鍦ㄤ富鍔ㄥ墠杩涢樁娈佃鏁?
+        - 鏃嬭浆鎵弿 (is_rotating=True): 鍘熷湴杞悜, 涓嶈
+        - 瀵归綈杞悜 (forward_steps==0): 鎵炬柟鍚戣浆, 涓嶈
+        - 鍓嶈繘闃舵 (forward_steps>0): 鏈熸湜绉诲姩, 浣嶇Щ<1cm 鍒欒鍗℃
         """
         if self._state.is_rotating or self._state.forward_steps == 0:
             self._state.stuck_counter = 0

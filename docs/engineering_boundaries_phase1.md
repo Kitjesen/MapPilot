@@ -8,14 +8,14 @@ migration.
 
 | Target package | Current surfaces | Responsibility |
 | --- | --- | --- |
-| `runtime` | `src/core/module.py`, `src/core/stream.py`, lifecycle helpers | Module lifecycle, ports, scheduling, backpressure |
-| `contracts` | `src/core/contracts/` | Runtime-checkable schemas for high-risk dict messages |
-| `composition` | `src/core/runtime_profiles.py`, `src/core/blueprints/` | Profile compilation, stack factories, explicit wires |
-| `platform` | `src/drivers/`, `src/slam/`, `config/devices.yaml`, `config/robot_config.yaml` | Robot hardware, ROS 2 bridges, SLAM/localization adapters |
+| `runtime` | `src/runtime/module.py`, `src/runtime/stream.py`, lifecycle helpers | Module lifecycle, ports, scheduling, backpressure |
+| `contracts` | `src/runtime/contracts/` | Runtime-checkable schemas for high-risk dict messages |
+| `composition` | `src/runtime/runtime_profiles.py`, `src/runtime/blueprints/` | Profile compilation, stack factories, explicit wires |
+| `platform` | `src/drivers/`, `src/localization/`, `config/devices.yaml`, `config/robot_config.yaml` | Robot hardware, ROS 2 bridges, SLAM/localization adapters |
 | `mapping` | `src/nav/services/*map*`, `src/nav/services/dynamic_filter.py` | Occupancy, ESDF, elevation, traversability, map lifecycle |
-| `navigation` | `src/nav/`, `src/global_planning/`, `src/base_autonomy/` | Mission FSM, global planning, local planning, cmd_vel arbitration |
-| `semantics` | `src/semantic/`, `src/memory/` | Perception, goal resolution, LLM/tool loop, semantic memory |
-| `interfaces` | `src/gateway/`, `src/webrtc/`, `scripts/lingtu` | REST/SSE/WS/MCP, dashboard, field operations CLI |
+| `navigation` | `src/nav/`, `src/nav/services/plan/`, `src/nav/local/` | Mission FSM, global planning, local planning, cmd_vel arbitration |
+| `semantics` | `src/perception/`, `src/decision/`, `src/memory/` | Perception, goal resolution, LLM/tool loop, semantic memory |
+| `interfaces` | `src/gateway/`, `src/gateway/media/`, `scripts/lingtu` | REST/SSE/WS/MCP, dashboard, field operations CLI |
 | `ops` | `scripts/`, `.github/`, deployment helpers | Build, deployment, diagnostics, CI |
 
 ## Dependency Rules

@@ -17,7 +17,7 @@
 #
 # Parameters are organized into sections matching the Point-LIO codebase.
 # Comments indicate which parameters are Point-LIO specific vs shared with
-# our existing Fast-LIO2 config (src/slam/fastlio2/config/lio.yaml).
+# our existing Fast-LIO2 config (src/localization/fastlio2/config/lio.yaml).
 # =============================================================================
 
 # --- ROS2 parameter namespace wrapper ---
@@ -28,11 +28,11 @@
         # common -- Topic names & frame combination/cutting
         # =====================================================================
         # These topic names must match our ROS2 topic contract.
-        # In our system, the launch file remaps these to /nav/ prefixed topics,
+        # In our system, launch remaps these to canonical /lidar and /imu topics,
         # but Point-LIO internally subscribes to these names.
         common:
-            lid_topic: "livox/lidar"       # remapped to /nav/lidar_scan in launch
-            imu_topic: "livox/imu"         # remapped to /nav/imu in launch
+            lid_topic: "livox/lidar"       # remapped to /lidar/raw_frame in launch
+            imu_topic: "livox/imu"         # remapped to /imu/raw in launch
 
             # Frame combination: merge multiple LiDAR frames into one before processing.
             # Useful for low-frequency LiDARs. Mid-360 runs at 10 Hz -- not needed.
@@ -56,7 +56,7 @@
         # =====================================================================
         preprocess:
             # LiDAR type enum: 1=AVIA (all Livox CustomMsg), 2=VELO16, 3=OUST64, 4=HESAIxt32
-            # Mid-360 uses type 1 (AVIA) â€” all Livox LiDARs share CustomMsg format.
+            # Mid-360 uses type 1 (AVIA) â€?all Livox LiDARs share CustomMsg format.
             lidar_type: 1                  # AVIA = Livox CustomMsg (Mid-360/Avia/HAP)
 
             scan_line: 4                   # [shared concept] Mid-360 has 4 scan lines
@@ -227,7 +227,7 @@
         publish:
             path_en: true                  # [Point-LIO specific] publish nav_msgs/Path
             scan_publish_en: true          # [Point-LIO specific] publish registered cloud
-            scan_bodyframe_pub_en: true    # MUST be true: /nav/registered_cloud needs body frame
+            scan_bodyframe_pub_en: true    # MUST be true: /slam/registered_cloud needs body frame
             tf_send_en: true               # broadcast TF: odom -> body
 
         # =====================================================================

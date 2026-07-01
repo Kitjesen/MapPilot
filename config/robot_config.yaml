@@ -59,6 +59,8 @@ driver:
 lidar:
   frame_id: "livox_frame"
   publish_freq: 10.0          # Hz
+  lidar_ip: "192.168.1.115"   # MID-360 device IP.
+  host_ip: "192.168.1.5"      # Robot NIC IP on the Livox subnet.
   # LiDAR mounting extrinsics (body->lidar TF, metres/radians).
   # Used by static_transform_publisher and C++ coordinate transforms.
   offset_x:  -0.011

@@ -106,35 +106,35 @@ def run_probe(args: argparse.Namespace) -> dict:
     rclpy.init(args=None)
     node = Node("lingtu_gazebo_topic_sync_probe")
     stats = {
-        "/nav/odometry": TopicStats("/nav/odometry"),
-        "/nav/map_cloud": TopicStats("/nav/map_cloud"),
-        "/nav/registered_cloud": TopicStats("/nav/registered_cloud"),
+        "/slam/odometry": TopicStats("/slam/odometry"),
+        "/slam/map_cloud": TopicStats("/slam/map_cloud"),
+        "/slam/registered_cloud": TopicStats("/slam/registered_cloud"),
     }
 
     def on_odom(msg: Odometry) -> None:
-        stats["/nav/odometry"].add(
+        stats["/slam/odometry"].add(
             frame_id=str(msg.header.frame_id),
             child_frame_id=str(msg.child_frame_id),
             stamp_sec=_stamp_sec(msg.header.stamp),
         )
 
     def on_map_cloud(msg: PointCloud2) -> None:
-        stats["/nav/map_cloud"].add(
+        stats["/slam/map_cloud"].add(
             frame_id=str(msg.header.frame_id),
             stamp_sec=_stamp_sec(msg.header.stamp),
             point_count=int(msg.width) * int(msg.height),
         )
 
     def on_registered_cloud(msg: PointCloud2) -> None:
-        stats["/nav/registered_cloud"].add(
+        stats["/slam/registered_cloud"].add(
             frame_id=str(msg.header.frame_id),
             stamp_sec=_stamp_sec(msg.header.stamp),
             point_count=int(msg.width) * int(msg.height),
         )
 
-    node.create_subscription(Odometry, "/nav/odometry", on_odom, 10)
-    node.create_subscription(PointCloud2, "/nav/map_cloud", on_map_cloud, 10)
-    node.create_subscription(PointCloud2, "/nav/registered_cloud", on_registered_cloud, 10)
+    node.create_subscription(Odometry, "/slam/odometry", on_odom, 10)
+    node.create_subscription(PointCloud2, "/slam/map_cloud", on_map_cloud, 10)
+    node.create_subscription(PointCloud2, "/slam/registered_cloud", on_registered_cloud, 10)
 
     deadline = time.monotonic() + args.timeout_sec
     try:
@@ -152,15 +152,15 @@ def run_probe(args: argparse.Namespace) -> dict:
         "simulation_only": True,
         "topics": {name: item.as_dict() for name, item in stats.items()},
         "skew_to_odometry_sec": {
-            "/nav/map_cloud": _skew_report(stats["/nav/odometry"], stats["/nav/map_cloud"]),
-            "/nav/registered_cloud": _skew_report(stats["/nav/odometry"], stats["/nav/registered_cloud"]),
+            "/slam/map_cloud": _skew_report(stats["/slam/odometry"], stats["/slam/map_cloud"]),
+            "/slam/registered_cloud": _skew_report(stats["/slam/odometry"], stats["/slam/registered_cloud"]),
         },
         "errors": [],
     }
     expected_frames = {
-        "/nav/odometry": {"odom"},
-        "/nav/map_cloud": {"odom"},
-        "/nav/registered_cloud": {"body"},
+        "/slam/odometry": {"odom"},
+        "/slam/map_cloud": {"odom"},
+        "/slam/registered_cloud": {"body"},
     }
     for topic, topic_stats in stats.items():
         if topic_stats.samples < args.min_samples:
@@ -169,8 +169,8 @@ def run_probe(args: argparse.Namespace) -> dict:
             report["errors"].append(f"{topic} header timestamps are not monotonic")
         if not expected_frames[topic].issubset(topic_stats.frames):
             report["errors"].append(f"{topic} expected frame {sorted(expected_frames[topic])}, got {sorted(topic_stats.frames)}")
-    if "body" not in stats["/nav/odometry"].child_frames:
-        report["errors"].append("/nav/odometry expected child_frame_id body")
+    if "body" not in stats["/slam/odometry"].child_frames:
+        report["errors"].append("/slam/odometry expected child_frame_id body")
     report["ok"] = not report["errors"]
     return report
 

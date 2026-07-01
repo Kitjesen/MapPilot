@@ -1,4 +1,4 @@
-"""Contract tests for CmdVelMux — priority arbitration order, timeout fallthrough,
+"""Contract tests for VelocityMux priority arbitration order, timeout fallthrough,
 freeze/unfreeze, and health reporting.
 
 All tests are pure-Python, no ROS2 / hardware / MuJoCo required.
@@ -9,16 +9,16 @@ from __future__ import annotations
 import time
 import unittest
 
-from core.msgs.geometry import Twist, Vector3
-from core.stream import In, Out
+from runtime.msgs.geometry import Twist, Vector3
+from runtime.stream import In, Out
 
 
-class TestCmdVelMuxContract(unittest.TestCase):
-    """Contract tests for CmdVelMux."""
+class TestVelocityMuxContract(unittest.TestCase):
+    """Contract tests for nav.velocity_mux."""
 
     def _make(self, source_timeout: float = 0.5):
-        from nav.cmd_vel_mux_module import CmdVelMux
-        return CmdVelMux(source_timeout=source_timeout)
+        from nav.services.safety.velocity_mux import VelocityMux
+        return VelocityMux(source_timeout=source_timeout)
 
     @staticmethod
     def _twist(vx: float = 0.0, vy: float = 0.0, wz: float = 0.0) -> Twist:
@@ -44,7 +44,7 @@ class TestCmdVelMuxContract(unittest.TestCase):
         self.assertIsInstance(m.ports_out["active_source"], Out)
 
     def test_layer_is_0(self):
-        """CmdVelMux must be layer 0."""
+        """VelocityMux must be layer 0."""
         m = self._make()
         self.assertEqual(m.layer, 0)
 
@@ -115,7 +115,7 @@ class TestCmdVelMuxContract(unittest.TestCase):
         self.assertEqual(active_sources[-1], "path_follower")
 
     def test_freeze_stops_outputs(self):
-        """When frozen, CmdVelMux must publish zero twist and reject inputs."""
+        """When frozen, VelocityMux must publish zero twist and reject inputs."""
         m = self._make(source_timeout=5.0)
         m.setup()
         driver_twists = []
@@ -130,7 +130,7 @@ class TestCmdVelMuxContract(unittest.TestCase):
         self.assertAlmostEqual(driver_twists[-1].linear.x, 0.0)
 
     def test_unfreeze_restores_operation(self):
-        """After unfreeze, CmdVelMux must resume normal arbitration."""
+        """After unfreeze, VelocityMux must resume normal arbitration."""
         m = self._make(source_timeout=5.0)
         m.setup()
         driver_twists = []

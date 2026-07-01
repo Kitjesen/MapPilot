@@ -460,6 +460,17 @@ export async function sendGoal(
   )
 }
 
+export async function navigateClick(
+  x: number,
+  y: number,
+  options: SendGoalOptions = {},
+): Promise<ControlCommandResponse> {
+  return postJson<ControlCommandResponse>(
+    apiPath('navigate_click', '/api/v1/navigate/click'),
+    commandBody('navigate_click', { x, y, ...options }),
+  )
+}
+
 export async function constructGoalCandidate(
   request: GoalCandidateRequest,
 ): Promise<GoalCandidateResponse> {

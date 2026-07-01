@@ -19,7 +19,7 @@
   "source_note": "Selected on the simulation server from /home/bsrl/hongsenpang/simulation/thunder2/policy_pt/policy.onnx after candidate gait screening.",
   "verified_by": [
     "sim/scripts/policy_nav_smoke.py --direct-duration 4",
-    "sim/scripts/policy_nav_smoke.py --goal-distance 0.8 --nav-local-planner-backend nanobind --nav-path-follower-backend nav_core",
+    "sim/scripts/policy_nav_smoke.py --goal-distance 0.8 --nav-local-planner-backend nanobind --nav-path-follower-backend nav_kernel",
     "sim/scripts/server_sim_closure.py"
   ],
   "simulation_only": true,

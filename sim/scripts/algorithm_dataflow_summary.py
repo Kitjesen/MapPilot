@@ -13,8 +13,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.dimos_runtime_dataflow import resolve_report_path
-from core.dimos_runtime_dataflow import summarize_live_report as summarize_report
+from runtime.dimos_runtime_dataflow import resolve_report_path
+from runtime.dimos_runtime_dataflow import summarize_live_report as summarize_report
 
 
 def main(argv: list[str] | None = None) -> int:

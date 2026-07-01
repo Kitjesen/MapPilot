@@ -8,7 +8,7 @@ This tool is intentionally non-motion:
 - it does not publish cmd_vel or goals
 
 It loads a trusted local tomogram pickle, injects synthetic odometry into
-NavigationModule, calls preview_plan(), prints JSON evidence, and exits.
+Navigation, calls preview_plan(), prints JSON evidence, and exits.
 
 Pickle files can execute code while loading. By default, explicit tomogram paths
 must stay under --map-root/NAV_MAP_DIR; use --trust-tomogram-pickle only for
@@ -40,8 +40,8 @@ for _path in (REPO_ROOT, REPO_ROOT / "src"):
     if text not in sys.path:
         sys.path.insert(0, text)
 
-import lingtu_runtime.plugin_seed  # noqa: E402,F401 - installs built-in planner catalog
-from global_planning.pct_planner_runnable.runtime import (  # noqa: E402
+import lingtu.plugin_seed  # noqa: E402,F401 - installs built-in planner catalog
+from nav.services.plan.global_planner.algorithm.pct.runtime.api import (  # noqa: E402
     inspect_pct_runtime,
 )
 
@@ -678,8 +678,8 @@ def annotate_pct_planner_mode(
 
 
 def make_odom(start: list[float], planning_frame: str) -> Any:
-    from core.msgs.geometry import Pose
-    from core.msgs.nav import Odometry
+    from runtime.msgs.geometry import Pose
+    from runtime.msgs.nav import Odometry
 
     return Odometry(pose=Pose(float(start[0]), float(start[1]), float(start[2])), frame_id=planning_frame)
 
@@ -694,16 +694,15 @@ def run_navigation_preview_inprocess(
     timeout_s: float,
     downsample_dist: float,
 ) -> dict[str, Any]:
-    from nav.navigation_module import NavigationModule
+    from nav.mission.navigation import Navigation
 
-    nav = NavigationModule(
+    nav = Navigation(
         planner=planner,
         tomogram=str(tomogram_path),
         obstacle_thr=obstacle_thr,
         planning_frame_id=planning_frame,
         preview_timeout=timeout_s,
         downsample_dist=downsample_dist,
-        enable_ros2_bridge=False,
         allow_direct_goal_fallback=False,
     )
     t0 = time.time()
@@ -731,7 +730,7 @@ def run_navigation_preview_inprocess(
     last = preview_path[-1] if preview_path else None
     return {
         "planner": planner,
-        "backend_class": type(backend).__name__ if backend is not None else None,
+        "planner_class": type(backend).__name__ if backend is not None else None,
         "backend_available": backend_available,
         "backend_load_error": getattr(backend, "_load_error", "") if backend is not None else "",
         "has_map": bool(nav._planner_svc.has_map),
@@ -766,7 +765,7 @@ def subprocess_failure_result(
 ) -> dict[str, Any]:
     return {
         "planner": planner,
-        "backend_class": None,
+        "planner_class": None,
         "backend_available": False,
         "backend_load_error": "",
         "has_map": False,
@@ -977,7 +976,7 @@ def summarize_case(
                 "reasons": ["pct_runtime_libs_missing"],
                 "error": ",".join(pct_runtime_libs.get("missing") or ["pct_runtime_libs_missing"]),
                 "backend_available": False,
-                "backend_class": "_PCTBackend",
+                "planner_class": "PCTPlanner",
                 "backend_load_error": "PCT runtime libraries are missing",
             }
         )
@@ -1074,7 +1073,7 @@ def case_failures(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Offline non-motion plan preview against an active tomogram."
+        description="Legacy tomogram plan preview; product global planning uses OctoPlanner3D."
     )
     parser.add_argument("--tomogram", help="Path to tomogram.pickle. Defaults to <map-root>/active/tomogram.pickle.")
     parser.add_argument("--map-root", help="Map root. Defaults to NAV_MAP_DIR, then ~/data/nova/maps.")
@@ -1083,7 +1082,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use-last-pose", action="store_true", help="Use active last_pose.txt as start when --goal is provided.")
     parser.add_argument("--internal-only", action="store_true", help="Only run an internal free-cell route, skipping last_pose.")
     parser.add_argument("--last-pose-only", action="store_true", help="Only run last_pose to nearest free route.")
-    parser.add_argument("--planner", choices=("pct", "astar"), default="pct")
+    parser.add_argument("--planner", choices=("pct",), default="pct")
     parser.add_argument("--planning-frame", default="odom")
     parser.add_argument("--obstacle-thr", type=float, default=49.9)
     parser.add_argument("--timeout", type=float, default=3.0)

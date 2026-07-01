@@ -27,7 +27,15 @@ class LingTuREPL(cmd.Cmd):
         try:
             return self._system.get_module(name)
         except KeyError:
+            if name == "SlamBridgeModule":
+                try:
+                    return self._system.get_module("SlamModule")
+                except KeyError:
+                    return None
             return None
+
+    def _get_slam_module(self):
+        return self._get_module("SlamModule") or self._get_module("SlamBridgeModule")
 
     def do_navigate(self, arg):
         """Send navigation goal: navigate <x> <y> [z]"""
@@ -42,12 +50,12 @@ class LingTuREPL(cmd.Cmd):
             print("  Error: coordinates must be numbers")
             return
 
-        nav = self._get_module("NavigationModule")
+        nav = self._get_module("nav.mission")
         if not nav or not hasattr(nav, "goal_pose"):
-            print("  NavigationModule not available")
+            print("  Navigation not available")
             return
 
-        from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+        from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
         goal = PoseStamped(
             pose=Pose(
@@ -65,9 +73,9 @@ class LingTuREPL(cmd.Cmd):
         if not arg:
             print("  Usage: go <instruction>  (e.g. go find the table)")
             return
-        nav = self._get_module("NavigationModule")
+        nav = self._get_module("nav.mission")
         if not nav or not hasattr(nav, "instruction"):
-            print("  NavigationModule not available")
+            print("  Navigation not available")
             return
         nav.instruction._deliver(arg)
         print(f"  Instruction -> {arg}")
@@ -83,9 +91,9 @@ class LingTuREPL(cmd.Cmd):
 
     def do_cancel(self, arg):
         """Cancel current navigation mission."""
-        nav = self._get_module("NavigationModule")
+        nav = self._get_module("nav.mission")
         if not nav or not hasattr(nav, "cancel"):
-            print("  NavigationModule not available")
+            print("  Navigation not available")
             return
         nav.cancel._deliver("user")
         print("  Mission cancelled")
@@ -119,15 +127,15 @@ class LingTuREPL(cmd.Cmd):
             print("  Usage: map list | save <name> | use <name> | build <name> | delete <name> | rename <old> <new>")
 
     def _map_cmd(self, cmd: dict) -> None:
-        """Send a command to MapManagerModule and print the result.
+        """Send a command to MapService and print the result.
 
-        Routes through the Module port when MapManagerModule is running.
+        Routes through the Module port when MapService is running.
         Falls back to direct filesystem operations for list/use/delete
         when the module is not in the blueprint (e.g. stub profile).
         """
         import json as _json
 
-        mod = self._get_module("MapManagerModule")
+        mod = self._get_module("nav.maps")
         if mod is not None:
             # Collect response via a one-shot callback
             result_holder: list = []
@@ -148,11 +156,11 @@ class LingTuREPL(cmd.Cmd):
             self._map_print_response(cmd.get("action", ""), resp)
             return
 
-        # --- Fallback: no MapManagerModule (stub/dev) ---
+        # --- Fallback: no MapService (stub/dev) ---
         self._map_fallback(cmd)
 
     def _map_print_response(self, action: str, resp: dict) -> None:
-        """Render a MapManagerModule response to the terminal."""
+        """Render a MapService response to the terminal."""
         if not resp.get("success"):
             print(f"  {T.red('Error')}: {resp.get('message', '?')}")
             return
@@ -188,7 +196,7 @@ class LingTuREPL(cmd.Cmd):
         elif action == "set_active":
             name = resp.get("active", "?")
             tomogram = resp.get("tomogram", "")
-            nav = self._get_module("NavigationModule")
+            nav = self._get_module("nav.mission")
             if (
                 nav
                 and tomogram
@@ -228,7 +236,7 @@ class LingTuREPL(cmd.Cmd):
             print(f"  Active map: {T.green(name)} (restart required to apply new tomogram)")
 
     def _map_fallback(self, cmd: dict) -> None:
-        """Direct filesystem fallback when MapManagerModule is not running."""
+        """Direct filesystem fallback when MapService is not running."""
         import shutil
 
         from cli.profiles_data import _default_map_dir
@@ -268,7 +276,7 @@ class LingTuREPL(cmd.Cmd):
                 shutil.rmtree(active_link)
             os.symlink(map_path, active_link)
             tomogram = os.path.join(map_path, "tomogram.pickle")
-            nav = self._get_module("NavigationModule")
+            nav = self._get_module("nav.mission")
             if nav and os.path.exists(tomogram):
                 self._reload_planner_tomogram(nav, tomogram, name)
             else:
@@ -285,11 +293,20 @@ class LingTuREPL(cmd.Cmd):
                 return
             print(f"  Building tomogram from {pcd_path}...")
             try:
-                tomo_dir = project_root() / "src" / "global_planning" / "pct_planner" / "tomography" / "scripts"
+                tomo_dir = (
+                    project_root()
+                    / "src"
+                    / "nav"
+                    / "planning"
+                    / "vendor"
+                    / "pct_planner"
+                    / "tomography"
+                    / "scripts"
+                )
                 tds = str(tomo_dir)
                 if tds not in sys.path:
                     sys.path.insert(0, tds)
-                from global_planning.pct_planner.tomography.scripts.build_tomogram import (
+                from nav.services.plan.global_planner.algorithm.pct.vendor.pct_planner.tomography.scripts.build_tomogram import (
                     build_tomogram_from_pcd,
                 )
                 build_tomogram_from_pcd(pcd_path, tomogram_path)
@@ -307,14 +324,13 @@ class LingTuREPL(cmd.Cmd):
             print(f"  Deleted: {name}")
 
         elif action == "save":
-            print("  MapManagerModule not running -> cannot call ROS2 save_maps service")
+            print("  MapService not running -> cannot call map-save adapter")
             print("  Start with a map-enabled profile (e.g. lingtu map)")
 
         else:
-            print(f"  MapManagerModule not running (action: {action})")
+            print(f"  MapService not running (action: {action})")
 
-    # -€-€ SLAM hot-switch -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-
+    # -鈧?鈧?SLAM hot-switch -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
     def do_slam(self, arg):
         """SLAM control: slam status | fastlio2 | localizer | super_lio | super_lio_relocation | stop"""
         parts = arg.split()
@@ -356,7 +372,7 @@ class LingTuREPL(cmd.Cmd):
 
     def _slam_status(self):
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
             svc = get_service_manager()
             st = svc.status(
                 "lidar",
@@ -395,18 +411,18 @@ class LingTuREPL(cmd.Cmd):
             icon = "*" if state == "running" else "*"
             print(f"    {icon} {name}: {state}")
 
-        # Show SlamBridge health if available
-        bridge = self._get_module("SlamBridgeModule")
-        if bridge:
+        # Show SLAM health if available
+        slam = self._get_slam_module()
+        if slam:
             try:
-                h = bridge.health()
-                print(f"  Bridge: alive={h.get('slam', {}).get('alive', '?')}")
+                h = slam.health()
+                print(f"  SLAM module: alive={h.get('slam', {}).get('alive', '?')}")
             except Exception:
                 pass
 
     def _slam_switch(self, profile: str):
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
             svc = get_service_manager()
         except Exception as e:
             print(f"  ServiceManager not available: {e}")
@@ -466,7 +482,7 @@ class LingTuREPL(cmd.Cmd):
 
     def _slam_stop(self):
         try:
-            from core.service_manager import get_service_manager
+            from runtime.service_manager import get_service_manager
             svc = get_service_manager()
             svc.stop("super_lio_relocation", "super_lio", "slam_pgo", "localizer", "slam")
             print("  All SLAM services stopped")
@@ -494,9 +510,9 @@ class LingTuREPL(cmd.Cmd):
         return [o for o in options if o.startswith(text)]
 
     def _gnss_status(self):
-        bridge = self._get_module("SlamBridgeModule")
+        bridge = self._get_slam_module()
         if bridge is None:
-            print("  SlamBridgeModule not available")
+            print("  SLAM module not available")
             return
         try:
             snap = bridge._gnss_health_snapshot()
@@ -531,9 +547,9 @@ class LingTuREPL(cmd.Cmd):
                 pass
 
     def _gnss_relock(self):
-        bridge = self._get_module("SlamBridgeModule")
+        bridge = self._get_slam_module()
         if bridge is None:
-            print("  SlamBridgeModule not available")
+            print("  SLAM module not available")
             return
         try:
             result = bridge.relock_gnss_alignment()
@@ -542,9 +558,9 @@ class LingTuREPL(cmd.Cmd):
             print(f"  Relock failed: {e}")
 
     def _gnss_set_fusion(self, enabled: bool):
-        bridge = self._get_module("SlamBridgeModule")
+        bridge = self._get_slam_module()
         if bridge is None:
-            print("  SlamBridgeModule not available")
+            print("  SLAM module not available")
             return
         try:
             result = bridge.set_gnss_fusion(enabled)
@@ -683,7 +699,7 @@ class LingTuREPL(cmd.Cmd):
             print()
 
         # Build context function from live modules
-        nav = self._get_module("NavigationModule")
+        nav = self._get_module("nav.mission")
         self._get_module("SemanticMapperModule")
         vmem = self._get_module("VectorMemoryModule")
         sem = self._get_module("SemanticPlannerModule")
@@ -718,7 +734,7 @@ class LingTuREPL(cmd.Cmd):
         # Build tool handlers that publish to module ports
         def _navigate_to(x, y, z=None, **_):
             if nav and hasattr(nav, "goal_pose"):
-                from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+                from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
                 if z is None:
                     try:
                         z = float(nav._robot_pos[2])
@@ -730,7 +746,7 @@ class LingTuREPL(cmd.Cmd):
                 ))
                 nav.goal_pose._deliver(goal)
                 return f"Navigating to ({float(x):.1f}, {float(y):.1f}, {float(z):.1f})"
-            return "NavigationModule not available"
+            return "Navigation not available"
 
         def _navigate_to_object(label, **_):
             if sem and hasattr(sem, "instruction"):
@@ -806,7 +822,7 @@ class LingTuREPL(cmd.Cmd):
 
         # Patch AgentLoop to print each step live
         try:
-            from semantic.planner.agent_loop import AGENT_TOOLS, AgentLoop
+            from decision.tasking.agent_loop import AgentLoop
         except ImportError:
             print("  AgentLoop not available -> check semantic stack is enabled")
             return
@@ -896,7 +912,7 @@ class LingTuREPL(cmd.Cmd):
             print(f"  {T.yellow('!')} Using mock LLM -> set a real API key for actual responses")
 
         # Build system prompt with current robot state
-        nav = self._get_module("NavigationModule")
+        nav = self._get_module("nav.mission")
         sem = self._get_module("SemanticPlannerModule")
 
         x, y, z = 0.0, 0.0, 0.0
@@ -1162,8 +1178,7 @@ class LingTuREPL(cmd.Cmd):
         profile = self._cfg.get("slam_profile", "?")
         print(f"\n  [{now}]  profile: {self._cfg.get('_desc', profile)}\n")
 
-        # -€-€ Startup -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-        n_mods = len(s.modules)
+        # -鈧?鈧?Startup -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        n_mods = len(s.modules)
         n_conn = len(s.connections)
         active = sum(
             1 for mod in s.modules.values()
@@ -1173,8 +1188,7 @@ class LingTuREPL(cmd.Cmd):
         print(f"  Startup    {n_mods} modules loaded, {n_conn} connections")
         print(f"             {active} modules have received/sent data")
 
-        # -€-€ SLAM / Localization -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-        slam = self._get_module("SlamBridgeModule") or self._get_module("SLAMModule")
+        # -鈧?鈧?SLAM / Localization -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        slam = self._get_module("SlamBridgeModule")
         if slam:
             odom_n  = slam.odometry.msg_count  if hasattr(slam, "odometry")  else 0
             cloud_n = slam.map_cloud.msg_count if hasattr(slam, "map_cloud") else 0
@@ -1186,8 +1200,7 @@ class LingTuREPL(cmd.Cmd):
         else:
             print(f"\n  SLAM       {T.dim('not in this profile')}")
 
-        # -€-€ Robot position -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-        nav = self._get_module("NavigationModule")
+        # -鈧?鈧?Robot position -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        nav = self._get_module("nav.mission")
         if nav and hasattr(nav, "_robot_pos"):
             x, y, z = nav._robot_pos
             state = getattr(nav, "_state", "?")
@@ -1196,8 +1209,7 @@ class LingTuREPL(cmd.Cmd):
             print(f"    position   x={x:.2f}  y={y:.2f}  z={z:.2f}")
             print(f"    state      {state_color(state)}")
 
-        # -€-€ Map modules -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-        occ = self._get_module("OccupancyGridModule")
+        # -鈧?鈧?Map modules -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        occ = self._get_module("OccupancyGridModule")
         if occ:
             n = sum(p.msg_count for p in occ.ports_in.values())
             ok = T.green("building") if n > 0 else T.yellow("waiting for point cloud")
@@ -1210,10 +1222,9 @@ class LingTuREPL(cmd.Cmd):
             ok = T.green("building") if n > 0 else T.yellow("waiting")
             print(f"    elevation map   {ok}  ({n} updates)")
 
-        # -€-€ C++ backends -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-        terrain = self._get_module("TerrainModule")
-        lp      = self._get_module("LocalPlannerModule")
-        pf      = self._get_module("PathFollowerModule")
+        # -鈧?鈧?C++ backends -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        terrain = self._get_module("nav.terrain")
+        lp      = self._get_module("nav.local_planner")
+        pf      = self._get_module("nav.path_follower")
         if terrain or lp or pf:
             print("\n  C++ backends")
             if terrain:
@@ -1226,17 +1237,15 @@ class LingTuREPL(cmd.Cmd):
                 print(f"    local planner  {ok}")
             if pf:
                 be = getattr(pf, "_backend", "?")
-                ok = T.green("nav_core") if be == "nav_core" else T.yellow(be)
+                ok = T.green("nav_kernel") if be == "nav_kernel" else T.yellow(be)
                 print(f"    path follower  {ok}")
 
-        # -€-€ Gateway -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-        gw = self._get_module("GatewayModule")
+        # -鈧?鈧?Gateway -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        gw = self._get_module("GatewayModule")
         if gw:
             port = getattr(gw, "_port", 5050)
             print(f"\n  Gateway    http://localhost:{port}  (accessible from LAN)")
 
-        # -€-€ Teleop -€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€-€
-        tp = self._get_module("TeleopModule")
+        # -鈧?鈧?Teleop -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        tp = self._get_module("TeleopModule")
         if tp:
             try:
                 st = tp.get_teleop_status()
@@ -1265,7 +1274,7 @@ class LingTuREPL(cmd.Cmd):
             n_out = sum(p.msg_count for p in mod.ports_out.values())
             traffic = f"in:{n_in} out:{n_out}" if (n_in + n_out) > 0 else T.dim("idle")
             print(f"  [{layer}] {name:30s} {traffic}")
-        nav = self._get_module("NavigationModule")
+        nav = self._get_module("nav.mission")
         if nav and hasattr(nav, "_state"):
             print(f"\n  Mission: {T.bold(nav._state)}")
         print()
@@ -1334,7 +1343,7 @@ class LingTuREPL(cmd.Cmd):
 
                 print(f"  {T.bold('LingTu')} [{mode_str}]  {ts}  {elapsed}s  Ctrl+C to stop\n")
 
-                nav = self._get_module("NavigationModule")
+                nav = self._get_module("nav.mission")
                 x, y, z, yaw_deg = 0.0, 0.0, 0.0, 0.0
                 if nav:
                     x, y, z = nav._robot_pos[0], nav._robot_pos[1], nav._robot_pos[2]
@@ -1355,7 +1364,7 @@ class LingTuREPL(cmd.Cmd):
                 print(f"  {T.bold('POSE')}:  x={x:7.2f}  y={y:7.2f}  z={z:5.2f}  yaw={yaw_deg:6.1f} deg")
                 print()
 
-                slam = self._get_module("SlamBridgeModule") or self._get_module("SLAMModule")
+                slam = self._get_module("SlamBridgeModule")
                 if slam:
                     odom = slam.odometry.msg_count if hasattr(slam, "odometry") else 0
                     cloud = slam.map_cloud.msg_count if hasattr(slam, "map_cloud") else 0

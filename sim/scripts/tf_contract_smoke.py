@@ -82,7 +82,7 @@ def run_smoke(timeout_sec: float, min_samples: int, require_sensors: bool, requi
         odom_state["frame_id"] = msg.header.frame_id
         odom_state["child_frame_id"] = msg.child_frame_id
 
-    node.create_subscription(Odometry, "/nav/odometry", on_odom, 10)
+    node.create_subscription(Odometry, "/slam/odometry", on_odom, 10)
 
     def count_topic(name: str, frame_id: str | None, points: int | None = None) -> None:
         topic_samples[name] = topic_samples.get(name, 0) + 1
@@ -91,10 +91,10 @@ def run_smoke(timeout_sec: float, min_samples: int, require_sensors: bool, requi
             point_counts[name] = max(point_counts.get(name, 0), points)
 
     def on_map_cloud(msg: PointCloud2) -> None:
-        count_topic("/nav/map_cloud", msg.header.frame_id, int(msg.width) * int(msg.height))
+        count_topic("/slam/map_cloud", msg.header.frame_id, int(msg.width) * int(msg.height))
 
     def on_registered_cloud(msg: PointCloud2) -> None:
-        count_topic("/nav/registered_cloud", msg.header.frame_id, int(msg.width) * int(msg.height))
+        count_topic("/slam/registered_cloud", msg.header.frame_id, int(msg.width) * int(msg.height))
 
     def on_color(msg: Image) -> None:
         count_topic("/camera/color/image_raw", msg.header.frame_id)
@@ -106,8 +106,8 @@ def run_smoke(timeout_sec: float, min_samples: int, require_sensors: bool, requi
         count_topic("/camera/color/camera_info", msg.header.frame_id)
 
     if require_sensors:
-        node.create_subscription(PointCloud2, "/nav/map_cloud", on_map_cloud, 10)
-        node.create_subscription(PointCloud2, "/nav/registered_cloud", on_registered_cloud, 10)
+        node.create_subscription(PointCloud2, "/slam/map_cloud", on_map_cloud, 10)
+        node.create_subscription(PointCloud2, "/slam/registered_cloud", on_registered_cloud, 10)
     if require_camera:
         node.create_subscription(Image, "/camera/color/image_raw", on_color, 10)
         node.create_subscription(Image, "/camera/depth/image_raw", on_depth, 10)
@@ -122,7 +122,7 @@ def run_smoke(timeout_sec: float, min_samples: int, require_sensors: bool, requi
         if samples < min_samples:
             return False
         if require_sensors:
-            for topic in ("/nav/map_cloud", "/nav/registered_cloud"):
+            for topic in ("/slam/map_cloud", "/slam/registered_cloud"):
                 if topic_samples.get(topic, 0) <= 0 or point_counts.get(topic, 0) <= 0:
                     return False
         if require_camera:
@@ -169,20 +169,20 @@ def run_smoke(timeout_sec: float, min_samples: int, require_sensors: bool, requi
             f"tf chain map->odom->body available samples {samples}/{min_samples}; last_error={last_error}"
         )
     if not odom_state["seen"]:
-        errors.append("/nav/odometry was not observed")
+        errors.append("/slam/odometry was not observed")
     else:
         if odom_state["frame_id"] != "odom":
             errors.append(
-                f"/nav/odometry.header.frame_id expected 'odom', got {odom_state['frame_id']!r}"
+                f"/slam/odometry.header.frame_id expected 'odom', got {odom_state['frame_id']!r}"
             )
         if odom_state["child_frame_id"] != "body":
             errors.append(
-                f"/nav/odometry.child_frame_id expected 'body', got {odom_state['child_frame_id']!r}"
+                f"/slam/odometry.child_frame_id expected 'body', got {odom_state['child_frame_id']!r}"
             )
     if require_sensors:
         expected_frames = {
-            "/nav/map_cloud": "odom",
-            "/nav/registered_cloud": "body",
+            "/slam/map_cloud": "odom",
+            "/slam/registered_cloud": "body",
         }
         for topic, frame_id in expected_frames.items():
             if topic_samples.get(topic, 0) <= 0:
@@ -190,7 +190,7 @@ def run_smoke(timeout_sec: float, min_samples: int, require_sensors: bool, requi
                 continue
             if topic_frames.get(topic) != frame_id:
                 errors.append(f"{topic} frame expected {frame_id!r}, got {topic_frames.get(topic)!r}")
-        for topic in ("/nav/map_cloud", "/nav/registered_cloud"):
+        for topic in ("/slam/map_cloud", "/slam/registered_cloud"):
             if point_counts.get(topic, 0) <= 0:
                 errors.append(f"{topic} had no points")
     if require_camera:

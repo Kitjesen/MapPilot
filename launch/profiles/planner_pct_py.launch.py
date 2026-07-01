@@ -83,7 +83,7 @@ def generate_launch_description():
         remappings=[
             # 输入: 从标准接口读取全局路径
             ('/pct_path',  '/nav/global_path'),
-            ('/Odometry',  '/nav/odometry'),
+            ('/Odometry',  '/slam/odometry'),
             # 输出: 标准航点接口
             ('/planner_waypoint', '/nav/way_point'),
         ],

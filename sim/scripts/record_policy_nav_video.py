@@ -206,7 +206,7 @@ def _render_replay(
     import cv2
     import mujoco
 
-    from drivers.sim.mujoco_driver_module import MujocoDriverModule
+    from drivers.sim.mujoco.driver import MujocoDriverModule
 
     if not snapshots:
         raise RuntimeError("No navigation snapshots captured; nothing to render")
@@ -328,8 +328,13 @@ def record_full_stack_nav(
     nav_max_angular_z: float,
     success_settle: float,
 ) -> dict[str, Any]:
-    from core.blueprints.profile_builder import build_system_for_profile
-    from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+    from runtime.blueprints.profile_builder import build_system_for_profile
+    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+    from sim.scripts.policy_nav_smoke import (
+        PRODUCTION_GLOBAL_PLANNER_BACKEND,
+        PRODUCTION_LOCAL_PLANNER_BACKEND,
+        PRODUCTION_PATH_FOLLOWER_BACKEND,
+    )
 
     system = build_system_for_profile("sim", dict(
         robot="sim_mujoco",
@@ -337,13 +342,14 @@ def record_full_stack_nav(
         slam_profile="none",
         detector="sim_scene",
         llm="mock",
+        planner_backend=PRODUCTION_GLOBAL_PLANNER_BACKEND,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=enable_map_modules,
         render=False,
-        python_autonomy_backend="simple",
-        python_path_follower_backend="pid",
+        python_autonomy_backend=PRODUCTION_LOCAL_PLANNER_BACKEND,
+        python_path_follower_backend=PRODUCTION_PATH_FOLLOWER_BACKEND,
         drive_mode=drive_mode,
         policy_path=policy_path,
         tomogram=tomogram,
@@ -360,8 +366,8 @@ def record_full_stack_nav(
 
     driver = system.get_module("MujocoDriverModule")
     ogm = system.get_module("OccupancyGridModule") if enable_map_modules else None
-    nav = system.get_module("NavigationModule")
-    mux = system.get_module("CmdVelMux")
+    nav = system.get_module("nav.mission")
+    mux = system.get_module("nav.velocity_mux")
 
     seen = {"costmap": 0, "waypoints": 0, "mux_cmd": 0}
     odom: list[tuple[float, float, float]] = []
@@ -486,6 +492,9 @@ def record_full_stack_nav(
             "world": world,
             "drive_mode": drive_mode,
             "tomogram": tomogram,
+            "global_planner_backend_requested": PRODUCTION_GLOBAL_PLANNER_BACKEND,
+            "local_planner_backend_requested": PRODUCTION_LOCAL_PLANNER_BACKEND,
+            "path_follower_backend_requested": PRODUCTION_PATH_FOLLOWER_BACKEND,
             "policy": _load_policy_metadata(str(getattr(driver, "_policy_path", policy_path))),
             "start": [float(v) for v in start[:3]],
             "goal": [float(goal_x), float(goal_y), 0.0],

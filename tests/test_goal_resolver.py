@@ -1,4 +1,4 @@
-﻿"""
+"""
 测试Fast Path、ESCA过滤、关键词提取
 
 参考: SEMANTIC_NAV_REPORT.md 第7.1节
@@ -7,8 +7,8 @@
 
 import pytest
 import json
-from semantic.planner.goal_resolver import GoalResolver
-from semantic.planner.llm_client import LLMConfig
+from decision.goal_resolution.goal_resolver import GoalResolver
+from decision.llm.llm_client import LLMConfig
 
 
 class TestFastPath:
@@ -177,17 +177,17 @@ class TestConfidenceFusion:
 
     def test_label_match_weight(self):
         """测试标签匹配权重"""
-        from semantic.planner.goal_resolver import WEIGHT_LABEL_MATCH
+        from decision.goal_resolution.goal_resolver import WEIGHT_LABEL_MATCH
         assert WEIGHT_LABEL_MATCH == 0.35
 
     def test_clip_weight(self):
         """测试CLIP权重"""
-        from semantic.planner.goal_resolver import WEIGHT_CLIP_SIM
+        from decision.goal_resolution.goal_resolver import WEIGHT_CLIP_SIM
         assert WEIGHT_CLIP_SIM == 0.35
 
     def test_weights_sum_to_one(self):
         """测试权重和为1"""
-        from semantic.planner.goal_resolver import (
+        from decision.goal_resolution.goal_resolver import (
             WEIGHT_LABEL_MATCH, WEIGHT_CLIP_SIM,
             WEIGHT_DETECTOR_SCORE, WEIGHT_SPATIAL_HINT
         )

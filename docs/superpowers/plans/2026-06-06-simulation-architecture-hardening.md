@@ -12,15 +12,15 @@
 
 ## File Structure
 
-- Modify: `src/drivers/sim/mujoco_scene_metadata.py`
+- Modify: `src/drivers/sim/mujoco/scene.py`
   - Shared MuJoCo XML transform helpers for body/geom world poses.
-- Modify: `src/drivers/sim/sim_pointcloud_provider.py`
+- Modify: `src/drivers/sim/pointcloud.py`
   - Static point-cloud generation from transformed box geoms.
 - Modify: `sim/validation/full_system.py`
   - Dependency-failure classification for simulation validation checks.
-- Modify: `src/core/tests/test_profile_graph_snapshots.py`
+- Modify: `src/runtime/tests/test_profile_graph_snapshots.py`
   - Simulation profile/endpoint/data-source matrix locks.
-- Modify: `src/core/tests/test_mujoco_scene_metadata.py`
+- Modify: `src/runtime/tests/test_mujoco_scene_metadata.py`
   - Parent-body transform and rotation metadata regression.
 - Create: `src/drivers/tests/test_sim_pointcloud_provider.py`
   - Static point-cloud transform and robot-placeholder exclusion regression.
@@ -28,11 +28,11 @@
   - Environment dependency blocked/fail classification tests.
 - Modify: `tests/README.md`
   - Correct canonical simulation closure test path.
-- Modify: `src/core/blueprints/stacks/perception.py`
+- Modify: `src/runtime/blueprints/stacks/perception.py`
   - Resolve CameraBridge only when the active driver path needs it.
-- Modify: `src/core/tests/test_stack_registry_resolution.py`
+- Modify: `src/runtime/tests/test_stack_registry_resolution.py`
   - Lock CameraBridge resolution and driver-camera skip behavior.
-- Modify: `src/drivers/sim/mujoco_driver_module.py`
+- Modify: `src/drivers/sim/mujoco/driver.py`
   - Avoid duplicating the repo import root during MuJoCo setup.
 - Modify: `src/drivers/tests/test_mujoco_driver_contract.py`
   - Lock MuJoCo setup import-root idempotence.
@@ -49,7 +49,7 @@ Use `ENVIRONMENT_DEPENDENCY_MODULES` and make `_timed()` return `BLOCKED` for mi
 
 - [x] **Step 2: Keep internal import typos as failures**
 
-Add a regression test where `ModuleNotFoundError(name="core.internal_typo")` remains `FAIL`.
+Add a regression test where `ModuleNotFoundError(name="runtime.internal_typo")` remains `FAIL`.
 
 - [x] **Step 3: Verify**
 
@@ -64,9 +64,9 @@ Expected: `2 passed`.
 ## Task 2: Shared MuJoCo Geometry Transforms
 
 **Files:**
-- Modify: `src/drivers/sim/mujoco_scene_metadata.py`
-- Modify: `src/drivers/sim/sim_pointcloud_provider.py`
-- Modify: `src/core/tests/test_mujoco_scene_metadata.py`
+- Modify: `src/drivers/sim/mujoco/scene.py`
+- Modify: `src/drivers/sim/pointcloud.py`
+- Modify: `src/runtime/tests/test_mujoco_scene_metadata.py`
 - Create: `src/drivers/tests/test_sim_pointcloud_provider.py`
 
 - [x] **Step 1: Add shared transform helpers**
@@ -90,7 +90,7 @@ Lock a nested body with `pos="1 2 0.5"` and `euler="0 0 1.57079632679"` plus a c
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_mujoco_scene_metadata.py src/drivers/tests/test_sim_pointcloud_provider.py -q --tb=short
+python -m pytest src/runtime/tests/test_mujoco_scene_metadata.py src/drivers/tests/test_sim_pointcloud_provider.py -q --tb=short
 ```
 
 Expected on a healthy Python/NumPy runtime: all tests pass. In the current Windows Python 3.13 environment, NumPy import crashes before pytest can collect the provider test; verify with the bundled Python script noted in the session if needed.
@@ -98,11 +98,11 @@ Expected on a healthy Python/NumPy runtime: all tests pass. In the current Windo
 ## Task 3: Simulation Profile/Endpoint Matrix
 
 **Files:**
-- Modify: `src/core/tests/test_profile_graph_snapshots.py`
+- Modify: `src/runtime/tests/test_profile_graph_snapshots.py`
 
 - [x] **Step 1: Add profile data-source matrix**
 
-Assert every `SIMULATION_PROFILES` entry maps to the expected `profile_data_source`, optional profile-level simulation contract, and compatibility launcher fields from `core.runtime_profiles.PROFILES`.
+Assert every `SIMULATION_PROFILES` entry maps to the expected `profile_data_source`, optional profile-level simulation contract, and compatibility launcher fields from `runtime.runtime_profiles.PROFILES`.
 
 - [x] **Step 2: Add endpoint run-spec matrix**
 
@@ -113,7 +113,7 @@ For `mujoco_live`, `replay`, `gazebo`, and `cmu_unity`, assert every supported p
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_profile_graph_snapshots.py::test_simulation_profiles_match_runtime_data_source_matrix src/core/tests/test_profile_graph_snapshots.py::test_simulation_endpoints_generate_coherent_runtime_run_specs -q --tb=short
+python -m pytest src/runtime/tests/test_profile_graph_snapshots.py::test_simulation_profiles_match_runtime_data_source_matrix src/runtime/tests/test_profile_graph_snapshots.py::test_simulation_endpoints_generate_coherent_runtime_run_specs -q --tb=short
 ```
 
 Expected on a healthy local runtime: `2 passed`.
@@ -121,7 +121,7 @@ Expected on a healthy local runtime: `2 passed`.
 ## Task 4: Exploration Profile Behavior Locks
 
 **Files:**
-- Create: `src/core/tests/test_profile_exploration_wiring.py`
+- Create: `src/runtime/tests/test_profile_exploration_wiring.py`
 
 - [x] **Step 1: Add `explore` wavefront/traversable-frontier test**
 
@@ -136,7 +136,7 @@ Create a test that builds `graph_for_profile("tare_explore", run_startup_checks=
 Run:
 
 ```bash
-python -m pytest src/core/tests/test_profile_exploration_wiring.py -q --tb=short
+python -m pytest src/runtime/tests/test_profile_exploration_wiring.py -q --tb=short
 ```
 
 Expected on a healthy runtime: tests pass without launching real robot services.
@@ -144,9 +144,9 @@ Expected on a healthy runtime: tests pass without launching real robot services.
 ## Task 5: Immediate Low-Risk Architecture Fixes
 
 **Files:**
-- Modify: `src/core/blueprints/stacks/perception.py`
-- Modify: `src/core/tests/test_stack_registry_resolution.py`
-- Modify: `src/drivers/sim/mujoco_driver_module.py`
+- Modify: `src/runtime/blueprints/stacks/perception.py`
+- Modify: `src/runtime/tests/test_stack_registry_resolution.py`
+- Modify: `src/drivers/sim/mujoco/driver.py`
 - Modify: `src/drivers/tests/test_mujoco_driver_contract.py`
 
 - [x] **Step 1: Lazy-resolve CameraBridge**
@@ -168,24 +168,24 @@ Run syntax checks and targeted behavior scripts; run pytest on a healthy Python/
 ## Task 6: Larger Architecture Follow-Ups
 
 **Files:**
-- Create: `src/core/runtime_profiles.py`
+- Create: `src/runtime/runtime_profiles.py`
 - Modify: `cli/profiles_data.py`
-- Modify: `src/core/blueprints/profile_graph.py`
-- Modify: `src/core/tests/test_module_boundaries.py`
-- Modify: `src/core/tests/test_profile_graph_snapshots.py`
-- Modify: `src/core/blueprints/stacks/driver.py`
+- Modify: `src/runtime/blueprints/profile_graph.py`
+- Modify: `src/runtime/tests/test_module_boundaries.py`
+- Modify: `src/runtime/tests/test_profile_graph_snapshots.py`
+- Modify: `src/runtime/blueprints/stacks/driver.py`
 - Modify: `src/gateway/gateway_module.py`
 - Modify: `src/gateway/mcp_server.py`
 - Modify: `src/gateway/tests/test_gateway_runtime_status.py`
-- Create: `src/slam/relocalization_service.py`
-- Create: `src/slam/tests/test_relocalization_service.py`
-- Modify: `src/slam/slam_bridge_module.py`
+- Create: `src/localization/relocalization.py`
+- Create: `src/localization/tests/test_relocalization.py`
+- Modify: `src/localization/bridge.py`
 - Modify: `src/gateway/routes/operations.py`
 - Modify: `src/gateway/tests/test_gateway_session_map_contract.py`
 
 - [x] **Step 1: Centralize profile ownership**
 
-Move profile/preset source of truth out of CLI into a neutral core/runtime profile module, then let CLI import that module. Add an import-boundary regression forbidding production `core.blueprints.* -> cli.*` after migration.
+Move profile/preset source of truth out of CLI into a neutral core/runtime profile module, then let CLI import that module. Add an import-boundary regression forbidding production `runtime.blueprints.* -> cli.*` after migration.
 
 - [x] **Step 2: Add driver-profile sync tests**
 
@@ -207,7 +207,7 @@ Verification:
 
 ```bash
 python -m py_compile src\gateway\gateway_module.py src\gateway\services\runtime_status.py src\gateway\routes\status.py src\gateway\routes\diagnostics.py src\gateway\tests\test_gateway_runtime_status.py src\gateway\tests\test_gateway_health_contract.py src\gateway\tests\test_gateway_route_split.py
-python -m pytest src\slam\tests\test_relocalization_service.py -q
+python -m pytest src\\localization\tests\test_relocalization.py -q
 git diff --check
 ```
 
@@ -215,16 +215,16 @@ Additional Gateway compatibility was verified with a direct route script that st
 
 Code-review closure:
 
-- Added a core-owned `RelocalizationService` protocol so Gateway depends on an injected capability instead of importing `slam.relocalization_service` directly. `GatewayModule.on_system_modules()` discovers the capability from SLAM modules, and operation routes return 503 when the adapter is unavailable after request/map validation.
+- Added a core-owned `RelocalizationService` protocol so Gateway depends on an injected capability instead of importing `localization.relocalization` directly. `GatewayModule.on_system_modules()` discovers the capability from SLAM modules, and operation routes return 503 when the adapter is unavailable after request/map validation.
 - Extended Module-First boundary tests to forbid production `gateway -> slam` imports.
 - Fixed `SlamBridgeModule._auto_relocalize()` so a ROS service response with process return code 0 but `success=False` leaves relocalization in `failed` instead of resetting drift and marking recovery `completed`.
-- Consolidated `RelocalizationResult` into the core-owned contract after making `core` and `core.transport` light enough to import without eager optional backend imports.
+- Consolidated `RelocalizationResult` into the core-owned contract after making `core` and `runtime.transport` light enough to import without eager optional backend imports.
 
 Review-fix verification:
 
 ```bash
 python -m py_compile <all changed and untracked Python files>
-python -m pytest src\slam\tests\test_relocalization_service.py -q
+python -m pytest src\\localization\tests\test_relocalization.py -q
 python -m pytest sim\tests\test_sim_full_system_validation.py::test_scene_catalog_identifies_multifloor_building_contract sim\tests\test_sim_full_system_validation.py::test_timed_marks_missing_environment_dependency_as_blocked sim\tests\test_sim_full_system_validation.py::test_timed_keeps_internal_missing_module_as_failure -q
 git diff --check
 ```
@@ -233,18 +233,18 @@ Additional AST/direct checks verified Module-First import boundaries and Gateway
 
 Continuation hardening:
 
-- Made `core.transport` optional SHM/DDS/Dual backend exports lazy so importing base `core` or `core.relocalization` does not import NumPy-backed SHM code.
-- Made `core.blueprints` package exports lazy and moved `profile_graph` full-stack import into graph construction, so profile/runtime matrix tests can inspect data without loading full runtime modules.
-- Moved full-stack calibration self-check import into the startup preflight branch and made `core.utils` validation exports lazy.
+- Made `runtime.transport` optional SHM/DDS/Dual backend exports lazy so importing base `core` or `runtime.relocalization` does not import NumPy-backed SHM code.
+- Made `runtime.blueprints` package exports lazy and moved `profile_graph` full-stack import into graph construction, so profile/runtime matrix tests can inspect data without loading full runtime modules.
+- Moved full-stack calibration self-check import into the startup preflight branch and made `runtime.utils` validation exports lazy.
 - Fixed `SlamBridgeModule._auto_relocalize()` branch ordering so an unsupported backend uses the backend recovery action, while a missing active map still reaches the SLAM restart fallback.
 
 Verification:
 
 ```bash
-python -m pytest src\slam\tests\test_relocalization_service.py -q
-python -m pytest src\core\tests\test_module_boundaries.py::test_core_blueprints_do_not_import_cli_profile_surfaces src\core\tests\test_module_boundaries.py::test_package_does_not_import_forbidden_layers_directly -q --tb=short -p no:cacheprovider
-python -m pytest src\core\tests\test_stack_registry_resolution.py::test_perception_stack_skips_camera_bridge_resolution_for_driver_camera src\core\tests\test_stack_registry_resolution.py::test_perception_stack_resolves_camera_bridge_for_external_camera -q --tb=short -p no:cacheprovider
-python -m pytest src\core\tests\test_profile_graph_snapshots.py::test_top_level_blueprint_api_exposes_all_stack_factories src\core\tests\test_profile_graph_snapshots.py::test_simulation_profiles_match_runtime_data_source_matrix src\core\tests\test_profile_graph_snapshots.py::test_simulation_endpoints_generate_coherent_runtime_run_specs -q --tb=short -p no:cacheprovider
+python -m pytest src\\localization\tests\test_relocalization.py -q
+python -m pytest src\runtime\tests\test_module_boundaries.py::test_core_blueprints_do_not_import_cli_profile_surfaces src\runtime\tests\test_module_boundaries.py::test_package_does_not_import_forbidden_layers_directly -q --tb=short -p no:cacheprovider
+python -m pytest src\runtime\tests\test_stack_registry_resolution.py::test_perception_stack_skips_camera_bridge_resolution_for_driver_camera src\runtime\tests\test_stack_registry_resolution.py::test_perception_stack_resolves_camera_bridge_for_external_camera -q --tb=short -p no:cacheprovider
+python -m pytest src\runtime\tests\test_profile_graph_snapshots.py::test_top_level_blueprint_api_exposes_all_stack_factories src\runtime\tests\test_profile_graph_snapshots.py::test_simulation_profiles_match_runtime_data_source_matrix src\runtime\tests\test_profile_graph_snapshots.py::test_simulation_endpoints_generate_coherent_runtime_run_specs -q --tb=short -p no:cacheprovider
 python -m pytest sim\tests\test_sim_full_system_validation.py::test_scene_catalog_identifies_multifloor_building_contract sim\tests\test_sim_full_system_validation.py::test_timed_marks_missing_environment_dependency_as_blocked sim\tests\test_sim_full_system_validation.py::test_timed_keeps_internal_missing_module_as_failure -q --tb=short -p no:cacheprovider
 ```
 
@@ -257,8 +257,8 @@ Implemented a SLAM-side `relocalization_service` helper that owns ROS service co
 Verification:
 
 ```bash
-python -m py_compile src\slam\relocalization_service.py src\gateway\routes\operations.py src\gateway\gateway_module.py src\slam\slam_bridge_module.py src\slam\tests\test_relocalization_service.py src\gateway\tests\test_gateway_session_map_contract.py
-python -m pytest src\slam\tests\test_relocalization_service.py -q
+python -m py_compile src\\localization\relocalization.py src\gateway\routes\operations.py src\gateway\gateway_module.py src\\localization\bridge.py src\\localization\tests\test_relocalization.py src\gateway\tests\test_gateway_session_map_contract.py
+python -m pytest src\\localization\tests\test_relocalization.py -q
 git diff --check
 ```
 
@@ -266,33 +266,33 @@ Additional Gateway endpoint behavior was verified with a direct route script tha
 
 Continuation hardening:
 
-- Added a low-dependency regression that parses `core/runtime_interface.py` to keep `slam.relocalization_service` service tokens synchronized with `RuntimeTopics` without importing the full `core` package.
+- Added a low-dependency regression that parses `core/runtime_interface.py` to keep `localization.relocalization` service tokens synchronized with `RuntimeTopics` without importing the full `core` package.
 - Added a low-dependency AST regression that verifies the two Gateway relocalize route functions do not import or call `subprocess` directly. Bag recording subprocess behavior in the same route module remains out of scope.
 - Strengthened Gateway contract tests so relocalize endpoint delegation tests patch global `subprocess.run` fail-fast while stubbing the unrelated unsupported-backend status helper.
 
 Verification:
 
 ```bash
-python -m py_compile src\slam\relocalization_service.py src\slam\tests\test_relocalization_service.py src\core\tests\test_module_boundaries.py src\gateway\tests\test_gateway_session_map_contract.py
-python -m pytest src\slam\tests\test_relocalization_service.py -q
+python -m py_compile src\\localization\relocalization.py src\\localization\tests\test_relocalization.py src\runtime\tests\test_module_boundaries.py src\gateway\tests\test_gateway_session_map_contract.py
+python -m pytest src\\localization\tests\test_relocalization.py -q
 ```
 
-Gateway behavior was re-verified with a direct route script using NumPy/YAML stubs and fail-fast `subprocess.run`; the script confirmed auto and saved-map relocalize route delegation, success-only pose persistence, and timeout-to-504 mapping. Running `src/core/tests/test_module_boundaries.py::test_gateway_relocalization_routes_delegate_subprocess_execution` under this host's pytest is not a reliable signal because `src/core/tests/conftest.py` imports `core` during session finish and the current Windows Python/NumPy stack exits with access violation `-1073741819`.
+Gateway behavior was re-verified with a direct route script using NumPy/YAML stubs and fail-fast `subprocess.run`; the script confirmed auto and saved-map relocalize route delegation, success-only pose persistence, and timeout-to-504 mapping. Running `src/runtime/tests/test_module_boundaries.py::test_gateway_relocalization_routes_delegate_subprocess_execution` under this host's pytest is not a reliable signal because `src/runtime/tests/conftest.py` imports `core` during session finish and the current Windows Python/NumPy stack exits with access violation `-1073741819`.
 
 Continuation hardening:
 
 - Added a static profile graph path that compiles primary profile module/wire graphs without constructing runtime blueprints or importing the message/NumPy stack. `graph_for_profile()` now defaults to `mode="static"` while retaining `mode="runtime"` for the previous behavior.
 - Extracted pure full-stack wire specs and navigation config helpers so profile/stack tests can verify architecture data without resolving runtime module classes.
-- Added `core.msgs.numpy_compat` and moved additional NumPy users behind lazy imports across core message types, Gateway map/status paths, base autonomy modules, SLAM bridge/visual odom, semantic reconstruction package exports, and simulation gate scripts.
+- Added `runtime.msgs.numpy_compat` and moved additional NumPy users behind lazy imports across core message types, Gateway map/status paths, base autonomy modules, SLAM bridge/visual odom, semantic reconstruction package exports, and simulation gate scripts.
 - Kept saved-map JSON and PCD snapshot routes usable in control-plane tests without NumPy by parsing/writing binary XYZ PCD through the standard library.
 - Reworked gateway dry-run and server-sim/video validation gates so local contract tests do not require importing the full GatewayModule, OpenCV, or NumPy in this broken Windows host.
 
 Verification:
 
 ```bash
-python -m pytest src\core\tests\test_profile_graph_snapshots.py src\core\tests\test_profile_exploration_wiring.py -q --tb=short -p no:cacheprovider
-python -m pytest src\slam\tests\test_relocalization_service.py src\gateway\tests\test_gateway_session_map_contract.py -q --tb=short -p no:cacheprovider
-python -m pytest src\core\tests\test_module_boundaries.py::test_core_blueprints_do_not_import_cli_profile_surfaces src\core\tests\test_module_boundaries.py::test_package_does_not_import_forbidden_layers_directly src\core\tests\test_stack_registry_resolution.py -q --tb=short -p no:cacheprovider
+python -m pytest src\runtime\tests\test_profile_graph_snapshots.py src\runtime\tests\test_profile_exploration_wiring.py -q --tb=short -p no:cacheprovider
+python -m pytest src\\localization\tests\test_relocalization.py src\gateway\tests\test_gateway_session_map_contract.py -q --tb=short -p no:cacheprovider
+python -m pytest src\runtime\tests\test_module_boundaries.py::test_core_blueprints_do_not_import_cli_profile_surfaces src\runtime\tests\test_module_boundaries.py::test_package_does_not_import_forbidden_layers_directly src\runtime\tests\test_stack_registry_resolution.py -q --tb=short -p no:cacheprovider
 python -m pytest sim\tests\test_server_sim_closure.py -q --tb=short -p no:cacheprovider
 python -m pytest sim\tests\test_sim_full_system_validation.py::test_scene_catalog_identifies_multifloor_building_contract sim\tests\test_sim_full_system_validation.py::test_timed_marks_missing_environment_dependency_as_blocked sim\tests\test_sim_full_system_validation.py::test_timed_keeps_internal_missing_module_as_failure src\drivers\tests\test_sim_pointcloud_provider.py -q --tb=short -p no:cacheprovider
 python -m py_compile <all changed and untracked Python files>
@@ -311,8 +311,8 @@ Continuation hardening:
 Verification:
 
 ```bash
-python -m py_compile src\drivers\sim\mujoco_driver_module.py src\drivers\tests\test_mujoco_driver_contract.py src\core\tests\test_runtime_switch.py
-python -m pytest src\drivers\tests\test_mujoco_driver_contract.py src\core\tests\test_runtime_switch.py -q --tb=short -p no:cacheprovider
+python -m py_compile src\drivers\sim\mujoco_driver_module.py src\drivers\tests\test_mujoco_driver_contract.py src\runtime\tests\test_runtime_switch.py
+python -m pytest src\drivers\tests\test_mujoco_driver_contract.py src\runtime\tests\test_runtime_switch.py -q --tb=short -p no:cacheprovider
 git diff --check
 ```
 
@@ -329,8 +329,8 @@ Code-review closure:
 Verification:
 
 ```bash
-python -m py_compile src\core\msgs\geometry.py src\core\tests\test_geometry_tolerance.py src\drivers\sim\sim_pointcloud_provider.py src\drivers\tests\test_sim_pointcloud_provider.py sim\validation\full_system.py sim\tests\test_sim_full_system_validation.py sim\scripts\policy_nav_smoke.py src\gateway\routes\maps.py src\gateway\tests\test_gateway_session_map_contract.py src\drivers\sim\mujoco_driver_module.py src\drivers\tests\test_mujoco_driver_contract.py src\core\tests\test_runtime_switch.py
-python -m pytest src\core\tests\test_geometry_tolerance.py src\drivers\tests\test_sim_pointcloud_provider.py sim\tests\test_sim_full_system_validation.py src\gateway\tests\test_gateway_session_map_contract.py::test_map_save_falls_back_to_super_lio_live_cloud_snapshot src\gateway\tests\test_gateway_session_map_contract.py::test_binary_xyz_pcd_writer_keeps_numpy_fast_path src\drivers\tests\test_mujoco_driver_contract.py src\core\tests\test_runtime_switch.py -q --tb=short -p no:cacheprovider
+python -m py_compile src\runtime\msgs\geometry.py src\runtime\tests\test_geometry_tolerance.py src\drivers\sim\sim_pointcloud_provider.py src\drivers\tests\test_sim_pointcloud_provider.py sim\validation\full_system.py sim\tests\test_sim_full_system_validation.py sim\scripts\policy_nav_smoke.py src\gateway\routes\maps.py src\gateway\tests\test_gateway_session_map_contract.py src\drivers\sim\mujoco_driver_module.py src\drivers\tests\test_mujoco_driver_contract.py src\runtime\tests\test_runtime_switch.py
+python -m pytest src\runtime\tests\test_geometry_tolerance.py src\drivers\tests\test_sim_pointcloud_provider.py sim\tests\test_sim_full_system_validation.py src\gateway\tests\test_gateway_session_map_contract.py::test_map_save_falls_back_to_super_lio_live_cloud_snapshot src\gateway\tests\test_gateway_session_map_contract.py::test_binary_xyz_pcd_writer_keeps_numpy_fast_path src\drivers\tests\test_mujoco_driver_contract.py src\runtime\tests\test_runtime_switch.py -q --tb=short -p no:cacheprovider
 python lingtu.py --list
 git diff --check
 ```
@@ -340,7 +340,7 @@ Results: targeted review-closure contracts `60 passed, 2 skipped`; `sim/tests/te
 ## Verification Notes
 
 - Current Windows `python` is 3.13 and crashes while importing NumPy. Treat NumPy-based pytest failures in this host as environment blockers, not code evidence.
-- Runtime profile graph construction can still import runtime modules and `core.msgs`, which require a healthy NumPy runtime. The default static profile graph, profile/runtime data-source matrix, and stack factory checks now run without those imports.
+- Runtime profile graph construction can still import runtime modules and `runtime.msgs`, which require a healthy NumPy runtime. The default static profile graph, profile/runtime data-source matrix, and stack factory checks now run without those imports.
 - Server-side full simulation closure still requires fresh artifacts under `artifacts/server_sim_closure/` plus `artifacts/server_sim_closure_summary_g4_current.json`.
 - Do not claim G4 full simulation health until `sim/scripts/server_sim_closure.py --preset g4_server_full_sim --required-only --strict` reports `ok=true`, `simulation_only=true`, `real_robot_motion=false`, `cmd_vel_sent_to_hardware=false`, and `missing_or_failed=[]`.
 
@@ -351,17 +351,17 @@ Completed additional hardening after parallel architecture and simulation verifi
 - Converted remaining control-plane NumPy crash sites in semantic planning and topology graph imports to lazy NumPy access, so the full core test suite no longer crashes on this Windows Python 3.13 host.
 - Reused dependency classification for runtime profile parity in `sim/validation/full_system.py`: known host dependencies remain `BLOCKED`, while internal missing modules now become `FAIL`.
 - Made default `run_validation(require_all=False)` treat blocked `sim_nav_planning_wiring` runtime parity as a required blocker, while leaving optional live MuJoCo evidence blocked when `--run-mujoco` is not requested.
-- Restored PCT ROS executable scripts inside `src/global_planning/pct_planner/planner/scripts/` and updated CMake/tests to install package-local scripts instead of stale `src/legacy/pct_planner` paths.
+- Restored PCT ROS executable scripts inside `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/` and updated CMake/tests to install package-local scripts instead of stale `src/legacy/pct_planner` paths.
 - Kept server-sim video artifact gates strict: missing or undecodable required videos fail instead of passing without evidence.
 
 Verification:
 
 ```bash
-python -m pytest src\core\tests\ -q --tb=short -p no:cacheprovider
+python -m pytest src\runtime\tests\ -q --tb=short -p no:cacheprovider
 python scripts\gates\runtime_contract_audit.py --json
 python -m pytest sim\tests\test_sim_full_system_validation.py sim\tests\test_server_sim_closure.py::test_server_sim_closure_rejects_missing_fastlio2_dynamic_inspection_video_file sim\tests\test_server_sim_closure.py::test_server_sim_closure_rejects_undecodable_fastlio2_dynamic_inspection_video_file sim\tests\test_server_sim_closure.py::test_server_sim_closure_accepts_fastlio2_dynamic_inspection_core_gate sim\tests\test_sim_runtime_compat.py -q -rs --tb=short -p no:cacheprovider
 python -m pytest src\gateway\tests\ -q --tb=short -p no:cacheprovider
-python -m py_compile src\global_planning\pct_planner\planner\scripts\global_planner.py src\global_planning\pct_planner\planner\scripts\pct_planner_astar.py src\global_planning\pct_planner\planner\scripts\fake_localization.py
+python -m py_compile src\nav\services\plan\global_planner\algorithm\pct\vendor\pct_planner\planner\scripts\global_planner.py src\nav\services\plan\global_planner\algorithm\pct\vendor\pct_planner\planner\scripts\pct_planner_astar.py src\nav\services\plan\global_planner\algorithm\pct\vendor\pct_planner\planner\scripts\fake_localization.py
 ```
 
 Results:

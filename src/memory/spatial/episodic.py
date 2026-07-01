@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.msgs.numpy_compat import np
+from runtime.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 

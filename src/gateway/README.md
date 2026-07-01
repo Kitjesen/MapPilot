@@ -1,40 +1,60 @@
-# Gateway — L6 外部接口模块
+# Gateway
 
-## 概述
+`src/gateway/` is the outside-facing interface layer.
 
-Gateway 模块对外暴露 REST / SSE / WebSocket / MCP 接口，提供机器人状态查询、控制指令下发、实时数据流推送和 AI Agent 远程控制能力。
+It exposes LingTu to dashboards, tools, frontend code, and remote agents. It
+turns external requests into Module inputs, and turns Module state into API or
+status responses. It should not decide navigation policy or run planning
+algorithms.
 
-| 模块 | 职责 |
-|------|------|
-| `gateway_module.py` | FastAPI HTTP/WS/SSE 服务（端口 5050），drift watchdog + save hooks |
-| `mcp_server.py` | MCP JSON-RPC 服务（端口 8090），暴露 @skill 工具给 AI Agent |
-| `rerun_bridge_module.py` | Rerun 可视化桥接 |
-| `auth.py` | 认证模块 |
-| `schemas.py` | Pydantic 数据模型 |
-| `native_factories.py` | C++ 本地工厂注册 |
+## What It Owns
 
-## routes/
+| Area | Files |
+| --- | --- |
+| HTTP, WebSocket, SSE server | `gateway_module.py`, `routes/` |
+| MCP tool server | `mcp_server.py` |
+| request and response schemas | `schemas.py` |
+| route helper logic | `services/` |
+| dashboard templates and static assets | `templates/`, `map_dashboard.py` |
+| optional visualization bridge | `rerun_bridge_module.py` |
+| auth helpers | `auth.py` |
 
-FastAPI 路由处理器：
+## Request Flow
 
-| 路由 | 用途 |
-|------|------|
-| `app.py` | 应用主路由 |
-| `maps.py` | 地图管理 REST API |
-| `commands.py` | 指令下发 |
-| `status.py` | 状态查询 |
-| `realtime.py` | SSE 实时事件流 |
-| `camera.py` | 摄像头流 |
-| `session.py` | Session 生命周期 |
-| `operations.py` | 运维操作 |
-| `auth.py` | 认证端点 |
-| `assets.py` | 静态资源 |
-| `diagnostics.py` | 诊断接口 |
+```text
+Frontend / CLI / MCP client
+  -> Gateway route or MCP tool
+  -> gateway service helper
+  -> Module port or skill call
+  -> navigation, map, semantic, or safety module
+  -> status/event response back through Gateway
+```
 
-## services/
+Example goal flow:
 
-业务逻辑层，包含 `runtime_dataflow.py`、`runtime_status.py`、`commands.py`、`goal_builder.py`、`map_safety.py`、`map_paths.py`、`state_snapshot.py`、`traffic.py` 等，封装 Gateway 核心数据流与状态管理。
+```text
+map click
+  -> Gateway goal endpoint
+  -> PoseStamped goal
+  -> nav.mission.goal_pose
+  -> global/local planning chain
+```
 
-## templates/
+## Folder Map
 
-HTML 模板（Teleop 控制面板、地图仪表盘等前端资源）。
+| Path | Role |
+| --- | --- |
+| `routes/` | FastAPI route registration and thin request handlers |
+| `services/` | Shared route helpers such as status, goal building, map safety, traffic |
+| `tests/` | Gateway-owned tests |
+| `templates/` | Dashboard HTML templates |
+
+Gateway maintenance scripts live in `scripts/gateway/`, not inside the Python
+package.
+
+## Boundary Rule
+
+Gateway may ask other modules for work or state. Gateway should not import
+planner, SLAM, driver, or perception internals to do the work itself. Put that
+logic in the owning package and expose it through Module ports, skills, or
+runtime status.

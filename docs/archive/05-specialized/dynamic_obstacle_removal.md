@@ -5,7 +5,7 @@
 
 ## Problem
 
-The mapping pipeline `Fast-LIO2 → SlamBridge → Gateway._on_map_cloud` only
+The mapping pipeline `Fast-LIO2 鈫?SlamBridge 鈫?Gateway._on_map_cloud` only
 applies a 0.15 m voxel dedup. Fast-LIO2 itself is purely geometric and does
 not classify static vs dynamic points; the localizer's ICP refinement only
 converges, it does not delete points. A person walking down a corridor leaves
@@ -14,7 +14,7 @@ a worm-shaped trail in the saved PCD.
 Baseline behaviour (v1.7.5):
 
 ```python
-# gateway_module.py — mapping branch
+# gateway_module.py 鈥?mapping branch
 combined = np.concatenate([self._map_points, pts])
 combined = _voxel_downsample(combined, 0.15)   # dedup, no dynamic removal
 self._map_points = combined
@@ -34,7 +34,7 @@ self._map_points = combined
 refinement. Dynablox is ROS1-only; porting to ROS2 Humble on S100P is not
 worth the engineering cost.
 
-## Phase 1 — Hit-count voting (live)
+## Phase 1 鈥?Hit-count voting (live)
 
 In `gateway_module.py:_on_map_cloud` (mapping branch) we keep an observation
 counter per voxel:
@@ -58,16 +58,16 @@ Tunables:
 
 Limitations:
 
-- Needs the robot to move — standing-still mapping accumulates no votes.
+- Needs the robot to move 鈥?standing-still mapping accumulates no votes.
 - A person standing still for a long time becomes "static" by this measure.
 - Slow movers (e.g. a meandering dog) leak through.
 
 Live SSE point-cloud stream uses this filter; saved PCD goes through Phase 2
 on top.
 
-## Phase 2 — DUFOMap save-time refinement (shipped)
+## Phase 2 鈥?DUFOMap save-time refinement (shipped)
 
-We do not depend on the Python `dufomap` package — there is no aarch64 wheel
+We do not depend on the Python `dufomap` package 鈥?there is no aarch64 wheel
 on PyPI and building the binding in-process is fragile. Instead we ship a
 subprocess wrapper.
 
@@ -76,8 +76,8 @@ subprocess wrapper.
 DUFOMap needs **per-frame poses + per-frame scans** for ray-casting; a fused
 `map.pcd` is not enough. PGO already dumps both:
 
-- `<map>/patches/*.pcd` — body-frame keyframe scans (~1500 pts each)
-- `<map>/poses.txt` — `patch.pcd tx ty tz qw qx qy qz` per line
+- `<map>/patches/*.pcd` 鈥?body-frame keyframe scans (~1500 pts each)
+- `<map>/poses.txt` 鈥?`patch.pcd tx ty tz qw qx qy qz` per line
 
 `src/nav/services/dynamic_filter.py:refilter_map` does:
 
@@ -86,7 +86,7 @@ DUFOMap needs **per-frame poses + per-frame scans** for ray-casting; a fused
    patch pose.
 3. Stage in a temp dir as `<tmp>/pcd/*.pcd`.
 4. `subprocess.run(dufomap_run, tmp, config.toml, timeout=300s)`.
-5. Backup `map.pcd → map.pcd.predufo`, then atomic `os.replace` into
+5. Backup `map.pcd 鈫?map.pcd.predufo`, then atomic `os.replace` into
    `map.pcd`. If the backup itself fails, the function aborts and leaves the
    original PCD intact.
 
@@ -97,7 +97,7 @@ Both save paths run Phase 2 unconditionally:
 | Caller | File |
 |--------|------|
 | Web button `POST /api/v1/map/save` | `src/gateway/gateway_module.py` |
-| MCP / programmatic save | `src/nav/services/map_manager_module.py:_map_save` |
+| MCP / programmatic save | `src/nav/services/maps.py:_map_save` |
 
 ### Build script
 
@@ -126,14 +126,14 @@ thresholds:
 
 ### Measured cost (S100P aarch64)
 
-105 patches × ~1600 pts (`corrected_20260406_224020`):
+105 patches 脳 ~1600 pts (`corrected_20260406_224020`):
 
 - DUFOMap (OpenMP) total: ~0.6 s.
 - Python wrapper overhead (repack + IPC): ~0.1 s.
-- Static-only scene drop rate: 0.01 % (expected — nothing to remove).
+- Static-only scene drop rate: 0.01 % (expected 鈥?nothing to remove).
 - Dynamic scene drop rate: pending real-data benchmark.
 
-## Phase 3 — Live DUFOMap (parked)
+## Phase 3 鈥?Live DUFOMap (parked)
 
 Calling DUFOMap per frame inside `_on_map_cloud` would push the live SSE map
 through the same filter. Risk: Mid-360 single frames are ~2k points which is
@@ -144,10 +144,10 @@ Won't pursue unless Phase 1 + 2 prove insufficient.
 
 - [x] Phase 1 deployed.
 - [x] Phase 2 deployed; DUFOMap binary builds clean on aarch64.
-- [x] Offline test passes (105 patches, 0.6 s, –23 pts on a static map).
+- [x] Offline test passes (105 patches, 0.6 s, 鈥?3 pts on a static map).
 - [x] LingTu config in effect at save time.
-- [ ] Real-world dynamic-scene test — residual ghost rate ≥ 60 % reduction.
-- [ ] Localizer ICP fitness on the new PCD ≥ baseline.
+- [ ] Real-world dynamic-scene test 鈥?residual ghost rate 鈮?60 % reduction.
+- [ ] Localizer ICP fitness on the new PCD 鈮?baseline.
 - [ ] Save-time gateway CPU peak < baseline + 30 %.
 
 ## Key Files
@@ -155,7 +155,7 @@ Won't pursue unless Phase 1 + 2 prove insufficient.
 | File | Role |
 |------|------|
 | `src/gateway/gateway_module.py` (`_on_map_cloud`, `/api/v1/map/save`) | Phase 1 voxel voting + Phase 2 entry on the web path |
-| `src/nav/services/map_manager_module.py:_map_save` | Phase 2 entry on the MCP path |
+| `src/nav/services/maps.py:_map_save` | Phase 2 entry on the MCP path |
 | `src/nav/services/dynamic_filter.py` | DUFOMap subprocess wrapper, atomic overwrite, backup |
 | `scripts/build_dufomap.sh` | Idempotent aarch64 build |
 | `scripts/dufomap_offline_test.py` | Standalone offline validator |
@@ -173,7 +173,7 @@ Won't pursue unless Phase 1 + 2 prove insufficient.
 
 ## References
 
-- [Dynablox — ETH-ASL, RA-L 2023](https://github.com/ethz-asl/dynablox)
-- [DUFOMap — KTH-RPL, RA-L 2024](https://github.com/KTH-RPL/dufomap)
-- [BeautyMap — HKUST, RA-L 2024](https://github.com/MKJia/BeautyMap)
-- [DynamicMap_Benchmark — KTH-RPL, ITSC 2023](https://github.com/KTH-RPL/DynamicMap_Benchmark)
+- [Dynablox 鈥?ETH-ASL, RA-L 2023](https://github.com/ethz-asl/dynablox)
+- [DUFOMap 鈥?KTH-RPL, RA-L 2024](https://github.com/KTH-RPL/dufomap)
+- [BeautyMap 鈥?HKUST, RA-L 2024](https://github.com/MKJia/BeautyMap)
+- [DynamicMap_Benchmark 鈥?KTH-RPL, ITSC 2023](https://github.com/KTH-RPL/DynamicMap_Benchmark)

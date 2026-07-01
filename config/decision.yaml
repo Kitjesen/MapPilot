@@ -1,0 +1,167 @@
+﻿# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+# Decision planner config
+#
+# 瑙勫垝鏂规:
+#   绾枃鏈帹鐞?  鍦烘櫙鍥?JSON 鈫?LLM (GPT-4o-mini) 鈫?鐩爣鍧愭爣
+#   瑙嗚 grounding: 鐩告満甯?鈫?GPT-4o Vision 鈫?鐩爣鏄惁鍙
+#                    (鍙傝€?VLMnav 2024)
+#
+# LLM 璋冪敤閾?
+#   1. 涓?LLM 鍒嗘瀽鍦烘櫙鍥?鈫?鐩爣鍧愭爣 (SG-Nav 鏂规)
+#   2. 缃俊搴︿綆 鈫?Vision grounding 楠岃瘉 (VLMnav 鏂规)
+#   3. 浠嶇劧鎵句笉鍒?鈫?LLM 寤鸿鎺㈢储鏂瑰悜
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+
+decision_node:
+  ros__parameters:
+    # 鈹€鈹€ Cloud LLM 閰嶇疆 鈹€鈹€
+    # 鏀寔: openai | kimi | claude | qwen
+    # 鎺ㄨ崘: kimi (鍥藉唴鐩磋繛, 鏃犻渶VPN, 鎬т环姣旈珮)
+    llm:
+      backend: "kimi"                    # openai | kimi | claude | qwen
+      model: "kimi-k2.5"                # Kimi K2.5 (鍥藉唴鐩磋繛, Kimi Code API)
+      api_key_env: "MOONSHOT_API_KEY"    # 浠庣幆澧冨彉閲忚鍙?API Key
+      base_url: "https://api.kimi.com/coding/v1"
+      timeout_sec: 15.0                  # Kimi 鍝嶅簲杈冨揩
+      max_retries: 2                     # 澶辫触閲嶈瘯娆℃暟
+      temperature: 0.2                   # 浣庢俯搴?鈫?绋冲畾杈撳嚭
+
+    # 鈹€鈹€ 澶囩敤 LLM (褰撲富 LLM 澶辫触鏃惰嚜鍔ㄥ垏鎹㈠埌涓嶅悓鍚庣) 鈹€鈹€
+    llm_fallback:
+      backend: "qwen"                    # 閫氫箟鍗冮棶浣滀负寮傛瀯澶囩敤
+      model: "qwen-turbo"               # 杞婚噺妯″瀷, 浣庡欢杩?
+      api_key_env: "DASHSCOPE_API_KEY"
+      base_url: ""                       # 浣跨敤榛樿 DashScope endpoint
+      timeout_sec: 10.0
+      max_retries: 1
+
+    # 鈹€鈹€ 鐩爣瑙ｆ瀽 鈹€鈹€
+    goal_resolution:
+      confidence_threshold: 0.6          # 浣庝簬姝ょ疆淇″害瑙﹀彂鎺㈢储
+      replan_on_failure: true            # 鍒拌揪澶辫触鏃堕噸鏂拌鍒?
+      max_replan_attempts: 3
+      fast_path_threshold: 0.75          # 楂樼疆淇″害蹇€熻矾寰勯槇鍊?
+
+    # 鈹€鈹€ 鎺㈢储绛栫暐 鈹€鈹€
+    exploration:
+      enable: true                       # 鐩爣鏈煡鏃惰嚜鍔ㄦ帰绱?
+      strategy: "sg_nav"                 # sg_nav | frontier | llm
+      max_explore_steps: 20              # 鏈€澶ф帰绱㈡鏁?
+      step_distance: 2.0                 # 姣忔鎺㈢储璺濈 (m)
+      costmap_topic: "/nav/costmap"      # OccupancyGrid 璇濋
+      terrain_topic: "/nav/terrain_map"  # 鍦板舰鐐逛簯璇濋 (PointCloud2)
+      terrain_grid_resolution: 0.2       # 鍦板舰鏍呮牸鍒嗚鲸鐜?(m/cell)
+      terrain_grid_half_size: 15.0       # 鍦板舰鏍呮牸鍗婂 (m)
+      frontier_score_threshold: 0.2      # frontier 鏈€浣庢帴鍙楀垎
+      frontier_min_size: 5               # 鏈€灏?frontier 鍖哄潡 cell 鏁?
+      frontier_max_count: 10             # 璇勫垎鍓嶄繚鐣欏灏戜釜 frontier
+      frontier_cluster_radius_cells: 3   # frontier 鑱氱被閭诲煙鍗婂緞
+      frontier_distance_weight: 0.2      # 璺濈鍒嗘潈閲?
+      frontier_novelty_weight: 0.3       # 鏂伴搴︽潈閲?
+      frontier_language_weight: 0.2      # 璇█鐩稿叧鎬ф潈閲?
+      frontier_grounding_weight: 0.3     # grounding potential 鏉冮噸
+
+      # Frontier 璇勫垎璇︾粏鍙傛暟 (Round 11 鏂板, 鐢ㄤ簬 FrontierScorer ablation 瀹為獙)
+      frontier_novelty_distance: 5.0     # 鏂伴搴﹀綊涓€鍖栬窛绂?(m); 瓒婅繙frontier鏂伴搴﹁秺楂? 鎺ㄨ崘 3.0~8.0
+      frontier_nearby_object_radius: 3.0 # 闄勮繎鐗╀綋鎼滅储鍗婂緞 (m); 鐢ㄤ簬璇█璇勫垎鍜屾弿杩扮敓鎴? 鎺ㄨ崘 2.0~5.0
+      frontier_grounding_angle_threshold: 0.7854  # MTU3D 绌洪棿姊害瑙掑害闃堝€?(rad, pi/4=45掳); 鎺ㄨ崘 0.3~1.0
+      frontier_cooccurrence_bonus: 0.25  # 鍏辩幇鍏堥獙鍔犲垎 (鐩爣甯镐笌鏌愮墿浣撳悓鐜版椂); 鎺ㄨ崘 0.1~0.4
+      frontier_grounding_spatial_bonus: 0.1      # frontier鏂瑰悜鏈夌墿浣撴椂鐨刧rounding鍔犲垎; 鎺ㄨ崘 0.05~0.2
+      frontier_grounding_keyword_bonus: 0.4      # frontier鏂瑰悜鏈夋寚浠ょ浉鍏崇墿浣撴椂鍔犲垎; 鎺ㄨ崘 0.2~0.6
+      frontier_grounding_relation_bonus: 0.15    # 鍏崇郴閾惧欢浼稿姞鍒?(SG-Nav鍏宠仈鐗╀綋); 鎺ㄨ崘 0.05~0.3
+      # 鍒涙柊3: Frontier CLIP 瑙嗚璇勫垎鏉冮噸 (VLFM 鏍稿績)
+      frontier_vision_weight: 0.0              # 0=绂佺敤; 鍚敤寤鸿 0.15
+      # 鍒涙柊4: 璇箟鍏堥獙鏉冮噸 (Topology-Aware Semantic Exploration)
+      frontier_semantic_prior_weight: 0.15     # 璇箟鍏堥獙鏉冮噸
+      # 鍒涙柊5: 璇箟涓嶇‘瀹氭€ф潈閲?(RoomTypePosterior.entropy 椹卞姩鎺㈢储)
+      frontier_semantic_uncertainty_weight: 0.15  # 楂?entropy 鎴块棿 鈫?鍊煎緱鎺㈢储
+
+      # USS-Nav TSP 鍚庡鐞嗗弬鏁?(璐績 nearest-neighbor 閲嶆帓搴忚闂『搴?
+      frontier_tsp_reorder: true               # 鏄惁鍚敤 TSP 璐績閲嶆帓搴? true=鎸?1/IG+dist 鎺? false=淇濇寔璇勫垎鎺掑簭
+      frontier_tsp_limit: 20                   # frontier 鏁拌秴杩囨鍊兼椂璺宠繃 TSP (閬垮厤 O(n虏) 寮€閿€); 鎺ㄨ崘 15~30
+      frontier_tsp_ig_radius_cells: 10         # 淇℃伅澧炵泭浼扮畻鍗婂緞 (cells); 缁熻鏈煡鏍煎瓙鏁? 鎺ㄨ崘 5~15
+
+      # 澶辫触璁板繂鍙傛暟 (SEEK-style, RSS 2024 鈥?閬垮厤閲嶅鎺㈢储姝昏)
+      frontier_failure_penalty_radius: 3.0     # 鎯╃綒鍗婂緞 (m); 璇ヨ寖鍥村唴 frontier 闄嶆潈; 鎺ㄨ崘 2.0~5.0
+      frontier_failure_penalty_decay: 0.7      # 鎯╃綒琛板噺绯绘暟 (0~1); 瓒婂ぇ鎯╃綒瓒婂己; 鎺ㄨ崘 0.5~0.9
+
+      # SG-Nav 瀵归綈鍙傛暟
+      sgnav:
+        max_subgraphs: 6                 # 姣忚疆鏈€澶氭帹鐞嗗瓙鍥炬暟閲?
+        use_llm_reasoning: true          # 瀛愬浘璇勫垎鏄惁璋冪敤 LLM
+        heuristic_weight: 0.45           # 鍚彂寮忓瓙鍥捐瘎鍒嗘潈閲?
+        llm_weight: 0.55                 # LLM 瀛愬浘璇勫垎鏉冮噸
+        frontier_base_weight: 0.55       # 鍘?frontier 鍒嗗崰姣?
+        room_gate_weight: 0.25           # room->group/view 灞傛闂ㄦ帶鏉冮噸
+        interp_decay_distance: 4.0       # 瀛愬浘鍒癴rontier鎻掑€艰“鍑忚窛绂?
+        credibility_decay: 0.9           # re-perception 鍙俊搴︽椂闂磋“鍑?
+        false_positive_penalty: 0.2      # 鏃犺瘉鎹洰鏍囨儵缃?
+        reject_threshold: 0.25           # 浣庝簬璇ュ€兼嫆缁濆綋鍓嶇洰鏍?
+        min_confidence_for_bypass: 0.85  # 楂樼疆淇＄洰鏍囪烦杩囨嫆缁?
+        arrival_reperception: true       # 鍒拌揪鍚?Re-perception (鍒涙柊3)
+        # 鍒涙柊3: 杩炵画 Re-perception
+        continuous_reperception: true     # 瀵艰埅涓瘡 N 绫宠Е鍙?Re-perception
+        reperception_interval_m: 2.0     # 瑙﹀彂闂撮殧 (绫?
+        # SG-Nav 搂3.4: 澶氳瑙掔疮绉噸鎰熺煡
+        reperception_n_max: 10           # 澶氳瑙掕娴嬬獥鍙ｅぇ灏?(鏈€澶氫繚鐣?N 娆¤娴?
+        reperception_s_thresh: 0.8       # 绱Н缃俊搴﹂槇鍊? >=姝ゅ€兼帴鍙楃洰鏍?
+
+    # 鈹€鈹€ 铻嶅悎鏉冮噸 (鏈?CLIP) 鈹€鈹€
+    fusion:
+      weight_label_match: 0.35           # 鏍囩鍖归厤鏉冮噸
+      weight_clip_sim: 0.35              # CLIP 鐩镐技搴︽潈閲?
+      weight_detector_score: 0.15        # 妫€娴嬪櫒鍒嗘暟鏉冮噸
+      weight_spatial_hint: 0.15          # 绌洪棿鎻愮ず鏉冮噸
+      no_clip_weight_label: 0.55         # 鏃?CLIP 鏃舵爣绛炬潈閲?
+      no_clip_weight_detector: 0.25      # 鏃?CLIP 鏃舵娴嬪櫒鏉冮噸
+      no_clip_weight_spatial: 0.20       # 鏃?CLIP 鏃剁┖闂存潈閲?
+      detector_count_normalize: 3        # 妫€娴嬪櫒璁℃暟褰掍竴鍖?
+
+    # 鈹€鈹€ Vision Grounding 閰嶇疆 鈹€鈹€
+    vision:
+      enable: true                       # 鍚敤瑙嗚 grounding 杈呭姪
+      image_topic: "/camera/color/image_raw"
+      verify_threshold: 0.5              # 瑙嗚楠岃瘉缃俊搴﹂槇鍊?
+
+    # 鈹€鈹€ 鎵ц鍙傛暟 鈹€鈹€
+    execution:
+      arrival_radius: 1.0                # 鍒拌揪鍒ゅ畾鍗婂緞 (m)
+      monitor_hz: 1.0                    # 鐩戞帶棰戠巼 (Hz)
+      look_around_hz: 10.0               # 鐜棰戠巼 (Hz)
+      default_timeout: 300.0             # 榛樿瓒呮椂鏃堕棿 (s)
+
+    # 鈹€鈹€ 鎷撴墤璁板繂 鈹€鈹€
+    topo_memory:
+      new_node_distance: 2.0             # 鏂拌妭鐐瑰垱寤鸿窛绂婚槇鍊?(m)
+      max_nodes: 500                     # 鏈€澶ц妭鐐规暟
+
+    # 鈹€鈹€ 瀹夊叏绾︽潫 鈹€鈹€
+    safety:
+      max_goal_distance: 50.0            # 璺濆綋鍓嶄綅缃渶澶х洰鏍囪窛绂?(m)
+      forbidden_zones: []                # 绂佹鍖哄煙鍒楄〃 (鏈潵鎵╁睍)
+
+    # 鈹€鈹€ LOVON椋庢牸闅愬紡FSM 鈹€鈹€
+    fsm:
+      mode: "implicit"                  # implicit | explicit
+      implicit:
+        weights_path: ""                # 鍙€? 璁粌濂界殑 .npz 鏉冮噸
+        strict: false                    # true=鏉冮噸鍔犺浇澶辫触鐩存帴鎶ラ敊
+
+    # 鈹€鈹€ Nav2 NavigateToPose Action 鈹€鈹€
+    nav2:
+      use_action_client: true            # 鏄惁浣跨敤 Nav2 action client
+      action_name: "navigate_to_pose"    # action server 鍚嶇О
+      action_timeout_sec: 120.0          # 鍗曟瀵艰埅瓒呮椂 (s)
+
+    # 鈹€鈹€ SCG 璺緞瑙勫垝闆嗘垚 (榛樿鍏抽棴) 鈹€鈹€
+    scg:
+      enable: false                      # 鍚敤 SCG 璺緞瑙勫垝
+      request_topic: "/nav/scg/plan_request"
+      result_topic: "/nav/scg/plan_result"
+      timeout_sec: 2.0                   # SCG 瑙勫垝瓒呮椂 (s)
+      waypoint_interval_sec: 0.5         # 鑸偣鍙戦€侀棿闅?(s)
+
+    # 鈹€鈹€ 璇箟鏁版嵁鎸佷箙鍖?鈹€鈹€
+    # 寤哄浘鏃惰嚜鍔ㄤ繚瀛? 瀵艰埅鏃惰嚜鍔ㄥ姞杞?(鎴块棿-鐗╀綋 KG + 鎷撴墤璁板繂)
+    # 绌?= 涓嶆寔涔呭寲; 璁句负鐩綍璺緞 = 鍚敤 (濡?"maps/semantic")
+    semantic_data_dir: "maps/semantic"   # 寤鸿涓?save_map.sh 鐨?SEMANTIC_DIR 涓€鑷?

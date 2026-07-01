@@ -22,8 +22,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from core.msgs.numpy_compat import np
-from core.utils.sanitize import safe_json_dumps
+from runtime.msgs.numpy_compat import np
+from runtime.utils.sanitize import safe_json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -548,7 +548,7 @@ class TopologicalMemory:
         """保存拓扑记忆到 JSON 文件。"""
         import os
 
-        from core.utils.sanitize import safe_json_dump as _safe_dump
+        from runtime.utils.sanitize import safe_json_dump as _safe_dump
 
         with self._lock:
             nodes_copy = dict(self._nodes)

@@ -48,20 +48,34 @@ devices:
   - id: orbbec_gemini335_main
     type: camera
     enabled: true
-    driver: orbbec_sdk
+    driver: orbbec_native
     description: "Orbbec Gemini 335 RGB-D Camera"
     udev_match:
       vendor_id: "2bc5"
       product_id: "0800"
     config:
-      color_resolution: "640x480"
-      depth_resolution: "640x480"
-      fps: 30
+      sdk_config_path: ""
+      serial_number: ""
+      uid: ""                      # USB uid / physical port, e.g. 1-1.2
+      product_id: "0x0800"
+      device_index: 0
+      connect_timeout_ms: 10000
+      color:
+        width: 640
+        height: 480
+        fps: 30
+      depth:
+        width: 640
+        height: 480
+        fps: 30
+      enable_frame_sync: false
       rotate: 270                  # 安装方向旋转 (0/90/180/270)
-    capabilities: [color, depth]
+      frame_id: camera_link
+    capabilities: [color, depth, intrinsics]
     publish_topics:
       - {name: color_image, type: Image, rate_hz: 30}
       - {name: depth_image, type: Image, rate_hz: 30}
+      - {name: camera_info, type: CameraIntrinsics, rate_hz: 1}
 
   # ── Motor Controller ────────────────────────────
   - id: brainstem_main

@@ -11,7 +11,7 @@ Product profiles are the field-facing LingTu stacks:
 - `map`
 - `nav`
 - `explore`
-- `tare_explore` when the external TARE binary and gate are installed
+- `tare_explore` as the LingTu-native traversable frontier exploration profile
 
 Experimental SLAM backends such as `super_lio` and `super_lio_relocation` are
 advanced runtime choices, not default field-facing product profiles. They must
@@ -24,7 +24,7 @@ Simulation and development profiles are separate:
 - `dev`
 - `sim`
 - `sim_mujoco_live`
-- `sim_mujoco_pct_live`
+- `sim_mujoco_octo_live`
 - `sim_gazebo`
 - `sim_industrial`
 - `sim_cmu_tare`
@@ -86,7 +86,7 @@ CMU Unity, or a future simulator. Each endpoint must satisfy the same runtime
 port contract. The only endpoint-specific code is the adapter that converts
 native streams or topics, frames, and commands into this contract.
 
-The canonical Python interface is defined in `src/core/runtime_interface.py`.
+The canonical Python interface is defined in `src/runtime/runtime_interface.py`.
 `config/topic_contract.yaml` mirrors it for operators and diagnostics. New
 simulators or robot variants must add/choose a data-source contract there
 instead of creating new `/nav/*` meanings.
@@ -101,13 +101,13 @@ checked against one frame contract instead of duplicating coordinate rules.
 Algorithm interfaces also expose `map_dependency`, which is the boundary that
 separates live SLAM/map use from saved artifacts such as a PCT tomogram.
 
-`src/core/blueprints/runtime_endpoint.py` defines the Dimos-style split between
+`src/runtime/blueprints/runtime_endpoint.py` defines the Dimos-style split between
 task and connection layer. The product task remains `map`, `nav`, `explore`, or
 `tare_explore`; `--endpoint thunder-field|mujoco_live|gazebo|cmu_unity|replay`
 selects the runtime source/sink. Legacy board aliases such as `real_s100p`
 still resolve to `thunder_field` for old scripts, but they are not product
 contract names. Compatibility profiles such as
-`sim_mujoco_live`, `sim_mujoco_pct_live`, `sim_industrial`, and `sim_cmu_tare`
+`sim_mujoco_live`, `sim_mujoco_octo_live`, `sim_industrial`, and `sim_cmu_tare`
 are launcher aliases for gates and demos, not independent product
 architectures.
 

@@ -3,7 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <boost/format.hpp>
-#include <opencv2/core.hpp>
+#include <opencv2/runtime.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <boost/program_options.hpp>

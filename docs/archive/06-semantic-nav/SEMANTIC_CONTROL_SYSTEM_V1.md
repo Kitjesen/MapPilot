@@ -1,7 +1,7 @@
 # Semantic Command Parser
 
 > Reference for the rule-based command parser that lives in
-> `src/semantic/planner/semantic_planner/task_decomposer.py` +
+> `src/decision/semantic_planner/task_decomposer.py` +
 > `task_rules.py`. It maps natural-language utterances into a
 > `TaskPlan` of atomic `SubGoal`s.
 >
@@ -174,7 +174,7 @@ Full table is in `chinese_tokenizer.py` and `task_rules.py`.
 
 ## 8. Tests
 
-Located in `src/semantic/planner/tests/`:
+Located in `src/decision/tests/`:
 
 | Test | Focus |
 |------|-------|
@@ -189,13 +189,13 @@ Located in `src/semantic/planner/tests/`:
 
 | File | Role |
 |------|------|
-| `src/semantic/planner/semantic_planner/task_decomposer.py` | `SubGoal*` dataclasses + LLM prompt builder |
-| `src/semantic/planner/semantic_planner/task_rules.py` | All pattern tables + rule engine |
-| `src/semantic/planner/semantic_planner/chinese_tokenizer.py` | jieba wrapper + stop-word handling |
-| `src/semantic/planner/semantic_planner/task_decomposer_module.py` | Module wrapper |
-| `src/semantic/planner/semantic_planner/action_executor.py` | Dispatches resolved SubGoals to module ports |
-| `src/semantic/planner/semantic_planner/agent_loop.py` | Multi-turn LLM tool-call loop (used when the rule engine + Fast Path can't resolve) |
-| `src/semantic/planner/semantic_planner/llm_client.py` | OpenAI / Claude / Qwen / Moonshot / Mock backends |
+| `src/decision/semantic_planner/task_decomposer.py` | `SubGoal*` dataclasses + LLM prompt builder |
+| `src/decision/semantic_planner/task_rules.py` | All pattern tables + rule engine |
+| `src/decision/semantic_planner/chinese_tokenizer.py` | jieba wrapper + stop-word handling |
+| `src/decision/semantic_planner/task_decomposer_module.py` | Module wrapper |
+| `src/decision/semantic_planner/action_executor.py` | Dispatches resolved SubGoals to module ports |
+| `src/decision/semantic_planner/agent_loop.py` | Multi-turn LLM tool-call loop (used when the rule engine + Fast Path can't resolve) |
+| `src/decision/semantic_planner/llm_client.py` | OpenAI / Claude / Qwen / Moonshot / Mock backends |
 
 ## 10. Open Items
 

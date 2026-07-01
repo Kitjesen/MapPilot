@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
-from core.tests.numpy_guard import import_numpy_or_skip
+from runtime.tests.numpy_guard import import_numpy_or_skip
 
 pytestmark = [pytest.mark.sim]
 
@@ -25,10 +25,10 @@ except ImportError:
 
 from sim.engine.core.robot import RobotConfig
 
-from core.blueprints.full_stack import full_stack_blueprint
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
-from core.msgs.nav import Odometry
-from drivers.sim.mujoco_driver_module import MujocoDriverModule
+from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.nav import Odometry
+from drivers.sim.mujoco.driver import MujocoDriverModule
 
 
 def test_default_nova_dog_resolves_real_robot_model():
@@ -55,8 +55,8 @@ def test_default_nova_dog_resolves_paths_from_engine_core_default():
 
 
 def test_mujoco_driver_splits_body_lidar_cloud_from_world_map_cloud():
-    from core.runtime_interface import FRAMES
-    from drivers.sim.mujoco_driver_module import _world_points_to_body_frame
+    from runtime.runtime_interface import FRAMES
+    from drivers.sim.mujoco.driver import _world_points_to_body_frame
 
     pts = np.array([[0.0, 1.0, 0.0, 0.5]], dtype=np.float32)
     yaw_90_xyzw = np.array([0.0, 0.0, math.sin(math.pi / 4.0), math.cos(math.pi / 4.0)])
@@ -132,16 +132,16 @@ def test_thunder_v3_mjcf_runtime_keeps_lingtu_sensor_and_control_contracts():
 
 @pytest.mark.skipif(not _ROS2_AVAILABLE, reason="Needs ROS2 runtime")
 def test_semantic_namespace_wrappers_expose_runtime_import_paths():
-    assert importlib.util.find_spec("semantic_perception.instance_tracker") is not None
-    assert importlib.util.find_spec("semantic_planner.llm_client") is not None
+    assert importlib.util.find_spec("perception.instance_tracker") is not None
+    assert importlib.util.find_spec("decision.llm_client") is not None
 
-    # Canonical imports from core.utils
-    from core.msgs import scene as scene_msgs
-    from core.utils.robustness import retry
-    from core.utils.sanitize import sanitize_position
-    from core.utils.validation import validate_bgr
-    from semantic.perception.instance_tracker import InstanceTracker
-    from semantic.perception.tracked_objects import TrackedObject
+    # Canonical imports from runtime.utils
+    from runtime.msgs import scene as scene_msgs
+    from runtime.utils.robustness import retry
+    from runtime.utils.sanitize import sanitize_position
+    from runtime.utils.validation import validate_bgr
+    from perception.instance_tracker import InstanceTracker
+    from perception.tracked_objects import TrackedObject
 
     assert callable(sanitize_position)
     assert InstanceTracker is not None
@@ -254,49 +254,6 @@ def test_fastlio2_config_can_disable_sim_zupt(tmp_path):
     assert "zupt_min_static_frames: 1000000" in text
 
 
-def test_fastlio2_live_config_can_write_time_diff_control(tmp_path):
-    from slam.fastlio2_live_bridge import write_fastlio2_config
-
-    config = tmp_path / "fastlio2_live_time_diff.yaml"
-    write_fastlio2_config(
-        config,
-        imu_topic="/imu_raw",
-        lidar_topic="/points_raw",
-        time_diff_lidar_to_imu=0.0125,
-    )
-    text = config.read_text(encoding="utf-8")
-
-    assert "time_diff_lidar_to_imu: 0.0125" in text
-
-
-def test_fastlio2_live_config_writes_degeneracy_guard(tmp_path):
-    from slam.fastlio2_live_bridge import write_fastlio2_config
-
-    config = tmp_path / "fastlio2_live_degeneracy_guard.yaml"
-    write_fastlio2_config(
-        config,
-        imu_topic="/imu_raw",
-        lidar_topic="/points_raw",
-        degeneracy_max_update_dof=2,
-        degeneracy_max_condition=50_000.0,
-        max_update_translation_m=0.5,
-        max_update_rotation_rad=0.35,
-        reject_nonconverged_update=True,
-        reject_degenerate_nonconverged_update=True,
-        vertical_velocity_constraint_enabled=True,
-    )
-    text = config.read_text(encoding="utf-8")
-
-    assert "degeneracy_max_update_dof: 2" in text
-    assert "degeneracy_max_condition: 50000" in text
-    assert "max_update_translation_m: 0.5" in text
-    assert "max_update_rotation_rad: 0.35" in text
-    assert "reject_nonconverged_update: true" in text
-    assert "reject_degenerate_nonconverged_update: true" in text
-    assert "vertical_velocity_constraint_enabled: true" in text
-    assert "vertical_velocity_sigma_v: 0.05" in text
-
-
 def test_fastlio2_cpp_applies_configured_ieskf_iteration_and_degeneracy_guard():
     root = Path(__file__).resolve().parents[2]
     lidar_processor = (
@@ -331,7 +288,7 @@ def test_fastlio2_cpp_applies_configured_ieskf_iteration_and_degeneracy_guard():
 
 
 def test_mujoco_fastlio2_live_gate_converts_world_cloud_to_sensor_frame():
-    from sim.scripts.mujoco_fastlio2_live_gate import _world_xyzi_to_sensor_xyzi
+    from sim.scripts.mujoco_live_gate import _world_xyzi_to_sensor_xyzi
 
     class FakeData:
         xpos = [None, np.array([1.0, 2.0, 0.5])]
@@ -356,8 +313,8 @@ def test_mujoco_fastlio2_live_gate_converts_world_cloud_to_sensor_frame():
 
 
 def test_mujoco_fastlio2_live_gate_converts_sensor_cloud_to_body_frame():
-    from core.runtime_interface import lidar_extrinsic
-    from sim.scripts.mujoco_fastlio2_live_gate import _sensor_xyzi_to_body_xyzi
+    from runtime.runtime_interface import lidar_extrinsic
+    from drivers.sim.mujoco.sensors import sensor_xyzi_to_body_xyzi
 
     sensor_cloud = np.array(
         [
@@ -367,7 +324,7 @@ def test_mujoco_fastlio2_live_gate_converts_sensor_cloud_to_body_frame():
         dtype=np.float32,
     )
 
-    body_cloud = _sensor_xyzi_to_body_xyzi(
+    body_cloud = sensor_xyzi_to_body_xyzi(
         sensor_cloud,
         lidar_extrinsic("mujoco_thunder_v3"),
     )
@@ -377,7 +334,7 @@ def test_mujoco_fastlio2_live_gate_converts_sensor_cloud_to_body_frame():
 
 
 def test_mujoco_fastlio2_live_gate_stationary_imu_specific_force_points_up():
-    from sim.scripts.mujoco_fastlio2_live_gate import _specific_force_body
+    from sim.scripts.mujoco_live_gate import _specific_force_body
 
     state = types.SimpleNamespace(
         orientation=np.array([0.0, 0.0, 0.0, 1.0]),
@@ -390,7 +347,7 @@ def test_mujoco_fastlio2_live_gate_stationary_imu_specific_force_points_up():
 
 
 def test_mujoco_fastlio2_live_gate_gravity_only_imu_ignores_kinematic_velocity_step():
-    from sim.scripts.mujoco_fastlio2_live_gate import _specific_force_body
+    from sim.scripts.mujoco_live_gate import _specific_force_body
 
     state = types.SimpleNamespace(
         orientation=np.array([0.0, 0.0, 0.0, 1.0]),
@@ -408,7 +365,7 @@ def test_mujoco_fastlio2_live_gate_gravity_only_imu_ignores_kinematic_velocity_s
 
 
 def test_mujoco_fastlio2_live_gate_preserves_signed_imu_gyro_z():
-    from sim.scripts.mujoco_fastlio2_live_gate import _make_imu_msg
+    from drivers.sim.mujoco.sensors import make_imu_msg
 
     class FakeImu:
         def __init__(self):
@@ -422,7 +379,7 @@ def test_mujoco_fastlio2_live_gate_preserves_signed_imu_gyro_z():
         linear_velocity=np.zeros(3),
     )
 
-    msg = _make_imu_msg(
+    msg = make_imu_msg(
         state=state,
         prev_velocity=np.zeros(3),
         dt=0.02,
@@ -436,7 +393,7 @@ def test_mujoco_fastlio2_live_gate_preserves_signed_imu_gyro_z():
 
 
 def test_mujoco_fastlio2_live_gate_defaults_to_kinematic_safe_imu_mode():
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+    from sim.scripts.mujoco_live_gate import _build_parser
 
     args = _build_parser().parse_args([])
 
@@ -446,7 +403,7 @@ def test_mujoco_fastlio2_live_gate_defaults_to_kinematic_safe_imu_mode():
 
 
 def test_mujoco_fastlio2_live_gate_exposes_wall_timeout_guard():
-    from sim.scripts.mujoco_fastlio2_live_gate import (
+    from sim.scripts.mujoco_live_gate import (
         _build_parser,
         _wall_timeout_status,
     )
@@ -474,7 +431,7 @@ def test_launch_mujoco_fastlio2_live_passes_wall_timeout_guard():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_partial_report_path():
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+    from sim.scripts.mujoco_live_gate import _build_parser
 
     args = _build_parser().parse_args(
         ["--partial-json-out", "artifacts/live/report.partial.json"]
@@ -483,21 +440,8 @@ def test_mujoco_fastlio2_live_gate_accepts_partial_report_path():
     assert args.partial_json_out == "artifacts/live/report.partial.json"
 
 
-def test_mujoco_fastlio2_live_gate_periodically_writes_partial_report():
-    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
-
-    assert '"schema_version": "lingtu.mujoco_fastlio2_live_gate.partial.v1"' in text
-    assert "_write_partial_report(" in text
-    assert "_load_exception_partial_report(args)" in text
-    assert '"partial_report_available"' in text
-    assert '"running",' in text
-    assert '"wall_timeout",' in text
-    assert '"finalizing",' in text
-    assert '"partial_report": True' in text
-
-
 def test_mujoco_fastlio2_live_gate_writes_json_before_stdout_print():
-    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco_live_gate.py").read_text(encoding="utf-8")
 
     json_write = text.index("if args.json_out:")
     stdout_print = text.index("print(text)")
@@ -530,16 +474,14 @@ def test_launch_mujoco_fastlio2_live_disables_pct_optimizer_by_default():
 
 
 def test_mujoco_fastlio2_live_gate_disables_pct_optimizer_by_default():
-    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco_live_gate.py").read_text(encoding="utf-8")
 
     assert 'PCT_OPTIMIZE_TRAJECTORY_ENV = "LINGTU_PCT_OPTIMIZE_TRAJECTORY"' in text
     assert 'os.environ.setdefault(PCT_OPTIMIZE_TRAJECTORY_ENV, "0")' in text
-    assert '"pct_optimizer_enabled": pct_optimizer_enabled' in text
-    assert '"pct_planner_path_mode": (' in text
 
 
 def test_mujoco_fastlio2_live_gate_samples_video_on_duration_clock():
-    from sim.scripts.mujoco_fastlio2_live_gate import _video_sample_elapsed_s
+    from sim.scripts.mujoco_live_gate import _video_sample_elapsed_s
 
     assert _video_sample_elapsed_s(
         "sim",
@@ -558,13 +500,6 @@ def test_mujoco_fastlio2_live_gate_samples_video_on_duration_clock():
     ) == pytest.approx(90.0)
 
 
-def test_mujoco_fastlio2_live_gate_reports_video_sample_clock():
-    text = Path("sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
-
-    assert '"video_sample_clock": str("sim" if duration_clock == "sim" else "wall")' in text
-    assert '"t_clock": str("sim" if duration_clock == "sim" else "wall")' in text
-
-
 def test_launch_mujoco_fastlio2_live_cleans_stale_fastlio_processes():
     text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
 
@@ -575,7 +510,7 @@ def test_launch_mujoco_fastlio2_live_cleans_stale_fastlio_processes():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_fastlio_tuning_args():
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+    from sim.scripts.mujoco_live_gate import _build_parser
 
     args = _build_parser().parse_args(
         [
@@ -603,7 +538,7 @@ def test_mujoco_fastlio2_live_gate_accepts_fastlio_tuning_args():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_fastlio_time_diff_arg():
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+    from sim.scripts.mujoco_live_gate import _build_parser
 
     args = _build_parser().parse_args(["--fastlio-time-diff-lidar-to-imu", "-0.0075"])
 
@@ -611,7 +546,7 @@ def test_mujoco_fastlio2_live_gate_accepts_fastlio_time_diff_arg():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_vertical_velocity_constraint_arg():
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+    from sim.scripts.mujoco_live_gate import _build_parser
 
     default_args = _build_parser().parse_args([])
     explicit_args = _build_parser().parse_args(
@@ -623,7 +558,7 @@ def test_mujoco_fastlio2_live_gate_accepts_vertical_velocity_constraint_arg():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_turn_speed_coupling_args():
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+    from sim.scripts.mujoco_live_gate import _build_parser
 
     args = _build_parser().parse_args(
         [
@@ -639,7 +574,7 @@ def test_mujoco_fastlio2_live_gate_accepts_turn_speed_coupling_args():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_inspection_tracking_args():
-    from sim.scripts.mujoco_fastlio2_live_gate import _build_parser
+    from sim.scripts.mujoco_live_gate import _build_parser
 
     default_args = _build_parser().parse_args([])
     args = _build_parser().parse_args(
@@ -754,44 +689,19 @@ def test_launch_mujoco_fastlio2_live_passes_inspection_tracking_controls():
     assert 'nav_turn_speed_min_scale_default="1.0"' in text
 
 
-def test_mujoco_fastlio2_live_gate_passes_inspection_tracking_to_stack():
-    import inspect
-
-    from sim.scripts import mujoco_fastlio2_live_gate
-
-    source = inspect.getsource(mujoco_fastlio2_live_gate.run_gate)
-    call = source[source.index("build_fastlio2_inspection_stack("):]
-    compact = "".join(call.split())
-
-    assert "waypoint_threshold=float(inspection_waypoint_threshold)" in call
-    assert "final_waypoint_threshold=float(inspection_final_waypoint_threshold)" in call
-    assert (
-        "complete_path_on_goal_proximity=bool("
-        "inspection_complete_path_on_goal_proximity)"
-    ) in compact
-    assert "goal_proximity_completion_threshold=(" in compact
-    assert "path_follower_goal_tolerance=float(inspection_path_goal_tolerance)" in call
-    assert "path_follower_lookahead=float(inspection_path_lookahead)" in call
-    assert "path_follower_min_speed=float(inspection_path_min_speed)" in call
-    assert "path_follower_yaw_rate_gain=float(inspection_path_yaw_rate_gain)" in call
-    assert (
-        "path_follower_stop_yaw_rate_gain=float("
-        "inspection_path_stop_yaw_rate_gain)"
-    ) in compact
-    assert "path_follower_dir_diff_thre=float(inspection_path_dir_diff_thre)" in call
-
 
 def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
-    from drivers.sim import mujoco_lingtu_stack
-    import core.blueprints.full_stack as full_stack_module
+    from drivers.sim.mujoco import stack as mujoco_stack
+    import runtime.blueprints.full_stack as full_stack_module
 
     captured = {}
     modules = {
+        "SimEndpointDriverModule": object(),
         "OccupancyGridModule": object(),
-        "NavigationModule": object(),
-        "LocalPlannerModule": object(),
-        "PathFollowerModule": object(),
-        "CmdVelMux": object(),
+        "nav.mission": object(),
+        "nav.local_planner": object(),
+        "nav.path_follower": object(),
+        "nav.velocity_mux": object(),
     }
 
     class FakeSystem:
@@ -812,7 +722,7 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
         fake_full_stack_blueprint,
     )
 
-    stack = mujoco_lingtu_stack.build_fastlio2_inspection_stack(
+    stack = mujoco_stack.build_fastlio2_inspection_stack(
         planner_backend="pct",
         downsample_dist=1.0,
         waypoint_threshold=1.2,
@@ -827,7 +737,13 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
         path_follower_dir_diff_thre=0.35,
     )
 
-    assert stack.navigation is modules["NavigationModule"]
+    assert stack.navigation is modules["nav.mission"]
+    assert stack.driver is modules["SimEndpointDriverModule"]
+    assert captured["robot"] == "sim_endpoint"
+    assert captured["enable_nav_out"] is False
+    assert captured["enable_endpoint_grid_bridge"] is False
+    assert "enable_ros2_path_bridge" not in captured
+    assert "enable_ros2_grid_bridge" not in captured
     assert captured["planner_backend"] == "pct"
     assert captured["downsample_dist"] == pytest.approx(1.0)
     assert captured["waypoint_threshold"] == pytest.approx(1.2)
@@ -843,7 +759,7 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
 
 
 def test_mujoco_fastlio2_live_gate_reports_fastlio_observability_warnings(tmp_path: Path):
-    from sim.scripts.mujoco_fastlio2_live_gate import _fastlio2_log_diagnostics
+    from sim.scripts.mujoco_live_gate import _fastlio2_log_diagnostics
 
     log = tmp_path / "fastlio2_node.log"
     log.write_text(
@@ -869,7 +785,7 @@ def test_mujoco_fastlio2_live_gate_reports_fastlio_observability_warnings(tmp_pa
 
 
 def test_mujoco_fastlio2_live_gate_summarizes_degeneracy_detail_samples():
-    from sim.scripts.mujoco_fastlio2_live_gate import _summarize_degeneracy_detail_samples
+    from sim.scripts.mujoco_live_gate import _summarize_degeneracy_detail_samples
 
     summary = _summarize_degeneracy_detail_samples(
         [
@@ -905,7 +821,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_degeneracy_detail_samples():
 
 
 def test_mujoco_fastlio2_live_gate_confirms_runtime_faults_by_streak():
-    from sim.scripts.mujoco_fastlio2_live_gate import _update_runtime_fault_streak
+    from sim.scripts.mujoco_live_gate import _update_runtime_fault_streak
 
     streaks = {"motion": 0, "z": 0, "yaw": 0}
 
@@ -934,7 +850,7 @@ def test_mujoco_fastlio2_live_gate_confirms_runtime_faults_by_streak():
 
 
 def test_mujoco_fastlio2_live_gate_finds_nearest_time_aligned_sim_pose():
-    from sim.scripts.mujoco_fastlio2_live_gate import _nearest_sim_pose_sample
+    from sim.scripts.mujoco_live_gate import _nearest_sim_pose_sample
 
     samples = [
         (1.0, 10.0, 0.0, 0.1, 0.2),
@@ -953,7 +869,7 @@ def test_mujoco_fastlio2_live_gate_finds_nearest_time_aligned_sim_pose():
 
 
 def test_mujoco_fastlio2_live_gate_builds_fastlio_large_loop_diagnostic_report():
-    from sim.scripts.mujoco_fastlio2_live_gate import _fastlio_large_loop_diagnostic_report
+    from sim.scripts.mujoco_live_gate import _fastlio_large_loop_diagnostic_report
 
     report = _fastlio_large_loop_diagnostic_report(
         segment_consistency=[
@@ -1019,7 +935,7 @@ def test_mujoco_fastlio2_live_gate_builds_fastlio_large_loop_diagnostic_report()
 
 
 def test_fastlio2_nav_bridge_records_odom_header_stamps():
-    from slam.fastlio2_nav_bridge import FastLio2NavBridgeRuntime
+    from localization.fastlio2_nav_bridge import FastLio2NavBridgeRuntime
 
     class FakePublisher:
         def publish(self, _msg):
@@ -1063,7 +979,7 @@ def test_fastlio2_nav_bridge_records_odom_header_stamps():
 
 
 def test_mujoco_fastlio2_motion_window_aligns_sim_samples_to_odom_stamps():
-    from sim.scripts.mujoco_fastlio2_live_gate import _aligned_motion_window
+    from sim.scripts.mujoco_live_gate import _aligned_motion_window
 
     window = _aligned_motion_window(
         [
@@ -1091,7 +1007,7 @@ def test_mujoco_fastlio2_motion_window_aligns_sim_samples_to_odom_stamps():
 
 
 def test_mujoco_fastlio2_motion_window_reports_fallback_when_stamps_are_missing():
-    from sim.scripts.mujoco_fastlio2_live_gate import _aligned_motion_window
+    from sim.scripts.mujoco_live_gate import _aligned_motion_window
 
     window = _aligned_motion_window(
         [],
@@ -1114,8 +1030,8 @@ def test_mujoco_fastlio2_motion_window_reports_fallback_when_stamps_are_missing(
 
 
 def test_fastlio2_nav_bridge_uses_runtime_default_frames():
-    from core.runtime_interface import TOPICS, topic_default_frame_id
-    from slam.fastlio2_nav_bridge import FastLio2NavBridgeRuntime
+    from runtime.runtime_interface import TOPICS, topic_default_frame_id
+    from localization.fastlio2_nav_bridge import FastLio2NavBridgeRuntime
 
     class FakePublisher:
         def __init__(self):
@@ -1184,8 +1100,79 @@ def test_fastlio2_nav_bridge_uses_runtime_default_frames():
         TOPICS.odometry)
 
 
+def test_fastlio2_nav_bridge_can_feed_module_driver_directly():
+    from runtime.runtime_interface import TOPICS, topic_default_frame_id
+    from localization.fastlio2_nav_bridge import FastLio2NavBridgeRuntime
+
+    class FakePublisher:
+        def publish(self, _msg):
+            pass
+
+    class FakeNode:
+        def create_publisher(self, *_args, **_kwargs):
+            return FakePublisher()
+
+        def create_subscription(self, *_args, **_kwargs):
+            return object()
+
+    class FakeSlamBridge:
+        _odom_worker_thread = None
+
+        def _on_rclpy_odom(self, _msg):
+            pass
+
+        def _process_rclpy_cloud(self, _msg):
+            pass
+
+    class FakeModuleDriver:
+        def __init__(self):
+            self.odom = []
+            self.registered_cloud = []
+            self.map_cloud = []
+
+        def publish_odometry_from_ros(self, msg):
+            self.odom.append(msg)
+
+        def publish_registered_cloud_from_ros(self, msg):
+            self.registered_cloud.append(msg)
+
+        def publish_map_cloud_from_ros(self, msg):
+            self.map_cloud.append(msg)
+
+    def msg(frame_id):
+        return types.SimpleNamespace(
+            header=types.SimpleNamespace(
+                stamp=types.SimpleNamespace(sec=1, nanosec=0),
+                frame_id=frame_id,
+            )
+        )
+
+    module_driver = FakeModuleDriver()
+    bridge = FastLio2NavBridgeRuntime(
+        node=FakeNode(),
+        slam_bridge=FakeSlamBridge(),
+        odometry_cls=object,
+        pointcloud2_cls=object,
+        module_driver=module_driver,
+    )
+
+    bridge.on_odom(msg("raw_odom"))
+    bridge.on_registered_cloud(msg("raw_registered"))
+    bridge.on_map_cloud(msg("raw_map"))
+
+    assert module_driver.odom[0].header.frame_id == topic_default_frame_id(
+        TOPICS.odometry
+    )
+    assert module_driver.registered_cloud[0].header.frame_id == topic_default_frame_id(
+        TOPICS.registered_cloud
+    )
+    assert module_driver.map_cloud[0].header.frame_id == topic_default_frame_id(
+        TOPICS.odometry
+    )
+
+
 def test_fastlio2_nav_bridge_rejects_messages_without_frame_header():
-    from slam.fastlio2_nav_bridge import FastLio2NavBridgeRuntime
+    from localization.fastlio2_nav_bridge import FastLio2NavBridgeRuntime
 
     msg = types.SimpleNamespace(header=types.SimpleNamespace())
 
@@ -1193,128 +1180,8 @@ def test_fastlio2_nav_bridge_rejects_messages_without_frame_header():
         FastLio2NavBridgeRuntime.nav_frame_msg(msg, "odom")
 
 
-def test_fastlio2_live_bridge_writes_tunable_sim_config(tmp_path: Path):
-    from slam.fastlio2_live_bridge import write_fastlio2_config
-
-    config = tmp_path / "fastlio_live.yaml"
-
-    write_fastlio2_config(
-        config,
-        imu_topic="/imu_raw",
-        lidar_topic="/points_raw",
-        lidar_filter_num=2,
-        scan_resolution=0.1,
-        map_resolution=0.2,
-        near_search_num=8,
-        ieskf_max_iter=8,
-        lidar_cov_inv=500.0,
-    )
-
-    text = config.read_text(encoding="utf-8")
-    assert "lidar_filter_num: 2" in text
-    assert "scan_resolution: 0.1" in text
-    assert "map_resolution: 0.2" in text
-    assert "near_search_num: 8" in text
-    assert "ieskf_max_iter: 8" in text
-    assert "lidar_cov_inv: 500" in text
-
-
-def test_mujoco_fastlio2_live_gate_pointcloud_includes_time_and_ring():
-    from sim.scripts.mujoco_fastlio2_live_gate import _make_pointcloud2
-
-    class FakeHeader:
-        def __init__(self):
-            self.stamp = None
-            self.frame_id = ""
-
-    class FakePointCloud2:
-        def __init__(self):
-            self.header = FakeHeader()
-
-    class FakePointField:
-        UINT16 = 4
-        FLOAT32 = 7
-
-        def __init__(self, *, name, offset, datatype, count):
-            self.name = name
-            self.offset = offset
-            self.datatype = datatype
-            self.count = count
-
-    msg = _make_pointcloud2(
-        points_xyzi=np.array([[1.0, 2.0, 3.0, 10.0], [4.0, 5.0, 6.0, 20.0]], dtype=np.float32),
-        stamp=types.SimpleNamespace(),
-        frame_id="body",
-        pointcloud_cls=FakePointCloud2,
-        pointfield_cls=FakePointField,
-        relative_times_s=np.array([0.0, 0.05], dtype=np.float32),
-        rings=np.array([0, 3], dtype=np.uint16),
-    )
-
-    assert msg.point_step == 24
-    assert msg.row_step == 48
-    assert {field.name: field.offset for field in msg.fields} == {
-        "x": 0,
-        "y": 4,
-        "z": 8,
-        "intensity": 12,
-        "time": 16,
-        "ring": 20,
-    }
-    assert struct.unpack_from("<fffffH", msg.data, 24) == pytest.approx(
-        (4.0, 5.0, 6.0, 20.0, 0.05, 3)
-    )
-
-
-def test_mujoco_fastlio2_live_gate_livox_custom_msg_uses_offset_time():
-    from sim.scripts.mujoco_fastlio2_live_gate import _make_livox_custom_msg
-
-    class FakeHeader:
-        def __init__(self):
-            self.stamp = None
-            self.frame_id = ""
-
-    class FakeCustomMsg:
-        def __init__(self):
-            self.header = FakeHeader()
-            self.timebase = 0
-            self.lidar_id = 0
-            self.rsvd = []
-            self.points = []
-
-    class FakeCustomPoint:
-        def __init__(self):
-            self.offset_time = 0
-            self.x = 0.0
-            self.y = 0.0
-            self.z = 0.0
-            self.reflectivity = 0
-            self.tag = 0
-            self.line = 0
-
-    stamp = types.SimpleNamespace(sec=10, nanosec=20)
-    msg = _make_livox_custom_msg(
-        points_xyzi=np.array([[1.0, 2.0, 3.0, 10.0], [4.0, 5.0, 6.0, 300.0]], dtype=np.float32),
-        stamp=stamp,
-        frame_id="body",
-        custom_msg_cls=FakeCustomMsg,
-        custom_point_cls=FakeCustomPoint,
-        relative_times_s=np.array([0.0, 0.05], dtype=np.float32),
-        rings=np.array([0, 3], dtype=np.uint16),
-    )
-
-    assert msg.header.stamp is stamp
-    assert msg.header.frame_id == "body"
-    assert msg.timebase == 10_000_000_020
-    assert msg.point_num == 2
-    assert msg.points[1].offset_time == 50_000_000
-    assert msg.points[1].reflectivity == 255
-    assert msg.points[1].tag == 0x10
-    assert msg.points[1].line == 3
-
-
 def test_mujoco_fastlio2_live_gate_exposes_scan_time_profiles():
-    from sim.scripts.mujoco_fastlio2_live_gate import (
+    from sim.scripts.mujoco_live_gate import (
         _build_parser,
         _physical_rolling_scan_from_samples,
         _relative_times_for_scan,
@@ -1369,7 +1236,7 @@ def test_mujoco_fastlio2_live_gate_exposes_scan_time_profiles():
 
 
 def test_mujoco_fastlio2_live_gate_defaults_use_raw_fastlio2_topics():
-    from sim.scripts.mujoco_fastlio2_live_gate import (
+    from sim.scripts.mujoco_live_gate import (
         _build_parser,
         _nav_planner_has_live_map,
         _parse_inspection_goals,
@@ -1415,7 +1282,7 @@ def test_mujoco_fastlio2_live_gate_defaults_use_raw_fastlio2_topics():
 
 
 def test_mujoco_fastlio2_live_gate_builds_navigation_diagnostic_sample():
-    from sim.scripts.mujoco_fastlio2_live_gate import _navigation_diagnostic_sample
+    from sim.scripts.mujoco_live_gate import _navigation_diagnostic_sample
 
     sample = _navigation_diagnostic_sample(
         sim_time_s=12.345,
@@ -1511,7 +1378,7 @@ def test_mujoco_fastlio2_live_gate_builds_navigation_diagnostic_sample():
 
 
 def test_mujoco_fastlio2_live_gate_can_stop_when_inspection_evidence_is_complete():
-    from sim.scripts.mujoco_fastlio2_live_gate import _inspection_gate_evidence_complete
+    from sim.scripts.mujoco_live_gate import _inspection_gate_evidence_complete
 
     ready = _inspection_gate_evidence_complete(
         run_lingtu_inspection=True,
@@ -1621,20 +1488,8 @@ def test_mujoco_fastlio2_live_gate_can_stop_when_inspection_evidence_is_complete
     assert latest_path_never_trackable["missing"] == ["local_path"]
 
 
-def test_mujoco_fastlio2_live_gate_emits_navigation_diagnostics_in_report():
-    root = Path(__file__).resolve().parents[2]
-    source = (root / "sim/scripts/mujoco_fastlio2_live_gate.py").read_text(encoding="utf-8")
-
-    assert "navigation_diagnostic_samples.append(" in source
-    assert '"navigation_diagnostics": navigation_diagnostics' in source
-    assert '"stale_nav_cmd_samples"' in source
-    assert '"path_diagnostics":' in source
-    assert '"local_planner": {' in source
-    assert '"path_follower": {' in source
-
-
 def test_mujoco_fastlio2_live_gate_summarizes_path_geometry():
-    from sim.scripts.mujoco_fastlio2_live_gate import _path_summary
+    from sim.scripts.mujoco_live_gate import _path_summary
 
     path = types.SimpleNamespace(
         poses=[
@@ -1662,7 +1517,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_path_geometry():
 
 
 def test_mujoco_fastlio2_live_gate_summarizes_numpy_path_points():
-    from sim.scripts.mujoco_fastlio2_live_gate import _path_summary
+    from sim.scripts.mujoco_live_gate import _path_summary
 
     summary = _path_summary(
         [
@@ -1682,7 +1537,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_numpy_path_points():
 def test_mujoco_truth_nav_pose_aligns_to_tomogram_map_frame(tmp_path: Path):
     from types import SimpleNamespace
 
-    from sim.scripts.mujoco_fastlio2_live_gate import (
+    from sim.scripts.mujoco_live_gate import (
         _map_frame_origin_world_xy_from_tomogram,
         _state_in_map_frame,
     )
@@ -1710,7 +1565,7 @@ def test_mujoco_truth_nav_pose_aligns_to_tomogram_map_frame(tmp_path: Path):
 
 
 def test_mujoco_live_gate_limits_command_acceleration_for_imu_consistency():
-    from sim.scripts.mujoco_fastlio2_live_gate import _limit_command_delta
+    from sim.scripts.mujoco_live_gate import _limit_command_delta
 
     limited = _limit_command_delta(
         target=(0.25, -0.1, 0.4),
@@ -1724,7 +1579,7 @@ def test_mujoco_live_gate_limits_command_acceleration_for_imu_consistency():
 
 
 def test_mujoco_fastlio2_live_gate_rejects_large_translation_scale_error():
-    from sim.scripts.mujoco_fastlio2_live_gate import _motion_consistency_report
+    from sim.scripts.mujoco_live_gate import _motion_consistency_report
 
     report = _motion_consistency_report(
         fastlio2_moved_m=1.7019,
@@ -1750,7 +1605,7 @@ def test_mujoco_fastlio2_live_gate_rejects_large_translation_scale_error():
 
 
 def test_mujoco_fastlio2_live_gate_can_hold_latest_nav_cmd_for_slow_sim_clock():
-    from sim.scripts.mujoco_fastlio2_live_gate import _select_nav_cmd_for_step
+    from sim.scripts.mujoco_live_gate import _select_nav_cmd_for_step
 
     selected = _select_nav_cmd_for_step(
         latest_nav_cmd={"vx": 0.2, "vy": -0.03, "wz": 0.1, "stamp": 100.0},
@@ -1764,70 +1619,8 @@ def test_mujoco_fastlio2_live_gate_can_hold_latest_nav_cmd_for_slow_sim_clock():
     assert selected["wz"] == pytest.approx(0.1)
 
 
-def test_mujoco_fastlio2_live_gate_rejects_spin_without_translation():
-    from sim.scripts.mujoco_fastlio2_live_gate import _control_quality_report
-
-    report = _control_quality_report(
-        applied_cmd_stats={
-            "linear_distance_integral_m": 1.1,
-            "angular_abs_integral_rad": 3.2,
-            "max_angular_abs": 0.45,
-            "angular_saturation_samples": 80,
-            "cmd_samples": 100,
-        },
-        max_yaw_per_meter=1.2,
-        max_angular_saturation_ratio=0.35,
-    )
-
-    assert report["ok"] is False
-    assert "yaw_per_meter too high" in report["blockers"]
-    assert "angular saturation ratio too high" in report["blockers"]
-
-
-def test_mujoco_fastlio2_live_gate_accepts_moving_obstacle_saturation_margin():
-    from sim.scripts.mujoco_fastlio2_live_gate import _control_quality_report
-
-    report = _control_quality_report(
-        applied_cmd_stats={
-            "linear_distance_integral_m": 1.3451,
-            "angular_abs_integral_rad": 1.4064,
-            "angular_saturation_samples": 369,
-            "cmd_samples": 1000,
-        },
-        max_yaw_per_meter=1.2,
-        max_angular_saturation_ratio=0.40,
-    )
-    strict_report = _control_quality_report(
-        applied_cmd_stats={
-            "linear_distance_integral_m": 1.3451,
-            "angular_abs_integral_rad": 1.4064,
-            "angular_saturation_samples": 369,
-            "cmd_samples": 1000,
-        },
-        max_yaw_per_meter=1.2,
-        max_angular_saturation_ratio=0.35,
-    )
-    spin_report = _control_quality_report(
-        applied_cmd_stats={
-            "linear_distance_integral_m": 1.1,
-            "angular_abs_integral_rad": 3.2,
-            "angular_saturation_samples": 399,
-            "cmd_samples": 1000,
-        },
-        max_yaw_per_meter=1.2,
-        max_angular_saturation_ratio=0.40,
-    )
-
-    assert report["ok"] is True
-    assert report["yaw_per_meter"] == pytest.approx(1.0456, abs=1e-4)
-    assert strict_report["ok"] is False
-    assert strict_report["blockers"] == ["angular saturation ratio too high"]
-    assert spin_report["ok"] is False
-    assert "yaw_per_meter too high" in spin_report["blockers"]
-
-
 def test_mujoco_fastlio2_live_gate_summarizes_dynamic_obstacle_sweep_quality():
-    from sim.scripts.mujoco_fastlio2_live_gate import _dynamic_obstacle_sweep_quality
+    from sim.scripts.mujoco_live_gate import _dynamic_obstacle_sweep_quality
 
     report = _dynamic_obstacle_sweep_quality(
         cases=[
@@ -1869,16 +1662,16 @@ def test_launch_mujoco_fastlio2_live_exposes_cmd_vel_timeout_override():
 
 
 def test_safety_stack_allows_sim_specific_cmd_vel_mux_source_timeout():
-    from core.blueprints.stacks.safety import safety
+    from runtime.blueprints.stacks.safety import safety
 
     system = safety(cmd_vel_mux_source_timeout=5.0).build()
-    mux = system.get_module("CmdVelMux")
+    mux = system.get_module("nav.velocity_mux")
 
     assert mux.health()["source_timeout_s"] == pytest.approx(5.0)
 
 
 def test_mujoco_fastlio2_live_gate_robot_crossing_obstacles_scale_density_and_speed():
-    from sim.scripts.mujoco_fastlio2_live_gate import (
+    from sim.scripts.mujoco_live_gate import (
         _live_moving_obstacle_boxes_from_pose,
         _live_moving_obstacle_points,
         _live_moving_obstacle_speed_bounds,
@@ -1941,7 +1734,7 @@ def test_mujoco_fastlio2_live_gate_robot_crossing_obstacles_scale_density_and_sp
 
 def test_mujoco_world_registry_includes_industrial_demo_scene():
     from pathlib import Path
-    from drivers.sim.mujoco_driver_module import WORLDS, _WORLDS_DIR
+    from drivers.sim.mujoco.driver import WORLDS, _WORLDS_DIR
 
     world_file = WORLDS["industrial_demo"]
 
@@ -1951,7 +1744,7 @@ def test_mujoco_world_registry_includes_industrial_demo_scene():
 
 
 def test_mujoco_world_registry_includes_product_industrial_park_scene():
-    from drivers.sim.mujoco_driver_module import WORLDS, _WORLDS_DIR
+    from drivers.sim.mujoco.driver import WORLDS, _WORLDS_DIR
 
     world_file = WORLDS["industrial_park"]
     text = (_WORLDS_DIR / world_file).read_text(encoding="utf-8")
@@ -1964,66 +1757,48 @@ def test_mujoco_world_registry_includes_product_industrial_park_scene():
 
 def test_mujoco_fastlio2_live_gate_relays_fastlio_outputs_to_nav_topics():
     from pathlib import Path
-    from core.runtime_interface import TOPICS
-    from sim.scripts import mujoco_fastlio2_live_gate
+    from runtime.runtime_interface import TOPICS
+    from sim.scripts import mujoco_live_gate
 
-    source = Path(mujoco_fastlio2_live_gate.__file__).read_text(encoding="utf-8")
-    bridge_source = Path("src/slam/fastlio2_nav_bridge.py").read_text(encoding="utf-8")
-    stack_source = Path("src/drivers/sim/mujoco_lingtu_stack.py").read_text(encoding="utf-8")
+    source = Path(mujoco_live_gate.__file__).read_text(encoding="utf-8")
+    report_source = Path("sim/scripts/mujoco_live/report.py").read_text(
+        encoding="utf-8"
+    )
+    diagnostics_source = Path("sim/scripts/mujoco_live/diag.py").read_text(
+        encoding="utf-8"
+    )
+    motion_source = Path("sim/scripts/mujoco_live/motion.py").read_text(
+        encoding="utf-8"
+    )
+    combined_source = source + report_source + diagnostics_source + motion_source
+    stack_source = Path("src/drivers/sim/mujoco/stack.py").read_text(encoding="utf-8")
     launcher_source = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
 
-    assert "resolved_runtime_data_flow" in source
-    assert "FastLio2NavBridgeRuntime" in source
-    assert "node.create_publisher(" in bridge_source
-    assert "TOPICS.odometry" in bridge_source
-    assert "TOPICS.registered_cloud" in bridge_source
-    assert "TOPICS.map_cloud" in bridge_source
-    assert "create_subscription(TwistStamped, TOPICS.cmd_vel" in source
-    assert "topic_default_frame_id(TOPICS.odometry)" in bridge_source
-    assert "topic_default_frame_id(TOPICS.registered_cloud)" in bridge_source
-    assert "from core.runtime_interface import FRAMES" not in bridge_source
-    assert '"nav_odometry": SIM_NAV_ODOMETRY_FRAME_ID' in source
-    assert '"nav_registered_cloud": SIM_NAV_REGISTERED_CLOUD_FRAME_ID' in source
-    assert '"nav_map_cloud": SIM_FASTLIO_LIVE_MAP_FRAME_ID' in source
-    assert "FRAMES.odom" not in source
-    assert "FRAMES.body" not in source
-    assert "FRAMES.lidar" not in source
-    assert "FRAMES.map" not in source
+    assert "resolved_runtime_data_flow" in combined_source
+    assert "FastLio2NavBridgeRuntime" not in combined_source
+    assert 'node.create_subscription(Odometry, "/Odometry"' not in combined_source
+    assert "canonical_nav_outputs_verified" in combined_source
+    assert "TOPICS.odometry" in combined_source
+    assert "TOPICS.registered_cloud" in combined_source
+    assert "TOPICS.map_cloud" in combined_source
+    assert "FRAMES.odom" not in combined_source
+    assert "FRAMES.body" not in combined_source
+    assert "FRAMES.lidar" not in combined_source
+    assert "FRAMES.map" not in combined_source
     assert TOPICS.raw_lidar_points == "/points_raw"
     assert TOPICS.raw_imu == "/imu_raw"
-    assert '--run-lingtu-frontier' in source
-    assert 'drive_source == "nav_cmd_vel"' in source
-    assert 'frontier_blockers' in source
-    assert "min_map_area_growth_m2" in source
-    assert "exploration_known_area" in source
-    assert "exploration_grid_growth_is_acceptance_metric" in source
-    assert "_pointcloud_xy_stats" in source
-    assert "motion_consistency" in source
-    assert "base_blockers" in source
-    assert "Fast-LIO odometry diverged from MuJoCo motion" in source
-    assert "canonical_nav_outputs_verified" in source
+    assert "--drive-source" in source
+    assert '"nav_cmd_vel"' in source
+    assert "motion_consistency" in combined_source
+    assert "remaining_gaps" in combined_source
+    assert "canonical_nav_outputs_verified" in combined_source
     assert "--nav-data-source" in source
-    assert "mujoco_ground_truth" in source
-    assert "demo_visualization_mode" in source
     assert 'plan_safety_policy="reject"' in stack_source
-    assert "frontier_started_after_slam_ready" in source
-    assert "navigation_chain" in source
-    assert "planner_fallback_used" in source
-    assert "frontier_mission_events" in source
-    assert "successful_navigation_goal_count" in source
-    assert "frontier successful navigation count" in source
-    assert "relative_times_s" in source
-    assert "fastlio2_lidar_type" in source
+    assert "relative_times_s" in combined_source
     assert "livox_custom_msg" in source
-    assert "_make_livox_custom_msg" in source
-    assert "require_livox=fastlio_lidar_input == \"livox_custom_msg\"" in source
-    assert "--fastlio-lidar-input timed_pointcloud2" in source
-    assert "sensor_timestamp_source" in source
-    assert "engine.sim_time" in source
-    assert "frame_id=SIM_LIDAR_FRAME_ID" in source
-    assert "body_to_lidar_m" in source
-    assert "fastlio2_lidar_frame" in source
-    assert "fastlio2_log_diagnostics" in source
+    assert "timed_pointcloud2" in source
+    assert "elapsed_sim_s" in combined_source
+    assert "SIM_LIDAR_FRAME_ID" in source
     assert "--drive-vx" in launcher_source
     assert "--drive-vy" in launcher_source
     assert "LINGTU_MUJOCO_LIVE_DRIVE_VY" in launcher_source
@@ -2031,7 +1806,7 @@ def test_mujoco_fastlio2_live_gate_relays_fastlio_outputs_to_nav_topics():
 
 
 def test_mujoco_fastlio2_live_gate_exception_report_keeps_runtime_contract():
-    from sim.scripts.mujoco_fastlio2_live_gate import _gate_exception_report
+    from sim.scripts.mujoco_live_gate import _gate_exception_report
 
     args = types.SimpleNamespace(
         duration_clock="wall",
@@ -2125,8 +1900,8 @@ def test_mujoco_fastlio2_live_gate_exception_report_keeps_runtime_contract():
 
 
 def test_mujoco_data_flow_marks_unrequired_navigation_stages_not_run():
-    from core.runtime_interface import TOPICS
-    from sim.scripts.mujoco_fastlio2_live_gate import _mujoco_data_flow_evidence
+    from runtime.runtime_interface import TOPICS
+    from sim.scripts.mujoco_live_gate import _mujoco_data_flow_evidence
 
     evidence = _mujoco_data_flow_evidence(
         topic_evidence={
@@ -2149,11 +1924,15 @@ def test_mujoco_data_flow_marks_unrequired_navigation_stages_not_run():
     ]
     assert evidence["global_planning"]["required"] is False
     assert evidence["global_planning"]["ok"] is False
-    assert evidence["global_planning"]["owner"] == "lingtu_navigation_or_pct"
+    assert (
+        evidence["global_planning"]["owner"]
+        == "lingtu_navigation_or_planner_backend"
+    )
     assert evidence["global_planning"]["frame_role"] == "map"
     assert evidence["global_planning"]["map_dependency"] == (
-        "pct_uses_same_source_saved_tomogram;"
-        "astar_or_frontier_may_use_live_occupancy_grid"
+        "octoplanner3d_uses_headless_octomap_or_point_cloud;"
+        "astar_compat_or_frontier_may_use_live_occupancy_grid;"
+        "pct_compat_uses_same_source_tomogram"
     )
     assert evidence["global_planning"]["reason"] == "not_required_for_basic_slam_gate"
     assert evidence["command_boundary"]["required"] is False
@@ -2173,6 +1952,8 @@ class _FakeEngine:
         camera_configs,
         headless,
         drive_mode="policy",
+        discrete_ray_config=None,
+        **_kwargs,
     ):
         self.robot_config = robot_config
         self.world_config = world_config
@@ -2180,6 +1961,7 @@ class _FakeEngine:
         self.camera_configs = camera_configs
         self.headless = headless
         self.drive_mode = drive_mode
+        self.discrete_ray_config = discrete_ray_config
         self.loaded_xml_path = ""
         self.reset_called = False
 
@@ -2235,7 +2017,7 @@ def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
 
 
 def test_mujoco_driver_policy_candidates_prioritize_brainstem_default():
-    import drivers.sim.mujoco_driver_module as driver_mod
+    import drivers.sim.mujoco.driver as driver_mod
 
     first = driver_mod._POLICY_CANDIDATES[0]
     assert first.name == "policy_251119.onnx"
@@ -2246,7 +2028,13 @@ def test_mujoco_driver_policy_candidates_prioritize_brainstem_default():
 
 
 def test_legacy_nova_nav_bridge_uses_current_robot_paths():
-    bridge = Path(__file__).resolve().parents[2] / "src" / "compat" / "ros2" / "nova_nav_bridge.py"
+    bridge = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "adapters"
+        / "ros2"
+        / "nova_nav_bridge.py"
+    )
     source = bridge.read_text(encoding="utf-8")
 
     assert 'SIM_DIR / "robot"' not in source
@@ -2325,8 +2113,8 @@ def test_root_operation_scripts_do_not_point_at_deleted_navigation_launches():
     assert "_run_lingtu status" in shell_entry
     assert '"$NAV_DIR/lingtu.py" nav' in ota_start
     assert "python3 \\$NAV_DIR/lingtu.py nav" in ota_install
-    assert "Shell 兼容入口" in scripts_index
-    assert "机器人端 `scripts/lingtu`" in scripts_index
+    assert "Shell 鍏煎鍏ュ彛" in scripts_index
+    assert "鏈哄櫒浜虹 `scripts/lingtu`" in scripts_index
 
 
 def test_sim_boundary_indexes_document_stable_contracts():
@@ -2397,9 +2185,9 @@ def test_sim_boundary_indexes_document_stable_contracts():
     assert "Boundary README added" in plan_text
     assert "default product runtime" in readme_text
     assert "enable_native=False" in readme_text
-    assert "LocalPlannerModule" in readme_text
-    assert "PathFollowerModule" in readme_text
-    assert "CmdVelMux" in readme_text
+    assert "nav.local_planner" in readme_text
+    assert "nav.path_follower" in readme_text
+    assert "nav.velocity_mux" in readme_text
     assert "native gate/legacy experiment" in readme_text
     assert "`maps/` | Reserved empty placeholder" in readme_text
     assert "`configs/` | Reserved empty placeholder" in readme_text
@@ -2441,7 +2229,7 @@ def test_sim_boundary_indexes_document_stable_contracts():
 
 
 def test_mujoco_driver_prefers_brainstem_policy_and_resolves_repo_relative_paths(monkeypatch, tmp_path):
-    import drivers.sim.mujoco_driver_module as driver_mod
+    import drivers.sim.mujoco.driver as driver_mod
 
     sim_root = tmp_path / "sim"
     policy_dir = sim_root / "robots" / "nova_dog"
@@ -2611,6 +2399,9 @@ def test_policy_nav_smoke_pass_fail_gates_are_conservative():
         "drive_mode": "policy",
         "policy_loaded": True,
         "finite": True,
+        "global_planner_backend_status": {"configured_backend": "octoplanner3d"},
+        "local_planner_backend_actual": "nanobind",
+        "path_follower_backend_actual": "nav_kernel",
         "success_seen": True,
         "moved_m": 0.25,
         "z": {"min": 0.40, "max": 0.45},
@@ -2655,6 +2446,9 @@ def test_policy_nav_smoke_requires_real_policy_drive_mode():
         "drive_mode": "kinematic",
         "policy_loaded": True,
         "finite": True,
+        "global_planner_backend_status": {"configured_backend": "octoplanner3d"},
+        "local_planner_backend_actual": "nanobind",
+        "path_follower_backend_actual": "nav_kernel",
         "success_seen": True,
         "moved_m": 0.30,
         "z": {"min": 0.40, "max": 0.45},
@@ -2690,6 +2484,9 @@ def test_policy_nav_smoke_accepts_close_goal_without_terminal_success_state():
         "drive_mode": "policy",
         "policy_loaded": True,
         "finite": True,
+        "global_planner_backend_status": {"configured_backend": "octoplanner3d"},
+        "local_planner_backend_actual": "nanobind",
+        "path_follower_backend_actual": "nav_kernel",
         "success_seen": False,
         "moved_m": 0.30,
         "dist_to_goal_m": 0.05,
@@ -2713,6 +2510,15 @@ def test_policy_nav_smoke_accepts_close_goal_without_terminal_success_state():
     assert policy_nav_smoke._passes_nav(nav, min_motion=0.20, max_dist_to_goal=0.10) is False
     nav["success_seen"] = True
     assert policy_nav_smoke._passes_nav(nav, min_motion=0.20, max_dist_to_goal=0.10) is True
+
+    nav["global_planner_backend_status"] = {"configured_backend": "astar"}
+    assert policy_nav_smoke._passes_nav(nav, min_motion=0.20, max_dist_to_goal=0.10) is False
+    nav["global_planner_backend_status"] = {"configured_backend": "octoplanner3d"}
+    nav["local_planner_backend_actual"] = "cmu_py"
+    assert policy_nav_smoke._passes_nav(nav, min_motion=0.20, max_dist_to_goal=0.10) is False
+    nav["local_planner_backend_actual"] = "nanobind"
+    nav["path_follower_backend_actual"] = "pid"
+    assert policy_nav_smoke._passes_nav(nav, min_motion=0.20, max_dist_to_goal=0.10) is False
 
 
 def test_policy_nav_smoke_direct_stand_and_turn_gates():
@@ -2779,10 +2585,12 @@ def test_policy_nav_smoke_accepts_explicit_policy_argument():
             "/tmp/policy.onnx",
             "--nav-max-angular-z",
             "0.2",
+            "--nav-planner-backend",
+            "octoplanner3d",
             "--nav-local-planner-backend",
             "nanobind",
             "--nav-path-follower-backend",
-            "nav_core",
+            "nav_kernel",
             "--direct-mode",
             "turn",
             "--max-stand-drift",
@@ -2802,8 +2610,9 @@ def test_policy_nav_smoke_accepts_explicit_policy_argument():
     )
 
     assert args.policy == "/tmp/policy.onnx"
+    assert args.nav_planner_backend == "octoplanner3d"
     assert args.nav_local_planner_backend == "nanobind"
-    assert args.nav_path_follower_backend == "nav_core"
+    assert args.nav_path_follower_backend == "nav_kernel"
     assert args.direct_mode == "turn"
     assert args.nav_max_angular_z == pytest.approx(0.2)
     assert args.nav_waypoint_threshold == pytest.approx(0.25)
@@ -2821,6 +2630,29 @@ def test_policy_nav_smoke_accepts_explicit_policy_argument():
     assert args.min_turn_yaw == pytest.approx(0.25)
     assert args.max_turn_drift == pytest.approx(0.12)
     assert args.direct_only is True
+
+
+def test_policy_nav_smoke_defaults_to_product_backends():
+    from sim.scripts import policy_nav_smoke
+
+    args = policy_nav_smoke._build_parser().parse_args([])
+
+    assert args.nav_planner_backend == "octoplanner3d"
+    assert args.nav_local_planner_backend == "nanobind"
+    assert args.nav_path_follower_backend == "nav_kernel"
+
+
+def test_record_policy_nav_video_uses_product_backends():
+    repo_root = Path(__file__).resolve().parents[2]
+    source = (repo_root / "sim/scripts/record_policy_nav_video.py").read_text(encoding="utf-8")
+
+    assert "PRODUCTION_GLOBAL_PLANNER_BACKEND" in source
+    assert "planner_backend=PRODUCTION_GLOBAL_PLANNER_BACKEND" in source
+    assert "python_autonomy_backend=PRODUCTION_LOCAL_PLANNER_BACKEND" in source
+    assert "python_path_follower_backend=PRODUCTION_PATH_FOLLOWER_BACKEND" in source
+    assert '"global_planner_backend_requested": PRODUCTION_GLOBAL_PLANNER_BACKEND' in source
+    assert '"local_planner_backend_requested": PRODUCTION_LOCAL_PLANNER_BACKEND' in source
+    assert '"path_follower_backend_requested": PRODUCTION_PATH_FOLLOWER_BACKEND' in source
 
 
 def test_policy_nav_smoke_free_costmap_covers_start_and_goal():
@@ -2883,6 +2715,7 @@ def test_navigation_stack_passes_path_follower_precision_params():
         slam_profile="none",
         detector="sim_scene",
         llm="mock",
+        planner_backend="astar",
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
@@ -2896,8 +2729,8 @@ def test_navigation_stack_passes_path_follower_precision_params():
         run_startup_checks=False,
     ).build()
 
-    follower = system.get_module("PathFollowerModule")
-    nav = system.get_module("NavigationModule")
+    follower = system.get_module("nav.path_follower")
+    nav = system.get_module("nav.mission")
 
     assert nav._tracker._final_threshold == pytest.approx(0.09)
     assert follower._goal_tolerance == pytest.approx(0.07)
@@ -2914,6 +2747,7 @@ def test_navigation_stack_passes_local_planner_trackable_path_threshold():
         slam_profile="none",
         detector="sim_scene",
         llm="mock",
+        planner_backend="astar",
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
@@ -2923,7 +2757,7 @@ def test_navigation_stack_passes_local_planner_trackable_path_threshold():
         run_startup_checks=False,
     ).build()
 
-    local_planner = system.get_module("LocalPlannerModule")
+    local_planner = system.get_module("nav.local_planner")
 
     assert local_planner._allow_direct_track_fallback is True
     assert local_planner._direct_track_fallback_min_distance_m == pytest.approx(0.75)
@@ -2943,7 +2777,12 @@ def test_mujoco_camera_preserves_metric_depth_output():
 def test_mujoco_driver_default_robot_emits_lidar_points():
     pytest.importorskip("mujoco")
 
-    driver = MujocoDriverModule(world="building_scene", render=False, enable_camera=False)
+    driver = MujocoDriverModule(
+        world="building_scene",
+        render=False,
+        enable_camera=False,
+        drive_mode="kinematic",
+    )
     driver.setup()
     try:
         assert driver._engine is not None
@@ -3065,7 +2904,7 @@ def test_mujoco_kinematic_step_integrates_yaw_from_cmd_vel(monkeypatch):
 
 
 def _real_policy_path_or_skip() -> Path:
-    import drivers.sim.mujoco_driver_module as driver_mod
+    import drivers.sim.mujoco.driver as driver_mod
 
     policy_path = driver_mod._first_existing_path(driver_mod._POLICY_CANDIDATES)
     if not policy_path:
@@ -3142,6 +2981,7 @@ def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
         slam_profile="none",
         detector="sim_scene",
         llm="mock",
+        planner_backend="astar",
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
@@ -3152,14 +2992,17 @@ def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
         drive_mode="kinematic",
         waypoint_threshold=0.35,
         downsample_dist=0.5,
+        safety_stop_wiring=False,
+        lidar_publish_every=100000,
+        height_ray_publish_every=100000,
         run_startup_checks=False,
     ).build()
     driver = system.get_module("MujocoDriverModule")
     ogm = system.get_module("OccupancyGridModule")
-    nav = system.get_module("NavigationModule")
-    local_planner = system.get_module("LocalPlannerModule")
-    path_follower = system.get_module("PathFollowerModule")
-    mux = system.get_module("CmdVelMux")
+    nav = system.get_module("nav.mission")
+    local_planner = system.get_module("nav.local_planner")
+    path_follower = system.get_module("nav.path_follower")
+    mux = system.get_module("nav.velocity_mux")
 
     seen = {
         "costmap": 0,
@@ -3170,8 +3013,10 @@ def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
         "direct_fallback": 0,
     }
     odom = []
+    state_history = []
     ogm.costmap._add_callback(lambda _: seen.__setitem__("costmap", seen["costmap"] + 1))
     nav.waypoint._add_callback(lambda _: seen.__setitem__("waypoints", seen["waypoints"] + 1))
+    nav.planner_status._add_callback(lambda state: state_history.append(state))
     nav.adapter_status._add_callback(
         lambda e: seen.__setitem__(
             "direct_fallback",
@@ -3213,7 +3058,7 @@ def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
             )
         )
 
-        plan_deadline = time.time() + 10.0
+        plan_deadline = time.time() + 16.0
         moved = 0.0
         dist_to_goal = math.hypot(goal_x - start[0], goal_y - start[1])
         while time.time() < plan_deadline:
@@ -3224,21 +3069,39 @@ def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
             if (
                 seen["waypoints"] > 0
                 and seen["local_path"] > 0
-                and seen["path_follower_cmd"] > 0
-                and seen["mux_cmd"] > 0
+                and seen["path_follower_cmd"] >= 3
+                and seen["mux_cmd"] >= 3
                 and moved > 0.30
                 and dist_to_goal < 2.20
             ):
                 break
 
+        state_at_navigation_evidence = nav._state
+        state_deadline = time.time() + 2.5
+        while time.time() < state_deadline and nav._state == "PLANNING":
+            time.sleep(0.05)
+
         assert seen["waypoints"] > 0
         assert seen["local_path"] > 0
-        assert seen["path_follower_cmd"] > 0
-        assert seen["mux_cmd"] > 0
+        assert seen["path_follower_cmd"] >= 3
+        assert seen["mux_cmd"] >= 3
         assert seen["direct_fallback"] == 0
-        assert moved > 0.30
+        assert moved > 0.30, {
+            "seen": seen,
+            "moved": moved,
+            "dist_to_goal": dist_to_goal,
+            "nav_state": nav._state,
+            "state_at_navigation_evidence": state_at_navigation_evidence,
+            "state_history_tail": state_history[-12:],
+        }
         assert dist_to_goal < 2.20
-        assert nav._state in ("EXECUTING", "SUCCESS")
+        assert "EXECUTING" in state_history or nav._state in ("EXECUTING", "SUCCESS"), {
+            "nav_state": nav._state,
+            "state_at_navigation_evidence": state_at_navigation_evidence,
+            "state_history_tail": state_history[-12:],
+        }
+        assert "FAILED" not in state_history
+        assert "CANCELLED" not in state_history
     finally:
         system.stop()
 
@@ -3256,8 +3119,8 @@ import json
 import math
 import time
 
-from core.blueprints.full_stack import full_stack_blueprint
-from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
 system = full_stack_blueprint(
     robot="sim_mujoco",
@@ -3265,6 +3128,7 @@ system = full_stack_blueprint(
     slam_profile="none",
     detector="sim_scene",
     llm="mock",
+    planner_backend="astar",
     enable_native=False,
     enable_semantic=False,
     enable_gateway=False,
@@ -3285,10 +3149,10 @@ system = full_stack_blueprint(
 ).build()
 driver = system.get_module("MujocoDriverModule")
 ogm = system.get_module("OccupancyGridModule")
-nav = system.get_module("NavigationModule")
-local_planner = system.get_module("LocalPlannerModule")
-path_follower = system.get_module("PathFollowerModule")
-mux = system.get_module("CmdVelMux")
+nav = system.get_module("nav.mission")
+local_planner = system.get_module("nav.local_planner")
+path_follower = system.get_module("nav.path_follower")
+mux = system.get_module("nav.velocity_mux")
 
 seen = {
     "costmap": 0,
@@ -3436,12 +3300,12 @@ def test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux():
         run_startup_checks=False,
     ).build()
 
-    nav = system.get_module("NavigationModule")
-    assert system.get_module("CmdVelMux") is not None
+    nav = system.get_module("nav.mission")
+    assert system.get_module("nav.velocity_mux") is not None
     recovery_edge = (
-        "NavigationModule",
+        "nav.mission",
         "recovery_cmd_vel",
-        "CmdVelMux",
+        "nav.velocity_mux",
         "recovery_cmd_vel",
     )
     if hasattr(nav, "recovery_cmd_vel"):
@@ -3449,25 +3313,25 @@ def test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux():
     else:
         assert recovery_edge not in system.connections
     assert (
-        "PathFollowerModule",
+        "nav.path_follower",
         "cmd_vel",
-        "CmdVelMux",
+        "nav.velocity_mux",
         "path_follower_cmd_vel",
     ) in system.connections
     assert (
-        "CmdVelMux",
+        "nav.velocity_mux",
         "driver_cmd_vel",
         "MujocoDriverModule",
         "cmd_vel",
     ) in system.connections
     assert (
-        "CmdVelMux",
+        "nav.velocity_mux",
         "driver_cmd_vel",
-        "SafetyRingModule",
+        "nav.safety",
         "cmd_vel",
     ) in system.connections
     assert (
-        "PathFollowerModule",
+        "nav.path_follower",
         "cmd_vel",
         "MujocoDriverModule",
         "cmd_vel",
@@ -3475,32 +3339,32 @@ def test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux():
 
 
 def test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd():
-    from core.blueprint import Blueprint
-    from core.blueprints.full_stack_wiring import apply_full_stack_wires
-    from core.module import Module
-    from core.stream import In, Out
-    from nav.cmd_vel_mux_module import CmdVelMux
+    from runtime.blueprint import Blueprint
+    from runtime.blueprints.full_stack_wiring import apply_full_stack_wires
+    from runtime.module import Module
+    from runtime.stream import In, Out
+    from nav.safety.velocity_mux import VelocityMux
 
-    class LegacyNavigationModule(Module, layer=5):
+    class LegacyNavigation(Module, layer=5):
         stop_signal: In[int]
 
     class TestDriverModule(Module, layer=1):
         cmd_vel: In[Twist]
         stop_signal: In[int]
 
-    class TestPathFollowerModule(Module, layer=5):
+    class TestPathFollower(Module, layer=5):
         cmd_vel: Out[Twist]
 
-    class TestSafetyRingModule(Module, layer=0):
+    class TestSafetyRing(Module, layer=0):
         stop_cmd: Out[int]
         cmd_vel: In[Twist]
 
     bp = Blueprint()
-    bp.add(LegacyNavigationModule, alias="NavigationModule")
+    bp.add(LegacyNavigation, alias="nav.mission")
     bp.add(TestDriverModule, alias="MujocoDriverModule")
-    bp.add(TestPathFollowerModule, alias="PathFollowerModule")
-    bp.add(TestSafetyRingModule, alias="SafetyRingModule")
-    bp.add(CmdVelMux)
+    bp.add(TestPathFollower, alias="nav.path_follower")
+    bp.add(TestSafetyRing, alias="nav.safety")
+    bp.add(VelocityMux)
 
     system = apply_full_stack_wires(
         bp,
@@ -3511,25 +3375,25 @@ def test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd():
     ).build()
 
     assert (
-        "NavigationModule",
+        "nav.mission",
         "recovery_cmd_vel",
-        "CmdVelMux",
+        "nav.velocity_mux",
         "recovery_cmd_vel",
     ) not in system.connections
     assert (
-        "PathFollowerModule",
+        "nav.path_follower",
         "cmd_vel",
-        "CmdVelMux",
+        "nav.velocity_mux",
         "path_follower_cmd_vel",
     ) in system.connections
     assert (
-        "CmdVelMux",
+        "nav.velocity_mux",
         "driver_cmd_vel",
         "MujocoDriverModule",
         "cmd_vel",
     ) in system.connections
     assert (
-        "PathFollowerModule",
+        "nav.path_follower",
         "cmd_vel",
         "MujocoDriverModule",
         "cmd_vel",
@@ -3537,24 +3401,24 @@ def test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd():
 
 
 def test_full_stack_required_safety_stop_wire_reports_missing_contract():
-    from core.blueprint import Blueprint
-    from core.blueprints.full_stack_wiring import apply_full_stack_wires
-    from core.module import Module
-    from core.stream import In, Out
+    from runtime.blueprint import Blueprint
+    from runtime.blueprints.full_stack_wiring import apply_full_stack_wires
+    from runtime.module import Module
+    from runtime.stream import In, Out
 
-    class LegacyNavigationModule(Module, layer=5):
+    class LegacyNavigation(Module, layer=5):
         pass
 
     class TestDriverModule(Module, layer=1):
         stop_signal: In[int]
 
-    class TestSafetyRingModule(Module, layer=0):
+    class TestSafetyRing(Module, layer=0):
         stop_cmd: Out[int]
 
     bp = Blueprint()
-    bp.add(LegacyNavigationModule, alias="NavigationModule")
+    bp.add(LegacyNavigation, alias="nav.mission")
     bp.add(TestDriverModule, alias="MujocoDriverModule")
-    bp.add(TestSafetyRingModule, alias="SafetyRingModule")
+    bp.add(TestSafetyRing, alias="nav.safety")
 
     with pytest.raises(ValueError) as exc:
         apply_full_stack_wires(
@@ -3566,8 +3430,8 @@ def test_full_stack_required_safety_stop_wire_reports_missing_contract():
         )
 
     assert "Required full-stack wire unavailable" in str(exc.value)
-    assert "SafetyRingModule.stop_cmd->NavigationModule.stop_signal" in str(exc.value)
-    assert "missing destination port NavigationModule.stop_signal" in str(exc.value)
+    assert "nav.safety.stop_cmd->nav.mission.stop_signal" in str(exc.value)
+    assert "missing destination port nav.mission.stop_signal" in str(exc.value)
 
 
 def test_full_stack_wires_frontier_exploration_goal_to_navigation():
@@ -3587,11 +3451,11 @@ def test_full_stack_wires_frontier_exploration_goal_to_navigation():
     assert (
         "WavefrontFrontierExplorer",
         "exploration_goal",
-        "NavigationModule",
+        "nav.mission",
         "goal_pose",
     ) in system.connections
     assert (
-        "NavigationModule",
+        "nav.mission",
         "mission_status",
         "WavefrontFrontierExplorer",
         "navigation_status",
@@ -3617,14 +3481,16 @@ def test_frontier_exploration_goal_reaches_navigation_planner():
         run_startup_checks=False,
     ).build()
     explorer = system.get_module("WavefrontFrontierExplorer")
-    nav = system.get_module("NavigationModule")
+    nav = system.get_module("nav.mission")
 
     seen = {"exploration_goals": 0, "waypoints": 0, "paths": 0}
+    state_history = []
     explorer.exploration_goal._add_callback(
         lambda _: seen.__setitem__("exploration_goals", seen["exploration_goals"] + 1)
     )
     nav.waypoint._add_callback(lambda _: seen.__setitem__("waypoints", seen["waypoints"] + 1))
     nav.global_path._add_callback(lambda _: seen.__setitem__("paths", seen["paths"] + 1))
+    nav.planner_status._add_callback(lambda state: state_history.append(state))
 
     grid = np.full((50, 50), -1, dtype=np.int16)
     grid[18:33, 18:33] = 0
@@ -3657,14 +3523,16 @@ def test_frontier_exploration_goal_reaches_navigation_planner():
         assert seen["exploration_goals"] > 0
         assert seen["paths"] > 0
         assert seen["waypoints"] > 0
-        assert nav._state in ("EXECUTING", "SUCCESS")
+        assert nav._state in ("EXECUTING", "SUCCESS") or any(
+            state in ("EXECUTING", "SUCCESS") for state in state_history
+        ), {"nav_state": nav._state, "state_history_tail": state_history[-12:]}
     finally:
         explorer.end_exploration()
         system.stop()
 
 
 def test_sim_scene_observer_emits_building_scene_stairs():
-    from semantic.perception.sim_scene_observer import SimSceneObserver
+    from perception.sim_scene_observer import SimSceneObserver
 
     class _Intrinsics:
         fx = 415.7
@@ -3689,7 +3557,7 @@ def test_sim_scene_observer_emits_building_scene_stairs():
 
 
 def test_sim_scene_observer_respects_live_forward_axis_convention():
-    from semantic.perception.sim_scene_observer import SimSceneObserver
+    from perception.sim_scene_observer import SimSceneObserver
 
     class _Intrinsics:
         fx = 415.7

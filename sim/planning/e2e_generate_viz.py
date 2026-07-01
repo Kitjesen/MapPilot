@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 寤虹瓚2_9 鍏ㄦ爤瀵艰埅 鈥?璁烘枃鍙鍖栧浘鐢熸垚鍣?Generates publication-quality figures for the advisor demo:
   1. 3D building cloud + navigation trajectory (perspective)
@@ -35,7 +35,7 @@ except (ImportError, AttributeError):
 _PCD_CANDIDATES = [
     os.environ.get('SIM_PCD_PATH', ''),
     '/home/sunrise/data/SLAM/navigation/install/pct_planner/share/pct_planner/rsc/pcd/building2_9.pcd',
-    '/home/sunrise/data/SLAM/navigation/src/global_planning/pct_planner/rsc/pcd/building2_9.pcd',
+    '/home/sunrise/data/SLAM/navigation/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/pcd/building2_9.pcd',
 ]
 _RESULT_DEFAULT = '/tmp/sim_result.json'
 

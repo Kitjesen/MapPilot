@@ -1,10 +1,9 @@
 #!/bin/bash
-# run_semantic_planner_test.sh — 轻量级语义规划集成测试
+# run_semantic_planner_test.sh 鈥?杞婚噺绾ц涔夎鍒掗泦鎴愭祴璇?#
+# 鍚姩 semantic_planner_node (mock LLM) + 闈欐€?TF + 娴嬭瘯鑺傜偣
+# 涓嶉渶瑕?MuJoCo/LiDAR/鐩告満
 #
-# 启动 semantic_planner_node (mock LLM) + 静态 TF + 测试节点
-# 不需要 MuJoCo/LiDAR/相机
-#
-# 用法: bash run_semantic_planner_test.sh
+# 鐢ㄦ硶: bash run_semantic_planner_test.sh
 set -e
 
 echo "=== Semantic Planner Integration Test ==="
@@ -12,14 +11,14 @@ echo "  Mode: mock LLM (no API key required)"
 echo "  Date: $(date)"
 echo ""
 
-# ── 清理旧进程 ──
+# 鈹€鈹€ 娓呯悊鏃ц繘绋?鈹€鈹€
 echo "[0] Cleaning up ..."
 pkill -9 -f semantic_planner_node 2>/dev/null || true
 pkill -9 -f semantic_planner_test 2>/dev/null || true
 pkill -9 -f "static_transform_publisher.*map.*odom" 2>/dev/null || true
 sleep 1
 
-# ── Source ROS2 + workspace ──
+# 鈹€鈹€ Source ROS2 + workspace 鈹€鈹€
 source /opt/ros/humble/setup.bash
 if [ -f /opt/nova/lingtu/v1.8.0/install/setup.bash ]; then
     source /opt/nova/lingtu/v1.8.0/install/setup.bash
@@ -32,7 +31,7 @@ else
     exit 1
 fi
 
-# ── [1] 静态 TF: map → odom → body ──
+# 鈹€鈹€ [1] 闈欐€?TF: map 鈫?odom 鈫?body 鈹€鈹€
 echo "[1] Starting static TF publishers ..."
 ros2 run tf2_ros static_transform_publisher \
     --x 0.0 --y 0.0 --z 0.0 --yaw 0.0 --pitch 0.0 --roll 0.0 \
@@ -47,11 +46,11 @@ ros2 run tf2_ros static_transform_publisher \
 TF2_PID=$!
 sleep 1
 
-# ── [2] 启动 semantic_planner_node (mock LLM) ──
+# 鈹€鈹€ [2] 鍚姩 semantic_planner_node (mock LLM) 鈹€鈹€
 echo "[2] Starting semantic_planner_node (mock LLM) ..."
-CONFIG_FILE=/opt/nova/lingtu/v1.8.0/config/semantic_planner.yaml
+CONFIG_FILE=/opt/nova/lingtu/v1.8.0/config/decision.yaml
 if [ ! -f "$CONFIG_FILE" ]; then
-    CONFIG_FILE=/home/sunrise/data/SLAM/navigation/config/semantic_planner.yaml
+    CONFIG_FILE=/home/sunrise/data/SLAM/navigation/config/decision.yaml
 fi
 
 ros2 run semantic_planner semantic_planner_node \
@@ -67,27 +66,27 @@ ros2 run semantic_planner semantic_planner_node \
     -p llm_fallback.backend:=mock \
     -p exploration.enable:=false \
     -p goal_resolution.replan_on_failure:=false \
-    > /tmp/test_semantic_planner.log 2>&1 &
+    > /tmp/test_decision.log 2>&1 &
 SP_PID=$!
 sleep 5
 
 if ! kill -0 $SP_PID 2>/dev/null; then
     echo "[ERROR] semantic_planner_node died!"
     echo "--- Log (last 30 lines) ---"
-    tail -30 /tmp/test_semantic_planner.log
+    tail -30 /tmp/test_decision.log
     kill $TF1_PID $TF2_PID 2>/dev/null
     exit 1
 fi
 echo "  semantic_planner_node running (PID=$SP_PID)"
 
-# ── [3] 运行测试 ──
+# 鈹€鈹€ [3] 杩愯娴嬭瘯 鈹€鈹€
 echo ""
 echo "[3] Running integration tests ..."
-echo "─────────────────────────────────────────"
+echo "鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€"
 TEST_RC=0
 python3 /tmp/test_semantic_planner_live.py --timeout 60 || TEST_RC=$?
 
-# ── [4] 清理 ──
+# 鈹€鈹€ [4] 娓呯悊 鈹€鈹€
 echo ""
 echo "[4] Cleanup ..."
 kill $SP_PID $TF1_PID $TF2_PID 2>/dev/null || true
@@ -95,7 +94,7 @@ sleep 1
 
 echo ""
 echo "--- semantic_planner log (last 20) ---"
-tail -20 /tmp/test_semantic_planner.log
+tail -20 /tmp/test_decision.log
 echo ""
 
 if [ $TEST_RC -eq 0 ]; then

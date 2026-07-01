@@ -10,8 +10,7 @@ import { StatusBar } from './components/StatusBar'
 import { MapView } from './components/MapView'
 import { SlamPanel } from './components/SlamPanel'
 import { SceneView } from './components/SceneView'
-import { RuntimeDataflowView } from './components/RuntimeDataflowView'
-import { InspectionAcceptanceView } from './components/InspectionAcceptanceView'
+
 import { MiniMap } from './components/MiniMap'
 import { FloatingWidget } from './components/FloatingWidget'
 import { ToastContainer } from './components/Toast'
@@ -97,8 +96,7 @@ function Dashboard() {
         {activeTab === 'scene' && <SceneView sseState={sseState} showToast={showToast} />}
         {activeTab === 'map' && <MapView showToast={showToast} />}
         {activeTab === 'slam' && <SlamPanel sseState={sseState} showToast={showToast} />}
-        {activeTab === 'dataflow' && <RuntimeDataflowView sseState={sseState} />}
-        {activeTab === 'inspection' && <InspectionAcceptanceView sseState={sseState} />}
+
       </main>
 
       <StatusBar sseState={sseState} uptimeSeconds={uptimeSeconds} />

@@ -1,15 +1,15 @@
 ﻿"""
-拓扑语义图 (TSG) 综合测试。
+鎷撴墤璇箟鍥?(TSG) 缁煎悎娴嬭瘯銆?
 
-覆盖:
-  1. 图构建与同步 (从 scene graph 更新)
-  2. 前沿节点管理
-  3. 穿越记忆 (房间切换检测)
-  4. 信息增益计算
-  5. Dijkstra 最短路径
-  6. 探索目标选择 (Algorithm 2)
-  7. 序列化/反序列化
-  8. LLM prompt 生成
+瑕嗙洊:
+  1. 鍥炬瀯寤轰笌鍚屾 (浠?scene graph 鏇存柊)
+  2. 鍓嶆部鑺傜偣绠＄悊
+  3. 绌胯秺璁板繂 (鎴块棿鍒囨崲妫€娴?
+  4. 淇℃伅澧炵泭璁＄畻
+  5. Dijkstra 鏈€鐭矾寰?
+  6. 鎺㈢储鐩爣閫夋嫨 (Algorithm 2)
+  7. 搴忓垪鍖?鍙嶅簭鍒楀寲
+  8. LLM prompt 鐢熸垚
 """
 
 import sys
@@ -19,9 +19,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# 确保可导入项目模块
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_perception"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "semantic_planner"))
+# 纭繚鍙鍏ラ」鐩ā鍧?
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from memory.spatial.topology_graph import (
     TopologySemGraph,
@@ -31,12 +31,12 @@ from memory.spatial.topology_graph import (
 )
 
 
-# ── 测试数据 ──────────────────────────────────────────────────
+# 鈹€鈹€ 娴嬭瘯鏁版嵁 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def make_scene_graph() -> dict:
-    """构建一个 3 房间 + 2 拓扑边的测试场景图。
+    """鏋勫缓涓€涓?3 鎴块棿 + 2 鎷撴墤杈圭殑娴嬭瘯鍦烘櫙鍥俱€?
 
-    布局:
+    甯冨眬:
         corridor (0,0) -- door --> office (5,0)
                        -- passage --> kitchen (0,5)
     """
@@ -103,10 +103,10 @@ def make_scene_graph() -> dict:
     }
 
 
-# ── 测试类 ──────────────────────────────────────────────────
+# 鈹€鈹€ 娴嬭瘯绫?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class TestGraphConstruction:
-    """图构建与同步。"""
+    """鍥炬瀯寤轰笌鍚屾銆?""
 
     def test_update_from_scene_graph(self):
         tsg = TopologySemGraph()
@@ -157,7 +157,7 @@ class TestGraphConstruction:
 
 
 class TestFrontierNodes:
-    """前沿节点管理。"""
+    """鍓嶆部鑺傜偣绠＄悊銆?""
 
     def test_add_frontier(self):
         tsg = TopologySemGraph()
@@ -204,7 +204,7 @@ class TestFrontierNodes:
 
 
 class TestTraversalMemory:
-    """穿越记忆。"""
+    """绌胯秺璁板繂銆?""
 
     def test_room_detection(self):
         tsg = TopologySemGraph()
@@ -253,7 +253,7 @@ class TestTraversalMemory:
 
 
 class TestShortestPath:
-    """Dijkstra 最短路径。"""
+    """Dijkstra 鏈€鐭矾寰勩€?""
 
     def test_direct_neighbors(self):
         tsg = TopologySemGraph()
@@ -292,7 +292,7 @@ class TestShortestPath:
 
 
 class TestInformationGain:
-    """信息增益计算。"""
+    """淇℃伅澧炵泭璁＄畻銆?""
 
     def test_unvisited_room_higher_ig(self):
         tsg = TopologySemGraph()
@@ -324,7 +324,7 @@ class TestInformationGain:
         ig_no_engine = tsg.compute_information_gain(2, "find refrigerator")
 
         sys.path.insert(0, str(
-            Path(__file__).resolve().parent.parent / "src" / "semantic_planner"
+            Path(__file__).resolve().parent.parent / "src"
         ))
         from memory.knowledge.semantic_prior import SemanticPriorEngine
         engine = SemanticPriorEngine()
@@ -336,7 +336,7 @@ class TestInformationGain:
 
 
 class TestExplorationTarget:
-    """Algorithm 2: 探索目标选择。"""
+    """Algorithm 2: 鎺㈢储鐩爣閫夋嫨銆?""
 
     def test_returns_targets(self):
         tsg = TopologySemGraph()
@@ -402,7 +402,7 @@ class TestExplorationTarget:
 
 
 class TestSerialization:
-    """序列化/反序列化。"""
+    """搴忓垪鍖?鍙嶅簭鍒楀寲銆?""
 
     def test_roundtrip(self):
         tsg = TopologySemGraph()
@@ -432,7 +432,7 @@ class TestSerialization:
 
 
 class TestPromptGeneration:
-    """LLM prompt 生成。"""
+    """LLM prompt 鐢熸垚銆?""
 
     def test_zh_prompt(self):
         tsg = TopologySemGraph()
@@ -445,10 +445,10 @@ class TestPromptGeneration:
         )
 
         context = tsg.to_prompt_context("zh")
-        assert "已知房间" in context
+        assert "宸茬煡鎴块棿" in context
         assert "corridor" in context
-        assert "连通关系" in context
-        assert "前沿" in context
+        assert "杩為€氬叧绯? in context
+        assert "鍓嶆部" in context
 
     def test_en_prompt(self):
         tsg = TopologySemGraph()
@@ -462,7 +462,7 @@ class TestPromptGeneration:
 
 
 class TestEdgeCases:
-    """边界情况。"""
+    """杈圭晫鎯呭喌銆?""
 
     def test_empty_graph(self):
         tsg = TopologySemGraph()

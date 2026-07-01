@@ -123,3 +123,37 @@
   height: 100%;
   display: block;
 }
+
+.pickMarker {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 12px rgba(0, 255, 136, 0.65);
+}
+
+.pickMarker::before,
+.pickMarker::after {
+  content: "";
+  position: absolute;
+  background: var(--accent);
+}
+
+.pickMarker::before {
+  left: 50%;
+  top: -5px;
+  width: 2px;
+  height: 20px;
+  transform: translateX(-50%);
+}
+
+.pickMarker::after {
+  left: -5px;
+  top: 50%;
+  width: 20px;
+  height: 2px;
+  transform: translateY(-50%);
+}

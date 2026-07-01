@@ -1,9 +1,9 @@
-﻿r"""
+r"""
 Building2_9 full-stack navigation simulation launch file for ROS 2 SITL.
 
 No physical robot, LiDAR, or SLAM service is required. Node topology:
 
-  sim_robot_node.py      -> /nav/odometry, /nav/map_cloud, /nav/terrain_map(+ext), /nav/stop
+  sim_robot_node.py      -> /slam/odometry, /slam/map_cloud, /nav/terrain_map(+ext), /nav/stop
   global_planner.py      -> /nav/global_path      (ele_planner.so C++ planner)
   pct_path_adapter (C++) -> /nav/way_point         (waypoint sequence + /nav/adapter_status)
   localPlanner (C++)     -> /nav/local_path        (local obstacle-aware path)
@@ -16,7 +16,7 @@ Usage:
 
   # Specify map and goal.
   ros2 launch sim/planning/sim_navigation.launch.py \
-    map_path:=/home/sunrise/data/SLAM/navigation/src/global_planning/pct_planner/rsc/pcd/building2_9.pickle \
+    map_path:=/home/sunrise/data/SLAM/navigation/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/pcd/building2_9.pickle \
     goal_x:=5.0 goal_y:=-8.0
 
   # Alternative diagonal corridor case.
@@ -51,7 +51,8 @@ def _default_pickle():
     planning_dir = os.path.dirname(__file__)        # sim/planning/
     src_root  = os.path.join(planning_dir, '..', '..', 'src')
     return os.path.normpath(os.path.join(
-        src_root, 'global_planning', 'pct_planner',
+        src_root, 'nav', 'services', 'plan', 'global_planner',
+        'backends', 'pct', 'vendor', 'pct_planner',
         'rsc', 'pcd', 'building2_9.pickle',
     ))
 
@@ -98,7 +99,7 @@ def generate_launch_description():
     use_terrain_passthrough_arg = DeclareLaunchArgument(
         'use_terrain_passthrough',
         default_value='false',
-        description='Copy /nav/map_cloud to terrain topics for Gazebo navigation gates.',
+        description='Copy /slam/map_cloud to terrain topics for Gazebo navigation gates.',
     )
     flatten_global_path_z_arg = DeclareLaunchArgument(
         'flatten_global_path_z',
@@ -148,11 +149,20 @@ def generate_launch_description():
     try:
         pct_share = get_package_share_directory('pct_planner')
     except Exception:
-        pct_share = os.path.join(repo_root, 'src', 'global_planning', 'pct_planner')
+        pct_share = os.path.join(
+            repo_root, 'src', 'nav', 'services', 'plan', 'global_planner',
+            'backends', 'pct', 'vendor', 'pct_planner'
+        )
     source_global_planner_script = os.path.join(
         repo_root,
         'src',
-        'global_planning',
+        'nav',
+        'services',
+        'plan',
+        'global_planner',
+        'backends',
+        'pct',
+        'vendor',
         'pct_planner',
         'planner',
         'scripts',
@@ -161,7 +171,9 @@ def generate_launch_description():
     legacy_global_planner_script = os.path.join(
         repo_root,
         'src',
-        'global_planning',
+        'nav',
+        'planning',
+        'vendor',
         'pct_planner',
         'planner',
         'scripts',
@@ -243,7 +255,7 @@ def generate_launch_description():
         }],
         remappings=[
             ('/pct_path',         '/nav/global_path'),
-            ('/Odometry',         '/nav/odometry'),
+            ('/Odometry',         '/slam/odometry'),
             ('/planner_waypoint', '/nav/way_point'),
         ],
     )
@@ -317,8 +329,8 @@ def generate_launch_description():
             'goalY':                 ParameterValue(goal_y, value_type=float),
         }],
         remappings=[
-            ('/Odometry',    '/nav/odometry'),
-            ('/cloud_map',   '/nav/map_cloud'),
+            ('/Odometry',    '/slam/odometry'),
+            ('/cloud_map',   '/slam/map_cloud'),
             ('/terrain_map', '/nav/terrain_map'),
             ('/terrain_map_ext', '/nav/terrain_map_ext'),
             ('/way_point',   '/nav/way_point'),
@@ -388,7 +400,7 @@ def generate_launch_description():
             'joy_axis_obstacle': 5,
         }],
         remappings=[
-            ('/Odometry',  '/nav/odometry'),
+            ('/Odometry',  '/slam/odometry'),
             ('/path',      '/nav/local_path'),
             ('/speed',     '/nav/speed'),
             ('/stop',      '/nav/stop'),

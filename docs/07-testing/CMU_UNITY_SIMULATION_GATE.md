@@ -77,7 +77,8 @@ Pass requires:
   `src/base_autonomy/vehicle_simulator/mesh/unity/environment`;
 - colcon build output exists at `install/setup.bash`;
 - expected CMU topics are present in source/config/launch files;
-- LingTu `tare_explore` profile disables wavefront and uses the TARE backend;
+- CMU Unity endpoint overrides LingTu `tare_explore` to disable wavefront and
+  use the external TARE bridge;
 - LingTu TARE native remaps align scan, odometry, map, waypoint, runtime, and
   start/finish topics;
 - LingTu has a checked-in CMU Unity adapter launch profile and relay contract;
@@ -383,21 +384,19 @@ Pass metrics from the runtime report:
   `cmd_vel_sent_to_hardware=false`.
 - Hardware safety report has no blocked hardware nodes; `/cmd_vel` is only
   consumed by CMU `vehicleSimulator`.
-- Planner diagnostics are present:
-  `primary_planner=pct`, `selected_planner=astar`, `fallback_used=true`,
-  `fallback_reason="pct path_safety failed (9 blocked samples)"`,
-  `selected_path_safety.ok=true`, and `reached_goal=true`.
+- Legacy planner diagnostics from that older run showed PCT as the primary
+  planner, an A* fallback as the selected planner, and a fallback reason of
+  `pct path_safety failed (9 blocked samples)`.
 
 Earlier product claim boundary:
 
 - This is a CMU Unity + LingTu adapter + TARE + navigation closed-loop pass.
-- PCT is integrated as the primary backend, but this older wrapper run did not
+- PCT was integrated as the primary backend, but this older wrapper run did not
   validate a pure PCT route. The PCT path was rejected by 3D path safety, and
-  the product-safe A* fallback produced the accepted path and motion.
-- Keep fallback enabled for product safety. Separate native MuJoCo/PCT gates are
-  still useful for isolated PCT regression coverage; the newer CMU same-source
-  flat traversability run above is the no-fallback proof for the Unity adapter
-  chain.
+  the then-active A* fallback produced the accepted path and motion.
+- Current product profiles use OctoPlanner3D with `plan_safety_policy=reject`
+  and no planner fallback. Separate native MuJoCo/PCT gates remain useful for
+  isolated PCT regression coverage.
 
 ## Visual Evidence
 

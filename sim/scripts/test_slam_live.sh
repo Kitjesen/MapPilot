@@ -82,9 +82,9 @@ if [ "$SLAM_PROFILE" = "pointlio" ]; then
     CONFIG_FILE="$NAV_DIR/config/pointlio.yaml"
     ros2 run pointlio pointlio_node --ros-args \
         --params-file "$CONFIG_FILE" \
-        -r cloud_registered_body:=/nav/registered_cloud \
-        -r cloud_registered:=/nav/map_cloud \
-        -r aft_mapped_to_init:=/nav/odometry \
+        -r cloud_registered_body:=/slam/registered_cloud \
+        -r cloud_registered:=/slam/map_cloud \
+        -r aft_mapped_to_init:=/slam/odometry \
         -r livox/lidar:=/lidar/scan \
         -r livox/imu:=/imu/data \
         > /tmp/slam_test.log 2>&1 &
@@ -93,9 +93,9 @@ elif [ "$SLAM_PROFILE" = "fastlio2" ]; then
     CONFIG_FILE="$NAV_DIR/install/fastlio2/share/fastlio2/config/lio.yaml"
     ros2 run fastlio2 lio_node --ros-args \
         -p config_path:="$CONFIG_FILE" \
-        -r /Odometry:=/nav/odometry \
-        -r /cloud_registered_body:=/nav/registered_cloud \
-        -r /cloud_registered:=/nav/map_cloud \
+        -r /Odometry:=/slam/odometry \
+        -r /cloud_registered_body:=/slam/registered_cloud \
+        -r /cloud_registered:=/slam/map_cloud \
         > /tmp/slam_test.log 2>&1 &
     SLAM_PID=$!
 else
@@ -120,7 +120,7 @@ echo ""
 echo "[3/4] 等待 SLAM 初始化..."
 INIT_OK=false
 for i in $(seq 1 15); do
-    if timeout 2 ros2 topic echo /nav/odometry --once >/dev/null 2>&1; then
+    if timeout 2 ros2 topic echo /slam/odometry --once >/dev/null 2>&1; then
         INIT_OK=true
         echo "  SLAM 初始化完成 (${i}s)"
         break
@@ -169,7 +169,7 @@ for i in $(seq 1 $NUM_SAMPLES); do
     fi
 
     # 采集里程计
-    ODOM_MSG=$(timeout 2 ros2 topic echo /nav/odometry --once 2>/dev/null || true)
+    ODOM_MSG=$(timeout 2 ros2 topic echo /slam/odometry --once 2>/dev/null || true)
     if [ -z "$ODOM_MSG" ]; then
         SEC=$((i * SAMPLE_INTERVAL))
         printf "%4ds | ---      | ---      | ---      | NO_DATA\n" "$SEC"
@@ -215,8 +215,8 @@ done
 echo ""
 echo "测量话题频率 (5s 采样)..."
 
-ODOM_HZ=$(timeout 5 ros2 topic hz /nav/odometry 2>/dev/null | grep "average rate:" | tail -1 | awk '{print $3}' || echo "?")
-CLOUD_HZ=$(timeout 5 ros2 topic hz /nav/registered_cloud 2>/dev/null | grep "average rate:" | tail -1 | awk '{print $3}' || echo "?")
+ODOM_HZ=$(timeout 5 ros2 topic hz /slam/odometry 2>/dev/null | grep "average rate:" | tail -1 | awk '{print $3}' || echo "?")
+CLOUD_HZ=$(timeout 5 ros2 topic hz /slam/registered_cloud 2>/dev/null | grep "average rate:" | tail -1 | awk '{print $3}' || echo "?")
 IMU_HZ=$(timeout 5 ros2 topic hz /livox/imu 2>/dev/null | grep "average rate:" | tail -1 | awk '{print $3}' || echo "?")
 LIDAR_HZ=$(timeout 5 ros2 topic hz /livox/lidar 2>/dev/null | grep "average rate:" | tail -1 | awk '{print $3}' || echo "?")
 
@@ -225,7 +225,7 @@ echo ""
 echo "录制 10s 数据包..."
 BAG_DIR="/tmp/slam_test_bag_$(date +%Y%m%d_%H%M%S)"
 timeout 12 ros2 bag record \
-    /livox/lidar /livox/imu /nav/odometry /nav/registered_cloud \
+    /livox/lidar /livox/imu /slam/odometry /slam/registered_cloud \
     -o "$BAG_DIR" 2>/dev/null &
 RECORD_PID=$!
 sleep 12
@@ -254,7 +254,7 @@ else
     echo "  状态:       SLAM SURVIVED (${DURATION}s)"
 
     # 最终位姿
-    FINAL_MSG=$(timeout 2 ros2 topic echo /nav/odometry --once 2>/dev/null || true)
+    FINAL_MSG=$(timeout 2 ros2 topic echo /slam/odometry --once 2>/dev/null || true)
     FX=$(echo "$FINAL_MSG" | grep -A 3 "position:" | grep "x:" | head -1 | awk '{print $2}')
     FY=$(echo "$FINAL_MSG" | grep -A 3 "position:" | grep "y:" | head -1 | awk '{print $2}')
     FZ=$(echo "$FINAL_MSG" | grep -A 3 "position:" | grep "z:" | head -1 | awk '{print $2}')

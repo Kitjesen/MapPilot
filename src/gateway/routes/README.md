@@ -1,17 +1,22 @@
-# Routes — FastAPI HTTP/WS/SSE Endpoints
+# Gateway Routes
 
-This package provides the route modules that register HTTP, WebSocket, and SSE endpoints on the Gateway's FastAPI application. Each route module handles a specific functional domain.
+Route files register HTTP, WebSocket, and SSE endpoints on the Gateway FastAPI
+app. Keep route handlers thin: parse input, call a service/helper, return a
+response.
 
-## Files
+| File | Role |
+| --- | --- |
+| `app.py` | FastAPI app factory and route registration |
+| `commands.py` | Navigation, stop, cancel, mode command endpoints |
+| `maps.py` | Map listing, selection, save/build/delete endpoints |
+| `status.py` | Runtime health and module status endpoints |
+| `realtime.py` | SSE and websocket realtime streams |
+| `camera.py` | Camera snapshot and stream endpoints |
+| `session.py` | Session lifecycle endpoints |
+| `operations.py` | Operator actions such as restart/toggle endpoints |
+| `diagnostics.py` | Diagnostic and evidence endpoints |
+| `assets.py` | Static asset serving |
+| `auth.py` | Auth endpoint helpers |
 
-- **`app.py`** — FastAPI application factory: creates the ASGI app with middleware, CORS, exception handlers, and route registration.
-- **`maps.py`** — Map REST endpoints: list, save, load, delete, and build maps; map lifecycle management.
-- **`commands.py`** — Command endpoints: navigate_to, stop, cancel, set_mode; dispatches to NavigationModule.
-- **`realtime.py`** — SSE (Server-Sent Events) streaming: real-time robot state, map cloud, and health status push.
-- **`camera.py`** — Camera streaming endpoints: JPEG frame fetch and MJPEG stream for WebSocket/HTTP clients.
-- **`session.py`** — Session management: start/stop robot session, session state query, and config overrides.
-- **`status.py`** — Health and status endpoints: module state, connection status, uptime, and error counts.
-- **`diagnostics.py`** — Diagnostic endpoints: system logs, component health checks, and calibration verification.
-- **`operations.py`** — Operations endpoints: restart services, toggle features, and env var inspection.
-- **`assets.py`** — Static asset serving: frontend assets, robot icons, and UI configuration files.
-- **`auth.py`** — Authentication middleware: API key validation and token-based access control for endpoints.
+If a route starts making navigation, SLAM, or map lifecycle decisions itself,
+move that logic to the owning module/service and keep the route as a caller.

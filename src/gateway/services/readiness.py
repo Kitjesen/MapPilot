@@ -40,6 +40,7 @@ _MISSION_ACTIVE_STATES = {
     "EXECUTING",
     "NAVIGATING",
     "PLANNING",
+    "PAUSED",
     "EXPLORING",
     "RECOVERY",
     "RECOVERING",
@@ -301,7 +302,7 @@ def _calibration_status(now: float | None = None) -> dict[str, Any]:
         if ts - cached_ts < _CALIBRATION_CACHE_TTL_S:
             return cached
     try:
-        from core.utils.calibration_check import run_calibration_check
+        from runtime.utils.calibration_check import run_calibration_check
 
         report = run_calibration_check(require_camera=False, require_slam=False)
         payload = {

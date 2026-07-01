@@ -82,6 +82,24 @@ def test_map_routes_register_expected_paths():
     assert "/api/v1/map/save" in paths
 
 
+def test_diagnostics_maps_snapshot_uses_map_manager_private_list(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.routes.diagnostics import _maps_snapshot
+
+    class Manager:
+        def _map_list(self):
+            return {"action": "list", "success": True, "maps": [{"name": "demo"}]}
+
+    monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
+    payload = _maps_snapshot(SimpleNamespace(_map_mgr=Manager()))
+
+    assert payload["has_manager"] is True
+    assert payload["manager"]["success"] is True
+    assert payload["manager"]["maps"][0]["name"] == "demo"
+
+
 def test_status_routes_register_expected_paths():
     from fastapi import FastAPI
 
@@ -141,7 +159,10 @@ def test_camera_snapshot_returns_cached_gateway_jpeg(monkeypatch):
     def fail_legacy_snapshot():
         raise AssertionError("snapshot route should not probe ROS when JPEG is cached")
 
-    monkeypatch.setattr("gateway.routes.camera._legacy_ros2_snapshot_jpeg", fail_legacy_snapshot)
+    monkeypatch.setattr(
+        "gateway.routes.camera._registered_snapshot_adapter_jpeg",
+        fail_legacy_snapshot,
+    )
 
     app = FastAPI()
     gw = SimpleNamespace(_latest_jpeg=b"\xff\xd8\xffcamera", _jpeg_lock=threading.Lock())
@@ -171,7 +192,10 @@ def test_camera_snapshot_uses_teleop_one_shot_encoder(monkeypatch):
             self.calls += 1
             return b"\xff\xd8\xffteleop"
 
-    monkeypatch.setattr("gateway.routes.camera._legacy_ros2_snapshot_jpeg", fail_legacy_snapshot)
+    monkeypatch.setattr(
+        "gateway.routes.camera._registered_snapshot_adapter_jpeg",
+        fail_legacy_snapshot,
+    )
 
     teleop = Teleop()
     app = FastAPI()
@@ -199,7 +223,10 @@ def test_camera_snapshot_fast_fails_when_gateway_reports_no_camera(monkeypatch):
     def fail_legacy_snapshot():
         raise AssertionError("snapshot route should not probe ROS when camera is unavailable")
 
-    monkeypatch.setattr("gateway.routes.camera._legacy_ros2_snapshot_jpeg", fail_legacy_snapshot)
+    monkeypatch.setattr(
+        "gateway.routes.camera._registered_snapshot_adapter_jpeg",
+        fail_legacy_snapshot,
+    )
 
     app = FastAPI()
     gw = SimpleNamespace(_all_modules={})
@@ -213,6 +240,45 @@ def test_camera_snapshot_fast_fails_when_gateway_reports_no_camera(monkeypatch):
     assert payload["error"] == "camera_unavailable"
     assert payload["ok"] is False
     assert payload["detail"]["camera"]["reason"] == "camera_bridge_not_loaded"
+
+
+def test_camera_route_does_not_reference_ros2_compat() -> None:
+    import gateway.routes.camera as camera_route
+
+    source = Path(camera_route.__file__).read_text(encoding="utf-8-sig")
+
+    assert "runtime.adapters.ros2" not in source
+
+
+def test_camera_snapshot_uses_registered_snapshot_adapter():
+    from fastapi import FastAPI
+
+    from runtime.registry import register, restore, snapshot
+    from gateway.routes.camera import register_camera_routes
+
+    saved = snapshot()
+    try:
+        @register("camera_snapshot_adapter", "test_adapter", priority=100)
+        class TestSnapshotAdapter:
+            calls = 0
+
+            @staticmethod
+            def capture_jpeg():
+                TestSnapshotAdapter.calls += 1
+                return b"\xff\xd8\xffadapter"
+
+        app = FastAPI()
+        register_camera_routes(app, None)
+
+        route = next(route for route in app.routes if route.path == "/api/v1/camera/snapshot")
+        response = asyncio.run(route.endpoint())
+
+        assert response.status_code == 200
+        assert response.media_type == "image/jpeg"
+        assert response.body == b"\xff\xd8\xffadapter"
+        assert TestSnapshotAdapter.calls == 1
+    finally:
+        restore(saved)
 
 
 def test_command_routes_register_expected_paths():
@@ -480,11 +546,15 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     )
     assert validation_gates["real_runtime_evidence"]["command"] == (
         "python lingtu.py real-runtime-evidence "
+        "--collector gateway "
+        "--gateway-url http://<robot>:5050 "
         "--duration-sec 20 "
         "--json-out artifacts/thunder_field_runtime/report.json"
     )
     assert validation_gates["real_runtime_evidence"]["collector_command"] == (
         "python scripts/gates/real_runtime_evidence_collect.py "
+        "--collector gateway "
+        "--gateway-url http://<robot>:5050 "
         "--duration-sec 20 "
         "--expected-contract thunder_field "
         "--json-out artifacts/thunder_field_runtime/report.json"
@@ -493,7 +563,7 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
         "python scripts/gates/real_runtime_evidence_gate.py "
         "artifacts/thunder_field_runtime/report.json "
         "--expected-contract thunder_field "
-        "--json-out artifacts/thunder_field_runtime/runtime_evidence.json"
+        "--json-out artifacts/thunder_field_runtime/profiles_evidence.json"
     )
     assert validation_gates["real_runtime_evidence"]["artifact"] == (
         "artifacts/thunder_field_runtime/report.json"
@@ -515,6 +585,7 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
         validation_gates["real_runtime_evidence"]["requires_real_robot_runtime"]
         is True
     )
+    assert validation_gates["real_runtime_evidence"]["requires_ros"] is False
     assert validation_gates["real_runtime_evidence"]["requires_active_robot_run"] is True
     assert (
         validation_gates["real_runtime_evidence"]["collector_publishes_control_topics"]
@@ -571,7 +642,7 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
 
     snapshot = _runtime_contract_snapshot()
     assert snapshot["schema_version"] == 1
-    assert snapshot["source"] == "core.runtime_interface.runtime_contract_manifest"
+    assert snapshot["source"] == "runtime.runtime_interface.runtime_contract_manifest"
     manifest = snapshot["manifest"]
     assert manifest["schema_version"] == "lingtu.runtime_interface.v1"
     assert manifest["frame_links"]["body_to_lidar"] == {
@@ -603,7 +674,7 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
 
 
 def test_runtime_contract_manifest_is_fully_typed_by_gateway_schema():
-    from core.runtime_interface import runtime_contract_manifest
+    from runtime.runtime_interface import runtime_contract_manifest
     from gateway.schemas import RuntimeContractManifest
 
     manifest = runtime_contract_manifest()
@@ -656,30 +727,30 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
         "child": "lidar_link",
         "required": True,
     }
-    assert runtime["topic_allowed_frame_ids"]["/nav/map_cloud"] == ["map"]
+    assert runtime["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
     assert runtime["required_topic_frame_ids"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
     ]
     assert runtime["runtime_data_flow_topics"][:2] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
+        "/lidar/raw_frame",
+        "/imu/raw",
     ]
     flow = {stage["name"]: stage for stage in runtime["resolved_runtime_data_flow"]}
-    assert flow["endpoint_adapter"]["inputs"] == ["/nav/lidar_scan", "/nav/imu"]
+    assert flow["endpoint_adapter"]["inputs"] == ["/lidar/raw_frame", "/imu/raw"]
     assert flow["command_boundary"]["outputs"] == [
         "hardware_driver_after_cmd_vel_mux"
     ]
 
 
 def test_frame_contract_snapshot_defaults_to_runtime_manifest(monkeypatch):
-    import core.runtime_interface as runtime_interface
+    import runtime.runtime_interface as runtime_interface
     from gateway.gateway_module import GatewayModule
     from gateway.routes import diagnostics
 
@@ -1443,7 +1514,7 @@ def test_algorithm_benchmark_latest_endpoint_preserves_runtime_dataflow(
 def test_algorithm_benchmark_latest_splits_product_profile_from_strict_benchmark(
     tmp_path,
 ):
-    from core.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
+    from runtime.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
     from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
 
     product_gates = {
@@ -1527,7 +1598,7 @@ def _write_real_runtime_evidence_report(
         "expected_contract": "thunder_field",
         "checked_real_motion_evidence": {"ok": True},
         "checked_hardware_boundary_evidence": {"ok": True},
-        "checked_live_topic_freshness": {"/nav/odometry": {"ok": True}},
+        "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
         "checked_runtime_data_flow_evidence": {
             "command_boundary": {"ok": True},
         },
@@ -1614,7 +1685,7 @@ def test_real_runtime_evidence_latest_uses_newest_report_even_when_failing(tmp_p
             "expected_contract": "thunder_field",
             "checked_real_motion_evidence": {"ok": False},
             "checked_hardware_boundary_evidence": {"ok": True},
-            "checked_live_topic_freshness": {"/nav/odometry": {"ok": True}},
+            "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
             "checked_runtime_data_flow_evidence": {
                 "command_boundary": {"ok": True},
             },
@@ -1679,7 +1750,7 @@ def test_real_runtime_evidence_latest_diagnostic_rejects_missing_data_flow_secti
         "expected_contract": "thunder_field",
         "checked_real_motion_evidence": {"ok": True},
         "checked_hardware_boundary_evidence": {"ok": True},
-        "checked_live_topic_freshness": {"/nav/odometry": {"ok": True}},
+        "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
         "blockers": [],
     }
     report_path = _write_real_runtime_evidence_report(

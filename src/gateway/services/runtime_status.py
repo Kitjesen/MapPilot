@@ -11,10 +11,10 @@ from dataclasses import asdict
 from collections.abc import Mapping
 from typing import Any
 
-from core.runtime_policy import (
+from runtime.runtime_policy import (
     backend_capability_defaults as _backend_capability_defaults,
 )
-from core.runtime_interface import REAL_RUNTIME_CONTRACT, map_frame_id
+from runtime.runtime_interface import REAL_RUNTIME_CONTRACT, map_frame_id
 from gateway.services.safety_status import (
     SAFETY_STOP_BLOCKER,
     safety_stop_active,
@@ -30,7 +30,13 @@ STATUS_MAP_FRAME_ID = map_frame_id()
 
 PATH_ENDPOINT = "/api/v1/path"
 
-MISSION_ACTIVE_STATES = {"PLANNING", "EXECUTING", "PATROLLING"}
+MISSION_ACTIVE_STATES = {
+    "PLANNING",
+    "EXECUTING",
+    "PAUSED",
+    "RECOVERING",
+    "PATROLLING",
+}
 MISSION_TERMINAL_STATES = {"SUCCESS", "FAILED", "CANCELLED"}
 
 CONTROL_SOURCE_META: dict[str, dict[str, Any]] = {
@@ -554,19 +560,7 @@ def _cmd_vel_health(gw: Any) -> dict[str, Any]:
     mux = getattr(gw, "_cmd_vel_mux", None)
     modules = getattr(gw, "_all_modules", None) or {}
     if mux is None:
-        mux = modules.get("CmdVelMux")
-    if mux is None:
-        for name, module in modules.items():
-            token = str(name).lower()
-            class_token = module.__class__.__name__.lower()
-            if (
-                "cmdvelmux" in token
-                or "cmd_vel_mux" in token
-                or "cmdvelmux" in class_token
-                or "cmd_vel_mux" in class_token
-            ):
-                mux = module
-                break
+        mux = modules.get("nav.velocity_mux")
     if mux is None:
         return {"active_source": "unknown", "sources": {}, "available": False}
     try:
@@ -587,13 +581,13 @@ def _cmd_vel_health(gw: Any) -> dict[str, Any]:
     return {"active_source": "unknown", "sources": {}, "available": False}
 
 
-def _navigation_module_status(gw: Any) -> dict[str, Any]:
+def _navigation_status_from_module(gw: Any) -> dict[str, Any]:
     modules = getattr(gw, "_all_modules", None) or {}
     candidates = []
-    injected = getattr(gw, "_navigation_module", None)
+    injected = getattr(gw, "_navigation", None)
     if injected is not None:
         candidates.append(injected)
-    direct = modules.get("NavigationModule")
+    direct = modules.get("nav.mission")
     if direct is not None and not any(direct is candidate for candidate in candidates):
         candidates.append(direct)
     for name, module in modules.items():
@@ -601,10 +595,10 @@ def _navigation_module_status(gw: Any) -> dict[str, Any]:
             continue
         token = str(name).lower()
         class_token = module.__class__.__name__.lower()
-        if "navigationmodule" in token or "navigation_module" in token:
+        if token.endswith("navigation") or token.endswith("nav.mission"):
             candidates.append(module)
             continue
-        if "navigationmodule" in class_token or "navigation_module" in class_token:
+        if class_token == "navigation":
             candidates.append(module)
 
     for module in candidates:
@@ -827,6 +821,12 @@ def _feedback_summary(
     elif state in {"EXECUTING", "PATROLLING"}:
         next_action = "monitor_progress"
         primary = "Navigation is following the planned path."
+    elif state == "RECOVERING":
+        next_action = "monitor_recovery"
+        primary = "Navigation is running recovery."
+    elif state == "PAUSED":
+        next_action = "resume_or_cancel"
+        primary = "Navigation is paused."
     elif state == "PLANNING":
         next_action = "wait_for_plan"
         primary = "Navigation is planning."
@@ -899,7 +899,11 @@ def _navigation_reason_codes(
     ):
         codes.append("pose_stale")
 
-    if state == "STUCK":
+    if state == "RECOVERING":
+        codes.append("mission_recovering")
+    elif state == "PAUSED":
+        codes.append("mission_paused")
+    elif state == "STUCK":
         codes.append("mission_stuck")
     elif state == "FAILED":
         codes.append("mission_failed")
@@ -962,7 +966,7 @@ def _map_artifact_gate_status(nav_runtime: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _real_runtime_evidence_status(session: Mapping[str, Any]) -> dict[str, Any]:
-    from core.runtime_interface import canonical_data_source_name
+    from runtime.runtime_interface import canonical_data_source_name
 
     runtime_contract = (
         os.environ.get("LINGTU_RUNTIME_CONTRACT")
@@ -1023,7 +1027,7 @@ def _frame_mismatch(
     frame: str | None,
     expected_frames: tuple[str, ...],
 ) -> dict[str, str] | None:
-    from core.runtime_interface import normalize_frame_id
+    from runtime.runtime_interface import normalize_frame_id
 
     normalized = normalize_frame_id(frame)
     if not normalized or normalized == "unknown" or normalized in expected_frames:
@@ -1040,10 +1044,10 @@ def _navigation_frame_summary(
     mission: Mapping[str, Any],
     odometry: Any,
 ) -> dict[str, Any]:
-    from core.runtime_interface import TOPICS
-    from core.runtime_interface import canonical_data_source_name
-    from core.runtime_interface import normalize_frame_id
-    from core.runtime_interface import runtime_topic_default_frame_id
+    from runtime.runtime_interface import TOPICS
+    from runtime.runtime_interface import canonical_data_source_name
+    from runtime.runtime_interface import normalize_frame_id
+    from runtime.runtime_interface import runtime_topic_default_frame_id
 
     runtime_contract = (
         os.environ.get("LINGTU_RUNTIME_CONTRACT")
@@ -1092,16 +1096,16 @@ def _navigation_frame_summary(
 
 
 def _runtime_boundary_status() -> dict[str, Any]:
-    from core.blueprints.runtime_endpoint import canonical_runtime_endpoint_name
-    from core.runtime_interface import FRAMES
-    from core.runtime_interface import RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES
-    from core.runtime_interface import canonical_data_source_name
-    from core.runtime_interface import resolved_runtime_data_flow
-    from core.runtime_interface import runtime_data_flow_topics
-    from core.runtime_interface import runtime_contract_manifest
-    from core.runtime_interface import runtime_required_topic_frame_ids
-    from core.runtime_interface import runtime_topic_allowed_frame_ids
-    from core.runtime_interface import runtime_topic_default_frame_ids
+    from runtime.profiles.endpoints import canonical_runtime_endpoint_name
+    from runtime.runtime_interface import FRAMES
+    from runtime.runtime_interface import RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES
+    from runtime.runtime_interface import canonical_data_source_name
+    from runtime.runtime_interface import resolved_runtime_data_flow
+    from runtime.runtime_interface import runtime_data_flow_topics
+    from runtime.runtime_interface import runtime_contract_manifest
+    from runtime.runtime_interface import runtime_required_topic_frame_ids
+    from runtime.runtime_interface import runtime_topic_allowed_frame_ids
+    from runtime.runtime_interface import runtime_topic_default_frame_ids
 
     env = {
         "profile": os.environ.get("LINGTU_PROFILE"),
@@ -1209,7 +1213,7 @@ def _diagnostic_frame_id(
     diagnostics: Mapping[str, Any],
     *keys: str,
 ) -> str | None:
-    from core.runtime_interface import normalize_frame_id
+    from runtime.runtime_interface import normalize_frame_id
 
     for key in keys:
         frame = normalize_frame_id(_frame_id(diagnostics.get(key)))
@@ -1223,11 +1227,11 @@ def _localization_frame_summary(
     diagnostics: Mapping[str, Any],
     runtime_boundary: Mapping[str, Any],
 ) -> dict[str, Any]:
-    from core.runtime_interface import TOPICS
-    from core.runtime_interface import canonical_data_source_name
-    from core.runtime_interface import normalize_frame_id
-    from core.runtime_interface import runtime_required_topic_frame_ids
-    from core.runtime_interface import runtime_topic_expected_frame_ids
+    from runtime.runtime_interface import TOPICS
+    from runtime.runtime_interface import canonical_data_source_name
+    from runtime.runtime_interface import normalize_frame_id
+    from runtime.runtime_interface import runtime_required_topic_frame_ids
+    from runtime.runtime_interface import runtime_topic_expected_frame_ids
 
     runtime_contract = (
         runtime_boundary.get("runtime_contract")
@@ -1362,7 +1366,7 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
     lease = safe_lease(gw)
     localization = build_localization_status(gw)
     cmd_vel = _cmd_vel_health(gw)
-    nav_runtime = _navigation_module_status(gw)
+    nav_runtime = _navigation_status_from_module(gw)
     state = str(mission.get("state", "IDLE"))
     wp_index = _as_int(mission.get("wp_index"), 0)
     wp_total = _as_int(mission.get("wp_total"), 0)

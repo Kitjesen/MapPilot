@@ -14,10 +14,10 @@ from datetime import datetime
 from collections.abc import Mapping
 from typing import Any
 
-from core.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from core.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
-from core.dimos_gap import build_dimos_gap_report
-from core.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
+from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
+from runtime.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
+from runtime.dimos_gap import build_dimos_gap_report
+from runtime.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
 from gateway.schemas import AlgorithmBenchmarkLatestResponse
 from gateway.schemas import InspectionAcceptanceRequest
 from gateway.schemas import InspectionAcceptanceResponse
@@ -178,7 +178,7 @@ def build_plugin_catalog() -> dict[str, Any]:
 
 
 def _build_plugin_catalog_impl() -> dict[str, Any]:
-    from core.registry import get_metadata, list_categories, list_plugins
+    from runtime.registry import get_metadata, list_categories, list_plugins
 
     categories: dict[str, list[dict[str, Any]]] = {}
     for category in list_categories():
@@ -781,7 +781,7 @@ def _real_runtime_evidence_summary_from_report(
     now: float,
     max_age_s: float,
 ) -> dict[str, Any] | None:
-    from core.runtime_interface import REAL_RUNTIME_CONTRACT
+    from runtime.runtime_interface import REAL_RUNTIME_CONTRACT
 
     report = _load_json_file(report_path)
     if report is None:
@@ -934,18 +934,18 @@ def build_real_runtime_evidence_latest_summary(
 
 
 def _runtime_contract_snapshot() -> dict[str, Any]:
-    from core.runtime_interface import runtime_contract_manifest
+    from runtime.runtime_interface import runtime_contract_manifest
 
     return {
         "schema_version": 1,
-        "source": "core.runtime_interface.runtime_contract_manifest",
+        "source": "runtime.runtime_interface.runtime_contract_manifest",
         "manifest": runtime_contract_manifest(),
         "ts": time.time(),
     }
 
 
 def _load_topic_contract() -> dict[str, Any]:
-    from core.yaml_helpers import load_yaml
+    from runtime.yaml_helpers import load_yaml
 
     path = (
         pathlib.Path(__file__).resolve().parents[3]
@@ -979,7 +979,7 @@ def _first_path_frame(path: Any) -> str | None:
 
 
 def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
-    from core.runtime_interface import runtime_contract_manifest
+    from runtime.runtime_interface import runtime_contract_manifest
     from gateway.services.runtime_status import build_navigation_status
 
     manifest = runtime_contract_manifest()
@@ -1003,6 +1003,12 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
     runtime_boundary = nav_status.get("runtime", {})
     if not isinstance(runtime_boundary, dict):
         runtime_boundary = {}
+    frame_tree = getattr(gw, "_frame_tree", None)
+    frame_tree_snapshot = (
+        frame_tree.snapshot()
+        if frame_tree is not None and hasattr(frame_tree, "snapshot")
+        else None
+    )
 
     with gw._state_lock:
         odom = dict(gw._odom) if isinstance(gw._odom, dict) else gw._odom
@@ -1060,6 +1066,7 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
             ),
         },
         "navigation_frames": frames,
+        "frame_tree": _json_payload(frame_tree_snapshot),
         "runtime_boundary": _json_payload(runtime_boundary),
         "mismatches": frames.get("mismatches", []),
         "ok": bool(frames.get("ok", True)),
@@ -1206,8 +1213,8 @@ def _inspection_map_gate(body: Any) -> dict[str, Any] | None:
                 map_dir = str(active_dir)
     if not map_dir:
         return None
-    from core.runtime_validation_gates import runtime_validation_gates
-    from core.same_source_map_artifacts import (
+    from runtime.runtime_validation_gates import runtime_validation_gates
+    from runtime.same_source_map_artifacts import (
         validate_saved_map_artifact_dir,
     )
 
@@ -1224,7 +1231,7 @@ def _inspection_map_gate(body: Any) -> dict[str, Any] | None:
 
 
 def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> dict[str, Any]:
-    from core.inspection_acceptance import goal_candidate_body_for_target
+    from runtime.inspection_acceptance import goal_candidate_body_for_target
     from gateway.schemas import GoalCandidateRequest
     from gateway.services.control_commands import ControlCommandService
     from gateway.services.goal_builder import construct_goal_from_request
@@ -1297,8 +1304,8 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
 
 
 def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
-    from core.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
-    from core.product_field_check import build_product_field_check
+    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.product_field_check import build_product_field_check
 
     gateway_acceptance = evaluate_gateway_runtime_acceptance(
         _gateway_acceptance_snapshots(gw),
@@ -1312,7 +1319,7 @@ def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, A
 
 
 def build_inspection_acceptance_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
-    from core.inspection_acceptance import (
+    from runtime.inspection_acceptance import (
         build_inspection_acceptance,
         inspection_targets_from_payload,
     )

@@ -8,7 +8,7 @@
 #   dataset_type:  legkilo | avia | mid360 (默认 legkilo)
 #
 # 数据集话题映射:
-#   legkilo: /points_raw (VLP-16 PointCloud2), /imu_raw (Imu)
+#   legkilo: /lidar/raw_frame (VLP-16 PointCloud2), /imu/raw (Imu)
 #            ⚠ 仅 Point-LIO 支持 (velody16 配置), Fast-LIO2 不支持 PointCloud2
 #   avia:    /livox/lidar (CustomMsg), /livox/imu (Imu) — 原生 Livox Avia
 #   mid360:  /livox/lidar (CustomMsg), /livox/imu (Imu) — 原生 Livox Mid-360
@@ -71,8 +71,8 @@ if [ "$DATASET_TYPE" = "legkilo" ] && [ "$SLAM_PROFILE" = "pointlio" ]; then
     CONFIG_FILE="/tmp/vlp16_legkilo.yaml"
     # 复制基础配置并修正: scan_line→16, 话题直接指向 bag 话题
     sed -e 's/scan_line: 32/scan_line: 16/' \
-        -e 's|lid_topic:.*|lid_topic: "/points_raw"|' \
-        -e 's|imu_topic:.*|imu_topic: "/imu_raw"|' \
+        -e 's|lid_topic:.*|lid_topic: "/lidar/raw_frame"|' \
+        -e 's|imu_topic:.*|imu_topic: "/imu/raw"|' \
         "$BASE_CONFIG" > "$CONFIG_FILE"
     echo "  [INFO] 已生成 VLP-16 临时配置: $CONFIG_FILE"
 fi

@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # ============================================================================
 # build_nav_package.sh 鈥?鏋勫缓 ROS2 瀵艰埅鍔熻兘鍖呭苟鎵撳寘涓哄彲閮ㄧ讲鍒跺搧
 #
@@ -8,7 +8,7 @@
 #
 # 鐢ㄦ硶:
 #   ./scripts/ota/build_nav_package.sh                    # 鏋勫缓鎵€鏈夊寘
-#   ./scripts/ota/build_nav_package.sh --packages-select fastlio2 local_planner  # 浠呮寚瀹氬寘
+#   ./scripts/ota/build_nav_package.sh --packages-select fastlio2 nav_kernel  # product subset
 #   ./scripts/ota/build_nav_package.sh --skip-build       # 璺宠繃缂栬瘧锛屼粎鎵撳寘 (宸茬紪璇戞椂)
 #   ./scripts/ota/build_nav_package.sh --incremental       # 澧為噺鍖?(浠呴€夊畾鍖?
 # ============================================================================
@@ -98,7 +98,7 @@ echo ""
 
 # ---- Step 1: 鏋勫缓 PCT Planner C++ 鏍稿績 (濡傛湁) ----
 if [ "$SKIP_BUILD" = false ]; then
-    PCT_BUILD="$WORKSPACE_DIR/src/global_planning/pct_planner/planner/build.sh"
+    PCT_BUILD="$WORKSPACE_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/build.sh"
     if [ -f "$PCT_BUILD" ]; then
         echo -e "${GREEN}[1/4] 鏋勫缓 PCT Planner C++ 鏍稿績...${NC}"
         (cd "$(dirname "$PCT_BUILD")" && bash build.sh)

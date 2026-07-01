@@ -19,9 +19,9 @@ cat > "$HOOK_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 # LingTu L1 - block commit if any framework test fails.
 set -e
-echo "[L1 pre-commit] running pytest src/core/tests/ ..."
+echo "[L1 pre-commit] running pytest src/runtime/tests/ ..."
 cd "$(git rev-parse --show-toplevel)"
-PYTHONIOENCODING=utf-8 python -m pytest src/core/tests/ -q --tb=no 2>&1 | tail -6
+PYTHONIOENCODING=utf-8 python -m pytest src/runtime/tests/ -q --tb=no 2>&1 | tail -6
 echo "[L1 pre-commit] OK"
 HOOK
 
@@ -31,13 +31,13 @@ cat > "$HOOK_DIR/pre-push" <<'HOOK'
 # LingTu L2 - block push if L1 or stub smoke fails.
 set -e
 cd "$(git rev-parse --show-toplevel)"
-echo "[L2 pre-push] running pytest src/core/tests/ ..."
-PYTHONIOENCODING=utf-8 python -m pytest src/core/tests/ -q --tb=no 2>&1 | tail -6
+echo "[L2 pre-push] running pytest src/runtime/tests/ ..."
+PYTHONIOENCODING=utf-8 python -m pytest src/runtime/tests/ -q --tb=no 2>&1 | tail -6
 echo "[L2 pre-push] running stub blueprint smoke ..."
 PYTHONIOENCODING=utf-8 python -c "
 import sys
 sys.path.insert(0, 'src')
-from core.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.full_stack import full_stack_blueprint
 # full_stack_blueprint() has no 'profile' kwarg - that arg used to be silently
 # absorbed by **config (so we got a full hardware stack instead of a stub).
 # Build a real lightweight stub: stub driver, no SLAM, no native C++ nodes,

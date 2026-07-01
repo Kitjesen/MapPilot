@@ -4,7 +4,7 @@
 #
 # 关键 remap 发现 (2026-03-06):
 #   - terrain_analysis / localPlanner / pathFollower 内部订阅 /Odometry (大写 O)
-#   - 需要 -r /Odometry:=/nav/odometry 才能接收 sim bridge 的里程计
+#   - 需要 -r /Odometry:=/slam/odometry 才能接收 sim bridge 的里程计
 #   - localPlanner 需要 autonomyMode:=true + useTerrainAnalysis:=true
 #   - PointCloud2 必须包含 intensity 字段 (XYZI, 16 bytes/point)
 #   - 机器人 geom group=0, 环境 geom group=1, LiDAR 只检测 group=1
@@ -45,7 +45,7 @@ fi
 echo "[2/4] Starting terrain_analysis..."
 ros2 run terrain_analysis terrainAnalysis \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cloud_map:=/livox/lidar \
     -r /terrain_map:=/nav/terrain_map \
     -p scanVoxelSize:=0.1 \
@@ -61,7 +61,7 @@ echo "[3/4] Starting localPlanner..."
 PATHS_DIR=/home/sunrise/data/SLAM/navigation/install/local_planner/share/local_planner/paths
 ros2 run local_planner localPlanner \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cloud_map:=/livox/lidar \
     -r /terrain_map:=/nav/terrain_map \
     -r /way_point:=/nav/way_point \
@@ -80,7 +80,7 @@ sleep 1
 echo "[4/4] Starting pathFollower..."
 ros2 run local_planner pathFollower \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cmd_vel:=/nav/cmd_vel \
     -p autonomyMode:=true \
     -p autonomySpeed:=1.0 \

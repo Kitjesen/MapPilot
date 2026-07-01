@@ -5,15 +5,15 @@ This adapter is deliberately simulation-only. It does not publish goals or
 commands. Its job is to keep raw Gazebo frames and topics out of `/nav/*` by
 owning the simulator boundary:
 
-  /lingtu/gazebo/raw/* -> /nav/odometry, /nav/map_cloud, camera topics
+  /lingtu/gazebo/raw/* -> /slam/odometry, /slam/map_cloud, camera topics
   TF: map -> odom, odom -> body
 
 The point-cloud path treats raw Gazebo lidar points as sensor-frame points,
 projects them through the configured body->lidar mounting extrinsic, and then projects
 the live cloud through the timestamp-matched odom->body pose. This keeps
-`/nav/map_cloud` live and odom-fixed, `/nav/registered_cloud` body-relative,
+`/slam/map_cloud` live and odom-fixed, `/slam/registered_cloud` body-relative,
 `/nav/terrain_map` as the CMU-style local-planner input, and
-`/nav/cumulative_map_cloud` plus `/nav/terrain_map_ext` as simulation-only
+`/slam/cumulative_map_cloud` plus `/nav/terrain_map_ext` as simulation-only
 accumulated maps for Gazebo deliverable gates.
 """
 
@@ -26,7 +26,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
-from core.runtime_interface import FRAMES, lidar_extrinsic, rpy_to_quaternion_xyzw
+from runtime.runtime_interface import FRAMES, lidar_extrinsic, rpy_to_quaternion_xyzw
 
 
 @dataclass(frozen=True)

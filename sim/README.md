@@ -1,6 +1,6 @@
-﻿# LingTu Simulation Environment
+# LingTu Simulation Environment
 
-> A hardware-free, full-stack simulation framework for quadruped robot navigation. Built on MuJoCo physics with ray-cast LiDAR, it enables end-to-end testing of SLAM, terrain-aware planning, semantic navigation, and person-following 鈥?all without a physical robot.
+> A hardware-free, full-stack simulation framework for quadruped robot navigation. Built on MuJoCo physics with ray-cast LiDAR, it enables end-to-end testing of SLAM, terrain-aware planning, semantic navigation, and person-following 锟?all without a physical robot.
 
 ## 1. Overview
 
@@ -38,9 +38,9 @@ adds wrappers, a deprecation window, and a full path-contract audit.
 
 The system has three layers:
 
-**Physics** 鈥?MuJoCo loads a world XML + robot MJCF, runs the physics step each tick, and reads ray-cast LiDAR data from the sensor plugin.
+**Physics** 锟?MuJoCo loads a world XML + robot MJCF, runs the physics step each tick, and reads ray-cast LiDAR data from the sensor plugin.
 
-**Bridge** 鈥?Three bridge options connect physics to navigation:
+**Bridge** 锟?Three bridge options connect physics to navigation:
 
 | Bridge | Path | Notes |
 |--------|------|-------|
@@ -49,14 +49,14 @@ The system has three layers:
 | `nova_nav_bridge.py` | MuJoCo/NOVA policy to ROS2 topics | Legacy ROS2 compatibility bridge |
 | `mujoco_viz_bridge.py` | MuJoCo to ROS2 visualization topics | Visualization-only compatibility bridge |
 
-**Navigation** 鈥?Either the ROS2 C++ autonomy stack (terrain + local planner + path follower) or the pure-Python LingTu module stack (`python lingtu.py sim`).
+**Navigation** 锟?Either the ROS2 C++ autonomy stack (terrain + local planner + path follower) or the pure-Python LingTu module stack (`python lingtu.py sim`).
 
-Worlds, robots, and bridges are independent 鈥?any world can host any robot, and either bridge connects to navigation.
+Worlds, robots, and bridges are independent 锟?any world can host any robot, and either bridge connects to navigation.
 
 Default product runtime contract: `enable_native=False` keeps motion ownership
-inside LingTu Modules. PCT/A* produce global plans in `NavigationModule`, then
-`LocalPlannerModule` (`nanobind`) feeds `PathFollowerModule` (`nav_core`), which
-publishes through `CmdVelMux` to the selected simulation driver. The ROS2 C++
+inside LingTu Modules. PCT/A* produce global plans in `Navigation`, then
+`LocalPlanner` (`nanobind`) feeds `PathFollower` (`nav_kernel`), which
+publishes through `VelocityMux` to the selected simulation driver. The ROS2 C++
 `localPlanner`/`pathFollower` bridge remains a native gate/legacy experiment,
 not the default product runtime.
 
@@ -140,10 +140,10 @@ The `FollowingBehavior` state machine manages five states:
 
 | State | Trigger In | Trigger Out |
 |-------|-----------|-------------|
-| **FOLLOW** | target re-acquired / target moves | target stopped 鈫?WAIT, target lost 鈫?SEARCH |
-| **WAIT** | target stopped | target moves 鈫?FOLLOW |
-| **SEARCH** | target lost | target found 鈫?FOLLOW, timeout 鈫?EXPLORE |
-| **EXPLORE** | search timeout | target found 鈫?FOLLOW, timeout 鈫?RECOVER |
+| **FOLLOW** | target re-acquired / target moves | target stopped 锟?WAIT, target lost 锟?SEARCH |
+| **WAIT** | target stopped | target moves 锟?FOLLOW |
+| **SEARCH** | target lost | target found 锟?FOLLOW, timeout 锟?EXPLORE |
+| **EXPLORE** | search timeout | target found 锟?FOLLOW, timeout 锟?RECOVER |
 | **RECOVER** | explore timeout | (terminal) |
 
 ### 5.3 Controller Comparison
@@ -206,7 +206,7 @@ as compatibility aliases for CI/server gates.
 | `kinematic` | Applies `cmd_vel` directly to the floating base for deterministic headless navigation tests. |
 
 Use kinematic mode when validating that LingTu planning, path following,
-`CmdVelMux`, odometry, and exploration are wired correctly without requiring a
+`VelocityMux`, odometry, and exploration are wired correctly without requiring a
 working gait checkpoint:
 
 ```bash
@@ -220,7 +220,7 @@ Run the policy-mode smoke tests on a machine that has MuJoCo, ONNX Runtime, and
 `policy_251119.onnx` available:
 
 ```bash
-PYTHONPATH=src:. python -m pytest src/core/tests/test_sim_runtime_compat.py -q \
+PYTHONPATH=src:. python -m pytest src/runtime/tests/test_sim_runtime_adapters.py -q \
   -k "policy_cmd_vel or full_stack_policy_mode"
 
 PYTHONPATH=src:. python sim/scripts/policy_nav_smoke.py \
@@ -229,7 +229,7 @@ PYTHONPATH=src:. python sim/scripts/policy_nav_smoke.py \
   --goal-distance 0.8 \
   --nav-duration 14 \
   --nav-local-planner-backend nanobind \
-  --nav-path-follower-backend nav_core \
+  --nav-path-follower-backend nav_kernel \
   --nav-costmap-wait 3 \
   --nav-path-min-speed 0.12 \
   --nav-path-max-speed 0.35 \
@@ -294,16 +294,16 @@ Current full closure gates:
 | `routecheck_preflight` | Gateway non-motion baseline/candidate route preflight with zero published goal/cmd_vel/stop |
 | `blocked_route_replan_preflight` | Gateway non-motion blocked-route replanning preview with synthetic route obstruction and zero published motion commands |
 | `navigation_replay_deviation` | Offline replay/deviation over routecheck-derived, JSON trace, or recorded topic JSONL global_path, local_path, cmd_vel, and odometry with no hardware output |
-| `multifloor_exploration` | multi-floor matrix, frontier loop, LiDAR localization contract, native PCT, nanobind local planning, nav_core tracking |
+| `multifloor_exploration` | multi-floor matrix, frontier loop, LiDAR localization contract, native PCT, nanobind local planning, nav_kernel tracking |
 | `large_terrain` | PCT/native planning on large terrain routes with path safety |
-| `native_pct_mujoco` | native PCT route through ROS2 local planner/path follower into MuJoCo kinematic motion |
 | `dynamic_obstacle_local_planner` | nanobind local planner replans around changing obstacles |
+| `policy_nav` | ONNX gait policy through full-stack simulated navigation with nanobind local planner and nav_kernel path follower |
 | `fastlio2_dynamic_inspection` | live MID-360/IMU through Fast-LIO2 into PCT/local planning with moving-obstacle video evidence |
 | `moving_obstacle_sweep` | moving-obstacle inspection evidence across speed and density bins |
 | `large_loop_closure` | long-range live Fast-LIO/PCT/local planner loop with bounded drift and return closure |
-| `gazebo_runtime` | ROS-native Gazebo TF, odometry, point-cloud frame smoke, frontier progress, and post-pass no-gain/stall observation |
+| `mujoco_tare_exploration` | native TARE on MuJoCo MID-360/Fast-LIO with LingTu navigation and simulation-only cmd_vel closure |
 | `saved_map_relocalize` | saved-map relocalization contract for localizer navigation mode |
-| `pct_saved_map_navigation` | saved-map PCT navigation after relocalization through localPlanner/pathFollower and MuJoCo motion |
+| `gateway_dry_run` | Gateway goal/preview command flow without driver use or hardware cmd_vel output |
 
 Recorded navigation topic logs can be materialized directly into the replay
 gate before aggregation:
@@ -457,7 +457,7 @@ PYTHONPATH=src:. python sim/scripts/full_sim_validation.py \
 The gate records JSON evidence for required worlds, the multi-floor building
 scene, Fast-LIO2 localization metric contracts, global/local planning wiring,
 frontier exploration, person-tracking behavior, MuJoCo LiDAR point clouds, and
-kinematic full-stack navigation motion through path follower and `CmdVelMux`.
+kinematic full-stack navigation motion through path follower and `VelocityMux`.
 Use `--require-all` when blocked checks should fail the run instead of being
 reported as incomplete evidence.
 
@@ -499,7 +499,7 @@ python sim/scripts/policy_nav_smoke.py \
   --goal-distance 0.8 \
   --nav-duration 14 \
   --nav-local-planner-backend nanobind \
-  --nav-path-follower-backend nav_core \
+  --nav-path-follower-backend nav_kernel \
   --nav-costmap-wait 3 \
   --nav-path-min-speed 0.12 \
   --nav-path-max-speed 0.35 \
@@ -558,10 +558,10 @@ tomogram, and a synthetic map cloud, then validates:
 - native PCT availability, ABI/lib path, tomogram hash, and route evidence
 - PCT floor-graph composition with a stairs transition edge
 - A* same-floor fallback planning
-- `global_path -> local_path -> cmd_vel -> CmdVelMux` dataflow in memory only
-- continuous odometry replay through the native `nav_core` path follower
+- `global_path -> local_path -> cmd_vel -> VelocityMux` dataflow in memory only
+- continuous odometry replay through the native `nav_kernel` path follower
 - optional MuJoCo bridge-loop validation:
-  `GlobalPath + WaypointTracker -> LocalPlanner -> PathFollower(nav_core) -> CmdVelMux -> MujocoDriver`
+  `GlobalPath + WaypointTracker -> LocalPlanner -> PathFollower(nav_kernel) -> VelocityMux -> MujocoDriver`
 - Wavefront frontier exploration candidate generation
 
 The script does not start Gateway, ROS services, robot services, or any real
@@ -660,7 +660,7 @@ available:
 - `command_flow.ok=true`
 - `command_flow.cmd_vel_sent_to_hardware=false`
 - `tracking_replay.ok=true`
-- `tracking_replay.backend_actual=nav_core`
+- `tracking_replay.backend_actual=nav_kernel`
 - `tracking_replay.cmd_vel_sent_to_hardware=false`
 - when `--bridge-loop` is enabled:
   - `mujoco_bridge_loop.ok=true`
@@ -668,15 +668,15 @@ available:
   - every segment has `nonzero_linear_xy_cmd_count>0`
   - every segment has `max_linear_xy>0.02`
   - every segment has `moved_m>0.05`
-  - every segment reports `path_follower_backend=nav_core`
+  - every segment reports `path_follower_backend=nav_kernel`
   - production local-planner segments report `local_path_trim_start_dist_m=0.2`
   - `mujoco_bridge_loop.cmd_vel_sent_to_hardware=false`
 - `exploration.ok=true`
 
 The bridge loop intentionally fails if the modules only exchange messages but
 all velocity commands stay zero. This catches dense or degenerate local paths
-that are not actually trackable by `PathFollowerModule(backend="nav_core")`.
-`LocalPlannerModule(backend="nanobind")` also filters untrackable placeholder
+that are not actually trackable by `PathFollower(backend="nav_kernel")`.
+`LocalPlanner(backend="nanobind")` also filters untrackable placeholder
 paths before publishing, so a one-point `{0,0,0}` recovery/stop result clears
 the local path instead of masquerading as a valid plan.
 
@@ -699,7 +699,7 @@ If `tracking_replay.backend_actual` falls back to `pid`, build the native
 backend first:
 
 ```bash
-bash scripts/build/build_nav_core.sh
+bash scripts/build/build_nav_kernel.sh
 ```
 
 #### Native PCT + ROS2 Local Planner + MuJoCo Showcase Gate
@@ -710,7 +710,7 @@ contains native PCT output, starts the ROS2 native `localPlanner` and
 `pathFollower` executables, feeds them PCT waypoints, and applies the native
 `/cmd_vel` stream to a kinematic MuJoCo robot.
 
-The script is still simulation-only. It does not start Gateway, CmdVelMux,
+The script is still simulation-only. It does not start Gateway, VelocityMux,
 robot drivers, robot services, or hardware bridges. Before launching
 `pathFollower`, it checks the selected ROS domain for existing `/cmd_vel` or
 `/nav/cmd_vel` subscribers and refuses to run unless the domain is isolated.
@@ -823,7 +823,7 @@ field robustness.
 Use this gate before recording large-field motion videos. It builds a
 24m-class synthetic terrain with boundary walls, boulders, a central narrow
 gate, rough/high-cost zones, a slope band, and a no-go ditch. The gate validates
-global planning assets only: no ROS2 nodes, Gateway, driver, CmdVelMux, or real
+global planning assets only: no ROS2 nodes, Gateway, driver, VelocityMux, or real
 robot command path is started.
 
 ```bash
@@ -1014,10 +1014,10 @@ messages in the bag.
 
 | Topic | Message Type | Direction | Rate |
 |-------|-------------|-----------|------|
-| `/mujoco/pos_w_pointcloud` | `sensor_msgs/PointCloud2` | Sim 鈫?Nav | 10 Hz |
-| `/nav/odometry` | `nav_msgs/Odometry` | Sim 鈫?Nav | 50 Hz |
-| `/nav/cmd_vel` | `geometry_msgs/TwistStamped` | Nav 鈫?Sim | 50 Hz |
-| TF (`map鈫抩dom鈫抌ody`) | `tf2_msgs/TFMessage` | Sim 鈫?Nav | 50 Hz |
+| `/mujoco/pos_w_pointcloud` | `sensor_msgs/PointCloud2` | Sim 锟?Nav | 10 Hz |
+| `/nav/odometry` | `nav_msgs/Odometry` | Sim 锟?Nav | 50 Hz |
+| `/nav/cmd_vel` | `geometry_msgs/TwistStamped` | Nav 锟?Sim | 50 Hz |
+| TF (`map鈫抩dom鈫抌ody`) | `tf2_msgs/TFMessage` | Sim 锟?Nav | 50 Hz |
 
 ## 10. Directory Reference
 
@@ -1028,7 +1028,7 @@ messages in the bag.
 | `robots/` | Compatibility robot model and policy paths for older scripts |
 | `assets/` | Canonical Thunder v3 robot assets, meshes, MJCF/URDF, and Livox assets |
 | `sensors/` | Standalone sensor simulators and fallbacks |
-| `bridge/` | Physics 鈫?navigation bridges (ROS2, direct Python, visualization) |
+| `bridge/` | Physics 锟?navigation bridges (ROS2, direct Python, visualization) |
 | `following/` | Person-following simulation (FSM, controllers, perception, metrics) |
 | `semantic/` | Legacy semantic simulation test residue |
 | `datasets/` | Offline LiDAR/IMU datasets |

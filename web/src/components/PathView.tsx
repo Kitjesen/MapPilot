@@ -426,7 +426,7 @@ export function PathView({ sseState, showToast }: PathViewProps) {
       return
     }
     try {
-      const res = await api.sendGoal(pendingGoal.x, pendingGoal.y, {
+      const res = await api.navigateClick(pendingGoal.x, pendingGoal.y, {
         source: 'map_click',
         target_type: 'map_point',
         label: 'path_view_click',

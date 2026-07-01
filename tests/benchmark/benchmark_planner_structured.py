@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Structured planner benchmark — runs A* and PCT on a synthetic map fixture.
+"""Structured planner benchmark 闁?runs A* and PCT on a synthetic map fixture.
 
 Emits structured JSON results per planner/route pair (schema_version=1)
 for CI/analysis ingestion.  Runs without ROS2.
@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-# ---- sys.path setup (mirrors src/core/tests/conftest.py) ----
+# ---- sys.path setup (mirrors src/runtime/tests/conftest.py) ----
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC = _REPO_ROOT / "src"
 for _p in [str(_REPO_ROOT), str(_SRC)]:
@@ -33,11 +33,11 @@ for _p in [str(_REPO_ROOT), str(_SRC)]:
         sys.path.insert(0, _p)
 
 # ---- imports after path setup ----
-from core.efficiency_status import benchmark_claim_metadata
-from core.efficiency_status import classify_benchmark_error
+from runtime.efficiency_status import benchmark_claim_metadata
+from runtime.efficiency_status import classify_benchmark_error
 
 IMPORT_ERROR: str | None = None
-GlobalPlannerService: Any | None = None
+GlobalPlanner: Any | None = None
 evaluate_backend_path_safety: Any | None = None
 build_large_terrain_assets: Any | None = None
 LargeTerrainAssets: Any | None = None
@@ -70,7 +70,7 @@ def _module_import_probe(module_name: str) -> str | None:
 def _ensure_benchmark_dependencies() -> str | None:
     """Load heavy planner dependencies only when a real benchmark will run."""
     global IMPORT_ERROR
-    global GlobalPlannerService
+    global GlobalPlanner
     global evaluate_backend_path_safety
     global build_large_terrain_assets
     global LargeTerrainAssets
@@ -78,7 +78,7 @@ def _ensure_benchmark_dependencies() -> str | None:
     if IMPORT_ERROR is not None:
         return IMPORT_ERROR
     if (
-        GlobalPlannerService is not None
+        GlobalPlanner is not None
         and evaluate_backend_path_safety is not None
         and build_large_terrain_assets is not None
     ):
@@ -90,8 +90,8 @@ def _ensure_benchmark_dependencies() -> str | None:
         return IMPORT_ERROR
 
     try:
-        from nav.global_planner_service import GlobalPlannerService as _PlannerService
-        from nav.plan_safety import evaluate_backend_path_safety as _evaluate_safety
+        from nav.services.plan.global_planner.service import GlobalPlanner as _PlannerService
+        from nav.services.safety.plan_safety import evaluate_backend_path_safety as _evaluate_safety
         from sim.engine.scenarios.large_terrain_assets import (
             LargeTerrainAssets as _LargeTerrainAssets,
             build_large_terrain_assets as _build_assets,
@@ -100,7 +100,7 @@ def _ensure_benchmark_dependencies() -> str | None:
         IMPORT_ERROR = f"missing benchmark dependency: {exc}"
         return IMPORT_ERROR
 
-    GlobalPlannerService = _PlannerService
+    GlobalPlanner = _PlannerService
     evaluate_backend_path_safety = _evaluate_safety
     build_large_terrain_assets = _build_assets
     LargeTerrainAssets = _LargeTerrainAssets
@@ -274,7 +274,7 @@ def benchmark_planner(
     planner_name = planner_name.lower().strip()
     tomogram_path = fixture_dir / "tomogram.pickle"
     result = _result_base(planner_name)
-    if GlobalPlannerService is None:
+    if GlobalPlanner is None:
         import_error = _ensure_benchmark_dependencies()
         if import_error is not None:
             result["ok"] = False
@@ -282,9 +282,9 @@ def benchmark_planner(
             result["error"] = import_error
             result["map_artifact_gate_ok"] = False
             return result
-    assert GlobalPlannerService is not None
+    assert GlobalPlanner is not None
 
-    svc = GlobalPlannerService(
+    svc = GlobalPlanner(
         planner_name=planner_name,
         tomogram=str(tomogram_path),
         downsample_dist=0.2,

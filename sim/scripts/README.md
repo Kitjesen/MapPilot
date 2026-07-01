@@ -19,7 +19,7 @@ window, and a full path-contract audit:
 | `saved_map_relocalize_runtime_gate.py` | Saved-map relocalization runtime gate |
 | `routecheck_preflight_gate.py` | Gateway route preflight gate |
 | `multifloor_nav_validation.py` | Multi-floor validation wrapper |
-| `policy_nav_smoke.py` | Policy-mode navigation smoke test |
+| `policy_nav_smoke.py` | OctoPlanner + nanobind/nav_kernel policy-mode navigation smoke test |
 | `run_dimos_linux_closure.sh` | Target-host DimOS closure runner |
 | `launch_lingtu_gazebo_industrial_demo.sh` | Gazebo industrial simulation launcher |
 | `launch_cmu_unity_lingtu_runtime.sh` | CMU Unity LingTu runtime launcher |
@@ -32,7 +32,7 @@ Use the safety class before running a script:
 | --- | --- | --- |
 | summary-only unless --run-missing | Reads existing reports and writes an aggregate summary. It must not launch missing gates unless `--run-missing` is passed. Explicit non-motion source materialization, such as `server_sim_closure.py --navigation-replay-deviation-topic-jsonl`, may write the requested local replay report before summarizing. Use `--host-preflight` to check host suitability without gate execution, `--skip-host-blocked` with `--run-missing` only for diagnostic local aggregation of host-blocked gates, and `--json-out -` for stdout-only reporting. Acceptance runs should use `run_dimos_linux_closure.sh`, which preflights first and does not pass `--skip-host-blocked` to runtime execution. | `server_sim_closure.py`, `dimos_gap_report.py` |
 | local non-motion | Runs local Python checks, asset generation, or in-memory module dataflow. It must report `real_robot_motion=false` and `cmd_vel_sent_to_hardware=false`. | `multifloor_nav_validation.py --skip-mujoco`, `large_terrain_nav_validation.py`, `routecheck_preflight_gate.py`, `blocked_route_replan_gate.py`, `navigation_replay_deviation_gate.py` |
-| simulated motion only | May move a MuJoCo/Gazebo/Unity simulated robot. It must stay disconnected from physical robot drivers and hardware command subscribers. | `policy_nav_smoke.py`, `native_pct_mujoco_gate.py`, `mujoco_fastlio2_live_gate.py` |
+| simulated motion only | May move a MuJoCo/Gazebo/Unity simulated robot. It must stay disconnected from physical robot drivers and hardware command subscribers. | `policy_nav_smoke.py`, `native_pct_mujoco_gate.py`, `mujoco_live_gate.py` |
 | ROS2 isolated simulation | May source ROS 2, launch sim nodes, or publish sim topics. Use an isolated `ROS_DOMAIN_ID`; never run on a robot ROS domain. | `gazebo_runtime_gate.py`, `launch_mujoco_fastlio2_live.sh`, `launch_lingtu_gazebo_industrial_demo.sh` |
 | legacy manual | Historical helpers or dataset scripts. They can source install spaces, start subprocesses, or assume local assets; they are not part of the G4 closure unless another gate explicitly consumes their report. | `_run_legkilo_test.sh`, `run_legkilo_test.sh`, `test_*.sh`, legacy Go1 demos |
 
@@ -47,13 +47,14 @@ Use the safety class before running a script:
 - `blocked_route_replan_gate.py` - Gateway blocked-route replanning preflight with a synthetic route obstruction and no goal or cmd_vel publication.
 - `navigation_replay_deviation_gate.py` - Offline replay/deviation check for routecheck-derived, JSON trace, or recorded topic JSONL global path, local path, cmd_vel, and odometry traces without hardware output.
 - `gateway_goal_dry_run_gate.py` - Gateway dry-run goal contract.
-- `dynamic_obstacle_local_planner_gate.py` - Dynamic-obstacle local planner gate.
+- `dynamic_obstacle_local_planner_gate.py` - Dynamic-obstacle nanobind local planner gate.
 - `large_loop_closure_gate.py` - Large-loop closure report validator.
 - `moving_obstacle_sweep_gate.py` - Moving-obstacle sweep report validator.
 - `fastlio2_rosbag_replay_gate.py` - Fast-LIO2 rosbag replay gate.
 - `fastlio_speed_boundary_gate.py` - Fast-LIO speed-boundary gate.
-- `mujoco_fastlio2_live_gate.py` - MuJoCo live LiDAR/IMU plus Fast-LIO2 simulation gate.
-- `native_pct_mujoco_gate.py` - Native PCT plus ROS2 local planner/path follower into MuJoCo simulation. `--contract-only` validates the PCT source-report/no-fallback/same-source artifact contract without launching ROS2 or MuJoCo; it also emits `command_generation` with source-report fingerprint and the localPlanner/pathFollower command contract. This is a wiring check, not runtime motion evidence.
+- `mujoco_live_gate.py` - MuJoCo live LiDAR/IMU plus Fast-LIO2 simulation gate.
+- `policy_nav_smoke.py` - Current product-style simulated motion smoke: OctoPlanner is the configured global planner, LocalPlanner runs the nanobind backend, PathFollower runs nav_kernel, and commands stay inside the MuJoCo policy driver through nav.velocity_mux.
+- `native_pct_mujoco_gate.py` - Legacy compatibility coverage for native PCT plus ROS2 local planner/path follower into MuJoCo simulation. `--contract-only` validates the PCT source-report/no-fallback/same-source artifact contract without launching ROS2 or MuJoCo; it also emits `command_generation` with source-report fingerprint and the localPlanner/pathFollower command contract. This is a compatibility wiring check, not the current product local-autonomy runtime.
 - `gazebo_runtime_gate.py` - Gazebo runtime simulation gate; requires ROS2 isolated simulation and records frontier post-pass no-gain/stall observation evidence.
 - `pct_saved_map_navigation_gate.py` - Saved-map PCT navigation gate. `--contract-only --source-report <json>` checks relocalization/source-report/map/tomogram binding, including same-source hash identity, without running PCT preview or MuJoCo motion; it is a saved-map wiring check, not full navigation evidence.
 - `saved_map_relocalize_contract_gate.py` / `saved_map_relocalize_runtime_gate.py` - Saved-map relocalization gates. `saved_map_relocalize_runtime_gate.py --preflight-only` checks saved-map assets, localizer config, host markers, and ROS 2 Python importability without launching MuJoCo/Fast-LIO/localizer processes.
@@ -102,7 +103,7 @@ Use the safety class before running a script:
 - `run_person_following.py` - Person-following simulation launcher.
 - `run_semantic_full_stack.py` - Semantic full-stack simulation launcher.
 - `demo_search.py` - Search demo.
-- `policy_nav_smoke.py` - Policy-mode navigation smoke test; simulated motion only.
+- `policy_nav_smoke.py` - OctoPlanner + nanobind/nav_kernel policy-mode navigation smoke test; simulated motion only.
 - `cmu_unity_lingtu_stack.py` - CMU Unity LingTu stack helper for controlled simulation experiments; not the default product runtime.
 - `nav_overlay.py` - Navigation overlay visualization.
 - `view_scene.py` - Scene viewer.
@@ -122,5 +123,5 @@ Use the safety class before running a script:
 
 ## Tooling
 
-- `algorithm_dataflow_summary.py` - Thin CLI wrapper around `core.dimos_runtime_dataflow` for flat live Fast-LIO reports; `dimos_gap_report.py --include-dataflow` and Gateway benchmark diagnostics use the same core parser for aggregate/wrapper/native gate reports.
+- `algorithm_dataflow_summary.py` - Thin CLI wrapper around `runtime.dimos_runtime_dataflow` for flat live Fast-LIO reports; `dimos_gap_report.py --include-dataflow` and Gateway benchmark diagnostics use the same core parser for aggregate/wrapper/native gate reports.
 - `rosbag_slam_bridge_replay.py` - Raw rosbag to `SlamBridgeModule` replay.

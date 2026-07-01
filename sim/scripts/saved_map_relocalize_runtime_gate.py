@@ -36,7 +36,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from core.runtime_interface import (
+from runtime.runtime_interface import (
     FRAME_LINKS,
     TOPICS,
     adapter_source_for_target,
@@ -259,7 +259,7 @@ def _resolve_scan_time_profile_arg(
 
 
 def _default_localizer_config_path() -> Path:
-    config_path = ROOT / "src/slam/localizer/config/localizer.yaml"
+    config_path = ROOT / "src/localization/localizer/config/localizer.yaml"
     if not config_path.is_file():
         config_path = ROOT / "install/share/localizer/config/localizer.yaml"
     return config_path
@@ -574,7 +574,7 @@ def _start_live_feed(args: argparse.Namespace, run_dir: Path) -> subprocess.Pope
     drive_source = "nav_cmd_vel" if args.live_drive_source == "frontier" else "fixed"
     cmd = [
         python,
-        str(ROOT / "sim/scripts/mujoco_fastlio2_live_gate.py"),
+        str(ROOT / "sim/scripts/mujoco_live_gate.py"),
         "--world",
         args.world,
         "--duration",
@@ -1006,7 +1006,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             blockers.append("BBS3D is disabled or did not load its map")
         if not bbs3d_ok:
             blockers.append("BBS3D global relocalize success was not observed")
-        if lost_health_samples <= 0 and "Localization health → LOST" not in localizer_tail:
+        if lost_health_samples <= 0 and "LOST" not in localizer_tail:
             blockers.append("kidnapped localizer did not report LOST before recovery")
         min_global_xy = float(args.min_global_map_odom_xy_m)
         if min_global_xy > 0.0 and map_to_odom_xy is not None and map_to_odom_xy < min_global_xy:

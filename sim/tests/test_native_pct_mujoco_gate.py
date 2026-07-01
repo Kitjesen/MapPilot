@@ -58,7 +58,7 @@ def _complete_dimos_native_pct_mujoco_report() -> dict:
         "selected_planner": "pct",
         "fallback_used": False,
         "global_planner_source": "source_report/native_pct_tomogram",
-        "pct_native_backend_used": True,
+        "pct_native_runtime_used": True,
         "pct_runtime_ok": True,
         "pct_path_count": 8,
         "pct_optimizer_enabled": True,
@@ -79,7 +79,7 @@ def _complete_dimos_native_pct_mujoco_report() -> dict:
             "selected_planner": "pct",
             "fallback_used": False,
             "path_safety_ok": True,
-            "native_backend_used": True,
+            "native_runtime_used": True,
             "tomogram_exists": True,
             "tomogram_sha256": "abc123",
             "pct_optimizer_enabled": True,
@@ -138,7 +138,7 @@ def _complete_dimos_native_pct_mujoco_report() -> dict:
 def _write_source_report(
     tmp_path: Path,
     *,
-    native_backend_used: bool = True,
+    native_runtime_used: bool = True,
     native_runtime_ok: bool = True,
     pct_optimizer_enabled: bool | None = False,
     pct_optimizer_attempted: bool | None = None,
@@ -203,8 +203,8 @@ def _write_source_report(
                 "planning": [
                     {
                         "planner": "pct",
-                        "backend_class": "_PCTBackend",
-                        "native_backend_used": native_backend_used,
+                        "planner_class": "PCTPlanner",
+                        "native_runtime_used": native_runtime_used,
                         "native_runtime": {"ok": native_runtime_ok},
                         "pct_optimizer_enabled": pct_optimizer_enabled,
                         "pct_optimizer_attempted": pct_optimizer_attempted,
@@ -229,10 +229,10 @@ def _write_source_report(
     return source
 
 
-def test_load_pct_route_requires_native_backend(tmp_path: Path) -> None:
-    source = _write_source_report(tmp_path, native_backend_used=False)
+def test_load_pct_route_requires_native_runtime(tmp_path: Path) -> None:
+    source = _write_source_report(tmp_path, native_runtime_used=False)
 
-    with pytest.raises(ValueError, match="native backend"):
+    with pytest.raises(ValueError, match="native runtime"):
         _load_pct_route(source, route="same_floor")
 
 
@@ -302,7 +302,7 @@ def test_native_pct_mujoco_report_satisfies_dimos_closure_evaluator() -> None:
     assert ok is True
     assert blockers == []
     assert evidence["planner"] == "pct"
-    assert evidence["source_planning_contract"]["native_backend_used"] is True
+    assert evidence["source_planning_contract"]["native_runtime_used"] is True
     assert evidence["source_planning_contract"]["tomogram_sha256"] == "abc123"
     assert evidence["same_source_artifacts"]["ok"] is True
     assert evidence["clearance_checked"] is True
@@ -389,7 +389,7 @@ def test_load_pct_route_extracts_showcase_inputs(tmp_path: Path) -> None:
     assert route.start == [-0.4, -2.1, 0.55]
     assert route.goal == [1.9, -1.25, 0.0]
     assert len(route.path) == 3
-    assert route.plan["backend_class"] == "_PCTBackend"
+    assert route.plan["planner_class"] == "PCTPlanner"
 
 
 def test_source_map_artifacts_extracts_same_source_metadata(tmp_path: Path) -> None:
@@ -432,7 +432,7 @@ def test_native_pct_mujoco_contract_only_validates_source_report(
     assert report["claim_boundary"] == "contract_only_no_ros_mujoco_motion"
     assert report["real_robot_motion"] is False
     assert report["cmd_vel_sent_to_hardware"] is False
-    assert report["pct_native_backend_used"] is True
+    assert report["pct_native_runtime_used"] is True
     assert report["pct_runtime_ok"] is True
     assert report["pct_path_count"] == 3
     assert report["pct_optimizer_enabled"] is False
@@ -440,7 +440,7 @@ def test_native_pct_mujoco_contract_only_validates_source_report(
     assert report["contract_checks"] == {
         "source_report_loads": True,
         "planner_no_fallback": True,
-        "pct_native_backend_used": True,
+        "pct_native_runtime_used": True,
         "pct_native_runtime_ok": True,
         "pct_optimizer_mode_recorded": True,
         "pct_path_mode_supported": True,
@@ -555,7 +555,7 @@ def test_native_pct_mujoco_contract_only_accepts_optimizer_rejected_raw_source(
 def test_native_pct_mujoco_contract_only_reports_source_blocker(
     tmp_path: Path,
 ) -> None:
-    source = _write_source_report(tmp_path, native_backend_used=False)
+    source = _write_source_report(tmp_path, native_runtime_used=False)
     args = argparse.Namespace(
         source_report=source,
         generate_source_report=False,
@@ -571,7 +571,7 @@ def test_native_pct_mujoco_contract_only_reports_source_blocker(
     assert report["ok"] is False
     assert report["execution_mode"] == "contract_only"
     assert report["validation_only"] is True
-    assert "native backend" in report["blockers"][0]
+    assert "native runtime" in report["blockers"][0]
     assert report["contract_checks"]["source_report_loads"] is False
 
 
@@ -755,7 +755,7 @@ def test_default_local_planner_path_folder_supports_merge_install(tmp_path: Path
     merge_paths.mkdir(parents=True)
     (merge_paths / "startPaths.ply").write_text("ply\n", encoding="utf-8")
     (merge_paths / "paths.ply").write_text("ply\n", encoding="utf-8")
-    source_paths = tmp_path / "src/base_autonomy/local_planner/paths"
+    source_paths = tmp_path / "src/nav/services/plan/local_planner/paths"
     source_paths.mkdir(parents=True)
     (source_paths / "startPaths.ply").write_text("ply\n", encoding="utf-8")
     (source_paths / "paths.ply").write_text("ply\n", encoding="utf-8")

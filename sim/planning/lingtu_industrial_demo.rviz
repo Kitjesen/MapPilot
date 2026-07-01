@@ -34,7 +34,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/PointCloud2
       Name: LiveRegisteredCloud
       Enabled: true
-      Topic: /nav/registered_cloud
+      Topic: /slam/registered_cloud
       Alpha: 0.35
       Autocompute Intensity Bounds: true
       Color Transformer: FlatColor
@@ -50,7 +50,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/PointCloud2
       Name: LiveOdomMapCloud
       Enabled: true
-      Topic: /nav/map_cloud
+      Topic: /slam/map_cloud
       Alpha: 0.28
       Autocompute Intensity Bounds: true
       Color Transformer: FlatColor
@@ -66,7 +66,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/PointCloud2
       Name: DebugCumulativeMapCloud
       Enabled: false
-      Topic: /nav/cumulative_map_cloud
+      Topic: /slam/cumulative_map_cloud
       Alpha: 0.55
       Autocompute Intensity Bounds: true
       Color Transformer: FlatColor
@@ -103,7 +103,7 @@ Visualization Manager:
       Name: RobotOdometry
       Enabled: true
       Topic:
-        Value: /nav/odometry
+        Value: /slam/odometry
         Depth: 5
       Shape: Arrow
       Color: 255; 120; 0

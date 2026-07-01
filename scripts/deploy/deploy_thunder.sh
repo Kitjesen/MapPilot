@@ -15,6 +15,17 @@ PYTHON_BIN="${LINGTU_PYTHON:-python3}"
 LOG="${LINGTU_DEPLOY_LOG:-/tmp/deploy_thunder.log}"
 STARTUP_TIMEOUT="${LINGTU_DEPLOY_STARTUP_TIMEOUT:-30}"
 
+is_lite_profile() {
+    case "${PROFILE}" in
+        lite|thunder-lite|basic|thunder-basic)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 echo "========================================"
 echo "  LingTu Thunder deployment"
 echo "========================================"
@@ -26,16 +37,16 @@ echo ""
 cd "${REPO}"
 
 if [ "${LINGTU_DEPLOY_UPDATE:-0}" = "1" ]; then
-    echo "[1/5] Updating repository with git pull --ff-only..."
+    echo "[1/6] Updating repository with git pull --ff-only..."
     git fetch origin
     git pull --ff-only
     echo "  revision: $(git log --oneline -1)"
 else
-    echo "[1/5] Repository update skipped (set LINGTU_DEPLOY_UPDATE=1 to enable)."
+    echo "[1/6] Repository update skipped (set LINGTU_DEPLOY_UPDATE=1 to enable)."
     echo "  revision: $(git log --oneline -1 2>/dev/null || echo unknown)"
 fi
 
-echo "[2/5] Building dashboard when Node.js is available..."
+echo "[2/6] Building dashboard when Node.js is available..."
 if command -v node >/dev/null 2>&1 && [ -d "${REPO}/web" ]; then
     (
         cd "${REPO}/web"
@@ -47,7 +58,19 @@ else
     echo "  skipped: Node.js or web/ is not available"
 fi
 
-echo "[3/5] Stopping previous LingTu runtime if present..."
+echo "[3/6] Building production nav kernel..."
+if is_lite_profile; then
+    echo "  skipped: Lite profile uses simple/pid autonomy"
+else
+    bash "${REPO}/scripts/build/build_nav_kernel.sh" --clean
+    PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY'
+from nav.kernel import require_nav_kernel
+require_nav_kernel(context="Thunder deployment")
+print("  nav_kernel OK")
+PY
+fi
+
+echo "[4/6] Stopping previous LingTu runtime if present..."
 mkdir -p "${REPO}/.lingtu"
 OLD_PID=""
 if [ -f "${REPO}/.lingtu/run.json" ]; then
@@ -69,7 +92,7 @@ else
 fi
 rm -f "${REPO}/.lingtu/run.json" "${REPO}/.lingtu/run.pid"
 
-echo "[4/5] Starting LingTu profile..."
+echo "[5/6] Starting LingTu profile..."
 set +u
 [ -f "${HOME}/.bashrc" ] && . "${HOME}/.bashrc" || true
 ROS2_ENV="${LINGTU_ROS2_ENV:-${REPO}/scripts/deploy/thunder/ros2-env.sh}"
@@ -95,8 +118,7 @@ case "${PROFILE}" in
         ;;
     *)
         : "${LINGTU_ENDPOINT:=thunder_field}"
-        : "${LINGTU_ENDPOINT_TRANSPORT:=lcm}"
-        : "${LINGTU_ENDPOINT_CONTRACT:=thunder_field_lcm_v1}"
+        : "${LINGTU_ENDPOINT_TRANSPORT:=dds}"
         : "${LINGTU_MODULE_TRANSPORT:=local}"
         : "${LINGTU_SIMULATION_ONLY:=0}"
         ;;
@@ -115,7 +137,7 @@ for _ in $(seq 1 "${STARTUP_TIMEOUT}"); do
     sleep 1
 done
 
-echo "[5/5] Verifying runtime..."
+echo "[6/6] Verifying runtime..."
 if [ ! -f "${REPO}/.lingtu/run.json" ]; then
     echo "  failed: .lingtu/run.json was not created"
     tail -30 "${LOG}" || true

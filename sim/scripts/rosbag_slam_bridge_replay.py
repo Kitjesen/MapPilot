@@ -31,20 +31,20 @@ SLAM_ODOM_TOPICS = {
     "/Odometry",
     "/aft_mapped_to_init",
     "/test/odometry",
-    "/nav/odometry",
+    "/slam/odometry",
 }
 SLAM_CLOUD_TOPICS = {
     "/cloud_registered",
     "/cloud_registered_body",
     "/test/map_cloud",
     "/test/registered_cloud",
-    "/nav/map_cloud",
-    "/nav/registered_cloud",
+    "/slam/map_cloud",
+    "/slam/registered_cloud",
 }
 RAW_ODOM_TOPICS = {"/state_SDK", "/odom", "/odometry"}
-RAW_CLOUD_TOPICS = {"/points_raw", "/livox/lidar", "/velodyne_points"}
+RAW_CLOUD_TOPICS = {"/lidar/raw_frame", "/livox/lidar", "/velodyne_points"}
 DEFAULT_ODOM_CANDIDATES = [
-    "/nav/odometry",
+    "/slam/odometry",
     "/test/odometry",
     "/Odometry",
     "/aft_mapped_to_init",
@@ -53,13 +53,13 @@ DEFAULT_ODOM_CANDIDATES = [
     "/odometry",
 ]
 DEFAULT_CLOUD_CANDIDATES = [
-    "/nav/map_cloud",
+    "/slam/map_cloud",
     "/test/map_cloud",
     "/cloud_registered",
     "/test/registered_cloud",
     "/cloud_registered_body",
-    "/nav/registered_cloud",
-    "/points_raw",
+    "/slam/registered_cloud",
+    "/lidar/raw_frame",
     "/velodyne_points",
 ]
 
@@ -162,7 +162,7 @@ def run_replay(
         raise FileNotFoundError(str(bag))
 
     rosbag2_py, deserialize_message, get_message = _load_ros_modules()
-    from slam.slam_bridge_module import SlamBridgeModule
+    from localization.bridge import SlamBridgeModule
 
     reader = rosbag2_py.SequentialReader()
     reader.open(
@@ -301,7 +301,7 @@ def run_replay(
         "ros2_slam_packages": _ros2_packages(),
         "limitations": [
             "This is offline rosbag CDR replay into SlamBridgeModule callbacks.",
-            "If selected topics are raw /points_raw + /state_SDK, this does not prove Fast-LIO2/Super-LIO algorithm output.",
+            "If selected topics are raw /lidar/raw_frame + /state_SDK, this does not prove Fast-LIO2/Super-LIO algorithm output.",
             "SLAM algorithm output is verified only when replaying /Odometry plus /cloud_registered or remapped equivalents.",
         ],
     }

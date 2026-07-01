@@ -9,7 +9,7 @@ else
   if [[ -z "${ROOT}" ]]; then
     candidate="${SCRIPT_DIR}"
     while [[ "${candidate}" != "/" ]]; do
-      if [[ -f "${candidate}/sim/scripts/mujoco_fastlio2_live_gate.py" ]] && [[ -d "${candidate}/src" ]]; then
+      if [[ -f "${candidate}/sim/scripts/mujoco_live_gate.py" ]] && [[ -d "${candidate}/src" ]]; then
         ROOT="${candidate}"
         break
       fi
@@ -65,7 +65,7 @@ for vx in "${SPEED_SCAN_VX_VALUES[@]}"; do
   for wz in "${SPEED_SCAN_WZ_VALUES[@]}"; do
     out="${ROOT}/artifacts/server_sim_closure/diagnosis_matrix/speed_boundary_refined/fixed_vx_${vx}_wz_${wz}"
     mkdir -p "${out}"
-    PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_fastlio2_live_gate.py \
+    PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_live_gate.py \
       "${COMMON_ARGS[@]}" \
       --drive-vx "${vx}" \
       --drive-wz "${wz}" \
@@ -78,7 +78,7 @@ for vx in "${COMMAND_SHAPE_VX_VALUES[@]}"; do
     for wz in "${COMMAND_SHAPE_WZ_VALUES[@]}"; do
       out="${ROOT}/artifacts/server_sim_closure/diagnosis_matrix/command_shape_boundary/fixed_vx_${vx}_vy_${vy}_wz_${wz}"
       mkdir -p "${out}"
-      PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_fastlio2_live_gate.py \
+      PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_live_gate.py \
         "${COMMON_ARGS[@]}" \
         --drive-vx "${vx}" \
         --drive-vy "${vy}" \
@@ -91,7 +91,7 @@ done
 for profile in physical_rolling synthetic_rolling instantaneous; do
   out="${ROOT}/artifacts/server_sim_closure/diagnosis_matrix/scan_timing/vx010_${profile}"
   mkdir -p "${out}"
-  PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_fastlio2_live_gate.py \
+  PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_live_gate.py \
     "${COMMON_ARGS[@]}" \
     --drive-vx 0.10 \
     --drive-wz 0.0 \
@@ -102,7 +102,7 @@ done
 
 out="${ROOT}/artifacts/server_sim_closure/diagnosis_matrix/tuned_fastlio/vx010_best_known"
 mkdir -p "${out}"
-PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_fastlio2_live_gate.py \
+PYTHONPATH="${LINGTU_SPEED_SCAN_PYTHONPATH}" python3 sim/scripts/mujoco_live_gate.py \
   "${COMMON_ARGS[@]}" \
   --drive-vx 0.10 \
   --drive-wz 0.0 \

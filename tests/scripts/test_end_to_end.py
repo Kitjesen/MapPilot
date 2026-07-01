@@ -32,11 +32,11 @@ print()
 # ============================================================================
 print("Test 1: Module imports...")
 try:
-    from semantic.perception.yolo_world_detector import YOLOWorldDetector
-    from semantic.perception.clip_encoder import CLIPEncoder
-    from semantic.perception.instance_tracker import InstanceTracker
-    from semantic.planner.goal_resolver import GoalResolver
-    from semantic.planner.chinese_tokenizer import extract_keywords
+    from perception.yolo_world_detector import YOLOWorldDetector
+    from perception.clip_encoder import CLIPEncoder
+    from perception.instance_tracker import InstanceTracker
+    from decision.goal_resolution.goal_resolver import GoalResolver
+    from decision.goal_resolution.chinese_tokenizer import extract_keywords
     print("[OK] All modules imported successfully")
 except ImportError as e:
     print(f"[FAIL] Module import failed: {e}")
@@ -73,7 +73,7 @@ try:
     tracker = InstanceTracker()
 
     # Simulate detection results
-    from semantic.perception.projection import Detection3D
+    from perception.projection import Detection3D
 
     det1 = Detection3D(
         label="chair",
@@ -148,7 +148,7 @@ try:
     }
 
     # Test Fast Path (no LLM required)
-    from semantic.planner.goal_resolver import GoalResolver
+    from decision.goal_resolution.goal_resolver import GoalResolver
 
     resolver = GoalResolver(llm_config=None)
 
@@ -181,7 +181,7 @@ print()
 # ============================================================================
 print("Test 5: Action executor...")
 try:
-    from semantic.planner.action_executor import ActionExecutor, ActionCommand
+    from decision.tasking.action_executor import ActionExecutor, ActionCommand
 
     executor = ActionExecutor()
 
@@ -217,7 +217,7 @@ print()
 # ============================================================================
 print("Test 6: Task decomposer...")
 try:
-    from semantic.planner.task_decomposer import TaskDecomposer, SubGoalAction
+    from decision.tasking.task_decomposer import TaskDecomposer, SubGoalAction
 
     decomposer = TaskDecomposer()
 

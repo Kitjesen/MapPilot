@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Collect read-only Thunder field runtime evidence.
 
-This script does not publish goals, cmd_vel, or any robot-control topic. It
-subscribes to existing ROS 2 topics, samples TF, inspects the command subscriber
-graph, writes a runtime report, and optionally validates that report with the
-Thunder field evidence gate.
+This script does not publish goals, cmd_vel, or any robot-control topic. The
+default collector polls Gateway's Module-first read-only dataflow endpoints. A
+legacy ROS 2 graph collector remains available via ``--collector ros2`` for
+cross-checks.
 """
 
 from __future__ import annotations
@@ -16,6 +16,9 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +33,7 @@ def _ensure_import_path() -> None:
 
 _ensure_import_path()
 
-from core.runtime_evidence import (
+from runtime.runtime_evidence import (
     REAL_HARDWARE_COMMAND_SINK,
     REAL_RUNTIME_COLLECTOR_NAME,
     REAL_RUNTIME_CONTRACT,
@@ -42,7 +45,7 @@ from core.runtime_evidence import (
     runtime_data_flow_stage_signals,
     validate_real_runtime_evidence,
 )
-from core.runtime_interface import (
+from runtime.runtime_interface import (
     FRAME_LINKS,
     TOPICS,
     runtime_algorithm_interface_contract,
@@ -56,7 +59,7 @@ from core.runtime_interface import (
     resolved_runtime_data_flow,
     runtime_data_flow_topics,
 )
-from core.runtime_validation_gates import runtime_validation_gates
+from runtime.runtime_validation_gates import runtime_validation_gates
 
 
 OBSERVED_TOPICS = runtime_data_flow_topics(REAL_RUNTIME_CONTRACT)
@@ -556,6 +559,508 @@ def _record_message(
         odom_positions.append(odom_position)
 
 
+class GatewayCollectionError(RuntimeError):
+    """Raised when the read-only Gateway evidence path is unavailable."""
+
+
+def _gateway_url(base_url: str, path: str, params: Mapping[str, Any] | None = None) -> str:
+    base = str(base_url or "").rstrip("/")
+    suffix = path if path.startswith("/") else f"/{path}"
+    url = f"{base}{suffix}"
+    if params:
+        url = f"{url}?{urlencode(params)}"
+    return url
+
+
+def _fetch_gateway_json(
+    base_url: str,
+    path: str,
+    *,
+    timeout_sec: float,
+    params: Mapping[str, Any] | None = None,
+) -> Any:
+    url = _gateway_url(base_url, path, params)
+    request = Request(url, headers={"Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=timeout_sec) as response:
+            raw = response.read().decode("utf-8")
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise GatewayCollectionError(f"Gateway endpoint unavailable: {url}: {exc}") from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GatewayCollectionError(f"Gateway endpoint returned invalid JSON: {url}: {exc}") from exc
+
+
+def _mapping_payload(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _nested_mapping(value: Mapping[str, Any], *keys: str) -> Mapping[str, Any]:
+    current: Any = value
+    for key in keys:
+        current = _mapping_payload(current).get(key)
+    return current if isinstance(current, Mapping) else {}
+
+
+def _numeric_payload(value: Mapping[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        parsed = _safe_float(value.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _count_payload(value: Any, *keys: str) -> int | None:
+    payload = _mapping_payload(value)
+    for key in keys:
+        raw = payload.get(key)
+        parsed = _safe_float(raw)
+        if parsed is not None:
+            return int(parsed)
+        try:
+            return len(raw)
+        except TypeError:
+            continue
+    return None
+
+
+def _position_payload(value: Any) -> tuple[float, float, float] | None:
+    payload = _mapping_payload(value)
+    x = _safe_float(payload.get("x"))
+    y = _safe_float(payload.get("y"))
+    z = _safe_float(payload.get("z", 0.0))
+    if x is not None and y is not None:
+        return (x, y, z or 0.0)
+    position = _mapping_payload(payload.get("position"))
+    x = _safe_float(position.get("x"))
+    y = _safe_float(position.get("y"))
+    z = _safe_float(position.get("z", 0.0))
+    if x is not None and y is not None:
+        return (x, y, z or 0.0)
+    return None
+
+
+def _record_gateway_sample(
+    topic_evidence: dict[str, dict[str, Any]],
+    odom_positions: list[tuple[float, float, float]],
+    topic: str,
+    *,
+    sample_time_sec: float,
+    min_cmd_vel_norm: float,
+    frame_id: str | None = None,
+    payload: Mapping[str, Any] | None = None,
+    inferred_nonempty: bool = False,
+    source: str = "gateway",
+) -> None:
+    entry = topic_evidence.setdefault(topic, {"ok": False, "samples": 0})
+    entry["samples"] = int(entry.get("samples", 0)) + 1
+    entry["ok"] = True
+    entry["gateway_source"] = source
+    first_seen = _safe_float(entry.get("first_seen_sec"))
+    if first_seen is None:
+        entry["first_seen_sec"] = sample_time_sec
+        first_seen = sample_time_sec
+    entry["last_seen_sec"] = sample_time_sec
+    entry["sample_span_sec"] = max(0.0, sample_time_sec - first_seen)
+    if frame_id:
+        entry["frame_id"] = str(frame_id)
+
+    data = _mapping_payload(payload)
+    if data:
+        if data.get("frame_id"):
+            entry["frame_id"] = str(data["frame_id"])
+        if data.get("data") is not None:
+            entry["data"] = str(data["data"])
+        if data.get("state") is not None and topic == TOPICS.localization_health:
+            quality = _numeric_payload(
+                data,
+                "fitness",
+                "quality",
+                "value",
+                "icp_quality",
+                "icp_fitness",
+            )
+            suffix = f"|fitness={quality}" if quality is not None else ""
+            entry["data"] = f"{data['state']}{suffix}"
+        value = _numeric_payload(
+            data,
+            "value",
+            "quality",
+            "fitness",
+            "icp_quality",
+            "icp_fitness",
+        )
+        if value is not None:
+            entry["value"] = value
+        points = _count_payload(data, "points", "count")
+        if points is not None:
+            entry["points"] = max(int(entry.get("points", 0)), points)
+        cells = _count_payload(data, "cells")
+        if cells is not None:
+            entry["cells"] = max(int(entry.get("cells", 0)), cells)
+        poses = _count_payload(data, "max_poses", "poses", "path")
+        if poses is not None:
+            entry["max_poses"] = max(int(entry.get("max_poses", 0)), poses)
+            if poses > 0:
+                entry["nonempty_samples"] = int(entry.get("nonempty_samples", 0)) + 1
+        cmd_norm = _numeric_payload(data, "cmd_norm", "max_norm")
+        if cmd_norm is not None:
+            entry["max_norm"] = max(float(entry.get("max_norm", 0.0)), cmd_norm)
+            if cmd_norm >= min_cmd_vel_norm:
+                entry["nonzero_samples"] = int(entry.get("nonzero_samples", 0)) + 1
+        odom_position = _position_payload(data.get("position") or data)
+        if topic == TOPICS.odometry and odom_position is not None:
+            odom_positions.append(odom_position)
+
+    if inferred_nonempty:
+        if topic in {TOPICS.global_path, TOPICS.local_path}:
+            entry["max_poses"] = max(int(entry.get("max_poses", 0)), 1)
+            entry["nonempty_samples"] = int(entry.get("nonempty_samples", 0)) + 1
+            entry["nonempty_inferred_from"] = source
+        elif "cloud" in topic or "scan" in topic:
+            entry["points"] = max(int(entry.get("points", 0)), 1)
+            entry["nonempty_samples"] = int(entry.get("nonempty_samples", 0)) + 1
+            entry["nonempty_inferred_from"] = source
+
+
+def _latest_summary_from_ports(topic_summary: Mapping[str, Any]) -> Mapping[str, Any]:
+    candidates = (
+        _mapping_payload(topic_summary.get("observability")).get(
+            "module_port_candidates"
+        )
+        or _mapping_payload(topic_summary.get("inspection")).get("module_stats")
+        or ()
+    )
+    for candidate in candidates:
+        summary = _mapping_payload(_mapping_payload(candidate).get("latest_summary"))
+        if summary:
+            return summary
+    return {}
+
+
+def _topic_live(topic_summary: Mapping[str, Any]) -> bool:
+    observability = _mapping_payload(topic_summary.get("observability"))
+    inspection = _mapping_payload(topic_summary.get("inspection"))
+    if (
+        observability.get("has_fresh_module_sample") is True
+        or observability.get("live_module_samples") is True
+        or inspection.get("live") is True
+    ):
+        return True
+    for port in observability.get("module_port_candidates") or ():
+        stats = _mapping_payload(port)
+        msg_count = _safe_float(stats.get("msg_count")) or 0.0
+        rate_hz = _safe_float(stats.get("rate_hz")) or 0.0
+        stale_ms = _safe_float(stats.get("stale_ms"))
+        if msg_count <= 0 and rate_hz <= 0.0:
+            continue
+        if stale_ms is None or stale_ms <= 2000.0:
+            return True
+    return False
+
+
+def _record_gateway_dataflow(
+    topic_evidence: dict[str, dict[str, Any]],
+    odom_positions: list[tuple[float, float, float]],
+    dataflow: Mapping[str, Any],
+    *,
+    sample_time_sec: float,
+    min_cmd_vel_norm: float,
+    command_active: bool,
+) -> None:
+    topic_summaries = {
+        str(item.get("topic")): item
+        for item in dataflow.get("topics") or ()
+        if isinstance(item, Mapping) and item.get("topic")
+    }
+    for topic in OBSERVED_TOPICS:
+        summary = _mapping_payload(topic_summaries.get(topic))
+        if not summary:
+            continue
+        entry = topic_evidence.setdefault(topic, {"ok": False, "samples": 0})
+        observability = _mapping_payload(summary.get("observability"))
+        inspection = _mapping_payload(summary.get("inspection"))
+        entry["graph_exists"] = bool(
+            observability.get("observable")
+            or inspection.get("observable")
+            or observability.get("module_port_candidates")
+        )
+        entry["gateway_observable"] = entry["graph_exists"]
+        if summary.get("default_frame_id") and "frame_id" not in entry:
+            entry["frame_id"] = str(summary["default_frame_id"])
+        latest_payload = _mapping_payload(inspection.get("latest_payload"))
+        latest_summary = _latest_summary_from_ports(summary)
+        live = _topic_live(summary)
+        if not live and not latest_payload and not latest_summary:
+            continue
+        payload = latest_payload or latest_summary
+        if not payload and live:
+            payload = {"frame_id": summary.get("default_frame_id")}
+        inferred_nonempty = bool(live and topic in {
+            TOPICS.lidar_scan,
+            TOPICS.registered_cloud,
+            TOPICS.map_cloud,
+        })
+        _record_gateway_sample(
+            topic_evidence,
+            odom_positions,
+            topic,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=min_cmd_vel_norm,
+            frame_id=summary.get("default_frame_id"),
+            payload=payload,
+            inferred_nonempty=inferred_nonempty,
+            source="gateway_runtime_dataflow",
+        )
+        if topic == TOPICS.cmd_vel and command_active:
+            entry = topic_evidence[topic]
+            entry["max_norm"] = max(
+                float(entry.get("max_norm", 0.0)),
+                float(min_cmd_vel_norm),
+            )
+            entry["nonzero_samples"] = int(entry.get("nonzero_samples", 0)) + 1
+            entry["cmd_vel_nonzero_source"] = "gateway_navigation_status"
+
+
+def _record_gateway_rest_payloads(
+    topic_evidence: dict[str, dict[str, Any]],
+    odom_positions: list[tuple[float, float, float]],
+    payloads: Mapping[str, Any],
+    *,
+    sample_time_sec: float,
+    min_cmd_vel_norm: float,
+) -> None:
+    state = _mapping_payload(payloads.get("state"))
+    odometry = _mapping_payload(state.get("odometry"))
+    if odometry:
+        _record_gateway_sample(
+            topic_evidence,
+            odom_positions,
+            TOPICS.odometry,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=min_cmd_vel_norm,
+            frame_id=str(odometry.get("frame_id") or "odom"),
+            payload=odometry,
+            source="gateway_state",
+        )
+
+    path = _mapping_payload(payloads.get("path"))
+    if path:
+        _record_gateway_sample(
+            topic_evidence,
+            odom_positions,
+            TOPICS.global_path,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=min_cmd_vel_norm,
+            frame_id=str(path.get("frame_id") or "map"),
+            payload=path,
+            source="gateway_path",
+        )
+
+    map_points = _mapping_payload(payloads.get("map_points"))
+    if map_points:
+        _record_gateway_sample(
+            topic_evidence,
+            odom_positions,
+            TOPICS.map_cloud,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=min_cmd_vel_norm,
+            frame_id=str(map_points.get("frame_id") or "map"),
+            payload=map_points,
+            source="gateway_map_points",
+        )
+
+    localization = _mapping_payload(payloads.get("localization"))
+    if localization:
+        state_value = (
+            localization.get("reported_state")
+            or localization.get("state")
+            or localization.get("localizer_health")
+            or "TRACKING"
+        )
+        if str(state_value).strip().lower() == "ready":
+            state_value = "LOCKED"
+        quality = _numeric_payload(
+            localization,
+            "localizer_health_fitness",
+            "icp_fitness",
+            "icp_quality",
+        )
+        health_payload = {"state": str(state_value).upper()}
+        if quality is not None:
+            health_payload["fitness"] = quality
+        _record_gateway_sample(
+            topic_evidence,
+            odom_positions,
+            TOPICS.localization_health,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=min_cmd_vel_norm,
+            frame_id="body",
+            payload=health_payload,
+            source="gateway_localization_status",
+        )
+        if quality is not None:
+            _record_gateway_sample(
+                topic_evidence,
+                odom_positions,
+                TOPICS.localization_quality,
+                sample_time_sec=sample_time_sec,
+                min_cmd_vel_norm=min_cmd_vel_norm,
+                frame_id="body",
+                payload={"value": quality},
+                source="gateway_localization_status",
+            )
+
+
+def _gateway_command_active(navigation_status: Mapping[str, Any]) -> bool:
+    control = _mapping_payload(navigation_status.get("control"))
+    active_source = str(
+        control.get("active_cmd_source")
+        or _nested_mapping(control, "active_source").get("name")
+        or ""
+    ).strip().lower()
+    if active_source and active_source != "none":
+        return True
+    sources = _mapping_payload(control.get("sources"))
+    for source in sources.values():
+        source_payload = _mapping_payload(source)
+        if source_payload.get("active") is True:
+            return True
+    return False
+
+
+def _gateway_command_subscribers(dataflow: Mapping[str, Any]) -> list[str]:
+    runtime_boundary = _mapping_payload(dataflow.get("runtime_boundary"))
+    control_boundary = _mapping_payload(dataflow.get("control_boundary"))
+    candidates = [
+        runtime_boundary.get("command_sink"),
+        runtime_boundary.get("expected_command_sink"),
+    ]
+    for interface in control_boundary.get("command_interfaces") or ():
+        item = _mapping_payload(interface)
+        if TOPICS.cmd_vel in tuple(item.get("publishes") or ()):
+            candidates.append(item.get("name"))
+    return [str(item) for item in candidates if item]
+
+
+def _gateway_frame_samples(dataflow: Mapping[str, Any]) -> tuple[dict[str, int], dict[str, str]]:
+    frame_samples = {name: 0 for name in FRAME_LINKS}
+    frame_errors: dict[str, str] = {}
+    runtime_boundary = _mapping_payload(dataflow.get("runtime_boundary"))
+    boundary_ok = runtime_boundary.get("ok") is True
+    declared_links = _mapping_payload(runtime_boundary.get("frame_links"))
+    for name, link in FRAME_LINKS.items():
+        declared = _mapping_payload(declared_links.get(name))
+        if boundary_ok or (
+            declared.get("parent") == link.parent and declared.get("child") == link.child
+        ):
+            frame_samples[name] = 1
+        else:
+            frame_errors[name] = "Gateway runtime boundary did not prove frame link"
+    return frame_samples, frame_errors
+
+
+def _collect_gateway_payloads(args: argparse.Namespace) -> dict[str, Any]:
+    base_url = args.gateway_url
+    timeout_sec = float(args.gateway_timeout_sec)
+    payloads: dict[str, Any] = {
+        "dataflow": _fetch_gateway_json(
+            base_url,
+            "/api/v1/runtime/dataflow",
+            timeout_sec=timeout_sec,
+        )
+    }
+    optional_endpoints = {
+        "state": "/api/v1/state",
+        "path": "/api/v1/path",
+        "map_points": "/api/v1/map/points",
+        "localization": "/api/v1/localization/status",
+        "navigation": "/api/v1/navigation/status",
+    }
+    errors = []
+    for name, path in optional_endpoints.items():
+        try:
+            payloads[name] = _fetch_gateway_json(
+                base_url,
+                path,
+                timeout_sec=timeout_sec,
+            )
+        except GatewayCollectionError as exc:
+            errors.append(str(exc))
+    if errors:
+        payloads["optional_errors"] = errors
+    return payloads
+
+
+def run_gateway_collect(args: argparse.Namespace) -> dict[str, Any]:
+    topic_evidence: dict[str, dict[str, Any]] = {
+        topic: {"ok": False, "samples": 0, "graph_exists": False}
+        for topic in OBSERVED_TOPICS
+    }
+    odom_positions: list[tuple[float, float, float]] = []
+    command_subscribers: list[str] = []
+    frame_samples = {name: 0 for name in FRAME_LINKS}
+    frame_errors: dict[str, str] = {}
+    collection_errors: list[str] = []
+
+    started_at = time.monotonic()
+    duration_sec = max(float(args.duration_sec), 0.0)
+    deadline = started_at + duration_sec
+    poll_sec = max(float(args.gateway_poll_sec), 0.05)
+
+    while True:
+        sample_time_sec = min(
+            max(0.0, time.monotonic() - started_at),
+            duration_sec,
+        )
+        payloads = _collect_gateway_payloads(args)
+        dataflow = _mapping_payload(payloads.get("dataflow"))
+        navigation = _mapping_payload(payloads.get("navigation"))
+        command_active = _gateway_command_active(navigation)
+        _record_gateway_dataflow(
+            topic_evidence,
+            odom_positions,
+            dataflow,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=args.min_cmd_vel_norm,
+            command_active=command_active,
+        )
+        _record_gateway_rest_payloads(
+            topic_evidence,
+            odom_positions,
+            payloads,
+            sample_time_sec=sample_time_sec,
+            min_cmd_vel_norm=args.min_cmd_vel_norm,
+        )
+        command_subscribers = _gateway_command_subscribers(dataflow)
+        sample_frames, sample_frame_errors = _gateway_frame_samples(dataflow)
+        for name, count in sample_frames.items():
+            frame_samples[name] = frame_samples.get(name, 0) + count
+        frame_errors.update(sample_frame_errors)
+        collection_errors.extend(payloads.get("optional_errors") or ())
+
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(min(poll_sec, max(0.0, deadline - time.monotonic())))
+
+    report = build_real_runtime_report(
+        topic_evidence=topic_evidence,
+        frame_samples=frame_samples,
+        frame_errors=frame_errors,
+        command_subscribers=command_subscribers,
+        expected_command_subscribers=args.expected_command_subscriber,
+        duration_sec=args.duration_sec,
+        odom_positions=odom_positions,
+        min_motion_m=args.min_motion_m,
+    )
+    report["collector"]["source"] = "gateway"
+    report["collector"]["gateway_url"] = args.gateway_url
+    if collection_errors:
+        report["warnings"] = sorted(dict.fromkeys(collection_errors))
+    return report
+
+
 def _transform_is_finite(transform: Any) -> bool:
     trans = transform.transform.translation
     rot = transform.transform.rotation
@@ -584,7 +1089,7 @@ def _sample_frame_links(buffer, rclpy_time) -> tuple[dict[str, int], dict[str, s
     return frame_samples, frame_errors
 
 
-def run_collect(args: argparse.Namespace) -> dict[str, Any]:
+def run_ros2_collect(args: argparse.Namespace) -> dict[str, Any]:
     import rclpy
     from rclpy.node import Node
     from rosidl_runtime_py.utilities import get_message
@@ -665,6 +1170,16 @@ def run_collect(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def run_collect(args: argparse.Namespace) -> dict[str, Any]:
+    if args.collector == "gateway":
+        return run_gateway_collect(args)
+    if args.collector == "ros2":
+        report = run_ros2_collect(args)
+        report["collector"]["source"] = "ros2"
+        return report
+    raise ValueError(f"unknown collector: {args.collector}")
+
+
 def build_unavailable_real_runtime_report(
     *,
     duration_sec: float,
@@ -712,6 +1227,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect read-only Thunder field runtime evidence.",
     )
+    parser.add_argument(
+        "--collector",
+        choices=["gateway", "ros2"],
+        default="gateway",
+        help="Read-only evidence source. Default: gateway.",
+    )
+    parser.add_argument("--gateway-url", default="http://127.0.0.1:5050")
+    parser.add_argument("--gateway-timeout-sec", type=float, default=2.0)
+    parser.add_argument("--gateway-poll-sec", type=float, default=0.25)
     parser.add_argument("--duration-sec", type=float, default=20.0)
     parser.add_argument("--min-motion-m", type=float, default=0.05)
     parser.add_argument("--min-cmd-vel-norm", type=float, default=0.01)
@@ -744,6 +1268,17 @@ def main(argv: list[str] | None = None) -> int:
     collection_error = False
     try:
         report = run_collect(args)
+    except GatewayCollectionError as exc:
+        collection_error = True
+        report = build_unavailable_real_runtime_report(
+            duration_sec=args.duration_sec,
+            error=f"Gateway collection unavailable: {exc}",
+            expected_contract=args.expected_contract,
+            expected_command_subscribers=args.expected_command_subscriber,
+            min_motion_m=args.min_motion_m,
+        )
+        report["collector"]["source"] = "gateway"
+        report["collector"]["gateway_url"] = args.gateway_url
     except ImportError as exc:
         collection_error = True
         report = build_unavailable_real_runtime_report(
@@ -753,6 +1288,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_command_subscribers=args.expected_command_subscriber,
             min_motion_m=args.min_motion_m,
         )
+        report["collector"]["source"] = "ros2"
 
     validation = None
     if not args.no_validate:

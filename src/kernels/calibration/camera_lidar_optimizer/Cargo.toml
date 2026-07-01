@@ -1,0 +1,15 @@
+[package]
+name = "lingtu_camera_lidar_optimizer"
+version = "0.1.0"
+edition = "2021"
+description = "Portable LingTu camera-LiDAR calibration optimizer math kernel"
+license = "Proprietary"
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[features]
+default = []
+
+[dependencies]
+nalgebra = "0.34"

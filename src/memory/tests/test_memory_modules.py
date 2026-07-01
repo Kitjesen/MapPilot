@@ -17,9 +17,9 @@ from unittest.mock import patch
 
 import numpy as np
 
-from core.msgs.geometry import Vector3
-from core.msgs.nav import Odometry, Pose
-from core.msgs.semantic import Detection3D, Region, SceneGraph
+from runtime.msgs.geometry import Vector3
+from runtime.msgs.nav import Odometry, Pose
+from runtime.msgs.semantic import Detection3D, Region, SceneGraph
 
 # ---------------------------------------------------------------------------
 # Helpers

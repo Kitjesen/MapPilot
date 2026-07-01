@@ -61,11 +61,11 @@ python calibration/apply_calibration.py --imu calibration/imu/output/imu.yaml
 
 This updates:
 - `config/robot_config.yaml` (if IMU section exists)
-- `src/slam/fastlio2/config/lio.yaml` (na, ng, nba, nbg)
+- `src/localization/fastlio2/config/lio.yaml` (na, ng, nba, nbg)
 - `config/pointlio.yaml` (imu_meas_acc_cov, imu_meas_omg_cov, b_acc_cov, b_gyr_cov)
 
 ## Important Notes
 
-- Livox built-in IMU outputs acceleration in **g** (not m/s^2) â€” the SLAM stack handles conversion
+- Livox built-in IMU outputs acceleration in **g** (not m/s^2) â€?the SLAM stack handles conversion
 - `mean_acc_norm` in LiDAR_IMU_Init should be set to `1` for Livox built-in IMU
 - Default noise values (na=0.01, ng=0.01) are conservative; calibrated values are typically lower

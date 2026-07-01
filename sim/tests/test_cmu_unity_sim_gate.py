@@ -10,11 +10,11 @@ import pickle
 import sys
 from pathlib import Path
 
-from core.tests.numpy_guard import import_numpy_or_skip
+from runtime.tests.numpy_guard import import_numpy_or_skip
 
 np = import_numpy_or_skip()
 
-from exploration.native_factories import TARE_REMAPS
+from nav.exploration.tare.topics import TARE_REMAPS
 from sim.engine.bridge.cmu_unity_lingtu_adapter import required_relay_contract
 from sim.scripts import cmu_unity_sim_gate
 from sim.scripts import cmu_unity_runtime_gate
@@ -113,8 +113,9 @@ def test_cmu_unity_lingtu_stack_script_is_simulation_only():
     script = cmu_unity_sim_gate.ROOT / "sim/scripts/cmu_unity_lingtu_stack.py"
     text = script.read_text(encoding="utf-8")
 
-    assert "robot=\"sim_ros2\"" in text
+    assert "robot=\"sim_endpoint\"" in text
     assert "slam_profile=\"none\"" in text
+    assert "CMUUnityEndpointRuntime" in text
     assert "enable_frontier=args.enable_frontier" in text
     assert "--disable-direct-goal-fallback" in text
     assert "LINGTU_CMU_ALLOW_STATIC_TOMOGRAM" in text
@@ -146,8 +147,9 @@ def test_cmu_unity_lingtu_stack_script_is_simulation_only():
         "direct_goal_fallback_on_planner_failure=not args.disable_direct_goal_fallback"
         in text
     )
-    assert "enable_ros2_bridge=True" in text
-    assert "enable_ros2_path_bridge=True" in text
+    assert "enable_endpoint_waypoint_bridge=False" in text
+    assert "enable_nav_out=False" in text
+    assert "enable_ros2_path_bridge=True" not in text
     assert "exploration_backend=\"none\" if args.enable_frontier else \"tare_external\"" in text
     assert "manage_external_services=False" in text
     assert "run_startup_checks=False" in text

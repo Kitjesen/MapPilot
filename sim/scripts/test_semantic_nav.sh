@@ -1,25 +1,25 @@
 #!/bin/bash
-# test_semantic_nav.sh — NOVA Dog + 语义导航全链路测试
+# test_semantic_nav.sh 鈥?NOVA Dog + 璇箟瀵艰埅鍏ㄩ摼璺祴璇?
 #
-# 架构:
-#   factory_stub_test.py (stub场景图 + 自然语言指令) →
-#   semantic_planner_node (Fast-Slow双进程目标解析) →
-#   global_planner (PCT A*) → pct_path_adapter →
-#   localPlanner → pathFollower → nova_nav_bridge (MuJoCo)
+# 鏋舵瀯:
+#   factory_stub_test.py (stub鍦烘櫙鍥?+ 鑷劧璇█鎸囦护) 鈫?
+#   semantic_planner_node (Fast-Slow鍙岃繘绋嬬洰鏍囪В鏋? 鈫?
+#   global_planner (PCT A*) 鈫?pct_path_adapter 鈫?
+#   localPlanner 鈫?pathFollower 鈫?nova_nav_bridge (MuJoCo)
 #
-# 用法:
+# 鐢ㄦ硶:
 #   bash test_semantic_nav.sh [instruction] [timeout_sec] [viz]
-#   bash test_semantic_nav.sh "导航到目标区域" 120        # 无头模式
-#   bash test_semantic_nav.sh "导航到控制室"   120 viz    # MuJoCo viewer
+#   bash test_semantic_nav.sh "瀵艰埅鍒扮洰鏍囧尯鍩? 120        # 鏃犲ご妯″紡
+#   bash test_semantic_nav.sh "瀵艰埅鍒版帶鍒跺"   120 viz    # MuJoCo viewer
 #
-# 注意: 所有 Z 坐标在场景图中已设为 0.35 (一楼)
+# 娉ㄦ剰: 鎵€鏈?Z 鍧愭爣鍦ㄥ満鏅浘涓凡璁句负 0.35 (涓€妤?
 set -e
 
-INSTRUCTION=${1:-"导航到目标区域"}
+INSTRUCTION=${1:-"瀵艰埅鍒扮洰鏍囧尯鍩?}
 MONITOR_SEC=${2:-240}
 VIZ=${3:-}
 
-# ── 路径 ─────────────────────────────────────────────────────────
+# 鈹€鈹€ 璺緞 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SIM_DIR=${LINGTU_SIM_DIR:-${REPO_ROOT}/sim}
 BRIDGE_SCRIPT=${LINGTU_NOVA_BRIDGE_SCRIPT:-${REPO_ROOT}/src/drivers/sim/nova_nav_bridge.py}
@@ -28,7 +28,7 @@ MAP_DIR=${LINGTU_SIM_MAP_DIR:-/tmp/sim_maps}
 MAP_FILE=${LINGTU_FACTORY_MAP_FILE:-${MAP_DIR}/factory_nova}
 SEMANTIC_STUB=${LINGTU_FACTORY_SEMANTIC_STUB:-${SIM_DIR}/semantic/factory_stub_test.py}
 
-# ── 检查文件 ─────────────────────────────────────────────────────
+# 鈹€鈹€ 妫€鏌ユ枃浠?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 for f in "${BRIDGE_SCRIPT}" "${SCENE_XML}"; do
     if [ ! -f "$f" ]; then
         echo "ERROR: not found: $f"
@@ -46,7 +46,7 @@ if [ ! -f "${SEMANTIC_STUB}" ]; then
     exit 1
 fi
 
-# ── 清理 ─────────────────────────────────────────────────────────
+# 鈹€鈹€ 娓呯悊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "=== Cleaning up existing processes ==="
 pkill -9 -f nova_nav_bridge 2>/dev/null || true
 pkill -9 -f factory_stub_test 2>/dev/null || true
@@ -72,7 +72,7 @@ echo "  Monitor:     ${MONITOR_SEC}s"
 echo "  Mode:        ${VIZ:-headless}"
 echo ""
 
-# ── [1] nova_nav_bridge ──────────────────────────────────────────
+# 鈹€鈹€ [1] nova_nav_bridge 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[1/7] Starting nova_nav_bridge ..."
 if [ "${VIZ}" = "viz" ]; then
     DISPLAY=:0 python3 ${BRIDGE_SCRIPT} \
@@ -93,7 +93,7 @@ if ! kill -0 $BRIDGE_PID 2>/dev/null; then
     echo "ERROR: nova_nav_bridge died!"; tail -20 /tmp/nova_bridge.log; exit 1
 fi
 
-# ── [1.5] Static TF ──────────────────────────────────────────────
+# 鈹€鈹€ [1.5] Static TF 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 ros2 run tf2_ros static_transform_publisher \
     --x 0.0 --y 0.0 --z 0.0 --yaw 0.0 --pitch 0.0 --roll 0.0 \
     --frame-id map --child-frame-id odom \
@@ -101,12 +101,12 @@ ros2 run tf2_ros static_transform_publisher \
 TF_PID=$!
 sleep 1
 
-# ── [2] terrain_analysis ────────────────────────────────────────
+# 鈹€鈹€ [2] terrain_analysis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[2/7] Starting terrain_analysis ..."
 ros2 run terrain_analysis terrainAnalysis \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
-    -r /cloud_map:=/nav/map_cloud \
+    -r /Odometry:=/slam/odometry \
+    -r /cloud_map:=/slam/map_cloud \
     -r /terrain_map:=/nav/terrain_map \
     -p scanVoxelSize:=0.1 \
     -p decayTime:=5.0 \
@@ -116,7 +116,7 @@ ros2 run terrain_analysis terrainAnalysis \
 TA_PID=$!
 sleep 2
 
-# ── [3] global_planner (Python A*) ──────────────────────────────
+# 鈹€鈹€ [3] global_planner (Python A*) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[3/7] Starting global_planner (PCT A*) ..."
 PCT_SCRIPTS=/home/sunrise/data/SLAM/navigation/install/pct_planner/share/pct_planner/planner/scripts
 VENV_PY=/tmp/venv_np1/bin/python3
@@ -124,7 +124,7 @@ VENV_SITE=$(${VENV_PY} -c "import sysconfig; print(sysconfig.get_path('purelib')
 ROS_PYPATH=$(python3 -c "import sys; print(':'.join(p for p in sys.path if p))")
 COMBINED="${VENV_SITE}:${ROS_PYPATH}"
 
-(cd ${PCT_SCRIPTS} && PYTHONPATH="${COMBINED}" ${VENV_PY} /tmp/gp_compat.py \
+(cd ${PCT_SCRIPTS} && PYTHONPATH="${COMBINED}" ${VENV_PY} /tmp/gp_adapters.py \
     --ros-args \
     -r /goal_pose:=/nav/goal_pose \
     -r /pct_path:=/nav/global_path \
@@ -143,12 +143,12 @@ if ! kill -0 $GP_PID 2>/dev/null; then
     kill $BRIDGE_PID $TA_PID $TF_PID 2>/dev/null; exit 1
 fi
 
-# ── [4] pct_path_adapter ─────────────────────────────────────────
+# 鈹€鈹€ [4] pct_path_adapter 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[4/7] Starting pct_path_adapter ..."
 ros2 run pct_adapters pct_path_adapter \
     --ros-args \
     -r /pct_path:=/nav/global_path \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /planner_waypoint:=/nav/way_point \
     -p waypoint_distance:=1.5 \
     -p arrival_threshold:=0.8 \
@@ -158,13 +158,13 @@ ros2 run pct_adapters pct_path_adapter \
 PA_PID=$!
 sleep 1
 
-# ── [5] localPlanner ─────────────────────────────────────────────
+# 鈹€鈹€ [5] localPlanner 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[5/7] Starting localPlanner ..."
 PATHS_DIR=/home/sunrise/data/SLAM/navigation/install/local_planner/share/local_planner/paths
 ros2 run local_planner localPlanner \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
-    -r /cloud_map:=/nav/map_cloud \
+    -r /Odometry:=/slam/odometry \
+    -r /cloud_map:=/slam/map_cloud \
     -r /terrain_map:=/nav/terrain_map \
     -r /way_point:=/nav/way_point \
     -p pathFolder:="${PATHS_DIR}" \
@@ -178,11 +178,11 @@ ros2 run local_planner localPlanner \
     > /tmp/local_planner.log 2>&1 &
 LP_PID=$!
 
-# ── [6] pathFollower ─────────────────────────────────────────────
+# 鈹€鈹€ [6] pathFollower 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[6/7] Starting pathFollower ..."
 ros2 run local_planner pathFollower \
     --ros-args \
-    -r /Odometry:=/nav/odometry \
+    -r /Odometry:=/slam/odometry \
     -r /cmd_vel:=/nav/cmd_vel \
     -p autonomyMode:=true \
     -p autonomySpeed:=1.0 \
@@ -192,13 +192,13 @@ ros2 run local_planner pathFollower \
 PF_PID=$!
 sleep 3
 
-# ── [7] semantic_planner_node ────────────────────────────────────
+# 鈹€鈹€ [7] semantic_planner_node 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "[7/7] Starting semantic_planner_node ..."
 ros2 run semantic_planner semantic_planner_node \
     --ros-args \
     -r instruction:=/nav/semantic/instruction \
     -r scene_graph:=/nav/semantic/scene_graph \
-    -r odometry:=/nav/odometry \
+    -r odometry:=/slam/odometry \
     -r resolved_goal:=/nav/goal_pose \
     -r status:=/nav/semantic/status \
     -r cmd_vel:=/nav/semantic/cmd_vel \
@@ -206,13 +206,13 @@ ros2 run semantic_planner semantic_planner_node \
     -p llm_fallback.backend:=openai \
     -p exploration.enable:=false \
     -p goal_resolution.replan_on_failure:=false \
-    > /tmp/semantic_planner.log 2>&1 &
+    > /tmp/decision.log 2>&1 &
 SP_PID=$!
 sleep 3
 
 if ! kill -0 $SP_PID 2>/dev/null; then
     echo "ERROR: semantic_planner_node died!"
-    tail -20 /tmp/semantic_planner.log
+    tail -20 /tmp/decision.log
     kill $BRIDGE_PID $TA_PID $TF_PID $GP_PID $PA_PID $LP_PID $PF_PID 2>/dev/null
     exit 1
 fi
@@ -222,7 +222,7 @@ echo ""
 echo "All 7 nodes started. Waiting 5s for terrain stabilization ..."
 sleep 5
 
-# ── 启动 stub 测试节点 (场景图 + 指令) ───────────────────────────
+# 鈹€鈹€ 鍚姩 stub 娴嬭瘯鑺傜偣 (鍦烘櫙鍥?+ 鎸囦护) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo "=== Starting factory_stub_test (instruction: '${INSTRUCTION}') ==="
 source /opt/ros/humble/setup.bash
 source /home/sunrise/data/SLAM/navigation/install/setup.bash 2>/dev/null || true
@@ -234,7 +234,7 @@ python3 ${SEMANTIC_STUB} \
 STUB_RC=$?
 cat /tmp/semantic_stub.log
 
-# ── 最终状态 ─────────────────────────────────────────────────────
+# 鈹€鈹€ 鏈€缁堢姸鎬?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 echo ""
 echo "=== Final Status ==="
 echo "-- nova_bridge (last 3) --"
@@ -244,7 +244,7 @@ tail -3 /tmp/global_planner.log
 echo "-- pct_adapter (last 5) --"
 tail -5 /tmp/pct_adapter.log
 echo "-- semantic_planner (last 5) --"
-tail -5 /tmp/semantic_planner.log
+tail -5 /tmp/decision.log
 echo ""
 echo "PIDs: BRIDGE=$BRIDGE_PID TF=$TF_PID TA=$TA_PID GP=$GP_PID"
 echo "      PA=$PA_PID LP=$LP_PID PF=$PF_PID SP=$SP_PID"

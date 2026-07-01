@@ -1,6 +1,6 @@
 """
-探索行为调试测试 — 验证修复后 rotation scan 不被 stuck_counter 打断, path_length > 0。
-运行: python test_explore_debug.py
+鎺㈢储琛屼负璋冭瘯娴嬭瘯 鈥?楠岃瘉淇鍚?rotation scan 涓嶈 stuck_counter 鎵撴柇, path_length > 0銆?
+杩愯: python test_explore_debug.py
 """
 import sys
 import logging
@@ -8,13 +8,13 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-sys.path.insert(0, str(Path(__file__).parents[2] / "src/semantic_perception"))
-sys.path.insert(0, str(Path(__file__).parents[2] / "src/semantic_planner"))
-sys.path.insert(0, str(Path(__file__).parents[2] / "src/semantic_common"))
+sys.path.insert(0, str(Path(__file__).parents[2] / "src/perception"))
+sys.path.insert(0, str(Path(__file__).parents[2] / "src/decision"))
+sys.path.insert(0, str(Path(__file__).parents[2] / "src"))
 
 import numpy as np
 import habitat
-from habitat.core.env import Env
+from habitat.runtime.env import Env
 from habitat.config.default import get_config
 
 from habitat_navimind_agent import NaviMindAgent, HABITAT_MOVE_FORWARD, HABITAT_TURN_LEFT, HABITAT_TURN_RIGHT, HABITAT_STOP
@@ -23,7 +23,7 @@ ACTION_NAMES = {0: "STOP", 1: "FWD", 2: "L", 3: "R"}
 
 def main():
     print("=" * 60)
-    print("探索行为调试测试")
+    print("鎺㈢储琛屼负璋冭瘯娴嬭瘯")
     print("=" * 60)
 
     config = get_config(
@@ -34,7 +34,7 @@ def main():
         ],
     )
     env = Env(config=config)
-    print(f"环境就绪, 共 {len(env.episodes)} 个 episodes")
+    print(f"鐜灏辩华, 鍏?{len(env.episodes)} 涓?episodes")
 
     agent = NaviMindAgent()
 
@@ -44,7 +44,7 @@ def main():
 
     print(f"\nRGB shape: {obs['rgb'].shape}")
     print(f"Depth shape: {obs['depth'].shape}")
-    print(f"目标类别: {getattr(env.current_episode, 'object_category', '?')}")
+    print(f"鐩爣绫诲埆: {getattr(env.current_episode, 'object_category', '?')}")
 
     goal_cat = getattr(env.current_episode, "object_category", "chair")
     agent.reset()
@@ -54,8 +54,8 @@ def main():
     prev_pos = start_pos.copy()
     path_length = 0.0
 
-    print(f"\n起始位置: {start_pos}")
-    print(f"\n{'步':>4} {'动作':>6} {'位置 (x,z)':>22} {'步距':>7} {'累积路径':>9} "
+    print(f"\n璧峰浣嶇疆: {start_pos}")
+    print(f"\n{'姝?:>4} {'鍔ㄤ綔':>6} {'浣嶇疆 (x,z)':>22} {'姝ヨ窛':>7} {'绱Н璺緞':>9} "
           f"{'stuck':>6} {'rotating':>9} {'fwd_steps':>9}")
     print("-" * 80)
 
@@ -78,15 +78,15 @@ def main():
         )
 
         if action == HABITAT_STOP:
-            print("→ STOP 动作")
+            print("鈫?STOP 鍔ㄤ綔")
             break
 
     final_pos = env.sim.get_agent_state().position
     dist_moved = float(np.linalg.norm(final_pos - start_pos))
-    print(f"\n总路径长度: {path_length:.3f}m")
-    print(f"直线位移:   {dist_moved:.3f}m")
-    print(f"传感器校正: {agent._img_h}×{agent._img_w}, fx={agent._fx:.1f}")
-    print(f"\n{'✅ PASS' if path_length > 0.3 else '❌ FAIL'}: path_length={path_length:.3f}m")
+    print(f"\n鎬昏矾寰勯暱搴? {path_length:.3f}m")
+    print(f"鐩寸嚎浣嶇Щ:   {dist_moved:.3f}m")
+    print(f"浼犳劅鍣ㄦ牎姝? {agent._img_h}脳{agent._img_w}, fx={agent._fx:.1f}")
+    print(f"\n{'鉁?PASS' if path_length > 0.3 else '鉂?FAIL'}: path_length={path_length:.3f}m")
 
     env.close()
 

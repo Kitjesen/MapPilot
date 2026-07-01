@@ -8,6 +8,8 @@ from typing import Any
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from runtime.plugin_seed import seed_registered_plugins
+from runtime.registry import auto_select, get
 from gateway.schemas import GatewayErrorResponse
 from gateway.services.media_status import build_camera_status
 
@@ -70,10 +72,44 @@ def _camera_unavailable(gw: Any | None) -> JSONResponse | None:
     )
 
 
-def _legacy_ros2_snapshot_jpeg() -> bytes | None:
-    from compat.ros2.camera_snapshot import capture_compressed_camera_snapshot
+def _seed_registered_camera_snapshot_plugins() -> None:
+    try:
+        seed_registered_plugins(groups=("camera_ros2",), reload_loaded=False)
+    except ValueError as exc:
+        if "camera_ros2" not in str(exc):
+            raise
 
-    return capture_compressed_camera_snapshot()
+
+def _seed_camera_snapshot_plugins() -> None:
+    try:
+        from lingtu.plugin_seed import seed_builtin_plugins
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"lingtu", "lingtu.plugin_seed"}:
+            raise
+        _seed_registered_camera_snapshot_plugins()
+        return
+
+    try:
+        seed_builtin_plugins(groups=("camera_ros2",), reload_loaded=False)
+    except ValueError as exc:
+        if "camera_ros2" not in str(exc):
+            raise
+        _seed_registered_camera_snapshot_plugins()
+
+
+def _registered_snapshot_adapter_jpeg() -> bytes | None:
+    _seed_camera_snapshot_plugins()
+    adapter_name = auto_select("camera_snapshot_adapter")
+    if not adapter_name:
+        return None
+    adapter = get("camera_snapshot_adapter", adapter_name)
+    capture = getattr(adapter, "capture_jpeg", None)
+    if not callable(capture):
+        return None
+    frame = capture()
+    if isinstance(frame, (bytes, bytearray)) and len(frame) > 0:
+        return bytes(frame)
+    return None
 
 
 def register_camera_routes(app, gw=None) -> None:
@@ -101,7 +137,7 @@ def register_camera_routes(app, gw=None) -> None:
             return unavailable
 
         try:
-            data = _legacy_ros2_snapshot_jpeg()
+            data = _registered_snapshot_adapter_jpeg()
             if data:
                 return Response(content=data, media_type="image/jpeg")
             return _error_response(

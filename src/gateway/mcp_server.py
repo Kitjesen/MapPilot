@@ -1,10 +1,10 @@
-"""LingTu MCP Server — Model Context Protocol for AI agent control.
+"""LingTu MCP Server -Model Context Protocol for AI agent control.
 
 Exposes robot capabilities as MCP tools so Claude/GPT can control the robot.
 Standard MCP JSON-RPC 2.0 over HTTP POST /mcp.
 
 Tools are auto-discovered from @skill methods on all system modules at
-build() time via on_system_modules().  No hardcoded tool list — every
+build() time via on_system_modules().  No hardcoded tool list -every
 @skill automatically becomes an MCP tool with a JSON Schema derived from
 the method signature and docstring.
 
@@ -24,12 +24,12 @@ import logging
 import threading
 from typing import Any
 
-from core.module import Module, skill
-from core.msgs.geometry import PoseStamped, Twist
-from core.msgs.nav import Odometry
-from core.msgs.semantic import SafetyState, SceneGraph
-from core.registry import register
-from core.stream import In, Out
+from runtime.module import Module, skill
+from runtime.msgs.geometry import PoseStamped, Twist
+from runtime.msgs.nav import Odometry
+from runtime.msgs.semantic import SafetyState, SceneGraph
+from runtime.registry import register
+from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,11 @@ _BACKEND_RECONFIGURE_TARGETS = {
     "encoder": ("PerceptionModule",),
     "llm": ("LLMModule",),
     "llm_client": ("LLMModule",),
-    "planner": ("NavigationModule",),
-    "local_planner": ("LocalPlannerModule",),
-    "path_follower": ("PathFollowerModule",),
-    "terrain": ("TerrainModule",),
-    "slam": ("SlamBridgeModule", "SLAMModule", "SlamModule"),
+    "planner": ("nav.mission",),
+    "local_planner": ("nav.local_planner",),
+    "path_follower": ("nav.path_follower",),
+    "terrain": ("nav.terrain",),
+    "slam": ("SlamBridgeModule", "SlamModule"),
 }
 
 
@@ -94,10 +94,10 @@ def _error(req_id: Any, code: int, msg: str) -> dict:
 
 @register("mcp", "server", description="MCP server for AI agent robot control")
 class MCPServerModule(Module, layer=6):
-    """MCP Server — exposes every robot @skill as an AI-callable tool.
+    """MCP Server -exposes every robot @skill as an AI-callable tool.
 
     Tools are discovered at build() time via on_system_modules().
-    No static list — modules register their own capabilities through @skill.
+    No static list -modules register their own capabilities through @skill.
 
     Built-in system tools (get_health, list_modules, get_config) are
     implemented as @skill methods on this module so they appear automatically.
@@ -140,8 +140,8 @@ class MCPServerModule(Module, layer=6):
         # Injected after system.start() by cli/main.py
         self._system_handle = None
 
-        # Populated by on_system_modules() — all @skill across all modules
-        self._tool_registry: dict[str, Any] = {}   # func_name → bound method
+        # Populated by on_system_modules() -all @skill across all modules
+        self._tool_registry: dict[str, Any] = {}   # func_name ->bound method
         self._tool_list:     list[dict] = []        # MCP tool descriptors
         self._all_modules: dict[str, Any] = {}
 
@@ -149,7 +149,7 @@ class MCPServerModule(Module, layer=6):
         self._tagged_locations_mod = None
         self._vector_memory_mod    = None
         self._episodic_mod         = None
-        self._navigation_module = None
+        self._navigation = None
         self._backend_reconfigure_modules: dict[str, Any] = {}
 
     # -- lifecycle ----------------------------------------------------------
@@ -167,7 +167,7 @@ class MCPServerModule(Module, layer=6):
         self._tool_registry = {}
         self._tool_list = []
         self._all_modules = modules
-        self._navigation_module = modules.get("NavigationModule")
+        self._navigation = modules.get("nav.mission")
         self._backend_reconfigure_modules = {
             module_name: modules.get(module_name)
             for module_names in _BACKEND_RECONFIGURE_TARGETS.values()
@@ -209,11 +209,36 @@ class MCPServerModule(Module, layer=6):
         for tool in self._tool_list:
             seen[tool["name"]] = tool  # last one wins (matches _tool_registry)
         self._tool_list = list(seen.values())
+        self._install_legacy_tool_aliases()
 
         logger.info(
             "MCP: %d tools from %d modules",
             len(self._tool_list), len(modules),
         )
+
+    def _install_legacy_tool_aliases(self) -> None:
+        """Keep old MCP clients working without exposing lifecycle stop()."""
+
+        if "stop" in self._tool_registry:
+            return
+        if "emergency_stop" not in self._tool_registry:
+            return
+
+        self._tool_registry["stop"] = self._legacy_stop_tool
+        source = next(
+            (tool for tool in self._tool_list if tool["name"] == "emergency_stop"),
+            None,
+        )
+        input_schema = (
+            dict(source.get("inputSchema", {}))
+            if source
+            else {"type": "object", "properties": {}, "required": []}
+        )
+        self._tool_list.append({
+            "name": "stop",
+            "description": "[MCPServerModule] Legacy alias for emergency_stop.",
+            "inputSchema": input_schema,
+        })
 
     def setup(self) -> None:
         self.odometry.subscribe(self._on_odom)
@@ -279,7 +304,7 @@ class MCPServerModule(Module, layer=6):
     def get_config(self) -> str:
         """Return robot configuration: speed limits, geometry, safety thresholds."""
         try:
-            from core.config import get_config
+            from runtime.config import get_config
             cfg = get_config()
             return json.dumps({
                 "speed":    {"max_linear": cfg.speed.max_linear,
@@ -302,7 +327,7 @@ class MCPServerModule(Module, layer=6):
 
     @skill
     def get_scene_graph(self) -> str:
-        """Return the current scene graph — detected objects with positions and labels."""
+        """Return the current scene graph -detected objects with positions and labels."""
         return self._sg_json
 
     @skill
@@ -396,7 +421,7 @@ class MCPServerModule(Module, layer=6):
     def tag_location(self, name: str) -> str:
         """Save the robot's current position under *name* for future navigation."""
         if not self._odom:
-            return json.dumps({"error": "no odometry — cannot tag location"})
+            return json.dumps({"error": "no odometry -cannot tag location"})
         tl = self._tagged_locations_mod
         if not (tl and hasattr(tl, "store")):
             return json.dumps({"error": "TaggedLocationsModule not running"})
@@ -419,10 +444,16 @@ class MCPServerModule(Module, layer=6):
 
     @skill
     def emergency_stop(self) -> str:
-        """Emergency stop — immediately halts all robot motion."""
+        """Emergency stop -immediately halts all robot motion."""
+        return self._publish_stop("emergency_stopped")
+
+    def _legacy_stop_tool(self) -> str:
+        return self._publish_stop("stopped")
+
+    def _publish_stop(self, status: str) -> str:
         self.stop_cmd.publish(2)
         self.cmd_vel.publish(Twist())
-        return json.dumps({"status": "emergency_stopped"})
+        return json.dumps({"status": status})
 
     @skill
     def set_mode(self, mode: str) -> str:
@@ -469,7 +500,7 @@ class MCPServerModule(Module, layer=6):
         **config: Any,
     ) -> dict[str, Any]:
         if category in _MOTION_BACKEND_CATEGORIES:
-            state = _navigation_state(self._navigation_module)
+            state = _navigation_state(self._navigation)
             if state != "IDLE":
                 return {
                     "ok": False,
@@ -497,7 +528,7 @@ class MCPServerModule(Module, layer=6):
             from fastapi.middleware.cors import CORSMiddleware
             from fastapi.responses import JSONResponse
         except ImportError:
-            logger.error("FastAPI not installed — run: pip install fastapi uvicorn")
+            logger.error("FastAPI not installed -run: pip install fastapi uvicorn")
             return
 
         cors_origins = os.environ.get(

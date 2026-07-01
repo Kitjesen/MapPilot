@@ -16,9 +16,9 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from compat.lcm.contracts import THUNDER_FIELD_LCM_CONTRACT_NAME, endpoint_contract  # noqa: E402
-from compat.lcm.sources.jsonl import message_from_record  # noqa: E402
-from core.runtime_interface import (  # noqa: E402
+from runtime.adapters.lcm.contracts import THUNDER_FIELD_LCM_CONTRACT_NAME, endpoint_contract  # noqa: E402
+from runtime.adapters.lcm.sources.jsonl import message_from_record  # noqa: E402
+from runtime.runtime_interface import (  # noqa: E402
     REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS,
     TOPICS,
     body_frame_id,

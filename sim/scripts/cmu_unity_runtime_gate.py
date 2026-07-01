@@ -39,7 +39,7 @@ HARDWARE_NODE_TOKENS = (
 
 COMMAND_TOPICS = ("/cmd_vel", "/nav/cmd_vel")
 WAYPOINT_TOPICS = ("/way_point", "/exploration/way_point", "/nav/way_point")
-ODOM_TOPICS = ("/nav/odometry", "/state_estimation")
+ODOM_TOPICS = ("/slam/odometry", "/state_estimation")
 START_TOPICS = ("/exploration/start", "/start_exploration")
 PATH_TOPICS = (
     "/exploration/global_path_full",
@@ -55,11 +55,11 @@ CLOUD_TOPICS = (
     "/registered_scan",
     "/nav/terrain_map",
     "/nav/terrain_map_ext",
-    "/nav/registered_cloud",
-    "/nav/map_cloud",
+    "/slam/registered_cloud",
+    "/slam/map_cloud",
 )
 DEFAULT_REQUIRED_MAP_TOPICS = ("/nav/terrain_map_ext",)
-DEFAULT_REQUIRED_SCAN_TOPICS = ("/registered_scan", "/nav/registered_cloud")
+DEFAULT_REQUIRED_SCAN_TOPICS = ("/registered_scan", "/slam/registered_cloud")
 
 
 def _sha256_file(path: Path) -> str:
@@ -1171,7 +1171,7 @@ def _load_cmu_runtime_contract() -> dict[str, Any]:
             path = str(candidate)
             if path not in sys.path:
                 sys.path.insert(0, path)
-        from core.blueprints.simulation_contract import simulation_runtime_contract
+        from runtime.blueprints.simulation_contract import simulation_runtime_contract
 
         return simulation_runtime_contract("cmu_unity_external").as_report()
     except Exception as exc:
@@ -1857,7 +1857,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         help=(
             "Require a scan/cloud topic to produce samples. "
-            "Defaults to /registered_scan and /nav/registered_cloud."
+            "Defaults to /registered_scan and /slam/registered_cloud."
         ),
     )
     parser.add_argument(
@@ -1868,7 +1868,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Require a specific map/cloud topic to grow. "
             "Format: TOPIC or TOPIC:MIN_AREA_M2. Defaults to /nav/terrain_map_ext. "
-            "The CMU launch wrapper adds /nav/map_cloud for product runs."
+            "The CMU launch wrapper adds /slam/map_cloud for product runs."
         ),
     )
     parser.add_argument("--voxel-size", type=float, default=0.25)
@@ -1924,7 +1924,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Fail validation unless Gateway exploration status reports at "
-            "least one TARE goal completed by LingTu Navigation."
+            "least one TARE goal completed by LingTu nav.mission."
         ),
     )
     parser.add_argument(

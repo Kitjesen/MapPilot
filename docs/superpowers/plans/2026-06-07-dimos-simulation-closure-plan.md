@@ -12,9 +12,9 @@
 
 ## Current Evidence Boundary
 
-- Code chain exists for MuJoCo live and PCT-oriented runtime entry points in `src/core/cli/runtime_endpoint.py`, `sim/scripts/native_pct_mujoco_gate.py`, `sim/scripts/moving_obstacle_sweep_gate.py`, and `sim/scripts/large_loop_closure_gate.py`.
-- PCT native runtime is represented by `src/global_planning/pct_planner_runnable/runtime.py` and the navigation path is dispatched through `src/nav/global_planner_service.py`.
-- Fast-LIO2 and live navigation evidence is evaluated through `sim/scripts/server_sim_closure.py` and data-flow cross gates in `src/core/dimos_runtime_dataflow.py`.
+- Code chain exists for MuJoCo live and PCT-oriented runtime entry points in `src/runtime/cli/runtime_endpoint.py`, `sim/scripts/native_pct_mujoco_gate.py`, `sim/scripts/moving_obstacle_sweep_gate.py`, and `sim/scripts/large_loop_closure_gate.py`.
+- PCT native runtime is represented by `src/nav/services/plan/global_planner/algorithm/pct/runtime/api.py` and the navigation path is dispatched through `src/nav/services/plan/global_planner/service.py`.
+- Fast-LIO2 and live navigation evidence is evaluated through `sim/scripts/server_sim_closure.py` and data-flow cross gates in `src/runtime/dimos_runtime_dataflow.py`.
 - Current local Windows/Python 3.13 host is not enough to prove DimOS closure: PCT native artifacts are Linux/Python 3.10-oriented, ROS 2 Humble is not sourced, and MuJoCo/Fast-LIO2 live proof has not been freshly produced here.
 - Latest target-host gap state is still red overall: `readiness_ok=false`, `claim_allowed=false`, 13 required gates, 7 passed, and 6 failed/missing. The target-host preflight is now green after building/sourcing ROS 2 `local_planner` and Fast-LIO2, verifying `localPlanner`, `pathFollower`, and `fastlio2 lio_node`, and syncing the official MID-360 scan-pattern asset. `native_pct_mujoco` now passes with native PCT, ROS 2 local planner/path follower, and MuJoCo kinematic motion. `fastlio2_dynamic_inspection` is no longer host-blocked, but remains runtime-red on motion consistency, checkpoints, moving-obstacle points, and frame evidence. Failed/missing gates are `fastlio2_dynamic_inspection`, `moving_obstacle_sweep`, `large_loop_closure`, `gazebo_runtime`, `saved_map_relocalize`, and `pct_saved_map_navigation`.
 - Current Windows/Python 3.13 host still cannot prove full DimOS closure. `sim/tests/test_native_pct_mujoco_gate.py` passes locally after lazy NumPy and pure-Python fallback fixes for light geometry helpers, but Fast-LIO/live/saved-map runtime proof still requires Linux/ROS 2 Humble/Python 3.10/PCT native/MuJoCo EGL.
@@ -49,7 +49,7 @@
   - Preserve child live report outputs, map artifacts, and planner provenance.
 - Modify: `sim/scripts/large_loop_closure_gate.py`
   - Preserve best-case live report same-source artifacts.
-- Modify: `src/core/dimos_runtime_dataflow.py`
+- Modify: `src/runtime/dimos_runtime_dataflow.py`
   - Cross-gate proof that PCT/MuJoCo and Fast-LIO2 use the same artifacts.
 - Modify: `sim/scripts/dimos_gap_report.py`
   - Accept explicit host preflight JSON so local planning and remote runtime proof can be separated.
@@ -137,7 +137,7 @@ Expected: missing gates are separated from environment-blocked gates; `ok_to_run
 **Files:**
 - Use: `sim/scripts/native_pct_mujoco_gate.py`
 - Use: `sim/scripts/server_sim_closure.py`
-- Use: `src/global_planning/pct_planner_runnable/runtime.py`
+- Use: `src/nav/services/plan/global_planner/algorithm/pct/runtime/api.py`
 
 - [x] **Step 0: Make native gate contract helpers locally testable**
 
@@ -225,13 +225,13 @@ consistency, `0/3` checkpoints, missing moving-obstacle points, and missing
 The previous upstream executable blocker was native PCT inside `large_terrain`.
 That gate now passes at `artifacts/server_sim_closure/large_terrain/report.json`
 with same-source map/tomogram artifacts, `native_runtime.ok=true`, all four PCT
-routes using `native_backend_used=true`, `pct_optimizer_enabled=false`,
+routes using `native_runtime_used=true`, `pct_optimizer_enabled=false`,
 `pct_planner_path_mode=native_astar_raw_path`, and child return code 0. This is
 not A* fallback, but it is also not proof that the GPMP optimizer or MuJoCo
 motion loop has run. The target-host `native_pct_mujoco` gate now passes at
 `artifacts/server_sim_closure/native_pct_mujoco/report_after_goal_reached_fix.json`
 with `selected_planner=pct`, `fallback_used=false`,
-`pct_native_backend_used=true`, `path_count=175`, `cmd_count_nonzero=484`,
+`pct_native_runtime_used=true`, `path_count=175`, `cmd_count_nonzero=484`,
 `moved_m=3.4101`, `final_distance_m=0.4944`, and `reached_goal=true`. That
 proves the PCT-to-ROS2-local-planner/path-follower-to-MuJoCo kinematic motion
 gate, while Fast-LIO live inspection, moving-obstacle sweep, large-loop

@@ -21,12 +21,12 @@ import threading
 import time
 from typing import Any
 
-from core.module import Module
-from core.msgs.geometry import Quaternion, Twist, Vector3
-from core.msgs.nav import Odometry
-from core.registry import register
-from core.runtime_interface import body_frame_id, odom_frame_id
-from core.stream import In, Out
+from runtime.module import Module
+from runtime.msgs.geometry import Quaternion, Twist, Vector3
+from runtime.msgs.nav import Odometry
+from runtime.registry import register
+from runtime.runtime_interface import body_frame_id, odom_frame_id
+from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
 THUNDER_ODOM_FRAME_ID = odom_frame_id()
@@ -246,7 +246,7 @@ class ThunderDriver(Module, layer=1):
 
     def _publish_odometry(self):
         """IMU 姿态 + cmd_vel 位置积分 → Odometry 消息。"""
-        from core.msgs.geometry import Pose
+        from runtime.msgs.geometry import Pose
 
         now = time.time()
         with self._cmd_lock:

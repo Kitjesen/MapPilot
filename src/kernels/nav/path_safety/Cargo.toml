@@ -1,0 +1,12 @@
+[package]
+name = "lingtu_path_safety"
+version = "0.1.0"
+edition = "2021"
+description = "Portable LingTu path safety kernel"
+license = "Proprietary"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
