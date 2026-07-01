@@ -560,6 +560,62 @@ def validate_core_compat_boundaries() -> tuple[list[str], int]:
     return violations, scanned
 
 
+ROS_COUPLING_STRING_ALLOWLIST: tuple[str, ...] = (
+    "runtime/adapters/ros2/",
+    "localization/adapters/ros2/",
+    "nav/adapters/ros2/",
+    "drivers/adapters/ros2/",
+    "perception/adapters/ros2/",
+    "localization/launch/",
+    "runtime/dimos_gap.py",
+    "drivers/real/lidar/lidar.py",
+    "lingtu/ros2_plugin_seed.py",
+    "lingtu/ros2_shutdown.py",
+)
+
+ROS_SUBPROCESS_MARKERS: tuple[str, ...] = (
+    '["ros2"',
+    "['ros2'",
+    '("ros2"',
+    "('ros2'",
+)
+
+ROS_SETUP_MARKERS: tuple[str, ...] = (
+    "/opt/ros/",
+    "source /opt/ros/",
+)
+
+
+def _is_ros_coupling_allowlisted(path: Path) -> bool:
+    rel = path.relative_to(SRC_DIR).as_posix()
+    if _is_ros_scan_excluded(path):
+        return True
+    if ros_compat_boundary_for(rel) is not None:
+        return True
+    return any(rel == prefix or rel.startswith(prefix) for prefix in ROS_COUPLING_STRING_ALLOWLIST)
+
+
+def validate_ros_coupling_touchpoints() -> tuple[list[str], int]:
+    """Flag new ROS 2 CLI/setup coupling outside explicit compat boundaries."""
+
+    violations: list[str] = []
+    scanned = 0
+    for path in _all_src_python_files():
+        if _is_test_or_example(path) or _is_ros_coupling_allowlisted(path):
+            continue
+        rel = path.relative_to(ROOT_DIR).as_posix()
+        text = path.read_text(encoding="utf-8-sig")
+        scanned += 1
+        markers: list[str] = []
+        if any(marker in text for marker in ROS_SUBPROCESS_MARKERS):
+            markers.append("ros2 CLI subprocess")
+        if any(marker in text for marker in ROS_SETUP_MARKERS):
+            markers.append("/opt/ros setup reference")
+        if markers:
+            violations.append(f"{rel}: unexpected ROS coupling ({', '.join(markers)})")
+    return violations, scanned
+
+
 def validate(verbose: bool = False) -> tuple[list[str], int]:
     violations: list[str] = []
     scanned = 0
@@ -586,6 +642,8 @@ def validate(verbose: bool = False) -> tuple[list[str], int]:
     violations.extend(core_violations)
     ros_violations, ros_scanned, ros_classified = validate_ros_import_boundaries()
     violations.extend(ros_violations)
+    ros_coupling_violations, ros_coupling_scanned = validate_ros_coupling_touchpoints()
+    violations.extend(ros_coupling_violations)
     if verbose:
         print(f"Scanned {scanned} production Python files")
         print(f"Checked Thunder hardware compat boundary across {hardware_scanned} file(s)")
@@ -593,6 +651,10 @@ def validate(verbose: bool = False) -> tuple[list[str], int]:
         print(
             "Classified ROS imports in "
             f"{ros_classified} explicit compat file(s) across {ros_scanned} scanned file(s)"
+        )
+        print(
+            "Checked ROS CLI/setup coupling across "
+            f"{ros_coupling_scanned} production file(s)"
         )
     return violations, scanned
 

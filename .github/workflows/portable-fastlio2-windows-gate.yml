@@ -1,70 +1,10 @@
 name: Portable FastLIO2 Windows Gate
 
+# Phase 0 (ROS2 decoupling): disabled — paths and portable Fast-LIO2 layout are
+# stale relative to src/localization/slam/cpp/ cyclone_runtime direction.
+# Re-enable only after portable build scripts are realigned with native SLAM CI.
 on:
-  push:
-    paths:
-      - ".github/workflows/portable-fastlio2-windows-gate.yml"
-      - "lingtu.py"
-      - "requirements-lite.txt"
-      - "pyproject.toml"
-      - "cli/**"
-      - "config/**"
-      - "docs/architecture/PORTABLE_ALGORITHM_BOUNDARY.md"
-      - "scripts/build/build_fastlio2_portable.py"
-      - "sim/scripts/portable_fastlio2_replay.py"
-      - "src/runtime/adapters/lcm/contracts.py"
-      - "src/runtime/adapters/lcm/endpoint_runner.py"
-      - "src/runtime/adapters/lcm/endpoint_service.py"
-      - "src/localization/adapters/portable/**"
-      - "src/localization/adapters/lcm/sources/portable_lio.py"
-      - "src/runtime/blueprints/**"
-      - "src/runtime/backend_status.py"
-      - "src/runtime/module.py"
-      - "src/runtime/msgs/**"
-      - "src/runtime/registry.py"
-      - "src/runtime/profiles/**"
-      - "src/runtime/runtime_interface.py"
-      - "src/runtime/stream.py"
-      - "src/runtime/tests/test_cli_no_repl.py"
-      - "src/runtime/tests/test_lcm_endpoint_runner.py"
-      - "src/runtime/tests/test_lcm_localization_adapter.py"
-      - "src/runtime/tests/test_fastlio2_portable_cpp_core.py"
-      - "src/runtime/tests/test_portable_lio_kernel.py"
-      - "src/runtime/tests/test_runtime_launcher.py"
-      - "src/runtime/tests/test_runtime_resolver.py"
-      - "src/localization/fastlio2/portable/**"
-  pull_request:
-    paths:
-      - ".github/workflows/portable-fastlio2-windows-gate.yml"
-      - "lingtu.py"
-      - "requirements-lite.txt"
-      - "pyproject.toml"
-      - "cli/**"
-      - "config/**"
-      - "docs/architecture/PORTABLE_ALGORITHM_BOUNDARY.md"
-      - "scripts/build/build_fastlio2_portable.py"
-      - "sim/scripts/portable_fastlio2_replay.py"
-      - "src/runtime/adapters/lcm/contracts.py"
-      - "src/runtime/adapters/lcm/endpoint_runner.py"
-      - "src/runtime/adapters/lcm/endpoint_service.py"
-      - "src/localization/adapters/portable/**"
-      - "src/localization/adapters/lcm/sources/portable_lio.py"
-      - "src/runtime/blueprints/**"
-      - "src/runtime/backend_status.py"
-      - "src/runtime/module.py"
-      - "src/runtime/msgs/**"
-      - "src/runtime/registry.py"
-      - "src/runtime/profiles/**"
-      - "src/runtime/runtime_interface.py"
-      - "src/runtime/stream.py"
-      - "src/runtime/tests/test_cli_no_repl.py"
-      - "src/runtime/tests/test_lcm_endpoint_runner.py"
-      - "src/runtime/tests/test_lcm_localization_adapter.py"
-      - "src/runtime/tests/test_fastlio2_portable_cpp_core.py"
-      - "src/runtime/tests/test_portable_lio_kernel.py"
-      - "src/runtime/tests/test_runtime_launcher.py"
-      - "src/runtime/tests/test_runtime_resolver.py"
-      - "src/localization/fastlio2/portable/**"
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -73,6 +13,7 @@ env:
 jobs:
   portable-fastlio2-windows:
     name: CMake, ctypes, and runtime endpoint
+    if: false
     runs-on: windows-latest
     timeout-minutes: 15
 

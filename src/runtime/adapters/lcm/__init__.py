@@ -1,4 +1,4 @@
-"""LCM endpoint compatibility contracts and adapters."""
+"""LCM endpoint adapters for smoke, replay, and optional lcm-endpoint deployments."""
 
 from .contracts import (
     LCMEndpointBinding,

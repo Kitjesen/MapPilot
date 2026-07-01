@@ -14,11 +14,13 @@ from runtime.runtime_interface import (
 )
 
 
-def test_thunder_field_endpoint_references_lcm_contract() -> None:
+def test_thunder_field_lcm_contract_available_for_optional_lcm_endpoint() -> None:
+    """LCM contract supports smoke/replay/lcm-endpoint mode; field default is typed DDS."""
+
     endpoint = RUNTIME_ENDPOINTS["thunder_field"]
 
-    assert endpoint.endpoint_transport == "lcm"
-    assert endpoint.endpoint_contract == THUNDER_FIELD_LCM_CONTRACT.name
+    assert endpoint.endpoint_transport == "dds"
+    assert endpoint.endpoint_contract != THUNDER_FIELD_LCM_CONTRACT.name
     assert THUNDER_FIELD_LCM_CONTRACT.runtime_contract == THUNDER_FIELD_RUNTIME_CONTRACT
     assert THUNDER_FIELD_LCM_CONTRACT.transport == "lcm"
 
