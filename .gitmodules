@@ -2,3 +2,18 @@
 	path = src/drivers/real/camera/OrbbecSDK_ROS2
 	url = https://github.com/orbbec/OrbbecSDK_ROS2.git
 	ignore = dirty
+[submodule "research/semantic_map_refs/DualMap"]
+	path = research/semantic_map_refs/DualMap
+	url = https://github.com/Eku127/DualMap.git
+[submodule "research/semantic_map_refs/HOV-SG"]
+	path = research/semantic_map_refs/HOV-SG
+	url = https://github.com/hovsg/HOV-SG.git
+[submodule "research/semantic_map_refs/OVO"]
+	path = research/semantic_map_refs/OVO
+	url = https://github.com/tberriel/OVO.git
+[submodule "research/semantic_map_refs/concept-graphs"]
+	path = research/semantic_map_refs/concept-graphs
+	url = https://github.com/concept-graphs/concept-graphs.git
+[submodule "research/semantic_map_refs/vlmaps"]
+	path = research/semantic_map_refs/vlmaps
+	url = https://github.com/vlmaps/vlmaps.git
