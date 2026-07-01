@@ -9,7 +9,7 @@ def _read_repo_file(path: str) -> str:
 
 
 def test_nav_core_builder_does_not_force_user_site_install():
-    script = _read_repo_file("scripts/build_nav_core.sh")
+    script = _read_repo_file("scripts/build/build_nav_core.sh")
 
     assert "pip install --user nanobind" not in script
     assert "CONDA_PREFIX" in script
@@ -89,7 +89,7 @@ def test_nav_core_standalone_tests_do_not_require_python_headers():
 
 
 def test_nav_core_build_script_is_ascii_for_server_terminals():
-    script = _read_repo_file("scripts/build_nav_core.sh")
+    script = _read_repo_file("scripts/build/build_nav_core.sh")
 
     assert script.isascii()
 

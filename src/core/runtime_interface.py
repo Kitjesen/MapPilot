@@ -15,7 +15,24 @@ from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
 
-REAL_RUNTIME_CONTRACT = "real_s100p"
+THUNDER_FIELD_RUNTIME_CONTRACT = "thunder_field"
+LEGACY_REAL_RUNTIME_CONTRACT = "real_s100p"
+REAL_RUNTIME_CONTRACT = THUNDER_FIELD_RUNTIME_CONTRACT
+THUNDER_LITE_RUNTIME_CONTRACT = "thunder_lite_local"
+THUNDER_FIELD_EVIDENCE_LABEL = "Thunder field evidence"
+
+DATA_SOURCE_ALIASES = {
+    LEGACY_REAL_RUNTIME_CONTRACT: THUNDER_FIELD_RUNTIME_CONTRACT,
+}
+
+
+def canonical_data_source_name(name: str | None) -> str | None:
+    """Return the canonical data-source/runtime-contract name."""
+
+    if name is None:
+        return None
+    value = str(name)
+    return DATA_SOURCE_ALIASES.get(value, value)
 
 
 @dataclass(frozen=True)
@@ -391,7 +408,7 @@ RUNTIME_DATA_FLOW = (
             TOPICS.goal_pose,
             "artifact:tomogram",
         ),
-        outputs=(TOPICS.global_path,),
+        outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_navigation_or_pct",
         frame_role=FRAMES.map,
         map_dependency=(
@@ -548,10 +565,15 @@ TOPIC_FORMATS = {
     TOPICS.check_obstacle: ("std_msgs/msg/Bool",),
     TOPICS.planner_status: ("std_msgs/msg/String",),
     TOPICS.navigation_boundary: ("geometry_msgs/msg/PolygonStamped",),
+    TOPICS.cancel: ("std_msgs/msg/String",),
     TOPICS.goal_pose: ("geometry_msgs/msg/PoseStamped",),
     TOPICS.goal_point: ("geometry_msgs/msg/PointStamped",),
+    TOPICS.semantic_instruction: ("std_msgs/msg/String",),
     TOPICS.exploration_way_point: ("geometry_msgs/msg/PointStamped",),
-    TOPICS.nav_way_point: ("geometry_msgs/msg/PointStamped",),
+    TOPICS.nav_way_point: (
+        "geometry_msgs/msg/PoseStamped",
+        "geometry_msgs/msg/PointStamped",
+    ),
     "/livox/lidar": ("raw_livox_custom",),
     "/livox/imu": ("sensor_msgs/msg/Imu",),
     "/imu/data": ("sensor_msgs/msg/Imu",),
@@ -599,6 +621,8 @@ TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.terrain_map_ext: (FRAMES.map, FRAMES.odom),
     TOPICS.global_path: (FRAMES.map, FRAMES.odom),
     TOPICS.local_path: (FRAMES.map, FRAMES.odom, FRAMES.body),
+    TOPICS.goal_pose: (FRAMES.map, FRAMES.odom),
+    TOPICS.nav_way_point: (FRAMES.map, FRAMES.odom),
     TOPICS.cmd_vel: (FRAMES.body,),
 }
 
@@ -608,6 +632,10 @@ REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.traversable_frontiers: (FRAMES.map,),
     TOPICS.frontier_candidate: (FRAMES.map,),
     TOPICS.global_path: (FRAMES.map,),
+}
+
+THUNDER_LITE_TOPIC_ALLOWED_FRAME_IDS = {
+    TOPICS.cmd_vel: (FRAMES.body,),
 }
 
 REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS = (
@@ -742,7 +770,7 @@ ALGORITHM_INTERFACES = {
     "global_planning": AlgorithmInterface(
         name="global_planning",
         inputs=(TOPICS.odometry, TOPICS.map_cloud, TOPICS.exploration_way_point, TOPICS.goal_pose),
-        outputs=(TOPICS.global_path,),
+        outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_navigation",
         map_dependency=(
             "planner_specific_pct_saved_tomogram_or_astar_occupancy_grid"
@@ -751,14 +779,14 @@ ALGORITHM_INTERFACES = {
     "astar_global_planning": AlgorithmInterface(
         name="astar_global_planning",
         inputs=(TOPICS.odometry, TOPICS.exploration_grid, TOPICS.goal_pose),
-        outputs=(TOPICS.global_path,),
+        outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_navigation",
         map_dependency="live_or_saved_occupancy_grid",
     ),
     "pct_global_planning": AlgorithmInterface(
         name="pct_global_planning",
         inputs=(TOPICS.odometry, "artifact:tomogram", TOPICS.goal_pose),
-        outputs=(TOPICS.global_path,),
+        outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_pct",
         map_dependency="same_source_saved_tomogram_required",
     ),
@@ -826,6 +854,20 @@ DATA_SOURCE_CONTRACTS = {
         slam_source="lingtu_fastlio_or_external_robot_slam",
         localization_source="slam_localizer",
         mapping_source="slam_map_cloud",
+    ),
+    THUNDER_LITE_RUNTIME_CONTRACT: DataSourceContract(
+        name=THUNDER_LITE_RUNTIME_CONTRACT,
+        provider="hardware",
+        owns=("robot_actuation", "local_module_graph"),
+        normalized_outputs=(),
+        command_sink="hardware_driver_after_cmd_vel_mux",
+        source_outputs=(),
+        algorithm_entry_outputs=(),
+        algorithm_context_outputs=(),
+        lidar_extrinsic_profile=None,
+        slam_source="none",
+        localization_source="none",
+        mapping_source="none",
     ),
     "mujoco_module_graph": DataSourceContract(
         name="mujoco_module_graph",
@@ -946,6 +988,7 @@ def _dedupe_runtime_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
 def _data_source_contract(data_source: str | DataSourceContract) -> DataSourceContract:
     if isinstance(data_source, DataSourceContract):
         return data_source
+    data_source = canonical_data_source_name(data_source) or ""
     try:
         return DATA_SOURCE_CONTRACTS[data_source]
     except KeyError as exc:
@@ -965,8 +1008,19 @@ def resolved_runtime_data_flow(
 
     source = _data_source_contract(data_source)
     stages: list[RuntimeDataFlowStage] = []
+    minimal_command_only = (
+        not source.normalized_outputs
+        and not source.algorithm_entry_outputs
+        and not source.algorithm_context_outputs
+        and source.slam_source == "none"
+        and source.mapping_source == "none"
+    )
+    minimal_stage_names = {"endpoint_adapter", "command_boundary"}
 
     for stage in RUNTIME_DATA_FLOW:
+        if minimal_command_only and stage.name not in minimal_stage_names:
+            continue
+
         inputs = stage.inputs
         outputs = stage.outputs
 
@@ -1309,6 +1363,12 @@ PROFILE_DATA_SOURCE_BINDINGS = {
         data_source="cmu_unity_external",
         mode="external_cmu_unity_tare_adapter",
     ),
+    "lite": ProfileDataSourceBinding(
+        profile="lite",
+        data_source="thunder_lite_local",
+        mode="minimal_thunder_no_ros",
+        note="Driver/safety/navigation shell only; no SLAM, map, semantic, ROS bridge, or external services.",
+    ),
     "map": ProfileDataSourceBinding(
         profile="map",
         data_source=REAL_RUNTIME_CONTRACT,
@@ -1555,8 +1615,11 @@ def simulator_world_frame_id() -> str:
 def runtime_topic_allowed_frame_ids(runtime_contract: str | None) -> dict[str, tuple[str, ...]]:
     """Return the topic frame_id contract for one resolved runtime contract."""
 
+    runtime_contract = canonical_data_source_name(runtime_contract)
     if runtime_contract == REAL_RUNTIME_CONTRACT:
         return dict(REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS)
+    if runtime_contract == THUNDER_LITE_RUNTIME_CONTRACT:
+        return dict(THUNDER_LITE_TOPIC_ALLOWED_FRAME_IDS)
     return dict(TOPIC_ALLOWED_FRAME_IDS)
 
 
@@ -1640,6 +1703,7 @@ def runtime_fixed_path_frame_ids(
 def runtime_required_topic_frame_ids(runtime_contract: str | None) -> tuple[str, ...]:
     """Return topics whose frame_id evidence is mandatory for one runtime."""
 
+    runtime_contract = canonical_data_source_name(runtime_contract)
     if runtime_contract == REAL_RUNTIME_CONTRACT:
         return REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS
     return ()

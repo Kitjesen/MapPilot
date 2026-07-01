@@ -64,9 +64,9 @@ class TestSaveReadClear:
         from cli.run_state import read_run_state, save_run_state
 
         runtime = {
-            "endpoint": "real_s100p",
-            "data_source": "real_s100p",
-            "runtime_contract": "real_s100p",
+            "endpoint": "thunder_field",
+            "data_source": "thunder_field",
+            "runtime_contract": "thunder_field",
             "command_sink": "hardware_driver_after_cmd_vel_mux",
             "resolved_runtime_data_flow": [
                 {
@@ -219,9 +219,9 @@ def _runtime_status_state() -> dict:
         "host": "test-host",
         "version": "test",
         "runtime": {
-            "endpoint": "real_s100p",
-            "data_source": "real_s100p",
-            "runtime_contract": "real_s100p",
+            "endpoint": "thunder_field",
+            "data_source": "thunder_field",
+            "runtime_contract": "thunder_field",
             "command_sink": "hardware_driver_after_cmd_vel_mux",
             "simulation_only": False,
             "slam_source": "lingtu_fastlio_or_external_robot_slam",
@@ -295,7 +295,7 @@ def test_status_human_output_includes_runtime_boundary(monkeypatch, capsys):
     ui.cmd_status_external(as_json=False)
 
     out = capsys.readouterr().out
-    assert "Runtime:  endpoint=real_s100p data_source=real_s100p" in out
+    assert "Runtime:  endpoint=thunder_field data_source=thunder_field" in out
     assert "SLAM:     slam_source=lingtu_fastlio_or_external_robot_slam" in out
     assert (
         "Frame ids: map=map odom=odom body=body lidar=lidar_link "
@@ -322,8 +322,8 @@ def test_status_json_output_includes_runtime_boundary(monkeypatch, capsys):
 
     report = json.loads(capsys.readouterr().out)
     assert report["runtime_status"] == "running"
-    assert report["runtime"]["endpoint"] == "real_s100p"
-    assert report["runtime"]["data_source"] == "real_s100p"
+    assert report["runtime"]["endpoint"] == "thunder_field"
+    assert report["runtime"]["data_source"] == "thunder_field"
     assert report["runtime"]["command_sink"] == "hardware_driver_after_cmd_vel_mux"
     assert report["runtime"]["topic_allowed_frame_ids"]["/nav/map_cloud"] == [
         "map"

@@ -18,6 +18,7 @@ from core.runtime_interface import (
     runtime_required_topic_frame_ids,
     runtime_data_flow_topics,
 )
+from core.transport.abc import TransportStrategy
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,10 @@ def runtime_spec_summary(spec: RuntimeRunSpec) -> dict[str, object]:
         "robot_preset": spec.robot_preset,
         "data_source": spec.data_source,
         "runtime_contract": spec.runtime_contract,
+        "module_transport": spec.module_transport,
+        "endpoint_transport": spec.endpoint_transport,
+        "endpoint_contract": spec.endpoint_contract,
+        "localization_adapter": spec.localization_adapter,
         "simulation_only": spec.simulation_only,
         "command_sink": spec.command_sink,
         "slam_source": spec.slam_source,
@@ -129,6 +134,26 @@ def validate_runtime_switch(spec: RuntimeRunSpec) -> RuntimeSwitchValidation:
         blockers.append("env endpoint does not match run spec")
     if spec.env.get("LINGTU_DATA_SOURCE") != spec.data_source:
         blockers.append("env data source does not match run spec")
+    if spec.env.get("LINGTU_MODULE_TRANSPORT") != spec.module_transport:
+        blockers.append("env module transport does not match run spec")
+    if spec.module_transport not in _known_transport_strategies():
+        blockers.append("module transport is not a known transport strategy")
+    if spec.env.get("LINGTU_ENDPOINT_TRANSPORT") != spec.endpoint_transport:
+        blockers.append("env endpoint transport does not match run spec")
+    if spec.endpoint_transport not in _known_transport_strategies():
+        blockers.append("endpoint transport is not a known transport strategy")
+    if spec.endpoint_contract and (
+        spec.env.get("LINGTU_ENDPOINT_CONTRACT") != spec.endpoint_contract
+    ):
+        blockers.append("env endpoint contract does not match run spec")
+    if not spec.endpoint_contract and "LINGTU_ENDPOINT_CONTRACT" in spec.env:
+        blockers.append("env endpoint contract exists without run spec contract")
+    if spec.localization_adapter and (
+        spec.env.get("LINGTU_LOCALIZATION_ADAPTER") != spec.localization_adapter
+    ):
+        blockers.append("env localization adapter does not match run spec")
+    if not spec.localization_adapter and "LINGTU_LOCALIZATION_ADAPTER" in spec.env:
+        blockers.append("env localization adapter exists without run spec adapter")
     if spec.runtime_contract and spec.env.get("LINGTU_RUNTIME_CONTRACT") != spec.runtime_contract:
         blockers.append("env runtime contract does not match run spec")
     if spec.env.get("LINGTU_COMMAND_SINK") != spec.command_sink:
@@ -167,6 +192,10 @@ def validate_runtime_switch(spec: RuntimeRunSpec) -> RuntimeSwitchValidation:
 
 def _expected_frames() -> dict[str, object]:
     return asdict(FRAMES)
+
+
+def _known_transport_strategies() -> set[str]:
+    return {strategy.value for strategy in TransportStrategy}
 
 
 def _expected_frame_links() -> dict[str, dict[str, object]]:

@@ -257,7 +257,7 @@ class GoalResolver(FastPathMixin, SlowPathMixin):
         import os as _os
         import time as _time
 
-        from .semantic_prior import SemanticPriorEngine
+        from memory.knowledge.semantic_prior import SemanticPriorEngine
         _kg_path = _os.path.join(save_dir, "room_object_kg.json") if save_dir else None
         self._semantic_prior_engine = SemanticPriorEngine(kg_path=_kg_path)
         self._kg_path = _kg_path

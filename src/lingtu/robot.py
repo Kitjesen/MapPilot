@@ -1,8 +1,8 @@
 """Robot — all-in-one SDK facade over the real LingTu blueprint.
 
-One import, full capability. Internally builds a real ``full_stack_blueprint``
-system (the same assembly ``lingtu.py`` runs) and drives it through module
-skills, so the SDK and the CLI behave identically.
+One import, full capability. Internally resolves the same product profiles that
+``lingtu.py`` uses, then builds the selected product or compatibility Blueprint
+through the shared runtime profile builder.
 
 Usage::
 
@@ -43,7 +43,7 @@ class Robot:
     Person following ("person in red") needs the semantic stack (VisualServo);
     ``nav`` / ``sim`` / ``explore`` / ``dev`` all include it. ``map`` does not.
 
-    Override any blueprint flag via keyword args, e.g.
+    Override any resolved profile flag via keyword args, e.g.
     ``Robot("nav", llm="openai", encoder="clip")`` to enable VLM/CLIP person
     selection on a real robot (the defaults — kimi + mobileclip — fall back to
     following the most-salient person).
@@ -62,7 +62,7 @@ class Robot:
         Args:
             mode: shorthand profile selector (nav/sim/explore/map/dev).
             profile: explicit CLI profile name; overrides the ``mode`` mapping.
-            **overrides: ``full_stack_blueprint`` kwargs overrides
+            **overrides: resolved profile config overrides
                          (e.g. ``llm="openai"``, ``encoder="clip"``,
                          ``gateway_port=5051``).
         """
@@ -77,11 +77,11 @@ class Robot:
         """Build and start the full blueprint system for the chosen profile."""
         if self._started:
             return self
-        from core.blueprints.full_stack import full_stack_blueprint
-        from core.blueprints.profile_graph import resolve_profile_config
+        from core.blueprints.profile_builder import build_system_from_resolved_profile
+        from core.runtime.resolver import resolve_profile_config
 
-        cfg = resolve_profile_config(self._profile, **self._overrides)
-        self._system = full_stack_blueprint(**cfg).build()
+        cfg = resolve_profile_config(self._profile, overrides=self._overrides)
+        self._system = build_system_from_resolved_profile(self._profile, cfg)
         self._system.start()
         self._started = True
         logger.info("Robot started (profile=%s, %d modules)",

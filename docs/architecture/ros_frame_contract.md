@@ -59,7 +59,7 @@ is a human-readable mirror of `runtime_topic_allowed_frame_ids()` in
 `src/core/runtime_interface.py`; update that source first, then update this
 table and the mirror tests.
 
-| Topic | Real default frame | General allowed frames | Real S100P evidence required | Real S100P allowed frames |
+| Topic | Thunder field default frame | General allowed frames | Thunder field evidence required | Thunder field allowed frames |
 | --- | --- | --- | --- | --- |
 | `/nav/lidar_scan` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
 | `/nav/imu` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
@@ -76,6 +76,8 @@ table and the mirror tests.
 | `/nav/terrain_map_ext` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/global_path` | `map` | `map`, `odom` | yes | `map` |
 | `/nav/local_path` | `map` | `map`, `odom`, `body` | yes | `map`, `odom`, `body` |
+| `/nav/goal_pose` | `map` | `map`, `odom` | no | `map`, `odom` |
+| `/nav/way_point` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/cmd_vel` | `body` | `body` | yes | `body` |
 
 `/nav/map_cloud` and `/nav/global_path` are deliberately stricter on real
@@ -94,7 +96,7 @@ product.
 | Fast-LIO mapping/localization | `/nav/lidar_scan`, `/nav/imu` | `/nav/odometry`, `/nav/registered_cloud`, `/nav/map_cloud` | SLAM |
 | Fast-LIO raw validation | `/points_raw`, `/imu_raw` | `/nav/odometry`, `/nav/registered_cloud`, `/nav/map_cloud` | MuJoCo/raw-sensor gate |
 | Exploration strategy | `/nav/odometry`, `/nav/map_cloud`, `/nav/exploration_grid` | `/exploration/way_point` | TARE or frontier |
-| Global planning | `/nav/odometry`, `/nav/map_cloud`, `/exploration/way_point` or `/nav/goal_pose` | `/nav/global_path` | LingTu navigation |
+| Global planning | `/nav/odometry`, `/nav/map_cloud`, `/exploration/way_point` or `/nav/goal_pose` | `/nav/global_path`, `/nav/way_point` | LingTu navigation |
 | Local planning/following | `/nav/odometry`, `/nav/registered_cloud`, `/nav/global_path` | `/nav/local_path`, `/nav/cmd_vel` | LingTu autonomy |
 
 The Python `NavigationModule` deliberately rejects goals, costmaps, and
@@ -133,7 +135,7 @@ ports. It should translate model frames into the canonical contract above.
    a real TF validation gate.
 3. `/nav/map_cloud` semantics are mixed across legacy simulation code. New code
    must keep map/world clouds separate from body-frame registered clouds, and
-   real S100P evidence must reject `/nav/map_cloud` outside `map`.
+   Thunder field evidence must reject `/nav/map_cloud` outside `map`.
 4. The ROS local planner may consume `odom` and `body` frames, while the product
    Python navigation path consumes `map`. Tests must state whether they validate
    the lower-level ROS path or the product saved-map Navigation path.

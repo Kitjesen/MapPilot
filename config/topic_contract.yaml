@@ -305,10 +305,12 @@ topic_formats:
   /nav/check_obstacle: [std_msgs/msg/Bool]
   /nav/planner_status: [std_msgs/msg/String]
   /nav/navigation_boundary: [geometry_msgs/msg/PolygonStamped]
+  /nav/cancel: [std_msgs/msg/String]
   /nav/goal_pose: [geometry_msgs/msg/PoseStamped]
   /nav/goal_point: [geometry_msgs/msg/PointStamped]
+  /nav/semantic/instruction: [std_msgs/msg/String]
   /exploration/way_point: [geometry_msgs/msg/PointStamped]
-  /nav/way_point: [geometry_msgs/msg/PointStamped]
+  /nav/way_point: [geometry_msgs/msg/PoseStamped, geometry_msgs/msg/PointStamped]
   /livox/lidar: [raw_livox_custom]
   /livox/imu: [sensor_msgs/msg/Imu]
   /imu/data: [sensor_msgs/msg/Imu]
@@ -355,6 +357,8 @@ topic_allowed_frame_ids:
   /nav/terrain_map_ext: [map, odom]
   /nav/global_path: [map, odom]
   /nav/local_path: [map, odom, body]
+  /nav/goal_pose: [map, odom]
+  /nav/way_point: [map, odom]
   /nav/cmd_vel: [body]
 
 topic_default_frame_ids:
@@ -373,6 +377,8 @@ topic_default_frame_ids:
   /nav/terrain_map_ext: map
   /nav/global_path: map
   /nav/local_path: map
+  /nav/goal_pose: map
+  /nav/way_point: map
   /nav/cmd_vel: body
 
 real_runtime_topic_allowed_frame_ids:
@@ -391,6 +397,8 @@ real_runtime_topic_allowed_frame_ids:
   /nav/terrain_map_ext: [map, odom]
   /nav/global_path: [map]
   /nav/local_path: [map, odom, body]
+  /nav/goal_pose: [map, odom]
+  /nav/way_point: [map, odom]
   /nav/cmd_vel: [body]
 
 real_runtime_topic_default_frame_ids:
@@ -409,6 +417,8 @@ real_runtime_topic_default_frame_ids:
   /nav/terrain_map_ext: map
   /nav/global_path: map
   /nav/local_path: map
+  /nav/goal_pose: map
+  /nav/way_point: map
   /nav/cmd_vel: body
 
 real_runtime_required_topic_frame_ids:
@@ -426,13 +436,14 @@ real_runtime_required_endpoint_input_topics:
   - /nav/imu
 
 runtime_data_flow_topics:
-  in_process_stub: [/nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
-  real_s100p: [/nav/lidar_scan, /nav/imu, /nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/localization_health, /nav/localization_quality, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
-  mujoco_module_graph: [/nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
-  mujoco_fastlio2_live: [/points_raw, /imu_raw, /nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
-  rosbag_fastlio2_replay: [/points_raw, /imu_raw, /nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
-  gazebo_industrial: [/model/thunder/odometry, /lingtu/gazebo/raw/lidar_points, /lingtu/gazebo/raw/lidar_scan, /nav/odometry, /nav/state_estimation_at_scan, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status, /lingtu/gazebo/cmd_vel]
-  cmu_unity_external: [/state_estimation, /state_estimation_at_scan, /registered_scan, /terrain_map, /terrain_map_ext, /way_point, /nav/odometry, /nav/state_estimation_at_scan, /nav/registered_cloud, /nav/map_cloud, /nav/terrain_map_ext, /exploration/way_point, /nav/exploration_grid, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status, /cmd_vel]
+  in_process_stub: [/nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/way_point, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
+  thunder_field: [/nav/lidar_scan, /nav/imu, /nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/localization_health, /nav/localization_quality, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/way_point, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
+  thunder_lite_local: [/nav/cmd_vel]
+  mujoco_module_graph: [/nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/way_point, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
+  mujoco_fastlio2_live: [/points_raw, /imu_raw, /nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/way_point, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
+  rosbag_fastlio2_replay: [/points_raw, /imu_raw, /nav/odometry, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/way_point, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status]
+  gazebo_industrial: [/model/thunder/odometry, /lingtu/gazebo/raw/lidar_points, /lingtu/gazebo/raw/lidar_scan, /nav/odometry, /nav/state_estimation_at_scan, /nav/registered_cloud, /nav/map_cloud, /nav/exploration_grid, /nav/terrain_map_ext, /exploration/way_point, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/way_point, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status, /lingtu/gazebo/cmd_vel]
+  cmu_unity_external: [/state_estimation, /state_estimation_at_scan, /registered_scan, /terrain_map, /terrain_map_ext, /way_point, /nav/odometry, /nav/state_estimation_at_scan, /nav/registered_cloud, /nav/map_cloud, /nav/terrain_map_ext, /exploration/way_point, /nav/exploration_grid, /nav/goal_pose, /nav/traversable_frontiers, /nav/frontier_candidate, /nav/global_path, /nav/way_point, /nav/local_path, /nav/cmd_vel, /nav/added_obstacles, /nav/check_obstacle, /nav/planner_status, /cmd_vel]
 
 algorithm_interfaces:
   fastlio_mapping:
@@ -467,17 +478,17 @@ algorithm_interfaces:
     map_dependency: live_registered_scan_or_terrain_map_ext
   global_planning:
     inputs: [/nav/odometry, /nav/map_cloud, /exploration/way_point, /nav/goal_pose]
-    outputs: [/nav/global_path]
+    outputs: [/nav/global_path, /nav/way_point]
     owner: lingtu_navigation
     map_dependency: planner_specific_pct_saved_tomogram_or_astar_occupancy_grid
   astar_global_planning:
     inputs: [/nav/odometry, /nav/exploration_grid, /nav/goal_pose]
-    outputs: [/nav/global_path]
+    outputs: [/nav/global_path, /nav/way_point]
     owner: lingtu_navigation
     map_dependency: live_or_saved_occupancy_grid
   pct_global_planning:
     inputs: [/nav/odometry, artifact:tomogram, /nav/goal_pose]
-    outputs: [/nav/global_path]
+    outputs: [/nav/global_path, /nav/way_point]
     owner: lingtu_pct
     map_dependency: same_source_saved_tomogram_required
   local_planning_and_following:
@@ -533,7 +544,7 @@ runtime_data_flow:
       - /exploration/way_point
       - /nav/goal_pose
       - artifact:tomogram
-    outputs: [/nav/global_path]
+    outputs: [/nav/global_path, /nav/way_point]
     owner: lingtu_navigation_or_pct
     frame_role: map
     map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -578,7 +589,7 @@ resolved_runtime_data_flow:
       map_dependency: live_map_or_occupancy_grid
     - name: global_planning
       inputs: [/nav/odometry, /nav/map_cloud, /nav/exploration_grid, /exploration/way_point, /nav/goal_pose, artifact:tomogram]
-      outputs: [/nav/global_path]
+      outputs: [/nav/global_path, /nav/way_point]
       owner: lingtu_navigation_or_pct
       frame_role: map
       map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -600,7 +611,7 @@ resolved_runtime_data_flow:
       owner: cmd_vel_mux_to_endpoint_sink
       frame_role: body_twist
       map_dependency: none
-  real_s100p:
+  thunder_field:
     - name: endpoint_adapter
       inputs: [/nav/lidar_scan, /nav/imu]
       outputs: [/nav/lidar_scan, /nav/imu]
@@ -621,7 +632,7 @@ resolved_runtime_data_flow:
       map_dependency: live_map_or_occupancy_grid
     - name: global_planning
       inputs: [/nav/odometry, /nav/map_cloud, /nav/exploration_grid, /exploration/way_point, /nav/goal_pose, artifact:tomogram]
-      outputs: [/nav/global_path]
+      outputs: [/nav/global_path, /nav/way_point]
       owner: lingtu_navigation_or_pct
       frame_role: map
       map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -637,6 +648,19 @@ resolved_runtime_data_flow:
       owner: local_planner_dynamic_obstacle_gate
       frame_role: odom_body_registered_cloud
       map_dependency: current_registered_cloud_and_added_obstacles
+    - name: command_boundary
+      inputs: [/nav/cmd_vel]
+      outputs: [hardware_driver_after_cmd_vel_mux]
+      owner: cmd_vel_mux_to_endpoint_sink
+      frame_role: body_twist
+      map_dependency: none
+  thunder_lite_local:
+    - name: endpoint_adapter
+      inputs: []
+      outputs: []
+      owner: endpoint_adapter
+      frame_role: native_to_canonical
+      map_dependency: declared_by_data_source
     - name: command_boundary
       inputs: [/nav/cmd_vel]
       outputs: [hardware_driver_after_cmd_vel_mux]
@@ -664,7 +688,7 @@ resolved_runtime_data_flow:
       map_dependency: live_map_or_occupancy_grid
     - name: global_planning
       inputs: [/nav/odometry, /nav/map_cloud, /nav/exploration_grid, /exploration/way_point, /nav/goal_pose, artifact:tomogram]
-      outputs: [/nav/global_path]
+      outputs: [/nav/global_path, /nav/way_point]
       owner: lingtu_navigation_or_pct
       frame_role: map
       map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -707,7 +731,7 @@ resolved_runtime_data_flow:
       map_dependency: live_map_or_occupancy_grid
     - name: global_planning
       inputs: [/nav/odometry, /nav/map_cloud, /nav/exploration_grid, /exploration/way_point, /nav/goal_pose, artifact:tomogram]
-      outputs: [/nav/global_path]
+      outputs: [/nav/global_path, /nav/way_point]
       owner: lingtu_navigation_or_pct
       frame_role: map
       map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -750,7 +774,7 @@ resolved_runtime_data_flow:
       map_dependency: live_map_or_occupancy_grid
     - name: global_planning
       inputs: [/nav/odometry, /nav/map_cloud, /nav/exploration_grid, /exploration/way_point, /nav/goal_pose, artifact:tomogram]
-      outputs: [/nav/global_path]
+      outputs: [/nav/global_path, /nav/way_point]
       owner: lingtu_navigation_or_pct
       frame_role: map
       map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -793,7 +817,7 @@ resolved_runtime_data_flow:
       map_dependency: live_map_or_occupancy_grid
     - name: global_planning
       inputs: [/nav/odometry, /nav/map_cloud, /nav/exploration_grid, /exploration/way_point, /nav/goal_pose, artifact:tomogram]
-      outputs: [/nav/global_path]
+      outputs: [/nav/global_path, /nav/way_point]
       owner: lingtu_navigation_or_pct
       frame_role: map
       map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -836,7 +860,7 @@ resolved_runtime_data_flow:
       map_dependency: live_map_or_occupancy_grid
     - name: global_planning
       inputs: [/nav/odometry, /nav/map_cloud, /nav/exploration_grid, /exploration/way_point, /nav/goal_pose, artifact:tomogram]
-      outputs: [/nav/global_path]
+      outputs: [/nav/global_path, /nav/way_point]
       owner: lingtu_navigation_or_pct
       frame_role: map
       map_dependency: pct_uses_same_source_saved_tomogram;astar_or_frontier_may_use_live_occupancy_grid
@@ -953,7 +977,7 @@ data_sources:
     slam_source: none
     localization_source: mock_or_in_process_odometry
     mapping_source: mock_or_in_process_map
-  real_s100p:
+  thunder_field:
     provider: hardware
     owns: [mid360_lidar, imu, robot_actuation]
     normalized_outputs: [/nav/lidar_scan, /nav/imu]
@@ -965,6 +989,18 @@ data_sources:
     slam_source: lingtu_fastlio_or_external_robot_slam
     localization_source: slam_localizer
     mapping_source: slam_map_cloud
+  thunder_lite_local:
+    provider: hardware
+    owns: [robot_actuation, local_module_graph]
+    normalized_outputs: []
+    command_sink: hardware_driver_after_cmd_vel_mux
+    source_outputs: []
+    algorithm_entry_outputs: []
+    algorithm_context_outputs: []
+    lidar_extrinsic_profile:
+    slam_source: none
+    localization_source: none
+    mapping_source: none
   mujoco_module_graph:
     provider: mujoco
     owns: [physics, rendered_lidar, simulation_actuation]
@@ -1036,9 +1072,10 @@ profile_data_sources:
   sim_gazebo: {data_source: gazebo_industrial, mode: gazebo_ros_native_simulation}
   sim_industrial: {data_source: gazebo_industrial, mode: gazebo_industrial_delivery_demo}
   sim_cmu_tare: {data_source: cmu_unity_external, mode: external_cmu_unity_tare_adapter}
-  map: {data_source: real_s100p, mode: real_robot_mapping}
-  nav: {data_source: real_s100p, mode: real_robot_saved_map_navigation}
-  explore: {data_source: real_s100p, mode: real_robot_live_exploration}
-  tare_explore: {data_source: real_s100p, mode: real_robot_tare_exploration}
-  super_lio: {data_source: real_s100p, mode: real_robot_super_lio_mapping}
-  super_lio_relocation: {data_source: real_s100p, mode: real_robot_super_lio_relocalization}
+  lite: {data_source: thunder_lite_local, mode: minimal_thunder_no_ros}
+  map: {data_source: thunder_field, mode: real_robot_mapping}
+  nav: {data_source: thunder_field, mode: real_robot_saved_map_navigation}
+  explore: {data_source: thunder_field, mode: real_robot_live_exploration}
+  tare_explore: {data_source: thunder_field, mode: real_robot_tare_exploration}
+  super_lio: {data_source: thunder_field, mode: real_robot_super_lio_mapping}
+  super_lio_relocation: {data_source: thunder_field, mode: real_robot_super_lio_relocalization}

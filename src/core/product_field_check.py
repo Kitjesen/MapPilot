@@ -18,6 +18,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from core.runtime_interface import THUNDER_FIELD_EVIDENCE_LABEL
+
 FIELD_CHECK_SCHEMA_VERSION = "lingtu.product_field_check.v1"
 HARDWARE_COMMAND_SINK = "hardware_driver_after_cmd_vel_mux"
 ALGORITHM_REQUIRED_MODES = ("simulation", "field")
@@ -238,14 +240,14 @@ def _default_switch_plan_request(mode: str) -> dict[str, Any]:
     if mode == "field":
         return {
             "current_profile": "explore",
-            "current_endpoint": "real_s100p",
+            "current_endpoint": "thunder_field",
             "target_profile": "explore",
             "target_endpoint": "mujoco_live",
         }
     return {
         "current_profile": "sim_mujoco_live",
         "target_profile": "explore",
-        "target_endpoint": "real_s100p",
+        "target_endpoint": "thunder_field",
     }
 
 
@@ -307,7 +309,7 @@ def build_product_field_check(
     if field_mode and routecheck.get("ok") is not True:
         blockers.append("route preview is not passing or unavailable")
     if field_mode and evidence.get("ok") is not True:
-        blockers.append("real S100P field evidence is not passing")
+        blockers.append(f"{THUNDER_FIELD_EVIDENCE_LABEL} is not passing")
     if field_mode and frontier_preview and frontier_preview.get("ok") is not True:
         blockers.append("traversable frontier preview is not passing")
     if algorithm["required"] and algorithm["ok"] is not True:
@@ -395,7 +397,7 @@ def build_product_field_check(
             "cmd_vel_mux": _status(evidence.get("cmd_vel_sent_to_hardware") is True),
         },
         "evidence": {
-            "real_s100p": _status(evidence.get("ok") is True),
+            "thunder_field": _status(evidence.get("ok") is True),
             "age_s": evidence.get("report_age_s"),
             "mode": mode,
             "runtime_contract": evidence.get("runtime_contract"),
@@ -413,7 +415,7 @@ def build_product_field_check(
             "runtime_audit": "python lingtu.py runtime-audit",
             "real_runtime_evidence": (
                 "python lingtu.py real-runtime-evidence --duration-sec 20 "
-                "--json-out artifacts/real_s100p_runtime/report.json"
+                "--json-out artifacts/thunder_field_runtime/report.json"
             ),
             "gateway_field_acceptance": (
                 "python lingtu.py gateway-runtime-acceptance --acceptance-mode field "

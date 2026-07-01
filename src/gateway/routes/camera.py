@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import os
-import subprocess
-import tempfile
 from typing import Any
 
 from fastapi.responses import JSONResponse
@@ -73,6 +70,12 @@ def _camera_unavailable(gw: Any | None) -> JSONResponse | None:
     )
 
 
+def _legacy_ros2_snapshot_jpeg() -> bytes | None:
+    from compat.ros2.camera_snapshot import capture_compressed_camera_snapshot
+
+    return capture_compressed_camera_snapshot()
+
+
 def register_camera_routes(app, gw=None) -> None:
     @app.get(
         "/api/v1/camera/snapshot",
@@ -97,44 +100,9 @@ def register_camera_routes(app, gw=None) -> None:
         if unavailable is not None:
             return unavailable
 
-        # Compatibility fallback for standalone route tests or legacy deployments
-        # where no Gateway instance was passed into this route module. This is
-        # not the product runtime communication boundary.
-        out = os.path.join(tempfile.gettempdir(), "lingtu_cam_snap.jpg")
-        script = os.path.join(tempfile.gettempdir(), "lingtu_cam_snap.py")
-        # Write script to avoid shell escaping issues.
-        with open(script, "w", encoding="utf-8") as f:
-            f.write(
-                (
-                    "import rclpy, sys\n"
-                    "from sensor_msgs.msg import CompressedImage\n"
-                    "rclpy.init()\n"
-                    "n=rclpy.create_node('cam_snap')\n"
-                    "msg=[None]\n"
-                    "n.create_subscription(CompressedImage,"
-                    "'/camera/color/image_raw/compressed',"
-                    "lambda m:msg.__setitem__(0,m),1)\n"
-                    "import time; t=time.time()\n"
-                    "while msg[0] is None and time.time()-t<2:"
-                    " rclpy.spin_once(n,timeout_sec=0.1)\n"
-                    "n.destroy_node(); rclpy.shutdown()\n"
-                    f"open('{out}','wb').write(msg[0].data)"
-                    " if msg[0] else None\n"
-                )
-            )
         try:
-            # Unset RMW to use default fastrtps (camera uses fastrtps).
-            env = os.environ.copy()
-            env.pop("RMW_IMPLEMENTATION", None)
-            subprocess.run(
-                ["bash", "-c", f"source /opt/ros/humble/setup.bash && python3 {script}"],
-                capture_output=True,
-                timeout=6,
-                env=env,
-            )
-            if os.path.isfile(out) and os.path.getsize(out) > 100:
-                with open(out, "rb") as f:
-                    data = f.read()
+            data = _legacy_ros2_snapshot_jpeg()
+            if data:
                 return Response(content=data, media_type="image/jpeg")
             return _error_response(
                 "no_frame",

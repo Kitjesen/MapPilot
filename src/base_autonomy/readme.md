@@ -126,7 +126,7 @@ which handles enable/disable, backend selection, and explicit wiring automatical
 The `nanobind` / `nav_core` backends require the compiled extension:
 
 ```bash
-bash scripts/build_nav_core.sh   # cmake + nanobind, ~30s
+bash scripts/build/build_nav_core.sh   # cmake + nanobind, ~30s
 # or
 make nav_core
 ```
@@ -170,5 +170,3 @@ Controlled via `config/robot_config.yaml → path_follower.no_rot_at_stop / no_r
 | `no_rot_at_stop` | `false` *(default)* | Robot may rotate in-place to avoid obstacles after emergency stop |
 | `no_rot_at_stop` | `true`              | Full lock on emergency stop — wait for human intervention         |
 | `no_rot_at_goal` | `true` *(default)*  | Stop precisely at goal, no in-place spin                          |
-
-

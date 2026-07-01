@@ -9,7 +9,7 @@ LingTu (灵途) is an autonomous navigation system for quadruped robots in outdo
 - **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64) | ROS2 Humble | Ubuntu 22.04
 - **Languages**: Python (framework + semantic modules), C++ (SLAM/terrain/planner)
 - **Architecture**: Module-First — Module is the only runtime unit, Blueprint is the only orchestration
-- **Guideline**: `docs/MODULE_FIRST_GUIDELINE.md` — 8 rules for how code should be structured
+- **Guideline**: `docs/archive/MODULE_FIRST_GUIDELINE.md` — 8 rules for how code should be structured
 
 ## Quick Start
 
@@ -22,14 +22,14 @@ python lingtu.py                          # interactive profile selector
 python lingtu.py stub                     # no hardware, framework testing
 python lingtu.py sim                      # MuJoCo simulation (full stack)
 python lingtu.py dev                      # semantic pipeline, no C++ nodes
-python lingtu.py s100p                    # real S100P robot (BPU + Kimi)
+python lingtu.py nav                      # real S100P saved-map navigation (BPU + Qwen)
 python lingtu.py explore                  # exploration, no pre-built map
 python lingtu.py map                      # mapping mode (SLAM + save)
 python lingtu.py --list                   # list all profiles
 
 # Override any profile flag
-python lingtu.py s100p --llm mock         # real robot but mock LLM
-python lingtu.py s100p --daemon           # background daemon (S100P)
+python lingtu.py nav --llm mock           # real robot but mock LLM
+python lingtu.py nav --daemon             # background daemon (S100P navigation)
 python lingtu.py stop                     # stop running daemon
 
 # Composable factory API (each line = one functional stack)
@@ -185,8 +185,8 @@ Note: `calibration/` and `sim/` live at repo root (not under `src/`). See [Senso
 | `src/nav/services/dynamic_filter.py` | DUFOMap wrapper (subprocess repack/run/backup) |
 | `src/nav/services/map_manager_module.py` | Save pipeline: PGO →DUFOMap →tomogram →occupancy |
 | `scripts/lingtu` | **Unified Operations CLI** (status/watch/map/nav/svc/log/health) |
-| `scripts/build_dufomap.sh` | Idempotent aarch64 build of DUFOMap (apt + patch + cmake) |
-| `scripts/dufomap_offline_test.py` | Standalone validator: run DUFOMap on existing map, print stats |
+| `scripts/build/build_dufomap.sh` | Idempotent aarch64 build of DUFOMap (apt + patch + cmake) |
+| `scripts/diagnostics/dufomap_offline_test.py` | Standalone validator: run DUFOMap on existing map, print stats |
 | `src/nav/services/frame_contract.py` | Central frame-id definitions + integrity checks for all coordinate frames |
 | `src/nav/ros2_waypoint_bridge_module.py` | ROS2 WaypointBridge: accepts /nav/goal goals from external ROS2 nodes |
 | `src/gateway/templates/map_viewer.html` | Embedded client-side map viewer served by GatewayModule |
@@ -423,7 +423,7 @@ bp.wire("TeleopModule", "teleop_active", "NavigationModule", "teleop_active")
 - **Nav deploy**: `/opt/lingtu/nav/`
 - **CycloneDDS**: Built from source at `~/cyclonedds/install/` (Unitree approach)
 - **Python**: 3.10.12, cyclonedds==0.10.5
-- **DUFOMap binary**: `~/src/dufomap/build/dufomap_run` (see `scripts/build_dufomap.sh`)
+- **DUFOMap binary**: `~/src/dufomap/build/dufomap_run` (see `scripts/build/build_dufomap.sh`)
 - **Default map dir**: `~/data/nova/maps/` (was `~/data/inovxio/data/maps/` —migrated)
 
 ## Operations CLI (`scripts/lingtu`)

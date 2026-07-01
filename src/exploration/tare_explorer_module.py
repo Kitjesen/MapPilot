@@ -1,11 +1,11 @@
-"""TAREExplorerModule — bridges the TARE ROS2 node (CMU) into LingTu.
+"""TAREExplorerModule - bridges the TARE planner into LingTu.
 
 Architecture
 ------------
-The TARE planner runs as a separate C++ ROS2 node (started via
+The TARE planner runs as a separate C++ process (started via
 ``exploration.native_factories.tare_explorer``). This module subscribes to
-its DDS output and re-publishes it through the framework's In/Out ports so
-the rest of LingTu stays unaware a third-party node exists.
+its DDS output and re-publishes it through framework ports. ROS 2 topic
+compatibility lives in ``compat.ros2.tare_bridge``.
 
 Port contract
 -------------
@@ -116,8 +116,8 @@ class TAREExplorerModule(Module, layer=5):
         )
 
         self._reader = None
-        self._rclpy_node = None
-        self._publisher = None
+        self._cyclonedds_publisher = None
+        self._cyclonedds_bool_type = None
 
         # Runtime state
         self._last_waypoint_ts: float = 0.0
@@ -147,29 +147,14 @@ class TAREExplorerModule(Module, layer=5):
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
-    # ROS2_BRIDGE: The preflight rclpy check is for the legacy fallback path
-    # (``_try_rclpy``).  New deployments should use cyclonedds OR add the
-    # separate ``TAREROS2BridgeModule`` (exploration.tare_ros2_bridge_module).
-    # Revisit when the cyclonedds path is proven stable on all target hardware.
-
     def preflight(self) -> str | None:
-        """Verify that at least one DDS backend is reachable before the system starts."""
-        has_cyclonedds = False
-        has_rclpy = False
+        """Verify that the lightweight DDS backend is importable before startup."""
         try:
             import cyclonedds  # noqa: F401
-            has_cyclonedds = True
         except ImportError:
-            pass
-        try:
-            import rclpy  # noqa: F401
-            has_rclpy = True
-        except ImportError:
-            pass
-        if not has_cyclonedds and not has_rclpy:
             return (
-                "TAREExplorerModule requires cyclonedds or rclpy, but neither is installed. "
-                "Install cyclonedds-python or source a ROS2 workspace."
+                "TAREExplorerModule requires cyclonedds-python. "
+                "Use compat.ros2.tare_bridge for ROS 2 topic compatibility."
             )
         return None
 
@@ -178,18 +163,14 @@ class TAREExplorerModule(Module, layer=5):
         self.navigation_status.subscribe(self._on_navigation_status)
         if self._try_cyclonedds():
             return
-        if self._try_rclpy():
-            return
-        # preflight() guarantees at least one package is importable, so reaching
-        # here means runtime init failed despite the package being present.
         logger.warning(
-            "TAREExplorerModule: DDS backend import succeeded but init failed; "
+            "TAREExplorerModule: cyclonedds unavailable or failed to initialize; "
             "no waypoints will be produced."
         )
 
     def start(self) -> None:
         super().start()
-        self.alive.publish(self._reader is not None or self._rclpy_node is not None)
+        self.alive.publish(self._reader is not None)
         self._shutdown.clear()
         # Watchdog: detect TARE silence and publish health state
         self._watchdog_thread = threading.Thread(
@@ -215,13 +196,6 @@ class TAREExplorerModule(Module, layer=5):
             except Exception:
                 pass
             self._reader = None
-        # ROS2_BRIDGE: rclpy node cleanup (legacy fallback).
-        if self._rclpy_node is not None:
-            try:
-                self._rclpy_node.destroy_node()
-            except Exception:
-                pass
-            self._rclpy_node = None
         super().stop()
 
     # ── DDS transports ───────────────────────────────────────────────────
@@ -249,8 +223,6 @@ class TAREExplorerModule(Module, layer=5):
                 return False
             reader.spin_background()
             self._reader = reader
-            # We reuse the reader's internal DDS participant for publishing
-            # the start signal; falling back to rclpy publish otherwise.
             try:
                 from cyclonedds.domain import DomainParticipant
                 from cyclonedds.pub import DataWriter, Publisher
@@ -270,49 +242,6 @@ class TAREExplorerModule(Module, layer=5):
             return False
         except Exception as e:
             logger.warning("TAREExplorerModule: cyclonedds init failed: %s", e)
-            return False
-
-    # ROS2_BRIDGE: ``_try_rclpy`` is the legacy rclpy fallback.  The
-    # extracted ``TAREROS2BridgeModule`` (exploration/tare_ros2_bridge_module.py)
-    # provides equivalent functionality as a standalone Module.  Remove this
-    # path when cyclonedds is confirmed on all target robots.
-
-    def _try_rclpy(self) -> bool:
-        """Fallback: rclpy subscribe + publish via shared executor."""
-        try:
-            from geometry_msgs.msg import PointStamped as ROS2PointStamped
-            from nav_msgs.msg import Path as ROS2Path
-            from rclpy.node import Node
-            from rclpy.qos import QoSProfile, ReliabilityPolicy
-            from std_msgs.msg import Bool as ROS2Bool
-            from std_msgs.msg import Float32 as ROS2Float32
-
-            from core.ros2_context import ensure_rclpy, get_shared_executor
-
-            ensure_rclpy()
-            qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=10)
-            node = Node("tare_bridge")
-            get_shared_executor().add_node(node)
-            node.create_subscription(
-                ROS2PointStamped, self._way_point_topic,
-                self._on_rclpy_waypoint, qos)
-            node.create_subscription(
-                ROS2Path, self._path_topic,
-                self._on_rclpy_path, qos)
-            node.create_subscription(
-                ROS2Float32, self._runtime_topic,
-                self._on_rclpy_runtime, qos)
-            node.create_subscription(
-                ROS2Bool, self._finish_topic,
-                self._on_rclpy_finish, qos)
-            self._publisher = node.create_publisher(
-                ROS2Bool, self._start_topic, qos)
-            self._rclpy_bool_type = ROS2Bool
-            self._rclpy_node = node
-            logger.info("TAREExplorerModule: using rclpy fallback")
-            return True
-        except (ImportError, Exception) as e:
-            logger.debug("TAREExplorerModule: rclpy unavailable: %s", e)
             return False
 
     @staticmethod
@@ -405,44 +334,9 @@ class TAREExplorerModule(Module, layer=5):
             logger.debug("TARE dds waypoint error: %s", e)
 
     def _on_dds_path(self, msg) -> None:
-        try:
-            frame = msg.header.frame_id or "map"
-            pts = [
-                {"x": float(ps.pose.position.x),
-                 "y": float(ps.pose.position.y),
-                 "z": float(ps.pose.position.z),
-                 "frame_id": frame}
-                for ps in msg.poses
-            ]
-            self._path_count += 1
-            self._publish_strategy_path_if_ready(pts)
-        except Exception as e:
-            logger.debug("TARE dds path error: %s", e)
+        self._on_path_message(msg, source="dds")
 
-    def _on_dds_runtime(self, msg) -> None:
-        try:
-            self._last_runtime_ms = float(msg.data)
-        except Exception:
-            pass
-
-    def _on_dds_finish(self, msg) -> None:
-        try:
-            self._last_finish = bool(msg.data)
-        except Exception:
-            pass
-
-    # ROS2_BRIDGE: rclpy callbacks (legacy fallback).  The extracted
-    # ``TAREROS2BridgeModule`` handles these equivalently.
-
-    def _on_rclpy_waypoint(self, msg) -> None:
-        try:
-            frame = msg.header.frame_id or "map"
-            self._emit_waypoint(float(msg.point.x), float(msg.point.y),
-                                  float(msg.point.z), frame_id=frame)
-        except Exception as e:
-            logger.warning("TARE rclpy waypoint error: %s", e)
-
-    def _on_rclpy_path(self, msg) -> None:
+    def _on_path_message(self, msg, *, source: str = "external") -> None:
         try:
             frame = str(getattr(getattr(msg, "header", None), "frame_id", "") or "map")
             pts = [
@@ -455,7 +349,19 @@ class TAREExplorerModule(Module, layer=5):
             self._path_count += 1
             self._publish_strategy_path_if_ready(pts)
         except Exception as e:
-            logger.debug("TARE rclpy path error: %s", e)
+            logger.debug("TARE %s path error: %s", source, e)
+
+    def _on_dds_runtime(self, msg) -> None:
+        try:
+            self._last_runtime_ms = float(msg.data)
+        except Exception:
+            pass
+
+    def _on_dds_finish(self, msg) -> None:
+        try:
+            self._last_finish = bool(msg.data)
+        except Exception:
+            pass
 
     def _strategy_goals_from_path(self, pts: list[dict]) -> list[dict]:
         if not self._prefer_path_strategy or len(pts) < 2:
@@ -628,14 +534,6 @@ class TAREExplorerModule(Module, layer=5):
             for x, y in self._last_goal_candidates
         )
 
-    # ROS2_BRIDGE: rclpy runtime/finish callbacks.
-
-    def _on_rclpy_runtime(self, msg) -> None:
-        self._last_runtime_ms = float(msg.data)
-
-    def _on_rclpy_finish(self, msg) -> None:
-        self._last_finish = bool(msg.data)
-
     # ── Emit ──────────────────────────────────────────────────────────────
 
     def _emit_waypoint(self, x: float, y: float, z: float,
@@ -707,12 +605,6 @@ class TAREExplorerModule(Module, layer=5):
             if self._reader is not None and getattr(self, "_cyclonedds_publisher", None):
                 msg = self._cyclonedds_bool_type(data=bool(enable))
                 self._cyclonedds_publisher.write(msg)
-                return
-            # ROS2_BRIDGE: rclpy start-signal publish (legacy fallback).
-            if self._publisher is not None:
-                msg = self._rclpy_bool_type()
-                msg.data = bool(enable)
-                self._publisher.publish(msg)
         except Exception as e:
             logger.debug("TARE start signal publish failed: %s", e)
 
@@ -727,10 +619,10 @@ class TAREExplorerModule(Module, layer=5):
         wp_age = (now - self._last_waypoint_ts
                   if self._last_waypoint_ts > 0 else float("inf"))
         healthy = (wp_age < self._way_point_timeout_s
-                   and (self._reader is not None or self._rclpy_node is not None))
+                   and self._reader is not None)
         self.tare_stats.publish({
             **self._backend_status.as_health_fields(),
-            "alive": self._reader is not None or self._rclpy_node is not None,
+            "alive": self._reader is not None,
             "started": self._started_exploration,
             "healthy": healthy,
             "waypoint_count": self._waypoint_count,
@@ -791,7 +683,7 @@ class TAREExplorerModule(Module, layer=5):
         now = _time.time()
         return json.dumps({
             **self._backend_status.as_health_fields(),
-            "alive": self._reader is not None or self._rclpy_node is not None,
+            "alive": self._reader is not None,
             "started": self._started_exploration,
             "waypoint_count": self._waypoint_count,
             "path_count": self._path_count,

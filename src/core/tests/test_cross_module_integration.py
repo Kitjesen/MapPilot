@@ -213,36 +213,79 @@ try:
 except Exception as e:
     test(25, "Safety stop wiring", False, str(e))
 
-# ==== Test 26: Teleop priority ====
+# ==== Test 26: Safety stop loop remains bounded ====
+try:
+    from core.msgs.geometry import Pose, Quaternion, Twist, Vector3
+    from core.msgs.nav import Odometry
+
+    safety = system.get_module("SafetyRingModule")
+    nav = system.get_module("NavigationModule")
+    lp = system.get_module("LocalPlannerModule")
+    pf = system.get_module("PathFollowerModule")
+    mux = system.get_module("CmdVelMux")
+
+    # Prime SafetyRing into a healthy state first so the LOST update below is
+    # the only STOP edge under test. The real full-stack wiring feeds
+    # CmdVelMux.driver_cmd_vel back into SafetyRing.cmd_vel for auditing.
+    safety._on_odom(Odometry(
+        pose=Pose(position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0, 0, 0, 1)),
+        twist=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0, 0, 0)),
+    ))
+    safety._on_cmdvel(Twist.zero())
+    safety._on_localization_status({"state": "OK", "confidence": 1.0})
+
+    watched_ports = [
+        safety.stop_cmd,
+        nav.clear_path,
+        nav.recovery_cmd_vel,
+        lp.local_path,
+        pf.cmd_vel,
+        mux.driver_cmd_vel,
+    ]
+    before_errors = sum(getattr(p, "_publish_errors", 0) for p in watched_ports)
+    before_stop_count = safety.stop_cmd.msg_count
+
+    safety._on_localization_status({"state": "LOST", "confidence": 0.0})
+    time.sleep(0.05)
+
+    after_errors = sum(getattr(p, "_publish_errors", 0) for p in watched_ports)
+    stop_delta = safety.stop_cmd.msg_count - before_stop_count
+    test(26, "Safety stop loop remains bounded",
+         after_errors == before_errors and 1 <= stop_delta <= 10,
+         "errors %d->%d, stop_delta=%d" % (before_errors, after_errors, stop_delta))
+except Exception as e:
+    test(26, "Safety stop loop remains bounded", False, str(e))
+
+# ==== Test 27: Teleop priority ====
 try:
     teleop = system.get_module("TeleopModule")
     teleop._on_joy({"lx": 0.5, "ly": 0.0, "az": 0.1})
     active_after = teleop._active
-    # TeleopModule uses time.monotonic() (not time.time()) for joy
+
     # timestamps. Mock an idle timestamp using the same clock so the
     # release branch in _check_idle actually fires.
     teleop._last_joy_time = time.monotonic() - teleop._release_timeout - 1.0
     teleop._check_idle()
     released = not teleop._active
-    test(26, "Teleop priority: _on_joy active, check_idle releases",
+    test(27, "Teleop priority: _on_joy active, check_idle releases",
          active_after and released,
          "active_after=%s, released=%s" % (active_after, released))
 except Exception as e:
-    test(26, "Teleop priority", False, str(e))
+    test(27, "Teleop priority", False, str(e))
 
-# ==== Test 27: Instruction fan-in ====
+# ==== Test 28: Instruction fan-in ====
 try:
     instr_conns = [c for c in system.connections
                    if c[3] == "instruction" and c[2] == "SemanticPlannerModule"]
     instr_sources = set(c[0] for c in instr_conns)
     has_gw = "GatewayModule" in instr_sources
     has_mcp = "MCPServerModule" in instr_sources
-    test(27, "Instruction fan-in: Gateway + MCP -> SemanticPlanner",
+    test(28, "Instruction fan-in: Gateway + MCP -> SemanticPlanner",
          has_gw and has_mcp, "sources=%s" % instr_sources)
 except Exception as e:
-    test(27, "Instruction fan-in", False, str(e))
+    test(28, "Instruction fan-in", False, str(e))
 
-# ==== Test 28: goal_pose SemanticPlanner -> Navigation ====
+# ==== Test 29: goal_pose SemanticPlanner -> Navigation ====
 try:
     from core.msgs.geometry import PoseStamped
     goal_conns = [c for c in system.connections
@@ -258,32 +301,32 @@ try:
     sp2.goal_pose.publish(goal)
     time.sleep(0.05)
     after_gp = nav.ports_in["goal_pose"].msg_count
-    test(28, "goal_pose: SemanticPlanner -> NavigationModule",
+    test(29, "goal_pose: SemanticPlanner -> NavigationModule",
          after_gp > before_gp and len(goal_conns) > 0,
          "wire=%d, before=%d, after=%d" % (len(goal_conns), before_gp, after_gp))
 except Exception as e:
-    test(28, "goal_pose fan-in", False, str(e))
+    test(29, "goal_pose fan-in", False, str(e))
 
-# ==== Test 29: @skill MCP discovery ====
+# ==== Test 30: @skill MCP discovery ====
 try:
     mcp = system.get_module("MCPServerModule")
     # MCPServerModule was refactored to a single _tool_list (no longer split
     # static TOOLS + _dynamic_tools). The list is populated in
     # on_system_modules() by walking @skill methods of all modules.
     tool_count = len(getattr(mcp, "_tool_list", []))
-    test(29, "@skill MCP discovery: tool count > 0",
+    test(30, "@skill MCP discovery: tool count > 0",
          tool_count > 0, "tool_list len=%d" % tool_count)
 except Exception as e:
-    test(29, "@skill MCP discovery", False, str(e))
+    test(30, "@skill MCP discovery", False, str(e))
 
-# ==== Test 30: Zero auto_wire ambiguity ====
+# ==== Test 31: Zero auto_wire ambiguity ====
 try:
     ambiguity_warnings = [w for w in _build_warnings if "ambiguity" in w.lower()]
-    test(30, "Zero auto_wire ambiguity warnings",
+    test(31, "Zero auto_wire ambiguity warnings",
          len(ambiguity_warnings) == 0,
          "found %d: %s" % (len(ambiguity_warnings), ambiguity_warnings[:3]))
 except Exception as e:
-    test(30, "Zero auto_wire ambiguity", False, str(e))
+    test(31, "Zero auto_wire ambiguity", False, str(e))
 
 # ==== Summary ====
 _passed = sum(1 for v in results.values() if v)

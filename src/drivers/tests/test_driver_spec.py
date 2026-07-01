@@ -24,7 +24,7 @@ _DRIVER_MODULES = (
     "drivers.real.thunder.han_dog_module",
     "core.blueprints.stub",
     "drivers.sim.mujoco_driver_module",
-    "drivers.sim.ros2_sim_driver",
+    "compat.ros2.sim_driver",
 )
 
 _MOTION_DRIVER_BACKENDS = ("stub", "thunder", "sim_mujoco", "sim_ros2")

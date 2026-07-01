@@ -10,9 +10,13 @@ import textwrap
 import threading
 from pathlib import Path
 
+from core.plugin_seed import seed_registered_plugins
+from lingtu_runtime.plugin_seed import install_builtin_plugin_catalog
+
 from . import term as T
+from .lifecycle import daemonize, health_check, kill_residual_ports
 from .logging_util import setup_logging
-from .profiles_data import PROFILES, ROBOT_PRESETS
+from .profiles_data import PROFILES
 from .repl import LingTuREPL
 from .run_state import (
     _lingtu_version,
@@ -23,20 +27,19 @@ from .run_state import (
 from .runtime_display import (
     format_frame_links,
     format_inspection_acceptance,
-    format_real_runtime_evidence_summary,
     format_product_field_check,
+    format_real_runtime_evidence_summary,
     format_runtime_audit_payload,
-    format_runtime_contract_manifest,
     format_runtime_boundary,
+    format_runtime_contract_manifest,
     format_runtime_flow,
     format_runtime_flow_stages,
     format_runtime_frames,
-    format_runtime_spec_payload,
     format_runtime_sources,
+    format_runtime_spec_payload,
     format_runtime_switch_plan,
     format_runtime_topic_frames,
 )
-from .runtime_extra import daemonize, health_check, kill_residual_ports, preflight
 from .term import IS_TTY
 from .ui import (
     cmd_health_external,
@@ -52,6 +55,7 @@ from .ui import (
 )
 
 logger = logging.getLogger("lingtu")
+install_builtin_plugin_catalog()
 
 
 _SPECIAL_COMMANDS = {
@@ -82,16 +86,16 @@ def _runtime_endpoint(name: str):
     return runtime_endpoint(name)
 
 
-def _runtime_endpoint_names() -> tuple[str, ...]:
-    from core.blueprints.runtime_endpoint import runtime_endpoint_names
+def _module_transport_names() -> tuple[str, ...]:
+    from core.transport.abc import TransportStrategy
 
-    return runtime_endpoint_names()
+    return tuple(strategy.value for strategy in TransportStrategy)
 
 
-def _apply_runtime_endpoint_config(profile_name: str, cfg: dict, endpoint_name: str) -> dict:
-    from core.blueprints.runtime_endpoint import apply_runtime_endpoint_config
+def _canonical_profile_name(profile_name: str) -> str:
+    from core.runtime.resolver import canonical_profile_name
 
-    return apply_runtime_endpoint_config(profile_name, cfg, endpoint_name)
+    return canonical_profile_name(profile_name)
 
 
 def _is_runtime_endpoint_error(exc: Exception) -> bool:
@@ -121,6 +125,35 @@ def _apply_runtime_process_env(profile_name: str, cfg: dict, args: argparse.Name
     for key, value in spec.env.items():
         os.environ[key] = value
     return spec
+
+
+def _needs_full_preflight(cfg: dict) -> bool:
+    slam_profile = str(cfg.get("slam_profile", "none"))
+    return (
+        slam_profile in {
+            "fastlio2",
+            "pointlio",
+            "localizer",
+            "super_lio",
+            "super_lio_relocation",
+        }
+        or bool(cfg.get("enable_native", False))
+        or bool(cfg.get("enable_gateway", False))
+    )
+
+
+def _preflight(profile_name: str, cfg: dict) -> None:
+    if not _needs_full_preflight(cfg):
+        return
+    try:
+        from .runtime_extra import preflight
+    except ModuleNotFoundError:
+        print(
+            f"  {T.red('Error')}: profile {profile_name!r} requires the full "
+            "runtime preflight module, but this package only contains the Lite runtime."
+        )
+        sys.exit(2)
+    preflight(profile_name, cfg)
 
 
 def _run_external_profile_launcher(
@@ -196,7 +229,8 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
             "[--current-endpoint ENDPOINT] [--endpoint ENDPOINT]"
         )
         sys.exit(1)
-    current_profile, target_profile = args.extra[:2]
+    current_profile = _canonical_profile_name(args.extra[0])
+    target_profile = _canonical_profile_name(args.extra[1])
 
     current_args = argparse.Namespace(**vars(args))
     current_args.endpoint = args.current_endpoint
@@ -240,7 +274,7 @@ def _cmd_runtime_spec(args: argparse.Namespace) -> None:
     if len(args.extra) != 1:
         print("  Usage: lingtu runtime-spec <profile> [--endpoint ENDPOINT]")
         sys.exit(1)
-    profile_name = args.extra[0]
+    profile_name = _canonical_profile_name(args.extra[0])
     cfg = _resolve_config(profile_name, args, allow_wizard=False)
     spec = resolve_runtime_run_spec(profile_name, cfg)
     validation = validate_runtime_switch(spec)
@@ -399,9 +433,13 @@ def _format_dataflow_topic(payload: dict) -> str:
     write_interfaces = _format_dataflow_interfaces(inspection.get("write_interfaces"))
     if write_interfaces != "none":
         lines.append(f"write_interfaces={write_interfaces}")
+    endpoint_topic_required = inspection.get(
+        "endpoint_topic_required",
+        inspection.get("ros2_topic_required"),
+    )
     lines.append(
         "primary=Gateway+ModulePorts "
-        f"ros2_topic_required={str(bool(inspection.get('ros2_topic_required'))).lower()} "
+        f"endpoint_topic_required={str(bool(endpoint_topic_required)).lower()} "
         "adapter=endpoint_only"
     )
     lines.append(
@@ -422,7 +460,11 @@ def _format_dataflow_summary(payload: dict) -> str:
         else {}
     )
     module_bus = transport_layers.get("module_port_bus", {})
-    ros2_adapter = transport_layers.get("ros2_adapter", {})
+    endpoint_adapter = (
+        transport_layers.get("endpoint_adapter")
+        or transport_layers.get("ros2_adapter")
+        or {}
+    )
     topics = payload.get("topics") if isinstance(payload.get("topics"), list) else []
     live_count = 0
     commandable_topics = 0
@@ -464,7 +506,7 @@ def _format_dataflow_summary(payload: dict) -> str:
         f"runtime_contract={payload.get('runtime_contract')}",
         "primary=Gateway+ModulePorts "
         f"module_port_bus.primary={str(bool(module_bus.get('primary'))).lower()} "
-        f"ros2_adapter.primary={str(bool(ros2_adapter.get('primary'))).lower()}",
+        f"endpoint_adapter.primary={str(bool(endpoint_adapter.get('primary'))).lower()}",
         f"topics={len(topics)} live_topics={live_count}",
         f"stages={len(stages)} live_stages={live_stages} missing_stages={missing_stages}",
         (
@@ -611,7 +653,7 @@ def _cmd_saved_map_artifact_gate(args: argparse.Namespace) -> None:
     repo_root = Path(__file__).resolve().parent.parent
     cmd = [
         sys.executable,
-        str(repo_root / "scripts" / "saved_map_artifact_gate.py"),
+        str(repo_root / "scripts" / "gates" / "saved_map_artifact_gate.py"),
         args.extra[0],
     ]
     if args.require_tomogram:
@@ -646,11 +688,13 @@ def _cmd_real_runtime_evidence(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    from core.runtime_evidence import REAL_RUNTIME_CONTRACT
+
     repo_root = Path(__file__).resolve().parent.parent
-    report_path = args.json_out or Path("artifacts/real_s100p_runtime/report.json")
+    report_path = args.json_out or Path("artifacts/thunder_field_runtime/report.json")
     cmd = [
         sys.executable,
-        str(repo_root / "scripts" / "real_runtime_evidence_collect.py"),
+        str(repo_root / "scripts" / "gates" / "real_runtime_evidence_collect.py"),
         "--duration-sec",
         str(args.duration_sec),
         "--min-motion-m",
@@ -658,7 +702,7 @@ def _cmd_real_runtime_evidence(args: argparse.Namespace) -> None:
         "--min-cmd-vel-norm",
         str(args.min_cmd_vel_norm),
         "--expected-contract",
-        "real_s100p",
+        REAL_RUNTIME_CONTRACT,
         "--json-out",
         str(report_path),
     ]
@@ -698,14 +742,13 @@ def _resolve_profile_name(explicit_profile: str | None, args: argparse.Namespace
             profile_name = "stub"
         else:
             profile_name = select_interactive()
-    return profile_name
+    return _canonical_profile_name(profile_name)
 
 
 def _validate_backend_overrides(args: argparse.Namespace) -> None:
     from core.backend_status import require_backend
-    from core.blueprints.stacks.slam import normalize_slam_profile
-    from core.plugin_seed import seed_builtin_plugins
     from core.registry import list_plugins
+    from core.runtime_policy import normalize_slam_profile
 
     slam_profile = getattr(args, "slam_profile", None)
     if slam_profile is not None:
@@ -731,7 +774,7 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
         )
 
     if getattr(args, "local_planner_backend", None) is not None:
-        seed_builtin_plugins(groups=("autonomy",), reload_loaded=True)
+        seed_registered_plugins(groups=("autonomy",), reload_loaded=True)
         require_backend(
             "local_planner",
             args.local_planner_backend,
@@ -739,7 +782,7 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
         )
 
     if getattr(args, "path_follower_backend", None) is not None:
-        seed_builtin_plugins(groups=("autonomy",), reload_loaded=True)
+        seed_registered_plugins(groups=("autonomy",), reload_loaded=True)
         require_backend(
             "path_follower",
             args.path_follower_backend,
@@ -747,7 +790,7 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
         )
 
     if getattr(args, "terrain_backend", None) is not None:
-        seed_builtin_plugins(groups=("autonomy",), reload_loaded=True)
+        seed_registered_plugins(groups=("autonomy",), reload_loaded=True)
         require_backend(
             "terrain",
             args.terrain_backend,
@@ -761,76 +804,64 @@ def _resolve_config(
     *,
     allow_wizard: bool = True,
 ) -> dict:
+    profile_name = _canonical_profile_name(profile_name)
     if profile_name not in PROFILES:
         print(f"  {T.red('Error')}: Unknown profile '{profile_name}'")
         print(f"  Available: {', '.join(PROFILES.keys())}")
         sys.exit(1)
 
-    endpoint_name = getattr(args, "endpoint", None)
-    cfg = dict(PROFILES[profile_name])
-    profile_default_robot = cfg.pop("_default_robot", "stub")
-    if endpoint_name:
-        try:
-            endpoint = _runtime_endpoint(endpoint_name)
-            endpoint.require_profile(profile_name)
-        except Exception as exc:
-            if not _is_runtime_endpoint_error(exc):
-                raise
-            print(f"  {T.red('Error')}: {exc}")
-            sys.exit(2)
-        robot_key = args.robot or endpoint.robot_preset
-    else:
-        robot_key = args.robot or profile_default_robot
-
-    if robot_key in ROBOT_PRESETS:
-        preset = ROBOT_PRESETS[robot_key]
-        for k, v in preset.items():
-            if k not in cfg:
-                cfg[k] = v
-            elif k == "robot":
-                cfg[k] = v
-    else:
-        cfg["robot"] = robot_key
-
-    if endpoint_name:
-        cfg = _apply_runtime_endpoint_config(profile_name, cfg, endpoint_name)
-
     _validate_backend_overrides(args)
 
+    endpoint_name = getattr(args, "endpoint", None)
     overrides = {
-        "dog_host": args.dog_host,
-        "dog_port": args.dog_port,
-        "detector": args.detector,
-        "encoder": args.encoder,
-        "llm": args.llm,
-        "planner": args.planner,
+        "dog_host": getattr(args, "dog_host", None),
+        "dog_port": getattr(args, "dog_port", None),
+        "detector": getattr(args, "detector", None),
+        "encoder": getattr(args, "encoder", None),
+        "llm": getattr(args, "llm", None),
+        "planner": getattr(args, "planner", None),
         "slam_profile": getattr(args, "slam_profile", None),
         "exploration_backend": getattr(args, "exploration_backend", None),
         "local_planner_backend": getattr(args, "local_planner_backend", None),
         "path_follower_backend": getattr(args, "path_follower_backend", None),
         "terrain_backend": getattr(args, "terrain_backend", None),
-        "tomogram": args.tomogram,
-        "plan_safety_policy": args.plan_safety_policy,
-        "fallback_planner_name": args.fallback_planner_name,
-        "gateway_port": args.gateway_port,
+        "tomogram": getattr(args, "tomogram", None),
+        "plan_safety_policy": getattr(args, "plan_safety_policy", None),
+        "fallback_planner_name": getattr(args, "fallback_planner_name", None),
+        "gateway_port": getattr(args, "gateway_port", None),
+        "module_transport": getattr(args, "module_transport", None),
     }
-    for k, v in overrides.items():
-        if v is not None:
-            cfg[k] = v
+    overrides = {key: value for key, value in overrides.items() if value is not None}
     if getattr(args, "local_planner_backend", None) is not None:
-        cfg["python_autonomy_backend"] = args.local_planner_backend
+        overrides["python_autonomy_backend"] = args.local_planner_backend
     if getattr(args, "path_follower_backend", None) is not None:
-        cfg["python_path_follower_backend"] = args.path_follower_backend
-    if args.no_semantic:
-        cfg["enable_semantic"] = False
-    if args.no_gateway:
-        cfg["enable_gateway"] = False
-    if args.native:
-        cfg["enable_native"] = True
-    if args.no_native:
-        cfg["enable_native"] = False
-    if args.rerun:
-        cfg["enable_rerun"] = True
+        overrides["python_path_follower_backend"] = args.path_follower_backend
+    if getattr(args, "no_semantic", False):
+        overrides["enable_semantic"] = False
+    if getattr(args, "no_gateway", False):
+        overrides["enable_gateway"] = False
+    if getattr(args, "native", False):
+        overrides["enable_native"] = True
+    if getattr(args, "no_native", False):
+        overrides["enable_native"] = False
+    if getattr(args, "rerun", False):
+        overrides["enable_rerun"] = True
+
+    from core.runtime.resolver import resolve_profile_config
+
+    try:
+        cfg = resolve_profile_config(
+            profile_name,
+            runtime_endpoint=endpoint_name,
+            robot_preset=getattr(args, "robot", None),
+            overrides=overrides,
+            include_profile_metadata=True,
+        )
+    except Exception as exc:
+        if not _is_runtime_endpoint_error(exc):
+            raise
+        print(f"  {T.red('Error')}: {exc}")
+        sys.exit(2)
 
     if allow_wizard and args.target is None and IS_TTY:
         wizard_interactive(profile_name, cfg)
@@ -849,9 +880,11 @@ def main() -> None:
         epilog=textwrap.dedent(
             """\
             product profiles:
+              lite      Lightweight local Thunder runtime without ROS/SLAM
               map       Build a new map
               nav       Navigation with pre-built map
               explore   Exploration, no pre-built map
+              aliases   thunder-lite, thunder-map, thunder-nav, thunder-explore
 
             advanced profiles:
               tare_explore  CMU TARE exploration when external TARE is installed
@@ -859,6 +892,8 @@ def main() -> None:
 
             runtime endpoints:
               endpoints are connection/adaptation layers; they do not replace the product task graph
+              --endpoint thunder-lite  Run lightweight local Thunder without ROS/SLAM
+              --endpoint thunder-field Run a product task against the physical Thunder robot
               --endpoint mujoco_live  Run a product task against MuJoCo raw MID-360 + Fast-LIO
               --endpoint replay       Run a product task against no-actuation replay logs
               --endpoint gazebo       Run a product task against Gazebo/GZ industrial adapter
@@ -867,7 +902,7 @@ def main() -> None:
             product simulation examples:
               python lingtu.py explore --endpoint mujoco_live
               python lingtu.py nav --endpoint replay status
-              python lingtu.py switch-plan explore explore --current-endpoint mujoco_live --endpoint real_s100p
+              python lingtu.py switch-plan explore explore --current-endpoint mujoco_live --endpoint thunder-field
               python lingtu.py tare_explore --endpoint mujoco_live
               python lingtu.py tare_explore --endpoint cmu_unity --record
 
@@ -885,7 +920,7 @@ def main() -> None:
               field-check  One-screen field readiness from Gateway/evidence/map gates
               inspection-check Non-motion inspection-point acceptance pack
               saved-map-artifact-gate Validate saved map artifact provenance
-              real-runtime-evidence Collect read-only real S100P runtime evidence
+              real-runtime-evidence Collect read-only Thunder field runtime evidence
               log          Print the current run log (add -f to follow)
               health       Sensor and module health (add --json for jq)
               doctor       Run diagnostics
@@ -908,14 +943,14 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="Force action for commands like `lingtu stop`")
     parser.add_argument(
         "--endpoint",
-        choices=_runtime_endpoint_names(),
         default=None,
+        metavar="ENDPOINT",
         help="Runtime endpoint/connection layer for map/nav/explore/tare_explore",
     )
     parser.add_argument(
         "--current-endpoint",
-        choices=_runtime_endpoint_names(),
         default=None,
+        metavar="ENDPOINT",
         help="Current runtime endpoint for switch-plan dry-run comparisons",
     )
     parser.add_argument(
@@ -950,6 +985,13 @@ def main() -> None:
         help="Planner backend used when --plan-safety-policy=fallback_astar",
     )
     parser.add_argument("--gateway-port", type=int, default=None, dest="gateway_port")
+    parser.add_argument(
+        "--module-transport",
+        choices=_module_transport_names(),
+        default=None,
+        dest="module_transport",
+        help="ModulePort transport strategy for this process (default: endpoint/local)",
+    )
     parser.add_argument("--no-semantic", action="store_true")
     parser.add_argument("--no-gateway", action="store_true")
     parser.add_argument("--native", action="store_true", help="Force C++ autonomy stack (terrain+local_planner+pathFollower)")
@@ -969,7 +1011,7 @@ def main() -> None:
                         help="Runtime dataflow topic or short alias for `lingtu dataflow`")
     parser.add_argument("--acceptance-mode", default=None,
                         choices=["non_motion", "simulation", "field"],
-                        help="Gateway acceptance strictness: non_motion checks product observability; simulation requires a live simulation endpoint; field requires real S100P evidence. Defaults: gateway-runtime-acceptance=non_motion, field-check=simulation, inspection-check=simulation")
+                        help="Gateway acceptance strictness: non_motion checks product observability; simulation requires a live simulation endpoint; field requires Thunder field evidence. Defaults: gateway-runtime-acceptance=non_motion, field-check=simulation, inspection-check=simulation")
     parser.add_argument("--min-motion-m", type=float, default=0.05,
                         help="Minimum odometry motion for `lingtu real-runtime-evidence`")
     parser.add_argument("--min-cmd-vel-norm", type=float, default=0.01,
@@ -1025,13 +1067,13 @@ def main() -> None:
     if args.target == "doctor":
         import subprocess as _sp
 
-        _sp.run([sys.executable, str(_repo / "scripts" / "doctor.py")])
+        _sp.run([sys.executable, str(_repo / "scripts" / "diagnostics" / "doctor.py")])
         return
 
     if args.target == "rerun":
         import subprocess as _sp
 
-        _sp.run([sys.executable, str(_repo / "scripts" / "rerun_live.py")])
+        _sp.run([sys.executable, str(_repo / "scripts" / "visualization" / "rerun_live.py")])
         return
 
     if args.target == "log":
@@ -1123,7 +1165,7 @@ def main() -> None:
     blueprint_cfg = dict(cfg)
     cfg["_desc"] = desc
 
-    preflight(profile_name, cfg)
+    _preflight(profile_name, cfg)
 
     print(f"  Runtime:  {format_runtime_boundary(runtime_spec)}")
     print(f"  SLAM:     {format_runtime_sources(runtime_spec)}")
@@ -1134,10 +1176,10 @@ def main() -> None:
     print(f"  Flow stages: {format_runtime_flow_stages(runtime_spec)}")
     print(f"\n  Building system ({T.green(profile_name)})...")
 
-    from core.blueprints.full_stack import full_stack_blueprint
+    from core.blueprints.profile_builder import build_system_from_resolved_profile
 
     try:
-        system = full_stack_blueprint(**blueprint_cfg).build()
+        system = build_system_from_resolved_profile(profile_name, blueprint_cfg)
     except Exception as e:
         logger.error("Build failed: %s", e, exc_info=True)
         print(f"\n  {T.red('Build failed')}: {e}")
@@ -1252,7 +1294,7 @@ def main() -> None:
         pass
     system.stop()
     try:
-        from core.ros2_context import shutdown_shared_executor
+        from compat.ros2.context import shutdown_shared_executor
 
         shutdown_shared_executor()
     except Exception:

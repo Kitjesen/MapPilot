@@ -103,8 +103,10 @@ separates live SLAM/map use from saved artifacts such as a PCT tomogram.
 
 `src/core/blueprints/runtime_endpoint.py` defines the Dimos-style split between
 task and connection layer. The product task remains `map`, `nav`, `explore`, or
-`tare_explore`; `--endpoint real_s100p|mujoco_live|gazebo|cmu_unity|replay`
-selects the runtime source/sink. Compatibility profiles such as
+`tare_explore`; `--endpoint thunder-field|mujoco_live|gazebo|cmu_unity|replay`
+selects the runtime source/sink. Legacy board aliases such as `real_s100p`
+still resolve to `thunder_field` for old scripts, but they are not product
+contract names. Compatibility profiles such as
 `sim_mujoco_live`, `sim_mujoco_pct_live`, `sim_industrial`, and `sim_cmu_tare`
 are launcher aliases for gates and demos, not independent product
 architectures.
@@ -206,9 +208,9 @@ should use a switch plan to inspect the boundary change:
 
 ```bash
 python lingtu.py switch-plan sim_mujoco_live explore
-python lingtu.py switch-plan explore explore --current-endpoint mujoco_live --endpoint real_s100p
+python lingtu.py switch-plan explore explore --current-endpoint mujoco_live --endpoint thunder-field
 python lingtu.py switch-plan nav nav --endpoint replay
-python lingtu.py switch-plan explore nav --endpoint real_s100p
+python lingtu.py switch-plan explore nav --endpoint thunder-field
 ```
 
 The default switch-plan output is an operator summary. Use `--json` or
@@ -241,8 +243,8 @@ actuation paths are outside the contract.
 
 Compatibility profiles are resolved back to their runtime endpoint in the
 switch plan. For example, `sim_mujoco_live -> explore` should report
-`mujoco_live -> real_s100p`, not an anonymous in-process source. Real targets
-must report `runtime_contract=real_s100p` and must not carry launcher
+`mujoco_live -> thunder_field`, not an anonymous in-process source. Real targets
+must report `runtime_contract=thunder_field` and must not carry launcher
 arguments; simulation and replay targets may carry the gate or recording action
 used by their external launcher.
 Both sides of the switch plan must validate; a clean target does not hide a
@@ -279,7 +281,7 @@ are `endpoint_adapter`, `slam_or_relayed_localization_map`,
 For an actual endpoint, use `resolved_runtime_data_flow.<data_source>` or
 `resolved_runtime_data_flow(data_source)`. That expanded contract replaces
 template placeholders with concrete source topics and command sinks. Examples:
-`real_s100p` resolves to `/nav/lidar_scan + /nav/imu -> /nav/odometry +
+`thunder_field` resolves to `/nav/lidar_scan + /nav/imu -> /nav/odometry +
 /nav/registered_cloud + /nav/map_cloud -> hardware_driver_after_cmd_vel_mux`;
 `mujoco_fastlio2_live` resolves to `/points_raw + /imu_raw -> Fast-LIO ->
 /nav/* -> mujoco_velocity_adapter`; `gazebo_industrial` resolves native Gazebo
@@ -371,7 +373,7 @@ The adapter boundary is:
 | `cmu_unity_baseline` | CMU Unity | CMU TARE/FAR | CMU exploration stack | CMU `localPlanner` | CMU `pathFollower` | CMU path follower to Unity simulator | Reference effect only; not LingTu validation |
 | `cmu_unity_external` | CMU Unity | External CMU TARE waypoint source | LingTu navigation, optionally PCT when the gate requires it | LingTu navigation | LingTu path follower | LingTu adapter relay to CMU simulator | LingTu can ingest CMU/TARE waypoints and execute in simulation |
 | `mujoco_fastlio2_live` | MuJoCo raw LiDAR/IMU | LingTu frontier when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu path follower when `explore/video` is used | MuJoCo velocity adapter or fixed gate motion | Fast-LIO raw sensor to canonical `/nav/*`; optional live exploration/navigation gate |
-| `real_s100p` | S100P MID-360/IMU | LingTu frontier or TARE profile | LingTu navigation/PCT | LingTu navigation | LingTu path follower | LingTu `CmdVelMux` to hardware driver | Real hardware runtime boundary; field readiness still requires robot-side evidence |
+| `thunder_field` | Thunder MID-360/IMU | LingTu frontier or TARE profile | LingTu navigation/PCT | LingTu navigation | LingTu path follower | LingTu `CmdVelMux` to hardware driver | Thunder field runtime boundary; field readiness still requires robot-side evidence |
 
 Forbidden claims are part of the runtime contract:
 

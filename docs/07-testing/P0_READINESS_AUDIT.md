@@ -138,7 +138,7 @@ Required artifacts:
 - `~/data/nav_logs/*_p0_explore.log`
 - Saved map directory containing `map.pcd`, `tomogram.pickle`,
   `occupancy.npz`, and `map.pgm` / `map.yaml`
-- Field run entry under `vault/field-runs/YYYY-MM-DD.md`
+- Field run entry under `docs/07-testing/field-runs/YYYY-MM-DD.md`
 
 ## Product Claim Boundary
 

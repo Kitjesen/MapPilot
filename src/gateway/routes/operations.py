@@ -694,7 +694,7 @@ def register_operation_routes(app, gw) -> None:
                 )
 
             repo_root = pathlib.Path(__file__).resolve().parents[3]
-            script = repo_root / "scripts" / "record_bag.sh"
+            script = repo_root / "scripts" / "hardware" / "record_bag.sh"
             if not script.exists():
                 return JSONResponse(
                     status_code=500,

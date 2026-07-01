@@ -39,9 +39,13 @@ def test_sim_to_real_switch_changes_command_sink_and_simulation_only():
     diff = compare_runtime_switch(sim_spec, real_spec)
 
     assert diff["from"]["data_source"] == "mujoco_fastlio2_live"
-    assert diff["to"]["data_source"] == "real_s100p"
+    assert diff["to"]["data_source"] == "thunder_field"
     assert diff["from"]["runtime_contract"] == "mujoco_fastlio2_live"
-    assert diff["to"]["runtime_contract"] == "real_s100p"
+    assert diff["to"]["runtime_contract"] == "thunder_field"
+    assert diff["from"]["module_transport"] == "local"
+    assert diff["to"]["module_transport"] == "local"
+    assert diff["from"]["endpoint_transport"] == "local"
+    assert diff["to"]["endpoint_transport"] == "lcm"
     assert diff["from"]["slam_source"] == "lingtu_fastlio2"
     assert diff["to"]["slam_source"] == "lingtu_fastlio_or_external_robot_slam"
     assert diff["from"]["mapping_source"] == "fastlio2_map_cloud"
@@ -92,6 +96,7 @@ def test_sim_to_real_switch_changes_command_sink_and_simulation_only():
     assert diff["from"]["simulation_only"] is True
     assert diff["to"]["simulation_only"] is False
     assert "command_sink" in diff["changed"]
+    assert "endpoint_transport" in diff["changed"]
     assert "resolved_runtime_data_flow" in diff["changed"]
     assert "simulation_only" in diff["changed"]
     assert "topic_allowed_frame_ids" in diff["changed"]
@@ -108,8 +113,8 @@ def test_compatibility_profile_switch_summary_names_runtime_endpoint():
 
     assert diff["from"]["endpoint"] == "mujoco_live"
     assert diff["from"]["robot_preset"] == "sim_gazebo"
-    assert diff["to"]["endpoint"] == "real_s100p"
-    assert diff["to"]["robot_preset"] == "s100p"
+    assert diff["to"]["endpoint"] == "thunder_field"
+    assert diff["to"]["robot_preset"] == "thunder"
     assert diff["to"]["launcher_args"] == []
 
 
@@ -123,6 +128,9 @@ def test_runtime_spec_summary_is_json_native():
     assert isinstance(summary["topic_allowed_frame_ids"][TOPICS.map_cloud], list)
     assert summary["frames"]["axis_convention"] == "x_forward_y_left_z_up"
     assert summary["topic_default_frame_ids"][TOPICS.map_cloud] == "map"
+    assert summary["module_transport"] == "local"
+    assert summary["endpoint_transport"] == "local"
+    assert summary["endpoint_contract"] is None
     assert summary["required_topic_frame_ids"] == []
     assert TOPICS.raw_lidar_points in summary["runtime_data_flow_topics"]
     assert isinstance(summary["runtime_data_flow_topics"], list)
@@ -249,6 +257,8 @@ def test_compatibility_external_profile_uses_endpoint_action_contract(
     assert gate_spec.env["LINGTU_PROFILE"] == profile
     assert gate_spec.env["LINGTU_ENDPOINT"] == endpoint
     assert gate_spec.env["LINGTU_DATA_SOURCE"] == data_source
+    assert gate_spec.env["LINGTU_MODULE_TRANSPORT"] == "local"
+    assert gate_spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "local"
     assert gate_spec.env["LINGTU_RUNTIME_CONTRACT"] == runtime_contract
     assert gate_spec.env["LINGTU_SIMULATION_ONLY"] == "1"
     assert validate_runtime_switch(gate_spec).ok is True
@@ -280,6 +290,8 @@ def test_in_process_sim_profiles_resolve_without_runtime_endpoint(
     assert spec.env == {
         "LINGTU_PROFILE": profile,
         "LINGTU_DATA_SOURCE": data_source,
+        "LINGTU_MODULE_TRANSPORT": "local",
+        "LINGTU_ENDPOINT_TRANSPORT": "local",
         "LINGTU_SIMULATION_ONLY": "1",
         "LINGTU_COMMAND_SINK": source.command_sink,
     }
@@ -323,6 +335,7 @@ def test_first_class_sim_profiles_resolve_endpoint_contract_without_launcher(
     assert spec.env["LINGTU_PROFILE"] == profile
     assert spec.env["LINGTU_ENDPOINT"] == endpoint
     assert spec.env["LINGTU_DATA_SOURCE"] == data_source
+    assert spec.env["LINGTU_MODULE_TRANSPORT"] == "local"
     assert spec.env["LINGTU_RUNTIME_CONTRACT"] == runtime_contract
     assert spec.env["LINGTU_SIMULATION_ONLY"] == "1"
     assert validate_runtime_switch(spec).ok is True
@@ -403,10 +416,56 @@ def test_switch_guard_accepts_normal_sim_and_real_targets():
     sim_spec = resolve_runtime_run_spec("explore", sim_cfg)
     real_spec = resolve_runtime_run_spec("explore", real_cfg)
 
-    assert real_spec.runtime_contract == "real_s100p"
-    assert real_spec.env["LINGTU_RUNTIME_CONTRACT"] == "real_s100p"
+    assert real_spec.runtime_contract == "thunder_field"
+    assert real_spec.env["LINGTU_RUNTIME_CONTRACT"] == "thunder_field"
+    assert real_spec.module_transport == "local"
+    assert real_spec.env["LINGTU_MODULE_TRANSPORT"] == "local"
+    assert real_spec.endpoint_transport == "lcm"
+    assert real_spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "lcm"
+    assert real_spec.endpoint_contract == "thunder_field_lcm_v1"
+    assert real_spec.env["LINGTU_ENDPOINT_CONTRACT"] == "thunder_field_lcm_v1"
+    assert real_spec.localization_adapter == "lcm_endpoint"
+    assert real_spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "lcm_endpoint"
     assert validate_runtime_switch(sim_spec).ok is True
     assert validate_runtime_switch(real_spec).ok is True
+
+
+def test_switch_guard_rejects_endpoint_contract_env_mismatch():
+    real_cfg = resolve_profile_config("explore")
+    real_spec = resolve_runtime_run_spec("explore", real_cfg)
+    bad_spec = real_spec.__class__(
+        **{
+            **real_spec.__dict__,
+            "env": {
+                **real_spec.env,
+                "LINGTU_ENDPOINT_CONTRACT": "wrong_contract",
+            },
+        }
+    )
+
+    result = validate_runtime_switch(bad_spec)
+
+    assert result.ok is False
+    assert "env endpoint contract does not match run spec" in result.blockers
+
+
+def test_switch_guard_rejects_localization_adapter_env_mismatch():
+    real_cfg = resolve_profile_config("explore")
+    real_spec = resolve_runtime_run_spec("explore", real_cfg)
+    bad_spec = real_spec.__class__(
+        **{
+            **real_spec.__dict__,
+            "env": {
+                **real_spec.env,
+                "LINGTU_LOCALIZATION_ADAPTER": "ros2_slam_bridge",
+            },
+        }
+    )
+
+    result = validate_runtime_switch(bad_spec)
+
+    assert result.ok is False
+    assert "env localization adapter does not match run spec" in result.blockers
 
 
 def test_switch_guard_rejects_simulation_target_exporting_real_mode_flag():
@@ -454,6 +513,8 @@ def test_switch_guard_rejects_runtime_env_mismatches():
     cases = (
         ("LINGTU_ENDPOINT", "mujoco_live", "env endpoint does not match run spec"),
         ("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live", "env data source does not match run spec"),
+        ("LINGTU_MODULE_TRANSPORT", "lcm", "env module transport does not match run spec"),
+        ("LINGTU_ENDPOINT_TRANSPORT", "local", "env endpoint transport does not match run spec"),
         ("LINGTU_RUNTIME_CONTRACT", "mujoco_fastlio2_live", "env runtime contract does not match run spec"),
         ("LINGTU_COMMAND_SINK", "mujoco_velocity_adapter", "env command sink does not match run spec"),
     )
@@ -472,6 +533,46 @@ def test_switch_guard_rejects_runtime_env_mismatches():
 
         assert result.ok is False, key
         assert blocker in result.blockers
+
+
+def test_switch_guard_rejects_unknown_module_transport():
+    real_cfg = resolve_profile_config("explore")
+    real_spec = resolve_runtime_run_spec("explore", real_cfg)
+    bad_spec = real_spec.__class__(
+        **{
+            **real_spec.__dict__,
+            "module_transport": "mqtt",
+            "env": {
+                **real_spec.env,
+                "LINGTU_MODULE_TRANSPORT": "mqtt",
+            },
+        }
+    )
+
+    result = validate_runtime_switch(bad_spec)
+
+    assert result.ok is False
+    assert "module transport is not a known transport strategy" in result.blockers
+
+
+def test_switch_guard_rejects_unknown_endpoint_transport():
+    real_cfg = resolve_profile_config("explore")
+    real_spec = resolve_runtime_run_spec("explore", real_cfg)
+    bad_spec = real_spec.__class__(
+        **{
+            **real_spec.__dict__,
+            "endpoint_transport": "mqtt",
+            "env": {
+                **real_spec.env,
+                "LINGTU_ENDPOINT_TRANSPORT": "mqtt",
+            },
+        }
+    )
+
+    result = validate_runtime_switch(bad_spec)
+
+    assert result.ok is False
+    assert "endpoint transport is not a known transport strategy" in result.blockers
 
 
 def test_switch_guard_rejects_frame_link_contract_mismatch():
@@ -608,6 +709,13 @@ def test_all_runtime_endpoint_profiles_resolve_to_matching_contracts():
             assert spec.data_source == endpoint.data_source
             assert spec.runtime_contract == endpoint.runtime_contract
             assert spec.robot_preset == endpoint.robot_preset
+            assert spec.module_transport == endpoint.module_transport
+            assert spec.endpoint_transport == endpoint.endpoint_transport
+            assert spec.env["LINGTU_MODULE_TRANSPORT"] == endpoint.module_transport
+            assert (
+                spec.env["LINGTU_ENDPOINT_TRANSPORT"]
+                == endpoint.endpoint_transport
+            )
             assert spec.simulation_only is endpoint.simulation_only
             assert validate_runtime_switch(spec).ok is True, (endpoint_name, profile)
 
@@ -628,6 +736,15 @@ def test_all_cli_profiles_resolve_to_declared_runtime_contracts():
 
         assert spec.profile == profile
         assert spec.data_source == binding.data_source
+        expected_endpoint_transport = (
+            RUNTIME_ENDPOINTS[spec.endpoint].endpoint_transport
+            if spec.endpoint in RUNTIME_ENDPOINTS
+            else "local"
+        )
+        assert spec.module_transport == "local"
+        assert spec.endpoint_transport == expected_endpoint_transport
+        assert spec.env["LINGTU_MODULE_TRANSPORT"] == "local"
+        assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == expected_endpoint_transport
         assert spec.command_sink == source.command_sink
         assert spec.slam_source == source.slam_source
         assert spec.localization_source == source.localization_source

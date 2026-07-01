@@ -53,7 +53,7 @@ Rebuild the runnable x86_64 native artifacts when any of these changes:
 - files under `pct_planner/planner/lib/src/` or its CMake configuration change
 - imports fail with native linker errors such as `GLIBC`, `GLIBCXX`, or missing
   shared-library messages
-- `scripts/plan_preview.py --planner pct --strict` reports
+- `scripts/planning/plan_preview.py --planner pct --strict` reports
   `backend_available=false`
 
 Do not rebuild just because a map changed. New maps require a fresh
@@ -144,19 +144,19 @@ resolution.
 
 ## Validate The System Entry
 
-Use `scripts/plan_preview.py` to validate the same runtime through the
+Use `scripts/planning/plan_preview.py` to validate the same runtime through the
 NavigationModule preview path. This is the gate to run before a real navigation
 session:
 
 ```bash
 cd /path/to/lingtu
-python3 scripts/plan_preview.py --planner pct --strict --compact
+python3 scripts/planning/plan_preview.py --planner pct --strict --compact
 ```
 
 If the active map is not under the default map root, pass it explicitly:
 
 ```bash
-python3 scripts/plan_preview.py \
+python3 scripts/planning/plan_preview.py \
   --planner pct \
   --tomogram /path/to/tomogram.pickle \
   --start 2 3 0 \
@@ -205,7 +205,7 @@ goal_error_m~=0.11
 System preview entry:
 
 ```text
-scripts/plan_preview.py --planner pct --strict
+scripts/planning/plan_preview.py --planner pct --strict
 ok=true
 feasible=true
 backend_available=true

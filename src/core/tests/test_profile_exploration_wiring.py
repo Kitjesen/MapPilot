@@ -55,7 +55,8 @@ def test_tare_explore_cmu_unity_endpoint_uses_external_tare_bridge():
 
     assert config["enable_frontier"] is False
     assert config["exploration_backend"] == "tare_external"
-    assert config["enable_ros2_path_bridge"] is True
+    assert config["enable_endpoint_path_bridge"] is True
+    assert "enable_ros2_path_bridge" not in config
     assert "TAREExplorerModule" in graph.modules
     assert "ExplorationSupervisorModule" in graph.modules
     assert "TAREPlannerNativeModule" not in graph.modules
@@ -63,5 +64,5 @@ def test_tare_explore_cmu_unity_endpoint_uses_external_tare_bridge():
     assert "TAREExplorerModule.exploration_goal->NavigationModule.goal_pose" in wires
     assert "TAREExplorerModule.exploration_path->NavigationModule.patrol_goals" in wires
     assert "NavigationModule.mission_status->TAREExplorerModule.navigation_status" in wires
-    assert "NavigationModule.global_path->ROS2PathBridgeModule.global_path" in wires
+    assert "NavigationModule.global_path->EndpointPathBridgeModule.global_path" in wires
     assert not graph.dangling_wires()

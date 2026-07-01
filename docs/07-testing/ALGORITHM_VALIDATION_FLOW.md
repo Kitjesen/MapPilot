@@ -410,7 +410,7 @@ report through the unified CLI entry:
 ```bash
 python lingtu.py real-runtime-evidence \
   --duration-sec 20 \
-  --json-out artifacts/real_s100p_runtime/report.json
+  --json-out artifacts/thunder_field_runtime/report.json
 ```
 
 This command wraps the read-only collector and embedded gate. The collector
@@ -437,11 +437,11 @@ list, checks, and coverage map so UI and operations tooling do not need to infer
 the validation sequence from ad hoc text.
 The gate uses
 `core.runtime_evidence.validate_real_runtime_evidence` and requires
-`runtime_contract.name=real_s100p`, the hardware command boundary
+`runtime_contract.name=thunder_field`, the hardware command boundary
 `hardware_driver_after_cmd_vel_mux`, `map->odom->body->lidar_link` frame
-evidence, concrete `resolved_runtime_data_flow.real_s100p` stage evidence, and
+evidence, concrete `resolved_runtime_data_flow.thunder_field` stage evidence, and
 positive global path, local path, and `/nav/cmd_vel` observations. For real
-S100P evidence, `/nav/map_cloud` and `/nav/global_path` must report `frame_id`
+Thunder evidence, `/nav/map_cloud` and `/nav/global_path` must report `frame_id`
 as `map`; the looser simulation/replay tolerance for `odom` is not sufficient
 to prove the real saved-map/global-planning boundary.
 

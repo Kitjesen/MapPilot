@@ -127,7 +127,7 @@ def try_import_nav_core(required_symbols: tuple[str, ...] = ()):
 def nav_core_build_hint() -> str:
     """Return a human-readable hint for building _nav_core."""
     return (
-        "Run:  bash scripts/build_nav_core.sh\n"
+        "Run:  bash scripts/build/build_nav_core.sh\n"
         "      (needs cmake, python3-dev, pip install nanobind)\n"
         "Windows local builds may use src/nav/core/build_nb_win."
     )

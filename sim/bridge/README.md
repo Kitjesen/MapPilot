@@ -1,22 +1,19 @@
-# sim/bridge/ — Thin Entrypoints
+# sim/bridge/ Thin Entrypoints
 
-> Please do not re-add new bridge implementations here. This directory holds
-> only thin entrypoints for backward compatibility. All real bridge code
-> lives in `src/drivers/sim/`. Files in `sim/robot/` are preserved
-> separately.
+This directory keeps legacy import paths for old simulation bridge callers.
+Do not add new bridge implementations here.
 
-## History
+## Canonical Location
 
-Bridge files were moved from `sim/bridge/` to `src/drivers/sim/` during
-the Sprint-6 consolidation. The `__init__.py` here redirects old imports
-(`from sim.bridge.xxx import ...`) to the canonical location.
+ROS-backed bridge implementations now live under `src/compat/ros2/`:
 
-## Moved files
+| Legacy import | Canonical implementation |
+| --- | --- |
+| `sim.bridge.mujoco_ros2_bridge` | `compat.ros2.mujoco_ros2_bridge` |
+| `sim.bridge.mujoco_viz_bridge` | `compat.ros2.mujoco_viz_bridge` |
+| `sim.bridge.nova_nav_bridge` | `compat.ros2.nova_nav_bridge` |
 
-| Old path | New path |
-|----------|----------|
-| `sim/bridge/mujoco_ros2_bridge.py` | `src/drivers/sim/mujoco_ros2_bridge.py` |
-| `sim/bridge/mujoco_viz_bridge.py` | `src/drivers/sim/mujoco_viz_bridge.py` |
-| `sim/bridge/nova_nav_bridge.py` | `src/drivers/sim/nova_nav_bridge.py` |
+The `sim.bridge` package redirects imports lazily so heavy dependencies such as
+MuJoCo and ROS 2 are loaded only when a specific bridge is imported.
 
-See `src/drivers/sim/README_bridge.md` for full documentation.
+See `src/drivers/sim/README_bridge.md` for legacy command compatibility notes.

@@ -817,7 +817,7 @@ def test_legacy_sim_launch_keeps_map_cloud_out_of_registered_scan_path():
 
 
 def test_legacy_mujoco_ros2_bridge_separates_registered_and_map_cloud_frames():
-    source = _read("src/drivers/sim/mujoco_ros2_bridge.py")
+    source = _read("src/compat/ros2/mujoco_ros2_bridge.py")
 
     assert "from core.runtime_interface import FRAMES, TOPICS" in source
     assert "registered_cloud = pack_pointcloud2(pts, FRAMES.body, stamp)" in source
@@ -830,7 +830,7 @@ def test_src_mujoco_bridges_use_runtime_contract_frames():
     sensor_bridge = _read("src/drivers/sim/mujoco_sensor_bridge.py")
     stack = _read("src/drivers/sim/mujoco_lingtu_stack.py")
     driver = _read("src/drivers/sim/mujoco_driver_module.py")
-    ros2_driver = _read("src/drivers/sim/ros2_sim_driver.py")
+    ros2_driver = _read("src/compat/ros2/sim_driver.py")
 
     assert "from core.runtime_interface import FRAME_LINKS, TOPICS, topic_default_frame_id" in sensor_bridge
     assert "MUJOCO_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in sensor_bridge
@@ -1427,7 +1427,7 @@ def test_gazebo_nav_loop_gate_publishes_only_goal_and_checks_motion():
     assert "--frontier-tomogram-out" in gate
     assert "explored_map.pcd" in gate
     assert "tomogram.pickle" in gate
-    assert "scripts\" / \"plan_preview.py" in gate
+    assert "scripts\" / \"planning\" / \"plan_preview.py" in gate
     assert '"pct"' in gate
     assert '"--internal-only"' in gate
     assert '"--strict"' in gate

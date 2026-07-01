@@ -1,7 +1,7 @@
 """Tests for the TARE exploration bridge and the exploration stack factory.
 
 Runs without any C++ binary or DDS transport — relies on the module's
-stub-mode when cyclonedds and rclpy are both absent, and exercises the
+stub-mode when cyclonedds is absent, and exercises the
 contracts (ports, skills, waypoint → PoseStamped conversion).
 """
 
@@ -62,7 +62,7 @@ class TestTAREExplorerModulePorts(unittest.TestCase):
         self.assertEqual(tare_port.msg_type, wave_port.msg_type)
 
     def test_stub_mode_no_crash(self):
-        """No DDS, no rclpy — module should still setup/start/stop cleanly."""
+        """No DDS path should still setup/start/stop cleanly."""
         m = self._make(auto_start=False)
         m.setup()
         m.start()
@@ -250,7 +250,7 @@ class TestTAREWaypointEmission(unittest.TestCase):
         received: list[list[dict]] = []
         m.exploration_path._add_callback(received.append)
 
-        m._on_rclpy_path(msg)
+        m._on_path_message(msg)
 
         self.assertEqual(m._path_count, 1)
         self.assertEqual(received, [])
@@ -283,7 +283,7 @@ class TestTAREWaypointEmission(unittest.TestCase):
         m.exploration_path._add_callback(received.append)
         m._on_odom(_odom(0.0, 0.0))
 
-        m._on_rclpy_path(msg)
+        m._on_path_message(msg)
 
         self.assertEqual(m._path_count, 1)
         self.assertEqual(len(received), 1)

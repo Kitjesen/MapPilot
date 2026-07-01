@@ -44,9 +44,10 @@ The system has three layers:
 
 | Bridge | Path | Notes |
 |--------|------|-------|
-| `mujoco_ros2_bridge.py` | MuJoCo 鈫?ROS2 topics 鈫?C++ autonomy stack | Full ROS2, same as real robot |
-| `nova_nav_bridge.py` | MuJoCo 鈫?Python LingTu modules directly | No ROS2 dependency, fastest iteration |
-| `mujoco_viz_bridge.py` | MuJoCo 鈫?visualization only | Rendering, no navigation |
+| `python lingtu.py sim` | MuJoCo to ModulePorts | Default pure-Python product simulation, no ROS2 dependency |
+| `mujoco_ros2_bridge.py` | MuJoCo to ROS2 topics to C++ autonomy stack | Legacy ROS2 compatibility bridge |
+| `nova_nav_bridge.py` | MuJoCo/NOVA policy to ROS2 topics | Legacy ROS2 compatibility bridge |
+| `mujoco_viz_bridge.py` | MuJoCo to ROS2 visualization topics | Visualization-only compatibility bridge |
 
 **Navigation** 鈥?Either the ROS2 C++ autonomy stack (terrain + local planner + path follower) or the pure-Python LingTu module stack (`python lingtu.py sim`).
 
@@ -698,7 +699,7 @@ If `tracking_replay.backend_actual` falls back to `pid`, build the native
 backend first:
 
 ```bash
-bash scripts/build_nav_core.sh
+bash scripts/build/build_nav_core.sh
 ```
 
 #### Native PCT + ROS2 Local Planner + MuJoCo Showcase Gate

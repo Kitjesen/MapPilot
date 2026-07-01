@@ -24,17 +24,19 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
     """RGB-D scene perception plus optional reconstruction and standalone tools."""
     bp = Blueprint()
     if config.get("manage_services", True):
-        try:
-            from core.service_manager import get_service_manager
-            svc = get_service_manager()
-            svc.ensure("camera")
-        except Exception:
-            pass
+        logger.debug(
+            "perception(manage_services=True) is ignored; external camera "
+            "startup is handled by core.blueprints.stacks.system.external_services"
+        )
 
     drv_name = config.get("_driver_cls_name", "")
-    needs_camera_bridge = bool(config.get("force_camera_bridge")) or (
-        drv_name not in _NATIVE_CAMERA_DRIVERS
-        and not bool(config.get("use_driver_camera", False))
+    camera_enabled = bool(config.get("enable_camera", True))
+    needs_camera_bridge = camera_enabled and (
+        bool(config.get("force_camera_bridge"))
+        or (
+            drv_name not in _NATIVE_CAMERA_DRIVERS
+            and not bool(config.get("use_driver_camera", False))
+        )
     )
 
     if needs_camera_bridge:
@@ -42,8 +44,8 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
             CameraBridgeModule = stack_module(
                 "camera_bridge",
                 "default",
-                seed_group="camera",
-                fallback="drivers.real.thunder.camera_bridge_module.CameraBridgeModule",
+                seed_group="camera_ros2",
+                fallback="compat.ros2.camera_bridge.CameraBridgeModule",
             )
             # Read camera rotation from robot_config.yaml
             cam_rotate = config.get("camera_rotate", 0)

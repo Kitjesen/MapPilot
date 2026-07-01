@@ -1,5 +1,8 @@
 #!/bin/bash
-# Deploy S100P SLAM systemd services
+# Install Thunder field SLAM systemd services.
+#
+# This legacy directory name is kept for field compatibility while the
+# product-facing deployment entrypoints move to Thunder naming.
 # Usage: scp scripts/deploy/s100p/*.service sunrise@192.168.66.190:/tmp/
 #        ssh sunrise@192.168.66.190 'bash /tmp/install_services.sh'
 # Or:    ssh sunrise@192.168.66.190 'bash -s' < scripts/deploy/s100p/install_services.sh
@@ -8,8 +11,24 @@ set -e
 
 SERVICES=(lidar slam slam_pgo localizer super_lio super_lio_relocation)
 SRC_DIR="${1:-/tmp}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="${LINGTU_CONFIG_DIR:-/opt/lingtu/config}"
+ROS2_ENV_SRC="${LINGTU_ROS2_ENV_SRC:-}"
+if [ -z "${ROS2_ENV_SRC}" ]; then
+    if [ -f "${SCRIPT_DIR}/../thunder/ros2-env.sh" ]; then
+        ROS2_ENV_SRC="${SCRIPT_DIR}/../thunder/ros2-env.sh"
+    elif [ -f "${SRC_DIR}/ros2-env.sh" ]; then
+        ROS2_ENV_SRC="${SRC_DIR}/ros2-env.sh"
+    fi
+fi
 
-echo "=== Installing S100P SLAM services ==="
+echo "=== Installing Thunder field SLAM services ==="
+if [ -n "${ROS2_ENV_SRC}" ] && [ -f "${ROS2_ENV_SRC}" ]; then
+    sudo mkdir -p "${CONFIG_DIR}"
+    sudo cp "${ROS2_ENV_SRC}" "${CONFIG_DIR}/ros2-env.sh"
+    sudo chmod 0644 "${CONFIG_DIR}/ros2-env.sh"
+    echo "  Installed: ${CONFIG_DIR}/ros2-env.sh"
+fi
 for svc in "${SERVICES[@]}"; do
     if [ -f "${SRC_DIR}/${svc}.service" ]; then
         sudo cp "${SRC_DIR}/${svc}.service" /etc/systemd/system/

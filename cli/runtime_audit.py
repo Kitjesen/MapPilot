@@ -18,6 +18,7 @@ from core.runtime_interface import (
     FRAME_LINKS,
     PROFILE_DATA_SOURCE_BINDINGS,
     REAL_RUNTIME_CONTRACT,
+    THUNDER_FIELD_EVIDENCE_LABEL,
     TOPICS,
     expand_frame_id_aliases,
     normalize_algorithm_interface_contract,
@@ -830,7 +831,8 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
     missing_required_flow_topics = sorted(set(real_required_frame_topics) - real_flow_topics)
     if missing_required_flow_topics:
         blockers.append(
-            "real_runtime_required_topic_frame_ids missing from real_s100p data flow: "
+            "real_runtime_required_topic_frame_ids missing from "
+            f"{REAL_RUNTIME_CONTRACT} data flow: "
             + ", ".join(missing_required_flow_topics)
         )
     missing_required_frame_rules = sorted(
@@ -850,8 +852,8 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
     missing_endpoint_flow_topics = sorted(set(real_endpoint_input_topics) - real_flow_topics)
     if missing_endpoint_flow_topics:
         blockers.append(
-            "real_runtime_required_endpoint_input_topics missing from real_s100p "
-            "data flow: "
+            "real_runtime_required_endpoint_input_topics missing from "
+            f"{REAL_RUNTIME_CONTRACT} data flow: "
             + ", ".join(missing_endpoint_flow_topics)
         )
     missing_endpoint_frame_requirements = sorted(
@@ -1045,7 +1047,15 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
 
         stages = list(resolved_flows.get(data_source_name) or [])
         stage_names = [str(stage.get("name")) for stage in stages]
-        if stage_names != template_stage_names:
+        expected_stage_names = template_stage_names
+        command_only = (
+            not source.get("normalized_outputs")
+            and not source.get("algorithm_entry_outputs")
+            and not source.get("algorithm_context_outputs")
+        )
+        if command_only:
+            expected_stage_names = ["endpoint_adapter", "command_boundary"]
+        if stage_names != expected_stage_names:
             blockers.append(f"resolved {data_source_name} stage order mismatch")
 
         for stage in stages:
@@ -1406,7 +1416,7 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
 
 
 def _load_real_collector_module():
-    script = REPO_ROOT / "scripts" / "real_runtime_evidence_collect.py"
+    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
     spec = importlib.util.spec_from_file_location(
         "lingtu_real_runtime_evidence_collect_audit",
         script,
@@ -1562,7 +1572,7 @@ def _check_real_collector(manifest: Mapping[str, Any]) -> dict[str, Any]:
             "does not match runtime manifest"
         )
 
-    source = (REPO_ROOT / "scripts" / "real_runtime_evidence_collect.py").read_text(
+    source = (REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py").read_text(
         encoding="utf-8"
     )
     if ".create_publisher(" in source or ".publish(" in source:
@@ -1574,7 +1584,7 @@ def _check_real_collector(manifest: Mapping[str, Any]) -> dict[str, Any]:
         "runtime_contract": REAL_RUNTIME_CONTRACT,
         "observed_topics": sorted(observed_topics),
         "required_runtime_topics": sorted(required_topics),
-        "required_real_s100p_topics": sorted(required_topics),
+        "required_thunder_field_topics": sorted(required_topics),
         "frames": collector_frames_contract,
         "topic_default_frame_ids": collector_topic_default_frame_contract,
         "topic_allowed_frame_ids": collector_topic_allowed_frame_contract,
@@ -1677,7 +1687,7 @@ def _check_ros_frame_contract_doc(
             blockers.append(f"ros_frame_contract.md topic frame row drifted for {topic}")
 
     required_phrase = (
-        "real S100P evidence must reject `/nav/map_cloud` outside `map`"
+        f"{THUNDER_FIELD_EVIDENCE_LABEL} must reject `/nav/map_cloud` outside `map`"
     )
     if required_phrase not in doc:
         blockers.append("ros_frame_contract.md missing real map_cloud rejection phrase")

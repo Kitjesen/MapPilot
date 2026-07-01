@@ -12,7 +12,7 @@ import pytest
 
 
 def _load_tool():
-    path = Path(__file__).resolve().parents[3] / "scripts" / "plan_preview.py"
+    path = Path(__file__).resolve().parents[3] / "scripts" / "planning" / "plan_preview.py"
     spec = importlib.util.spec_from_file_location("lingtu_plan_preview_tool", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

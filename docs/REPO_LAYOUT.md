@@ -32,10 +32,9 @@ brain/lingtu/
 │   │   └── tests/                # ~1000+ framework tests, no ROS2 needed
 │   ├── nav/               # NavigationModule, SafetyRing, CmdVelMux, OccupancyGrid, ESDF, …
 │   │   ├── services/      # frame_contract, geofence, map_manager, patrol, task_scheduler
-│   │   ├── ros2_waypoint_bridge_module.py  # Extracted ROS2 waypoint bridge
-│   │   ├── ros2_grid_bridge_module.py
-│   │   ├── ros2_path_bridge_module.py
 │   │   └── …
+│   ├── compat/ros2/       # Optional ROS 2 adapters; product/runtime code uses endpoint aliases
+│   │   └── nav/           # grid/path/waypoint ROS 2 endpoint adapters
 │   ├── semantic/          # Flat perception/ + planner/ + reconstruction/ layout
 │   │   ├── perception/    # api/, impl/, srv/, storage/, tests/
 │   │   ├── planner/       # AgentLoop, GoalResolver, VisualServo, tests/, resource/
@@ -124,18 +123,27 @@ brain/lingtu/
 │   ├── e2e/               # End-to-end tests
 │   ├── integration/       # Integration tests
 │   └── scripts/           # Script-based tests
-├── tools/                 # Dev / robot-side helpers (see tools/README.md)
-│   ├── validate/          # robot_config + topic_contract validators
+├── tools/                 # Dev / debug / offline analysis helpers (see tools/README.md)
+│   ├── validate/          # robot_config + topic_contract + architecture validators
 │   ├── evaluation/        # Degeneracy / dataset eval
+│   ├── perception/        # BPU export, ONNX→HBM, perception demos/replay
+│   ├── reconstruction/    # Offline 3D reconstruction helpers
+│   ├── navigation/        # Goal/odometry/navigation helper tools
+│   ├── gateway/           # Gateway demo viewer + health utility
 │   └── proto_gen/         # Generated protobuf stubs
-├── scripts/               # Build helpers, deploy, ota, proto, lingtu CLI shell wrapper
-│   ├── build/             # ROS workspace build helpers, fetch_ortools, build_tare, …
-│   ├── deploy/            # Installers, systemd, OTA, monitoring
-│   │   └── infra/stack/   # Docker + extra systemd + cron/logrotate (legacy deploy stack)
+├── scripts/               # Build/deploy/ops/gates; root keeps only stable entrypoints
+│   ├── build/             # nav_core, DUFOMap, ROS workspace, TARE, semantic deps
+│   ├── deploy/            # S100P/server deploy, systemd, network, release switching
 │   ├── ota/               # Package and push to robot
+│   ├── monitor/           # Feishu / Telegram remote monitoring bots
+│   ├── gates/             # Runtime audit, saved-map artifact, real-runtime evidence gates
+│   ├── diagnostics/       # Doctor, soak, static localization and DUFOMap offline probes
+│   ├── planning/          # Planning preview helpers
+│   ├── visualization/     # Rerun live/mapping visualizers
+│   ├── perception/        # Real-time perception demos
+│   ├── hardware/          # Bag recording and IMU Allan variance capture
 │   ├── proto/             # protoc helpers
-│   ├── lingtu             # Bash CLI for ops on the robot (status / map / nav / svc / log)
-│   └── …                  # build_dufomap.sh, build_nav_core.sh, doctor.py, ...
+│   └── lingtu             # Bash CLI for ops on the robot (status / map / nav / svc / log)
 ├── web/                   # React + Vite dashboard
 ├── docs/                  # Architecture, guides, ADRs
 ├── Makefile               # colcon build / test / format / lint / mapping / navigation
@@ -149,7 +157,7 @@ brain/lingtu/
 1. `python lingtu.py [profile]` — primary, CLI + REPL.
 2. `lingtu` — pip console script (`pyproject.toml` → `lingtu = lingtu_cli:main`).
 3. ~~`python main_nav.py`~~ — removed; use `python lingtu.py` instead.
-4. `make mapping` / `make navigation` — thin wrappers around `lingtu.py map` / `lingtu.py s100p`.
+4. `make mapping` / `make navigation` — thin wrappers around `lingtu.py map` / `lingtu.py nav`.
 
 There are **no** Module-First ROS2 launch files. The Module is the runtime
 unit; SLAM and other C++ subsystems are managed via `NativeModule` (see
@@ -171,4 +179,4 @@ unit; SLAM and other C++ subsystems are managed via `NativeModule` (see
 | Root Gazebo simulation scaffold | `launch/gazebo_simulation.launch.py` (kept at root because ROS-native launchers reference it directly) |
 | Robot physical parameters | `config/robot_config.yaml` (single source of truth) |
 | Calibration SOP | `calibration/README.md` |
-| Operations CLI on the robot | `scripts/lingtu` + `docs/archive/AGENTS.md` |
+| Operations CLI on the robot | `scripts/lingtu` + `docs/04-deployment/lingtu_cli.md` |

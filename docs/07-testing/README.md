@@ -118,6 +118,9 @@ visible without parsing the nested summary.
 
 ## L3 P0 scripts on the robot
 
+Field-run session notes (bugs, bag paths, BACKLOG links) live in
+[`field-runs/`](field-runs/README.md) — one `YYYY-MM-DD.md` per on-robot session.
+
 Each P0 script is self-contained, uses `set -e`, and writes its log to `~/data/nav_logs/YYYYMMDD_HHMMSS_<script>.log`.
 
 | Script | Coverage | Input | Pass criteria |
@@ -157,7 +160,7 @@ LINGTU_P0_RUN_EXPLORE=1 LINGTU_P0_EXPLORE_DURATION=30 \
 ```
 
 After the run:
-1. Record `PASS / FAIL / BLOCKED` plus reason in `vault/field-runs/YYYY-MM-DD.md`.
+1. Record `PASS / FAIL / BLOCKED` plus reason in `docs/07-testing/field-runs/YYYY-MM-DD.md`.
 2. Update the matching item in `BACKLOG.md` (status + last-on-robot date).
 3. Failure cases get their own ticket under `docs/archive/08-project-management/known-issues/` (when that location is created).
 

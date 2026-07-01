@@ -604,6 +604,7 @@ class RuntimeDataflowObservability(GatewayResponseModel):
     live_module_samples: bool = False
     has_fresh_module_sample: bool = False
     fresh_stale_ms_limit: float | None = None
+    endpoint_topic_required: bool = False
     ros2_topic_required: bool = False
 
 
@@ -660,6 +661,7 @@ class RuntimeDataflowResponse(GatewayResponseModel):
     runtime_contract: str | None = None
     runtime_boundary: dict[str, Any] = Field(default_factory=dict)
     transport_layers: dict[str, Any] = Field(default_factory=dict)
+    endpoint_topic_required: bool = False
     ros2_topic_required: bool = False
     module_ports: dict[str, Any] = Field(default_factory=dict)
     topics: list[RuntimeDataflowTopicSummary] = Field(default_factory=list)
@@ -696,6 +698,7 @@ class RuntimeDataflowSubscribeResponse(GatewayResponseModel):
     ok: bool
     ts: float
     read_only: bool = True
+    endpoint_topic_required: bool = False
     ros2_topic_required: bool = False
     arbitrary_publish_supported: bool = False
     publishes: list[str] = Field(default_factory=list)

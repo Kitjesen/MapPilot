@@ -1,7 +1,7 @@
 """Compatibility exports for runtime profile data.
 
-Profile ownership lives in :mod:`core.runtime_profiles` so core blueprint code
-does not depend on the CLI package.
+Profile ownership lives under :mod:`core.blueprints.catalog`. The
+``core.runtime_profiles`` module keeps legacy imports stable for CLI code.
 """
 
 from __future__ import annotations

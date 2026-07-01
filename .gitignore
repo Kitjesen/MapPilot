@@ -105,6 +105,7 @@ docs/media/videos/*.gif
 # 鈹€鈹€ AI agent / OMC state 鈹€鈹€
 **/.omc/
 **/.omx/
+.hermes/
 .qoder/
 .chat_history
 
@@ -132,7 +133,7 @@ client/flutter_monitor/build/
 client/flutter_monitor/linux/flutter/ephemeral/
 client/flutter_monitor/web/.dart_tool/
 
-# 鈹€鈹€ Third-party (use scripts/clone_semantic_deps.sh to restore) 鈹€鈹€
+# 鈹€鈹€ Third-party (use scripts/build/clone_semantic_deps.sh to restore) 鈹€鈹€
 third_party/
 !third_party/.gitkeep
 

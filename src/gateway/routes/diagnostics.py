@@ -386,9 +386,9 @@ def _real_runtime_evidence_artifacts_root(
         return pathlib.Path(env_root).expanduser()
     env_artifacts = os.environ.get("LINGTU_ARTIFACT_ROOT")
     if env_artifacts:
-        return pathlib.Path(env_artifacts).expanduser() / "real_s100p_runtime"
+        return pathlib.Path(env_artifacts).expanduser() / "thunder_field_runtime"
     repo_root = pathlib.Path(__file__).resolve().parents[3]
-    return repo_root / "artifacts" / "real_s100p_runtime"
+    return repo_root / "artifacts" / "thunder_field_runtime"
 
 
 def _real_runtime_evidence_max_age_s(explicit: float | None = None) -> float:
@@ -781,6 +781,8 @@ def _real_runtime_evidence_summary_from_report(
     now: float,
     max_age_s: float,
 ) -> dict[str, Any] | None:
+    from core.runtime_interface import REAL_RUNTIME_CONTRACT
+
     report = _load_json_file(report_path)
     if report is None:
         return None
@@ -824,8 +826,10 @@ def _real_runtime_evidence_summary_from_report(
     if validation.get("ok") is not True:
         blockers.append("real-runtime-evidence gate did not pass")
         blockers.extend(str(item) for item in (validation.get("blockers") or []) if item)
-    if contract_name != "real_s100p":
-        blockers.append("real-runtime-evidence contract is not real_s100p")
+    if contract_name != REAL_RUNTIME_CONTRACT:
+        blockers.append(
+            f"real-runtime-evidence contract is not {REAL_RUNTIME_CONTRACT}"
+        )
     if report.get("simulation_only") is not False:
         blockers.append("real-runtime-evidence simulation_only is not false")
     if report.get("real_robot_motion") is not True:
@@ -1350,7 +1354,7 @@ def register_diagnostic_routes(app, gw) -> None:
     @app.get(
         "/api/v1/diagnostics/real-runtime-evidence/latest",
         response_model=RealRuntimeEvidenceLatestResponse,
-        summary="Read latest real S100P runtime evidence gate summary",
+        summary="Read latest Thunder field runtime evidence gate summary",
     )
     async def real_runtime_evidence_latest():
         return build_real_runtime_evidence_latest_summary()

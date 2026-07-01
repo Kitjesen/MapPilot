@@ -13,7 +13,7 @@
 
 ```bash
 # 重新生成两份文档
-python scripts/extract_api_docs.py
+python scripts/docs/extract_api_docs.py
 ```
 
 ## 架构分层

@@ -4,11 +4,29 @@
 
 ```bash
 cd ~/data/inovxio/lingtu
-pip install -e .
+uv sync --locked
 ```
 
-After install the `lingtu` console script (`lingtu_cli:main`) is on `$PATH`
-and is equivalent to `python lingtu.py`.
+`uv.lock` pins the resolved Python packages. `.python-version` pins the
+default interpreter to Python 3.10.12, matching the S100P runtime.
+
+Run commands through `uv run --locked` so deployment fails fast if
+`pyproject.toml` and `uv.lock` drift:
+
+```bash
+uv run --locked python lingtu.py --list
+```
+
+Install extras only for the profile you are running:
+
+```bash
+uv sync --locked --extra vision --extra ml --extra llm --extra nlp
+uv sync --locked --extra perception --extra vector   # heavy semantic deps
+uv sync --locked --extra dev                         # test/lint tooling
+```
+
+After sync the `lingtu` console script (`lingtu_cli:main`) is available in the
+uv-managed environment and is equivalent to `uv run --locked python lingtu.py`.
 
 ## Robot environment (S100P)
 
@@ -38,7 +56,7 @@ keeps compatibility exports for CLI callers.
 | `lingtu explore` | wavefront frontier exploration | LiDAR + IMU + camera |
 | `lingtu tare_explore` | CMU TARE hierarchical explorer | LiDAR + IMU + camera + built TARE binary |
 
-`lingtu --list` lists what is currently registered.
+`uv run --locked lingtu --list` lists what is currently registered.
 
 ## Typical session
 
@@ -117,8 +135,8 @@ lingtu restart             Stop and relaunch with the same argv
 lingtu status              External run state (add --json)
 lingtu show-config nav     Resolved config (add --json)
 lingtu log -f              Follow the run log
-lingtu doctor              scripts/doctor.py
-lingtu rerun               scripts/rerun_live.py
+lingtu doctor              scripts/diagnostics/doctor.py
+lingtu rerun               scripts/visualization/rerun_live.py
 lingtu --list              List profiles
 lingtu --version           Print version
 ```

@@ -65,8 +65,8 @@ Known cleanup targets:
 - `sim/bridge/nova_nav_bridge.py` has been moved off the deleted `sim/robot`
   defaults and now points at `sim/robots/nova_dog/robot_with_camera.xml` plus
   `sim/robots/nova_dog/policy.onnx`.
-- `tests/planning/` is legacy but still referenced by simulation contracts and
-  profile graph tests.
+- `sim/planning/` contains legacy planning simulation tests/assets that are still
+  referenced by simulation contracts and profile graph tests.
 
 ## Modularization Targets
 

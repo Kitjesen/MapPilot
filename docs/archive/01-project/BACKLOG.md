@@ -9,7 +9,7 @@
 > Discipline:
 > 1. Every new PR adds or modifies an entry here, then opens the PR.
 > 2. After an on-robot run, update status and date.
-> 3. `doing` requires an owner; `verified` requires a `vault/实机记录/` link.
+> 3. `doing` requires an owner; `verified` requires a `docs/07-testing/field-runs/` link.
 
 ---
 
@@ -103,7 +103,7 @@
 
 1. **Before opening a PR**: add or update an entry here; commit message references `[BACKLOG-##]`.
 2. **Unit tests pass**: state moves `doing -> verified (unit)`.
-3. **On-robot run passes**: state moves to `verified (robot)`, last-on-robot date updated, `vault/实机记录/YYYY-MM-DD.md` link added.
+3. **On-robot run passes**: state moves to `verified (robot)`, last-on-robot date updated, `docs/07-testing/field-runs/YYYY-MM-DD.md` link added.
 4. **Blocker hit**: state `blocked` plus reason ("waiting for NTRIP credentials", "S100P off network", ...).
 
 **Review cadence**: refresh status every Friday after the L3 pass.

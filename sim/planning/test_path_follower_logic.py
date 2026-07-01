@@ -13,7 +13,7 @@ pathFollower.cpp 纯 Python 单元测试 (无需 ROS2)
   - yawRate 夹紧 (maxYawRate)
 
 用法:
-    python tests/planning/test_path_follower_logic.py
+    python sim/planning/test_path_follower_logic.py
 """
 
 import math

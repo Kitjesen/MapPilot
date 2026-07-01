@@ -14,7 +14,7 @@ velocity arbitration. It should not import `semantic/`, `drivers/`, or
 | Maps | `occupancy_grid_module.py`, `voxel_grid_module.py`, `esdf_module.py`, `elevation_map_module.py`, `traversability_cost_module.py` | L2 map layers used by navigation, safety, gateway preview, and local autonomy. |
 | Safety | `safety_ring_module.py`, `plan_safety.py`, `cmd_vel_mux_module.py`, `services/geofence_manager_module.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
 | Frontier exploration | `frontier_explorer_module.py`, `traversable_frontier_module.py` | Wavefront frontier goals and traversability-enriched frontier previews. |
-| ROS 2 bridges | `ros2_waypoint_bridge_module.py`, `ros2_path_bridge_module.py`, `ros2_grid_bridge_module.py` | Bridge selected navigation products to ROS 2 topics when configured. |
+| Endpoint bridge ports | Blueprint aliases `EndpointWaypointBridgeModule`, `EndpointPathBridgeModule`, `EndpointGridBridgeModule` | Optional external visualization/control endpoints. ROS 2 implementations live under `compat/ros2/nav/`; `nav/` keeps no ROS runtime implementation. |
 | Map lifecycle | `services/map_manager_module.py` | Save/use/build/delete maps, including PGO/DUFOMap save-time cleanup. |
 
 ## Exploration and planning boundaries

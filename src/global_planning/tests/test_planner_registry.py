@@ -2,9 +2,8 @@
 
 import pytest
 
-from core.plugin_seed import seed_builtin_plugins
-from core.registry import clear, get, get_metadata, list_plugins, restore, snapshot
-
+from core.registry import get, get_metadata, list_plugins, restore, snapshot
+from lingtu_runtime.plugin_seed import seed_builtin_plugins
 
 # ---------------------------------------------------------------------------
 # Fixtures

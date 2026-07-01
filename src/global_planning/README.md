@@ -80,7 +80,7 @@ class MyPlannerBackend:
 2. Set the planner profile to use it:
 
 ```bash
-python lingtu.py s100p --planner my_planner
+python lingtu.py nav --planner my_planner
 ```
 
 Or update `cli/profiles_data.py`:

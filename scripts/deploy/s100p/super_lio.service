@@ -1,5 +1,5 @@
 [Unit]
-Description=S100P Super-LIO experimental LIO backend
+Description=Thunder Super-LIO experimental LIO backend
 After=network.target lidar.service robot-lidar.service
 Wants=lidar.service robot-lidar.service
 StartLimitIntervalSec=300
@@ -18,7 +18,7 @@ Environment=SUPER_LIO_IMU_TOPIC=/nav/imu
 EnvironmentFile=-/etc/lingtu/super_lio.env
 ExecStart=/bin/bash -c '\
   set -eo pipefail; \
-  source /opt/ros/humble/setup.bash; \
+  source /opt/lingtu/config/ros2-env.sh; \
   LINGTU_LIVOX_SETUP="/opt/lingtu/current/install/livox_ros_driver2/share/livox_ros_driver2/local_setup.bash"; \
   if [ -f "$${LINGTU_LIVOX_SETUP}" ]; then \
     source "$${LINGTU_LIVOX_SETUP}"; \

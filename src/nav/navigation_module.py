@@ -148,7 +148,6 @@ class NavigationModule(Module, layer=5):
         stuck_dist_thre: float = 0.15,
         max_replan_count: int = 3,
         downsample_dist: float = 2.0,
-        enable_ros2_bridge: bool = False,
         final_waypoint_threshold: float | None = None,
         complete_path_on_goal_proximity: bool = False,
         goal_proximity_completion_threshold: float | None = None,
@@ -171,9 +170,11 @@ class NavigationModule(Module, layer=5):
         allow_path_start_insert: bool = False,
         **kw,
     ):
+        legacy_enable_ros2_bridge = bool(kw.pop("enable_ros2_bridge", False))
         super().__init__(**kw)
         planner_key = str(planner or "").strip().lower()
-        self._enable_ros2_bridge = enable_ros2_bridge
+        self._legacy_enable_ros2_bridge = legacy_enable_ros2_bridge
+        self._enable_ros2_bridge = legacy_enable_ros2_bridge
         self._allow_direct_goal_fallback = allow_direct_goal_fallback
         self._direct_goal_fallback_on_planner_failure = direct_goal_fallback_on_planner_failure
         self._external_strategy_path_control = external_strategy_path_control
@@ -320,19 +321,19 @@ class NavigationModule(Module, layer=5):
         self.traversability.subscribe(self._on_traversability)
         self.map_frame_jump_event.subscribe(self._on_map_frame_jump)
 
-        # DEPRECATED: ROS2 waypoint bridge is now a separate module
-        # (nav.ros2_waypoint_bridge_module.ROS2WaypointBridgeModule).
-        # The enable_ros2_bridge parameter is kept as a no-op for backward
-        # compatibility; set it at the blueprint level instead.
-        if self._enable_ros2_bridge:
+        # DEPRECATED: endpoint bridges are now separate Blueprint modules.
+        # A legacy enable_ros2_bridge keyword is accepted through **kw only so
+        # older callers fail soft while the formal constructor surface stays
+        # ROS-free.
+        if self._legacy_enable_ros2_bridge:
             logger.info(
                 "NavigationModule: enable_ros2_bridge is deprecated — "
-                "use ROS2WaypointBridgeModule in the blueprint stack instead"
+                "use EndpointWaypointBridgeModule in the blueprint stack instead"
             )
 
         self._set_state(MissionState.IDLE)
 
-    # ROS2 spin handled by shared executor (core.ros2_context)
+    # External endpoint spinning is owned by the selected compat adapter.
 
     # ── Mission FSM ───────────────────────────────────────────────────────
 
@@ -2247,8 +2248,8 @@ class NavigationModule(Module, layer=5):
             ts=time.time(),
         )
         self.waypoint.publish(pose)
-        # ROS2 waypoint publishing moved to ROS2WaypointBridgeModule
-        # (nav.ros2_waypoint_bridge_module).  Subscribe to self.waypoint.
+        # Endpoint waypoint publishing moved to EndpointWaypointBridgeModule
+        # (compat.ros2.nav.waypoint_bridge). Subscribe to self.waypoint.
 
     # ── Skills (auto-discovered by MCPServerModule) ───────────────────────
 

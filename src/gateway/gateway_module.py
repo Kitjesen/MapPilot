@@ -52,18 +52,20 @@ import json
 import logging
 import math
 import os
-import subprocess
 import sys
 import threading
 import time
 from pathlib import Path as FilePath
 from typing import Any, Callable
 
+from core.map_save import MapSaveAdapter, MapSaveError, save_nav_map_with_adapter
 from core.module import Module
 from core.msgs.geometry import PoseStamped, Twist, Vector3
 from core.msgs.nav import Odometry, Path
+from core.msgs.numpy_compat import np
 from core.msgs.semantic import ExecutionEval, SafetyState, SceneGraph
 from core.msgs.sensor import PointCloud2
+from core.plugin_seed import seed_registered_plugins
 from core.registry import register
 from core.relocalization import RelocalizationService
 from core.stream import In, Out
@@ -79,7 +81,6 @@ from gateway.services.map_paths import (
     active_map_name,
     map_dir_for,
 )
-from core.msgs.numpy_compat import np
 from gateway.services.map_safety import (
     safe_map_name as _map_safe_map_name,
 )
@@ -341,6 +342,7 @@ class GatewayModule(Module, layer=6):
         self._cmd_vel_mux = None
         self._backend_reconfigure_modules: dict[str, Any] = {}
         self._relocalization_service: RelocalizationService | None = None
+        self._map_save_adapter: MapSaveAdapter | None = kw.get("map_save_adapter")
 
         # rosbag recording state
         self._bag_proc: Any = None       # subprocess.Popen
@@ -2803,17 +2805,18 @@ class GatewayModule(Module, layer=6):
         import tempfile
         tmp = os.path.join(tempfile.gettempdir(), "lingtu_live_snapshot.pcd")
         try:
-            subprocess.run(
-                ["bash", "-c",
-                 "source /opt/ros/humble/setup.bash && "
-                 "source ~/data/SLAM/navigation/install/setup.bash 2>/dev/null; "
-                 "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && "
-                 f"ros2 service call /nav/save_map interface/srv/SaveMaps "
-                 f"\"{{file_path: '{tmp}'}}\""],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=15)
-        except Exception as e:
-            logger.debug("_generate_viewer_live: ros2 save_map failed: %s", e)
+            if self._map_save_adapter is None:
+                seed_registered_plugins(
+                    groups=("map_save_adapter",),
+                    reload_loaded=False,
+                )
+            save_nav_map_with_adapter(
+                self._map_save_adapter,
+                tmp,
+                timeout_sec=15.0,
+            )
+        except MapSaveError as e:
+            logger.debug("_generate_viewer_live: map save adapter failed: %s", e)
 
         if os.path.isfile(tmp) and os.path.getsize(tmp) > 200:
             # Parse temp PCD

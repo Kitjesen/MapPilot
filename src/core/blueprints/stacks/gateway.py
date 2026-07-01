@@ -85,7 +85,7 @@ def gateway(
             "visualization",
             "rerun",
             seed_group="visualization",
-            fallback="gateway.rerun_bridge_module.RerunBridgeModule",
+            fallback="compat.ros2.rerun_bridge.RerunBridgeModule",
         )
         if RerunBridgeModule is not None:
             bp.add(RerunBridgeModule, alias="RerunBridgeModule", web_port=rerun_port)

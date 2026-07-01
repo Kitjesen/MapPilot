@@ -38,7 +38,7 @@ class Camera:
         if self._started:
             return self
         try:
-            from drivers.real.thunder.camera_bridge_module import CameraBridgeModule
+            from compat.ros2.camera_bridge import CameraBridgeModule
             self._bridge = CameraBridgeModule(
                 color_topic=self._color_topic,
                 depth_topic=self._depth_topic,

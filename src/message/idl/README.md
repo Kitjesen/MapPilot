@@ -1,0 +1,34 @@
+# IDL Ownership
+
+LingTu has two DDS schema families:
+
+1. Compatibility DDS binds upstream ROS 2 and Livox message IDL:
+
+- `livox_ros_driver2/msg/CustomMsg`
+- `sensor_msgs/msg/Imu`
+- `sensor_msgs/msg/PointCloud2`
+- `nav_msgs/msg/Odometry`
+- `nav_msgs/msg/Path`
+- `geometry_msgs/msg/PoseStamped`
+- `geometry_msgs/msg/TwistStamped`
+- `std_msgs/msg/String`
+- `std_msgs/msg/Float32`
+
+2. Native field DDS uses LingTu-owned IDL in `lingtu_slam.idl`.
+
+Current native SLAM boundary types are `lingtu.dds.LivoxFrame`,
+`lingtu.dds.Imu`, `lingtu.dds.Odometry`, `lingtu.dds.PointCloud2`,
+`lingtu.dds.Float32`, and `lingtu.dds.Text`.
+
+Use the native IDL when the process must not link ROS 2, `rclcpp`, or
+`livox_ros_driver2`. Native publishers and subscribers must both use the
+LingTu IDL type on the same DDS topic; it is not wire-compatible with a ROS 2
+publisher using `livox_ros_driver2/msg/CustomMsg` on that topic.
+
+Direct CycloneDDS C++ publishers/subscribers need `idlcxx`-generated C++ types
+for the matching IDL. The fallback C++ structs in `dds_topics.hpp` are contract
+tags for portable builds, not DDS wire types.
+
+Python native DDS product types live in `message.dds_types`. `runtime.dds` and
+`drivers.real.lidar._dds` are compatibility shims for old ROS2/Livox readers;
+they are not the ownership location for new LingTu wire contracts.

@@ -224,7 +224,7 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     monkeypatch.setenv("LINGTU_PROFILE", "explore")
     monkeypatch.setenv("LINGTU_ENDPOINT", "mujoco_live")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
 
@@ -311,9 +311,9 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     from gateway.services.readiness import build_readiness_snapshot
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
@@ -351,7 +351,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
         in payload["reasons"]
     )
     localization = payload["runtime"]["localization"]
-    assert localization["runtime_contract"] == "real_s100p"
+    assert localization["runtime_contract"] == "thunder_field"
     assert localization["topic_default_frame_ids"]["/nav/map_cloud"] == "map"
     assert localization["required_topic_frame_ids"] == [
         "/nav/lidar_scan",
@@ -370,7 +370,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
         "local_planning_and_following",
     ]
     frames = localization["frames"]
-    assert frames["runtime_contract"] == "real_s100p"
+    assert frames["runtime_contract"] == "thunder_field"
     assert frames["odometry_frame_id"] == "odom"
     assert frames["registered_cloud_frame_id"] == "body"
     assert frames["map_cloud_frame_id"] == "map"

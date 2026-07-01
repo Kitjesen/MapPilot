@@ -328,10 +328,10 @@ def record_full_stack_nav(
     nav_max_angular_z: float,
     success_settle: float,
 ) -> dict[str, Any]:
-    from core.blueprints.full_stack import full_stack_blueprint
+    from core.blueprints.profile_builder import build_system_for_profile
     from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
-    system = full_stack_blueprint(
+    system = build_system_for_profile("sim", dict(
         robot="sim_mujoco",
         world=world,
         slam_profile="none",
@@ -356,7 +356,7 @@ def record_full_stack_nav(
         path_follower_max_speed=path_max_speed,
         safe_goal_tolerance=safe_goal_tolerance,
         run_startup_checks=False,
-    ).build()
+    ))
 
     driver = system.get_module("MujocoDriverModule")
     ogm = system.get_module("OccupancyGridModule") if enable_map_modules else None

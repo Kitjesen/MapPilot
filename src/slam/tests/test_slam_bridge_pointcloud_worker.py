@@ -303,7 +303,7 @@ def test_rclpy_subscriptions_use_separate_callback_groups(monkeypatch):
         _module("rclpy.callback_groups", MutuallyExclusiveCallbackGroup=FakeGroup),
     )
 
-    import core.ros2_context as ros2_context
+    import compat.ros2.context as ros2_context
 
     executor = FakeExecutor()
     monkeypatch.setattr(ros2_context, "ensure_rclpy", lambda: None)

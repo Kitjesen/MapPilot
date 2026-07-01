@@ -56,6 +56,7 @@ def test_slam_switch_service_plans_preserve_order():
         "super_lio_relocation",
     )
     assert slam_switch_plan("fastlio2").ensure == ("slam", "slam_pgo")
+    assert slam_switch_plan("fastlio2").wait_ready == ("slam", "slam_pgo")
     assert slam_switch_plan("localizer").stop == (
         "slam_pgo",
         "super_lio",

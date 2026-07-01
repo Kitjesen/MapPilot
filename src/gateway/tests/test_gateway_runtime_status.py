@@ -68,8 +68,8 @@ def _write_active_same_source_tomogram(map_root):
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "real_s100p",
-                "data_source": "real_s100p",
+                "source_profile": "thunder_field",
+                "data_source": "thunder_field",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -79,8 +79,8 @@ def _write_active_same_source_tomogram(map_root):
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "real_s100p",
-                        "data_source": "real_s100p",
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -89,8 +89,8 @@ def _write_active_same_source_tomogram(map_root):
                         "path": "tomogram.pickle",
                         "sha256": tomogram_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "real_s100p",
-                        "data_source": "real_s100p",
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
                         "frame_id": "map",
                         "shape": [1, 1, 1],
                     },
@@ -111,7 +111,7 @@ def test_diagnostics_plugin_catalog_exposes_registered_backends():
     # ^ Cross-layer: gateway test imports from semantic/ for registry setup.
     #   Acceptable: test needs to register a semantic backend in the global
     #   registry so build_plugin_catalog() can detect it.  No production
-    #   dependency â€” the import is for side-effect registration only.
+    #   dependency â€?the import is for side-effect registration only.
 
     clear_diagnostics_cache()
 
@@ -607,9 +607,9 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
     from gateway.services.runtime_status import build_localization_status
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
@@ -633,8 +633,8 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
 
     runtime = payload["runtime"]
     assert runtime["ok"] is True
-    assert runtime["data_source"] == "real_s100p"
-    assert runtime["runtime_contract"] == "real_s100p"
+    assert runtime["data_source"] == "thunder_field"
+    assert runtime["runtime_contract"] == "thunder_field"
     assert runtime["frames"]["map"] == "map"
     assert runtime["frames"]["odom"] == "odom"
     assert runtime["frames"]["body"] == "body"
@@ -655,7 +655,7 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
     ]
 
     frames = payload["frames"]
-    assert frames["runtime_contract"] == "real_s100p"
+    assert frames["runtime_contract"] == "thunder_field"
     assert frames["odometry_frame_id"] == "odom"
     assert frames["registered_cloud_frame_id"] == "body"
     assert frames["map_cloud_frame_id"] == "map"
@@ -665,7 +665,7 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
     assert frames["missing_required_topic_frame_ids"] == []
     assert frames["mismatches"] == []
     assert frames["ok"] is True
-    assert model.runtime.data_source == "real_s100p"
+    assert model.runtime.data_source == "thunder_field"
     assert model.frames.ok is True
 
 
@@ -1190,9 +1190,9 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
     from gateway.services.runtime_status import build_navigation_status
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
@@ -1216,9 +1216,9 @@ def test_navigation_status_reports_current_runtime_boundary(monkeypatch):
     assert runtime["ok"] is True
     assert runtime["declared"] is True
     assert runtime["profile"] == "nav"
-    assert runtime["endpoint"] == "real_s100p"
-    assert runtime["data_source"] == "real_s100p"
-    assert runtime["runtime_contract"] == "real_s100p"
+    assert runtime["endpoint"] == "thunder_field"
+    assert runtime["data_source"] == "thunder_field"
+    assert runtime["runtime_contract"] == "thunder_field"
     assert runtime["simulation_only"] is False
     assert runtime["command_sink"] == "hardware_driver_after_cmd_vel_mux"
     assert runtime["expected_command_sink"] == "hardware_driver_after_cmd_vel_mux"
@@ -1302,7 +1302,7 @@ def test_navigation_frame_summary_defaults_planning_frame_from_runtime_contract(
         calls.append((runtime_contract, topic))
         return "contract_map"
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setattr(
         runtime_interface,
         "runtime_topic_default_frame_id",
@@ -1313,7 +1313,7 @@ def test_navigation_frame_summary_defaults_planning_frame_from_runtime_contract(
 
     assert summary["planning_frame_id"] == "contract_map"
     assert summary["ok"] is True
-    assert calls == [("real_s100p", runtime_interface.TOPICS.global_path)]
+    assert calls == [("thunder_field", runtime_interface.TOPICS.global_path)]
 
 
 def test_navigation_status_flags_runtime_boundary_mismatch(monkeypatch):
@@ -1323,7 +1323,7 @@ def test_navigation_status_flags_runtime_boundary_mismatch(monkeypatch):
     monkeypatch.setenv("LINGTU_PROFILE", "explore")
     monkeypatch.setenv("LINGTU_ENDPOINT", "mujoco_live")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
 
@@ -1394,8 +1394,8 @@ def test_navigation_status_flags_unknown_topic_frame_contract(monkeypatch):
     from gateway.services.runtime_status import build_navigation_status
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "typo_contract")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
@@ -2500,9 +2500,9 @@ def test_runtime_dataflow_route_exposes_module_first_observability(monkeypatch):
     from gateway.schemas import RuntimeDataflowResponse
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
@@ -2513,8 +2513,8 @@ def test_runtime_dataflow_route_exposes_module_first_observability(monkeypatch):
     initial_payload = payload
 
     assert payload["schema_version"] == 1
-    assert payload["runtime_contract"] == "real_s100p"
-    assert payload["runtime_boundary"]["runtime_contract"] == "real_s100p"
+    assert payload["runtime_contract"] == "thunder_field"
+    assert payload["runtime_boundary"]["runtime_contract"] == "thunder_field"
     assert payload["ros2_topic_required"] is False
     assert payload["transport_layers"]["module_port_bus"]["primary"] is True
     assert payload["transport_layers"]["ros2_adapter"]["primary"] is False
@@ -2589,7 +2589,7 @@ def test_runtime_dataflow_route_validates_active_saved_tomogram_artifact(
     map_root = tmp_path / "maps"
     _write_active_same_source_tomogram(map_root)
     monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow")
@@ -2631,7 +2631,7 @@ def test_runtime_dataflow_route_marks_missing_active_tomogram_artifact(
     map_root = tmp_path / "maps"
     map_root.mkdir()
     monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow")
@@ -2660,7 +2660,7 @@ def test_runtime_dataflow_route_marks_missing_active_tomogram_artifact(
 def test_runtime_dataflow_route_is_read_only_for_module_ports(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow")
@@ -2681,7 +2681,7 @@ def test_runtime_dataflow_route_does_not_mark_stale_port_as_live(
     from core.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
     monkeypatch.setattr(dataflow_mod, "LIVE_MODULE_SAMPLE_STALE_MS", -1.0)
 
     gateway = GatewayModule()
@@ -2703,7 +2703,7 @@ def test_runtime_dataflow_topic_route_answers_one_stream_without_ros2(monkeypatc
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeDataflowTopicDetailResponse
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/topic")
@@ -2744,7 +2744,7 @@ def test_runtime_dataflow_subscribe_route_returns_read_only_sse_plan(monkeypatch
         RuntimeDataflowSubscribeResponse,
     )
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/subscribe")
@@ -2797,7 +2797,7 @@ def test_runtime_dataflow_exposes_traversable_frontier_candidates_read_only(
     #   RuntimeDataflow endpoint with real module state.  Gateway tests
     #   serve as integration tests for the full stack through the HTTP layer.
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2960,7 +2960,7 @@ def test_runtime_dataflow_subscribe_route_rejects_unknown_selector_without_publi
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeDataflowSubscribeRequest
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/subscribe")
@@ -2985,7 +2985,7 @@ def test_runtime_dataflow_topic_route_accepts_canonical_stream_token(
     from core.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/topic")
@@ -3006,7 +3006,7 @@ def test_runtime_dataflow_topic_route_exposes_whitelisted_command_interfaces(
     from core.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/topic")
@@ -3033,9 +3033,9 @@ def test_runtime_dataflow_topic_route_exposes_whitelisted_command_interfaces(
     ),
     [
         (
-            "real_s100p",
-            "real_s100p",
-            "real_s100p",
+            "thunder_field",
+            "thunder_field",
+            "thunder_field",
             "hardware_driver_after_cmd_vel_mux",
             "0",
         ),
@@ -3086,7 +3086,7 @@ def test_runtime_dataflow_topic_route_exposes_all_whitelisted_write_interfaces(
     from core.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/topic")
@@ -3122,9 +3122,9 @@ def test_runtime_dataflow_reflects_sim_to_real_runtime_switch_without_cache(
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
     sim_payload = asyncio.run(endpoint())
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
     real_payload = asyncio.run(endpoint())
@@ -3132,7 +3132,7 @@ def test_runtime_dataflow_reflects_sim_to_real_runtime_switch_without_cache(
     assert sim_payload["runtime_contract"] == "mujoco_fastlio2_live"
     assert sim_payload["runtime_boundary"]["simulation_only"] is True
     assert sim_payload["runtime_boundary"]["command_sink"] == "mujoco_velocity_adapter"
-    assert real_payload["runtime_contract"] == "real_s100p"
+    assert real_payload["runtime_contract"] == "thunder_field"
     assert real_payload["runtime_boundary"]["simulation_only"] is False
     assert (
         real_payload["runtime_boundary"]["command_sink"]
@@ -3148,7 +3148,7 @@ def test_runtime_dataflow_reflects_sim_to_real_runtime_switch_without_cache(
 def test_runtime_dataflow_topic_route_reports_unknown_selector(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/topic")
@@ -3177,7 +3177,7 @@ def test_runtime_dataflow_reports_live_samples_for_field_topics(monkeypatch):
     from core.runtime_interface import TOPICS
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow")
@@ -3228,7 +3228,7 @@ def test_runtime_dataflow_topic_route_answers_every_product_observable_stream_wi
     from core.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
     from gateway.gateway_module import GatewayModule
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     endpoint = _endpoint(gateway, "/api/v1/runtime/dataflow/topic")
@@ -3253,7 +3253,7 @@ def test_runtime_dataflow_subscribe_route_covers_every_gateway_realtime_stream(
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeDataflowSubscribeRequest
 
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
 
     gateway = GatewayModule()
     gateway.setup()

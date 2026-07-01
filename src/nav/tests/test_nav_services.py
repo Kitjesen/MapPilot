@@ -357,7 +357,6 @@ class TestMapManagerModule(unittest.TestCase):
         self.assertIn("not supported", resp["message"])
         run.assert_not_called()
 
-    @patch("subprocess.run")
     @patch(
         "gateway.gateway_module._apply_dynamic_filter_step1half",
         return_value=None,
@@ -365,9 +364,9 @@ class TestMapManagerModule(unittest.TestCase):
     def test_map_save_localizer_keeps_relocalization_contract(
         self,
         _filter,
-        run,
     ):
-        run.return_value = MagicMock(returncode=0, stderr="")
+        adapter = MagicMock(return_value={"success": True, "source": "fake_adapter"})
+        self.mod._map_save_adapter = adapter
 
         with patch.object(
             self.mod,
@@ -392,8 +391,13 @@ class TestMapManagerModule(unittest.TestCase):
         self.assertTrue(resp["saved_map_relocalization_supported"])
         self.assertTrue(resp["restart_recovery_supported"])
         self.assertEqual(resp["recovery_method"], "relocalize_service")
+        adapter.assert_called_once()
+        self.assertEqual(
+            Path(adapter.call_args.args[0]),
+            Path(self._map_dir) / "localizer_map" / "map.pcd",
+        )
+        self.assertTrue(adapter.call_args.kwargs["save_patches"])
 
-    @patch("subprocess.run")
     @patch(
         "gateway.gateway_module._apply_dynamic_filter_step1half",
         return_value=None,
@@ -401,9 +405,9 @@ class TestMapManagerModule(unittest.TestCase):
     def test_map_save_localizer_requires_navigation_tomogram(
         self,
         _filter,
-        run,
     ):
-        run.return_value = MagicMock(returncode=0, stderr="")
+        adapter = MagicMock(return_value={"success": True, "source": "fake_adapter"})
+        self.mod._map_save_adapter = adapter
 
         with patch.object(
             self.mod,
@@ -426,9 +430,9 @@ class TestMapManagerModule(unittest.TestCase):
         self.assertFalse(resp["tomogram_ok"])
         self.assertIn("not ready for navigation", resp["message"])
         self.assertIn("tomogram source", resp["tomogram_message"])
+        adapter.assert_called_once()
         occupancy.assert_not_called()
 
-    @patch("subprocess.run")
     @patch(
         "gateway.gateway_module._apply_dynamic_filter_step1half",
         return_value=None,
@@ -436,38 +440,35 @@ class TestMapManagerModule(unittest.TestCase):
     def test_simulation_only_map_save_closes_active_artifact_loop(
         self,
         _filter,
-        run,
     ):
         """Map save produces active map artifacts without ROS2 or hardware."""
         map_name = "sim_saved"
         map_dir = Path(self._map_dir) / map_name
 
-        def _fake_save_maps(*_args, **_kw):
-            cmd = list(_args[0]) if _args else []
-            if "/pgo/save_maps" in cmd:
-                map_dir.mkdir(parents=True, exist_ok=True)
-                (map_dir / "map.pcd").write_text(
-                    "VERSION 0.7\n"
-                    "FIELDS x y z\n"
-                    "SIZE 4 4 4\n"
-                    "TYPE F F F\n"
-                    "COUNT 1 1 1\n"
-                    "WIDTH 8\n"
-                    "HEIGHT 1\n"
-                    "VIEWPOINT 0 0 0 1 0 0 0\n"
-                    "POINTS 8\n"
-                    "DATA ascii\n"
-                    "0.0 0.0 0.0\n"
-                    "1.0 0.0 0.0\n"
-                    "0.0 1.0 0.0\n"
-                    "1.0 1.0 0.0\n"
-                    "0.0 0.0 0.5\n"
-                    "1.0 0.0 0.5\n"
-                    "0.0 1.0 0.5\n"
-                    "1.0 1.0 0.5\n",
-                    encoding="utf-8",
-                )
-            return MagicMock(returncode=0, stderr="")
+        def _fake_save_maps(pcd_path, **_kw):
+            Path(pcd_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(pcd_path).write_text(
+                "VERSION 0.7\n"
+                "FIELDS x y z\n"
+                "SIZE 4 4 4\n"
+                "TYPE F F F\n"
+                "COUNT 1 1 1\n"
+                "WIDTH 8\n"
+                "HEIGHT 1\n"
+                "VIEWPOINT 0 0 0 1 0 0 0\n"
+                "POINTS 8\n"
+                "DATA ascii\n"
+                "0.0 0.0 0.0\n"
+                "1.0 0.0 0.0\n"
+                "0.0 1.0 0.0\n"
+                "1.0 1.0 0.0\n"
+                "0.0 0.0 0.5\n"
+                "1.0 0.0 0.5\n"
+                "0.0 1.0 0.5\n"
+                "1.0 1.0 0.5\n",
+                encoding="utf-8",
+            )
+            return {"success": True, "source": "fake_adapter"}
 
         def _fake_build_tomogram(name):
             import pickle
@@ -491,7 +492,8 @@ class TestMapManagerModule(unittest.TestCase):
                 "tomogram": str(tomogram_path),
             }
 
-        run.side_effect = _fake_save_maps
+        adapter = MagicMock(side_effect=_fake_save_maps)
+        self.mod._map_save_adapter = adapter
         with patch.object(self.mod, "_build_tomogram", side_effect=_fake_build_tomogram):
             resp = self.mod._map_save(map_name, slam_profile="localizer")
 
@@ -504,8 +506,9 @@ class TestMapManagerModule(unittest.TestCase):
         self.assertTrue(Path(resp["tomogram"]).exists())
         self.assertTrue(Path(resp["occupancy"]).exists())
         self.assertTrue(resp["saved_map_relocalization_supported"])
-        save_calls = [call for call in run.call_args_list if "/pgo/save_maps" in call.args[0]]
-        self.assertEqual(len(save_calls), 1)
+        adapter.assert_called_once()
+        self.assertEqual(Path(adapter.call_args.args[0]), map_dir / "map.pcd")
+        self.assertTrue(adapter.call_args.kwargs["save_patches"])
 
         active = self._cmd({"action": "set_active", "name": map_name})
         self.assertTrue(active["success"], active)
@@ -1572,7 +1575,7 @@ class TestCameraBridgeModule(unittest.TestCase):
     """Test CameraBridgeModule instantiation and stub mode (no rclpy)."""
 
     def _make_bridge(self, **kw):
-        from drivers.real.thunder.camera_bridge_module import CameraBridgeModule
+        from compat.ros2.camera_bridge import CameraBridgeModule
         return CameraBridgeModule(**kw)
 
     def _make_stub_bridge(self, **kw):

@@ -8,48 +8,35 @@ The graph is intentionally read-only and snapshot-friendly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from core.blueprint import Blueprint
+from core.blueprints.catalog.products import (
+    LIGHTWEIGHT_PRODUCT_PROFILES,
+    OPTIONAL_NATIVE_PRODUCT_PROFILES,
+    PRODUCT_PROFILES,
+    PROFILE_SNAPSHOT_TARGETS,
+    SIMULATION_PROFILES,
+)
+from core.blueprints.catalog.robots import robot_driver_module_name
 from core.blueprints.full_stack_wiring import full_stack_wire_specs
-from core.blueprints.runtime_endpoint import (
-    apply_runtime_endpoint_config,
-    runtime_endpoint_robot_preset,
-)
 from core.blueprints.stacks.slam import normalize_slam_profile, slam_module_name
-from core.runtime_profiles import PROFILES, ROBOT_PRESETS
+from core.blueprints.stacks.stack_config import needs_lidar_for_slam
+from core.runtime.resolver import resolve_profile_config
 
-
-SIMULATION_PROFILES = (
-    "stub",
-    "dev",
-    "sim",
-    "sim_mujoco_live",
-    "sim_mujoco_pct_live",
-    "sim_gazebo",
-    "sim_industrial",
-    "sim_cmu_tare",
-    "sim_nav",
-)
-
-PRODUCT_PROFILES = (
-    "map",
-    "nav",
-    "explore",
-    "tare_explore",
-    "super_lio",
-    "super_lio_relocation",
-)
-
-# Offline graph snapshots exclude profiles that require a locally built native
-# external binary at blueprint construction time. They remain product profiles
-# and are checked through profile-level contracts.
-OPTIONAL_NATIVE_PRODUCT_PROFILES = ("tare_explore",)
-
-PROFILE_SNAPSHOT_TARGETS = (
-    *SIMULATION_PROFILES,
-    *(profile for profile in PRODUCT_PROFILES if profile not in OPTIONAL_NATIVE_PRODUCT_PROFILES),
-)
+__all__ = [
+    "LIGHTWEIGHT_PRODUCT_PROFILES",
+    "OPTIONAL_NATIVE_PRODUCT_PROFILES",
+    "PRODUCT_PROFILES",
+    "PROFILE_SNAPSHOT_TARGETS",
+    "SIMULATION_PROFILES",
+    "ProfileGraph",
+    "WireEdge",
+    "blueprint_for_profile",
+    "graph_for_profile",
+    "resolve_profile_config",
+]
 
 
 @dataclass(frozen=True, order=True)
@@ -103,20 +90,8 @@ class ProfileGraph:
         )
 
 
-_DRIVER_MODULES = {
-    "auto": "StubDogModule",
-    "stub": "StubDogModule",
-    "sim": "MujocoDriverModule",
-    "sim_mujoco": "MujocoDriverModule",
-    "sim_gazebo": "ROS2SimDriverModule",
-    "sim_ros2": "ROS2SimDriverModule",
-    "ros2": "ROS2SimDriverModule",
-    "s100p": "ThunderDriver",
-    "thunder": "ThunderDriver",
-    "navigate": "ThunderDriver",
-}
-
 _NATIVE_CAMERA_DRIVERS = {"MujocoDriverModule"}
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _dedupe(names: list[str]) -> tuple[str, ...]:
@@ -129,30 +104,96 @@ def _dedupe(names: list[str]) -> tuple[str, ...]:
     return tuple(unique)
 
 
-def _static_driver_module(robot: str) -> str:
-    try:
-        return _DRIVER_MODULES[robot]
-    except KeyError as exc:
-        raise KeyError(
-            f"unknown static driver mapping for robot preset: {robot}"
-        ) from exc
+def _bridge_enabled(config: dict[str, Any], name: str, legacy_name: str) -> bool:
+    if name in config:
+        return bool(config[name])
+    return bool(config.get(legacy_name, False))
 
 
-def _needs_lidar_for_slam(slam_profile: str) -> bool:
-    return slam_profile not in (
-        "",
-        "none",
-        "bridge",
-        "super_lio",
-        "super_lio_relocation",
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off", ""}
+    return bool(value)
+
+
+def _endpoint_egress_uses_lcm(config: dict[str, Any]) -> bool:
+    selected = str(
+        config.get("endpoint_path_bridge")
+        or config.get("endpoint_egress_adapter")
+        or ""
+    ).lower()
+    endpoint_transport = str(
+        config.get("_endpoint_transport")
+        or config.get("endpoint_transport")
+        or ""
+    ).lower()
+    return selected in {"lcm", "lcm_endpoint", "lcm_path_command_bridge"} or (
+        not selected and endpoint_transport == "lcm"
     )
+
+
+def _endpoint_ingress_uses_lcm(config: dict[str, Any]) -> bool:
+    selected = str(
+        config.get("endpoint_command_bridge")
+        or config.get("endpoint_ingress_adapter")
+        or ""
+    ).lower()
+    endpoint_transport = str(
+        config.get("_endpoint_transport")
+        or config.get("endpoint_transport")
+        or ""
+    ).lower()
+    return selected in {"lcm", "lcm_endpoint", "lcm_navigation_command_bridge"} or (
+        not selected and endpoint_transport == "lcm"
+    )
+
+
+def _static_driver_module(robot: str) -> str:
+    return robot_driver_module_name(robot)
 
 
 def _needs_camera_bridge(config: dict[str, Any], *, driver_module: str) -> bool:
-    return bool(config.get("force_camera_bridge")) or (
-        driver_module not in _NATIVE_CAMERA_DRIVERS
-        and not bool(config.get("use_driver_camera", False))
+    return bool(config.get("enable_camera", True)) and (
+        bool(config.get("force_camera_bridge"))
+        or (
+            driver_module not in _NATIVE_CAMERA_DRIVERS
+            and not bool(config.get("use_driver_camera", False))
+        )
     )
+
+
+def _static_device_manager_modules() -> tuple[str, ...]:
+    """Mirror stacks.system.device_manager without importing devices."""
+
+    return ("DeviceManager",) if (_REPO_ROOT / "config" / "devices.yaml").exists() else ()
+
+
+def _static_gnss_module_names(config: dict[str, Any]) -> tuple[str, ...]:
+    """Mirror stacks.system.gnss from config data only.
+
+    Static profile graphs must not import SLAM/GNSS runtime modules, but they
+    should still include the module names that full_stack_blueprint() adds when
+    a profile allows GNSS and config/robot_config.yaml enables it. This keeps
+    runtime parity checks from reporting expected hardware support modules as
+    graph drift while letting lightweight profiles explicitly opt out.
+    """
+
+    if _optional_bool(config.get("enable_gnss")) is False:
+        return ()
+    try:
+        from core.config import get_config
+
+        gnss_cfg = get_config().raw.get("gnss", {})
+    except Exception:
+        return ()
+    if not gnss_cfg.get("enabled", False):
+        return ()
+    modules = ["GnssModule", "GnssBridgeModule"]
+    if (gnss_cfg.get("rtcm") or {}).get("enabled", False):
+        modules.append("NtripClientModule")
+    return tuple(modules)
 
 
 def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
@@ -162,10 +203,13 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     enable_semantic = bool(config.get("enable_semantic", True))
     enable_gateway = bool(config.get("enable_gateway", True))
     enable_teleop = bool(config.get("enable_teleop", True))
+    enable_robot_driver = bool(config.get("enable_robot_driver", True))
 
-    modules: list[str] = [driver_module]
+    modules: list[str] = [*_static_device_manager_modules()]
+    if enable_robot_driver:
+        modules.append(driver_module)
 
-    if _needs_lidar_for_slam(slam_profile):
+    if needs_lidar_for_slam(slam_profile):
         modules.append("LidarModule")
     if config.get("scene_xml", ""):
         modules.append("SimPointCloudProvider")
@@ -173,11 +217,12 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     slam_module = slam_module_name(slam_profile)
     if slam_module:
         modules.extend([slam_module, "DepthVisualOdomModule"])
+    modules.extend(_static_gnss_module_names(config))
 
     if bool(config.get("enable_map_modules", True)):
         modules.append("OccupancyGridModule")
-        if bool(config.get("enable_ros2_grid_bridge", False)):
-            modules.append("ROS2GridBridgeModule")
+        if _bridge_enabled(config, "enable_endpoint_grid_bridge", "enable_ros2_grid_bridge"):
+            modules.append("EndpointGridBridgeModule")
         modules.extend([
             "VoxelGridModule",
             "ESDFModule",
@@ -207,10 +252,22 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
         ])
 
     modules.append("NavigationModule")
-    if bool(config.get("enable_ros2_bridge", False)):
-        modules.append("ROS2WaypointBridgeModule")
-    if bool(config.get("enable_ros2_path_bridge", False)):
-        modules.append("ROS2PathBridgeModule")
+    if (
+        _bridge_enabled(
+            config,
+            "enable_endpoint_command_bridge",
+            "enable_ros2_command_bridge",
+        )
+        and _endpoint_ingress_uses_lcm(config)
+    ):
+        modules.append("EndpointCommandBridgeModule")
+    if (
+        _bridge_enabled(config, "enable_endpoint_waypoint_bridge", "enable_ros2_bridge")
+        and not _endpoint_egress_uses_lcm(config)
+    ):
+        modules.append("EndpointWaypointBridgeModule")
+    if _bridge_enabled(config, "enable_endpoint_path_bridge", "enable_ros2_path_bridge"):
+        modules.append("EndpointPathBridgeModule")
     if bool(config.get("enable_frontier", False)):
         modules.append("WavefrontFrontierExplorer")
     if bool(config.get("enable_traversable_frontier", False)):
@@ -246,11 +303,39 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
 def _static_stack_wire_specs(config: dict[str, Any]) -> tuple[WireEdge, ...]:
     modules = set(_static_module_names(config))
     specs: list[WireEdge] = []
-    if "ROS2WaypointBridgeModule" in modules:
+    if "EndpointCommandBridgeModule" in modules:
+        specs.extend([
+            WireEdge(
+                "EndpointCommandBridgeModule",
+                "goal_pose",
+                "NavigationModule",
+                "goal_pose",
+            ),
+            WireEdge(
+                "EndpointCommandBridgeModule",
+                "cancel",
+                "NavigationModule",
+                "cancel",
+            ),
+            WireEdge(
+                "EndpointCommandBridgeModule",
+                "instruction",
+                "NavigationModule",
+                "instruction",
+            ),
+        ])
+    if "EndpointWaypointBridgeModule" in modules:
         specs.append(WireEdge(
             "NavigationModule",
             "waypoint",
-            "ROS2WaypointBridgeModule",
+            "EndpointWaypointBridgeModule",
+            "waypoint",
+        ))
+    if "EndpointPathBridgeModule" in modules and _endpoint_egress_uses_lcm(config):
+        specs.append(WireEdge(
+            "NavigationModule",
+            "waypoint",
+            "EndpointPathBridgeModule",
             "waypoint",
         ))
     if "WavefrontFrontierExplorer" in modules:
@@ -271,32 +356,6 @@ def _static_stack_wire_specs(config: dict[str, Any]) -> tuple[WireEdge, ...]:
     return tuple(specs)
 
 
-def resolve_profile_config(
-    profile: str,
-    *,
-    runtime_endpoint: str | None = None,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """Return the full full_stack_blueprint kwargs for a CLI profile."""
-
-    if profile not in PROFILES:
-        raise KeyError(f"unknown profile: {profile}")
-    profile_data = PROFILES[profile]
-    if runtime_endpoint:
-        preset_name = runtime_endpoint_robot_preset(profile, runtime_endpoint)
-    else:
-        preset_name = profile_data.get("_default_robot", "stub")
-    if preset_name not in ROBOT_PRESETS:
-        raise KeyError(f"unknown robot preset for profile {profile}: {preset_name}")
-
-    config = dict(ROBOT_PRESETS[preset_name])
-    config.update({k: v for k, v in profile_data.items() if not k.startswith("_")})
-    if runtime_endpoint:
-        config = apply_runtime_endpoint_config(profile, config, runtime_endpoint)
-    config.update(overrides)
-    return config
-
-
 def blueprint_for_profile(
     profile: str,
     *,
@@ -306,12 +365,13 @@ def blueprint_for_profile(
 ) -> Blueprint:
     """Compile a profile into a Blueprint without starting modules."""
 
-    from core.blueprints.full_stack import full_stack_blueprint
-
     config = resolve_profile_config(profile, **overrides)
     config["run_startup_checks"] = run_startup_checks
     config["manage_external_services"] = manage_external_services
-    return full_stack_blueprint(**config)
+
+    from core.blueprints.profile_builder import blueprint_for_resolved_profile
+
+    return blueprint_for_resolved_profile(profile, config)
 
 
 def graph_for_profile(

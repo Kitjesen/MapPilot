@@ -1,0 +1,376 @@
+from __future__ import annotations
+
+import sys
+import types
+from pathlib import Path
+
+from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import Imu, PointCloud2
+
+
+def test_slam_module_exposes_pose_map_health_only() -> None:
+    from localization.slam.module import SlamModule
+
+    module = SlamModule()
+
+    required_outputs = {
+        "odometry",
+        "registered_cloud",
+        "map_cloud",
+        "saved_map",
+        "localization_status",
+        "localization_quality",
+        "alive",
+        "map_odom_tf",
+        "map_frame_jump_event",
+        "gnss_fusion_health",
+        "scene_mode",
+        "lidar_scan",
+        "imu",
+        "state_estimation_at_scan",
+    }
+    forbidden_outputs = {
+        "global_path",
+        "local_path",
+        "nav_way_point",
+        "cmd_vel",
+        "path",
+    }
+
+    assert required_outputs.issubset(module.ports_out)
+    assert forbidden_outputs.isdisjoint(module.ports_out)
+    assert {"visual_odom", "gnss_odom", "lidar_scan_in", "lidar_imu"}.issubset(
+        module.ports_in
+    )
+    assert "lidar_raw_scan" in module.ports_in
+
+
+def test_slam_module_consumes_lidar_inputs() -> None:
+    from localization.slam.module import SlamModule
+
+    module = SlamModule()
+    module.setup()
+    module.start()
+    try:
+        module.lidar_scan_in._deliver(
+            PointCloud2.from_numpy(
+                np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32),
+                frame_id="lidar_link",
+            )
+        )
+        module.lidar_imu._deliver(Imu())
+        module._drain_inputs()
+        outputs = module._runner.outputs()
+    finally:
+        module.stop()
+
+    assert outputs["lidar_buffer"] == 1
+    assert outputs["imu_buffer"] == 1
+
+
+def test_slam_imu_contract_preserves_covariance() -> None:
+    from localization.slam.module import _imu_to_dict
+
+    sample = _imu_to_dict(
+        Imu(
+            orientation_covariance=[0.1] * 9,
+            angular_velocity_covariance=[0.2] * 9,
+            linear_acceleration_covariance=[0.3] * 9,
+            ts=1.0,
+            frame_id="imu_link",
+        )
+    )
+
+    assert sample["orientation_covariance"] == [0.1] * 9
+    assert sample["angular_velocity_covariance"] == [0.2] * 9
+    assert sample["linear_acceleration_covariance"] == [0.3] * 9
+
+
+def test_slam_module_consumes_raw_livox_frame() -> None:
+    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from localization.slam.module import SlamModule
+
+    points = np.zeros(1, dtype=POINT_DTYPE)
+    points["x"] = [1.0]
+    points["y"] = [2.0]
+    points["z"] = [3.0]
+    points["intensity"] = [4.0]
+    points["offset_time_ns"] = [123]
+    points["line"] = [2]
+    points["tag"] = [7]
+
+    module = SlamModule()
+    module.setup()
+    module.start()
+    try:
+        module.lidar_raw_scan._deliver(
+            LivoxPointFrame(points=points, timestamp_ns=1_000_000_000)
+        )
+        module._drain_inputs()
+        outputs = module._runner.outputs()
+    finally:
+        module.stop()
+
+    assert outputs["lidar_buffer"] == 1
+
+
+def test_pointlio_profile_accepts_raw_lidar_but_reports_pending_algorithm() -> None:
+    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from localization.slam.module import SlamModule
+
+    points = np.zeros(1, dtype=POINT_DTYPE)
+    points["x"] = [1.0]
+    points["y"] = [2.0]
+    points["z"] = [3.0]
+    points["intensity"] = [4.0]
+    points["offset_time_ns"] = [123]
+    points["line"] = [2]
+    points["tag"] = [7]
+
+    module = SlamModule(backend_profile="pointlio")
+    module.setup()
+    module.start()
+    try:
+        module.lidar_raw_scan._deliver(
+            LivoxPointFrame(points=points, timestamp_ns=1_000_000_000)
+        )
+        module._drain_inputs()
+        module._runner.tick()
+        outputs = module._runner.outputs()
+    finally:
+        module.stop()
+
+    assert outputs["lidar_buffer"] == 1
+    assert outputs["state"] == "DEGRADED"
+    assert outputs["reason"] == "pointlio_algorithm_pending_ros_node_extraction"
+
+
+def test_slam_module_save_map_writes_contract_artifacts(tmp_path) -> None:
+    from localization.slam.module import SlamModule
+
+    module = SlamModule()
+    module.setup()
+    module.start()
+    try:
+        module.visual_odom._deliver(Odometry())
+        result = module.save_map(str(tmp_path))
+    finally:
+        module.stop()
+
+    assert result["ok"] is True
+    assert (tmp_path / "map.pcd").exists()
+    assert (tmp_path / "poses.txt").exists()
+    assert (tmp_path / "patches").is_dir()
+
+
+def test_slam_stack_defaults_to_native_slam_module() -> None:
+    from runtime.blueprints.stacks.slam import slam, slam_module_name
+
+    bp = slam("fastlio2", enable_visual_backup=False)
+
+    assert [entry.name for entry in bp._entries] == ["SlamModule"]
+    assert slam_module_name("fastlio2") == "SlamModule"
+
+
+def test_slam_stack_keeps_explicit_ros2_bridge_compatibility() -> None:
+    from runtime.blueprints.stacks.slam import slam
+
+    bp = slam(
+        "fastlio2",
+        enable_visual_backup=False,
+        localization_adapter="ros2_slam_bridge",
+    )
+
+    assert [entry.name for entry in bp._entries] == ["SlamBridgeModule"]
+
+
+def test_native_slam_wiring_covers_old_bridge_consumers() -> None:
+    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from runtime.runtime_interface import TOPICS
+
+    modules = {
+        "SlamModule",
+        "DepthVisualOdomModule",
+        "GatewayModule",
+        "nav.safety",
+        "nav.mission",
+        "nav.local_planner",
+        "nav.path_follower",
+        "nav.terrain",
+        "nav.maps",
+        "OccupancyGridModule",
+        "ElevationMapModule",
+        "VoxelGridModule",
+        "ThunderDriver",
+        "LidarModule",
+    }
+    specs = full_stack_wire_specs(
+        modules,
+        robot="thunder",
+        driver_module="ThunderDriver",
+        slam_profile="fastlio2",
+        enable_semantic=False,
+    )
+    wires = {
+        f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}"
+        for spec in specs
+    }
+    spec_by_wire = {
+        f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}": spec
+        for spec in specs
+    }
+
+    assert "SlamModule.saved_map->GatewayModule.saved_map" in wires
+    assert "SlamModule.map_cloud_frame->nav.maps.map_cloud_frame" in wires
+    assert "SlamModule.map_cloud_frame->nav.terrain.map_cloud_frame" in wires
+    assert "SlamModule.map_cloud_frame->OccupancyGridModule.map_cloud_frame" in wires
+    assert "SlamModule.map_cloud_frame->ElevationMapModule.map_cloud_frame" in wires
+    assert "SlamModule.map_cloud_frame->VoxelGridModule.map_cloud_frame" in wires
+    assert "SlamModule.map_cloud->nav.terrain.map_cloud" not in wires
+    assert "SlamModule.map_cloud->OccupancyGridModule.map_cloud" not in wires
+    assert "SlamModule.localization_status->GatewayModule.localization_status" in wires
+    assert "SlamModule.localization_status->nav.safety.localization_status" in wires
+    assert "SlamModule.localization_status->nav.mission.localization_status" in wires
+    assert "SlamModule.localization_status->DepthVisualOdomModule.localization_status" in wires
+    assert "SlamModule.gnss_fusion_health->nav.safety.gnss_fusion_health" in wires
+    assert "SlamModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
+    assert "DepthVisualOdomModule.visual_odometry->SlamModule.visual_odom" in wires
+    assert "LidarModule.raw_scan->SlamModule.lidar_raw_scan" in wires
+    assert "LidarModule.imu->SlamModule.lidar_imu" in wires
+    assert spec_by_wire["LidarModule.raw_scan->SlamModule.lidar_raw_scan"].transport == "dds"
+    assert spec_by_wire["LidarModule.raw_scan->SlamModule.lidar_raw_scan"].topic == TOPICS.raw_lidar_points
+    assert spec_by_wire["LidarModule.imu->SlamModule.lidar_imu"].transport == "dds"
+    assert spec_by_wire["LidarModule.imu->SlamModule.lidar_imu"].topic == TOPICS.raw_imu
+
+
+def test_slam_cpp_build_declares_python_native_binding() -> None:
+    cmake = Path("src/localization/slam/cpp/CMakeLists.txt").read_text(encoding="utf-8")
+    module = Path("src/localization/slam/module.py").read_text(encoding="utf-8")
+    binding = Path("src/localization/slam/cpp/bind.cpp").read_text(encoding="utf-8")
+    ros2_dds_runtime = Path("src/localization/slam/cpp/ros2_dds_runtime.cpp").read_text(encoding="utf-8")
+    cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
+    build_script = Path("scripts/build/build_slam_core.sh").read_text(encoding="utf-8")
+
+    assert "LINGTU_SLAM_BUILD_PYTHON_BINDINGS" in cmake
+    assert "nanobind_add_module(_native bind.cpp)" in cmake
+    assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in cmake
+    assert "add_executable(lingtu_slam_dds_runtime cyclone_runtime.cpp)" in cmake
+    assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" in cmake
+    assert "add_executable(lingtu_slam_ros2_dds_runtime ros2_dds_runtime.cpp)" in cmake
+    assert "find_package(iceoryx_binding_c QUIET)" in cmake
+    assert "find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)" in cmake
+    assert "CycloneDDS-CXX::idlcxx" in cmake
+    assert "add_executable(lingtu_slam_cyclone_runtime ALIAS lingtu_slam_dds_runtime)" in cmake
+    assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in build_script
+    assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" in build_script
+    assert "localization.slam._native" in module
+    assert "NATIVE_SLAM_BINDING_SCHEMA" in module
+    assert "NB_MODULE(_native, m)" in binding
+    assert "SlamRunner" in binding
+    assert "create_subscription<lingtu::message::LivoxCustomMsg>" in ros2_dds_runtime
+    assert "backend_->feedLidar" in ros2_dds_runtime
+    assert "backend_->feedImu" in ros2_dds_runtime
+    assert "#include \"dds/dds.hpp\"" in cyclone_runtime
+    assert "rclcpp" not in cyclone_runtime
+    assert "sensor_msgs" not in cyclone_runtime
+    assert "livox_ros_driver2" not in cyclone_runtime
+    assert "dds::sub::DataReader<lt::LivoxFrame>" in cyclone_runtime
+    assert "backend->feedLidar" in cyclone_runtime
+    assert "backend->feedImu" in cyclone_runtime
+
+
+def test_slam_loader_prefers_schema_checked_native_binding(monkeypatch) -> None:
+    from localization.slam import module as slam_module
+
+    class FakeRunner:
+        def __init__(self, backend: str, mode: str, map_path: str) -> None:
+            self.args = (backend, mode, map_path)
+
+    fake_native = types.ModuleType("localization.slam._native")
+    fake_native.NATIVE_SLAM_BINDING_SCHEMA = slam_module.NATIVE_SLAM_BINDING_SCHEMA
+    fake_native.SlamRunner = FakeRunner
+    monkeypatch.setitem(sys.modules, "localization.slam._native", fake_native)
+
+    runner = slam_module._load_runner("fastlio2", "mapping", "")
+
+    assert isinstance(runner, FakeRunner)
+    assert runner.args == ("fastlio2", "mapping", "")
+
+
+def test_slam_loader_ignores_unversioned_native_binding(monkeypatch) -> None:
+    from localization.slam import module as slam_module
+
+    stale_native = types.ModuleType("localization.slam._native")
+    stale_native.SlamRunner = object
+    monkeypatch.setitem(sys.modules, "localization.slam._native", stale_native)
+
+    runner = slam_module._load_runner("fastlio2", "mapping", "")
+
+    assert isinstance(runner, slam_module._PythonSlamRunner)
+
+
+def test_fastlio_feed_lidar_only_queues_raw_frame() -> None:
+    text = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+    feed = text.split("Status feedLidar(const LidarFrame& frame) override {", 1)[1]
+    feed = feed.split("Status feedGnss", 1)[0]
+    sync = text.split("bool prepareFastLioPackage() {", 1)[1]
+    sync = sync.split("void updateWaitingReason()", 1)[0]
+
+    assert "toPclCloud" not in feed
+    assert "lidar_buffer_.push_back(frame)" in feed
+    assert "toPclCloud(lidar_buffer_.front(), builder_config_)" in sync
+
+
+def test_slam_sensor_callbacks_are_enqueue_only() -> None:
+    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from localization.slam.module import SlamModule
+
+    points = np.zeros(1, dtype=POINT_DTYPE)
+    points["x"] = [1.0]
+    points["y"] = [2.0]
+    points["z"] = [3.0]
+    points["intensity"] = [4.0]
+
+    module = SlamModule()
+    module.setup()
+    result = module.feed_raw_lidar(
+        LivoxPointFrame(points=points, timestamp_ns=1_000_000_000)
+    )
+
+    assert result["message"] == "lidar_queued"
+    assert module._runner.outputs()["lidar_buffer"] == 0
+    assert module.slam_status()["input_queue"]["lidar"] == 1
+
+    module._drain_inputs()
+
+    assert module._runner.outputs()["lidar_buffer"] == 1
+    assert module.slam_status()["input_queue"]["lidar"] == 0
+
+
+def test_slam_status_reports_lidar_imu_sync_window() -> None:
+    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from localization.slam.module import SlamModule
+
+    points = np.zeros(2, dtype=POINT_DTYPE)
+    points["x"] = [1.0, 2.0]
+    points["offset_time_ns"] = [0, 100_000_000]
+
+    module = SlamModule()
+    module.setup()
+    try:
+        module.feed_imu(Imu(ts=1.02))
+        module.feed_imu(Imu(ts=1.06))
+        module.feed_raw_lidar(
+            LivoxPointFrame(points=points, timestamp_ns=1_000_000_000)
+        )
+        module._drain_inputs()
+        sync = module.slam_status()["sync"]
+    finally:
+        module.stop()
+
+    assert abs(sync["scan_start_s"] - 1.0) < 1e-9
+    assert abs(sync["scan_end_s"] - 1.1) < 1e-9
+    assert abs(sync["last_imu_s"] - 1.06) < 1e-9
+    assert sync["imu_batch"] == 2
+    assert sync["wait_count"] == 1

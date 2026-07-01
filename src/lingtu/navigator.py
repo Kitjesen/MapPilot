@@ -48,7 +48,6 @@ class Navigator:
             self._nav_module = NavigationModule(
                 planner=self._planner,
                 tomogram=self._tomogram,
-                enable_ros2_bridge=False,
             )
             self._nav_module.setup()
             self._nav_module.start()

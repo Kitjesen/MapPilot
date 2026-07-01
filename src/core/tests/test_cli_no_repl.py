@@ -26,6 +26,7 @@ class _FakeSystem:
     def __init__(self, gateway: _FakeGateway):
         self.gateway = gateway
         self.modules = {"GatewayModule": gateway}
+        self.build_transport = "not-built"
         self.started = False
         self.stopped = False
 
@@ -46,20 +47,35 @@ class _FakeBuilder:
     def __init__(self, system: _FakeSystem):
         self._system = system
 
-    def build(self) -> _FakeSystem:
+    def build(self, transport=None) -> _FakeSystem:
+        self._system.build_transport = transport
         return self._system
 
 
-def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> None:
+def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> dict:
     import cli.main as main_mod
+    import core.blueprints.products as products_mod
+
+    calls = {"full_stack": [], "product": []}
+
+    def _fake_full_stack_blueprint(**kwargs):
+        calls["full_stack"].append(dict(kwargs))
+        return _FakeBuilder(system)
+
+    def _fake_thunder_blueprint(config=None, **overrides):
+        resolved = dict(config or {})
+        resolved.update(overrides)
+        calls["product"].append(resolved)
+        return _FakeBuilder(system)
 
     fake_full_stack = types.ModuleType("core.blueprints.full_stack")
-    fake_full_stack.full_stack_blueprint = lambda **kwargs: _FakeBuilder(system)
+    fake_full_stack.full_stack_blueprint = _fake_full_stack_blueprint
     monkeypatch.setitem(sys.modules, "core.blueprints.full_stack", fake_full_stack)
+    monkeypatch.setattr(products_mod, "thunder_blueprint", _fake_thunder_blueprint)
 
-    fake_ros2 = types.ModuleType("core.ros2_context")
+    fake_ros2 = types.ModuleType("compat.ros2.context")
     fake_ros2.shutdown_shared_executor = lambda: None
-    monkeypatch.setitem(sys.modules, "core.ros2_context", fake_ros2)
+    monkeypatch.setitem(sys.modules, "compat.ros2.context", fake_ros2)
 
     fake_service_manager = types.ModuleType("core.service_manager")
     fake_service_manager.get_service_manager = lambda: types.SimpleNamespace(
@@ -76,6 +92,53 @@ def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> None:
     monkeypatch.setattr(main_mod, "update_run_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_mod, "clear_run_state", lambda: None)
     monkeypatch.setattr(main_mod.signal, "signal", lambda *args, **kwargs: None)
+    return calls
+
+
+def test_cli_shutdown_uses_compat_ros_context() -> None:
+    source = Path("cli/main.py").read_text(encoding="utf-8-sig")
+
+    assert "from core.ros2_context import shutdown_shared_executor" not in source
+    assert "from compat.ros2.context import shutdown_shared_executor" in source
+
+
+def test_cli_help_shows_product_endpoint_aliases_not_legacy_board_names(
+    monkeypatch,
+    capsys,
+) -> None:
+    import cli.main as main_mod
+
+    monkeypatch.setattr(sys, "argv", ["lingtu.py", "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        main_mod.main()
+
+    out = capsys.readouterr().out
+    assert exc.value.code == 0
+    assert "--endpoint thunder-field" in out
+    assert "--endpoint thunder-lite" in out
+    assert "real_s100p" not in out
+    assert "s100p" not in out.lower()
+
+
+def test_cli_accepts_legacy_endpoint_alias_without_showing_it(
+    monkeypatch,
+    capsys,
+) -> None:
+    import cli.main as main_mod
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lingtu.py", "runtime-spec", "thunder-nav", "--endpoint", "real_s100p", "--json"],
+    )
+
+    main_mod.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["spec"]["endpoint"] == "thunder_field"
+    assert payload["spec"]["robot_preset"] == "thunder"
 
 
 def test_no_repl_exits_nonzero_when_gateway_server_returns_false(
@@ -103,11 +166,13 @@ def test_no_repl_clean_gateway_shutdown_exits_zero(monkeypatch, tmp_path):
 
     gateway = _FakeGateway(run_result=True)
     system = _FakeSystem(gateway)
-    _install_cli_harness(monkeypatch, tmp_path, system)
+    calls = _install_cli_harness(monkeypatch, tmp_path, system)
     monkeypatch.setattr(sys, "argv", ["lingtu.py", "stub", "--no-repl"])
 
     main_mod.main()
 
+    assert len(calls["full_stack"]) == 1
+    assert calls["product"] == []
     assert gateway._defer_server is True
     assert gateway.run_server_called is True
     assert system.started is True
@@ -126,7 +191,7 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
 
     gateway = _FakeGateway(run_result=True)
     system = _FakeSystem(gateway)
-    _install_cli_harness(monkeypatch, tmp_path, system)
+    calls = _install_cli_harness(monkeypatch, tmp_path, system)
     saved_state = {}
 
     def _capture_run_state(profile_name, cfg, log_dir, **kwargs):
@@ -141,7 +206,7 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
     main_mod.main()
 
     out = capsys.readouterr().out
-    assert "Runtime:  endpoint=real_s100p data_source=real_s100p" in out
+    assert "Runtime:  endpoint=thunder_field data_source=thunder_field" in out
     assert (
         "Topic frames: lidar_scan=lidar_link imu=lidar_link "
         "odometry=odom,map registered_cloud=body "
@@ -151,23 +216,97 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
     assert "global_planning[lingtu_navigation_or_pct|map]" in out
     assert "command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist]" in out
     assert os.environ["LINGTU_PROFILE"] == "nav"
-    assert os.environ["LINGTU_ENDPOINT"] == "real_s100p"
-    assert os.environ["LINGTU_DATA_SOURCE"] == "real_s100p"
-    assert os.environ["LINGTU_RUNTIME_CONTRACT"] == "real_s100p"
+    assert os.environ["LINGTU_ENDPOINT"] == "thunder_field"
+    assert os.environ["LINGTU_DATA_SOURCE"] == "thunder_field"
+    assert os.environ["LINGTU_MODULE_TRANSPORT"] == "local"
+    assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "lcm"
+    assert os.environ["LINGTU_RUNTIME_CONTRACT"] == "thunder_field"
     assert os.environ["LINGTU_COMMAND_SINK"] == "hardware_driver_after_cmd_vel_mux"
     assert os.environ["LINGTU_SIMULATION_ONLY"] == "0"
-    assert saved_state["runtime"]["endpoint"] == "real_s100p"
-    assert saved_state["runtime"]["data_source"] == "real_s100p"
-    assert saved_state["runtime"]["runtime_contract"] == "real_s100p"
+    assert saved_state["runtime"]["endpoint"] == "thunder_field"
+    assert saved_state["runtime"]["data_source"] == "thunder_field"
+    assert saved_state["runtime"]["runtime_contract"] == "thunder_field"
+    assert saved_state["runtime"]["module_transport"] == "local"
+    assert saved_state["runtime"]["endpoint_transport"] == "lcm"
     assert saved_state["runtime"]["command_sink"] == "hardware_driver_after_cmd_vel_mux"
     assert saved_state["runtime"]["validation"] == {
         "ok": True,
         "blockers": [],
-        "warnings": [],
+        "warnings": ["product semantic override: slam_profile localizer -> bridge"],
     }
     assert saved_state["runtime"]["resolved_runtime_data_flow"][-1]["outputs"] == [
         "hardware_driver_after_cmd_vel_mux",
     ]
+    assert len(calls["product"]) == 1
+    assert calls["product"][0]["robot"] == "thunder"
+    assert calls["product"][0]["slam_profile"] == "bridge"
+    assert calls["full_stack"] == []
+    assert system.started is True
+
+
+def test_thunder_nav_alias_runs_canonical_nav_profile(monkeypatch, tmp_path):
+    import cli.main as main_mod
+
+    gateway = _FakeGateway(run_result=True)
+    system = _FakeSystem(gateway)
+    calls = _install_cli_harness(monkeypatch, tmp_path, system)
+    saved_state = {}
+
+    def _capture_run_state(profile_name, cfg, log_dir, **kwargs):
+        saved_state["profile"] = profile_name
+        saved_state["cfg"] = cfg
+        saved_state["log_dir"] = log_dir
+        saved_state.update(kwargs)
+
+    monkeypatch.setattr(main_mod, "save_run_state", _capture_run_state)
+    monkeypatch.setattr(sys, "argv", ["lingtu.py", "thunder-nav", "--no-repl"])
+
+    main_mod.main()
+
+    assert os.environ["LINGTU_PROFILE"] == "nav"
+    assert saved_state["profile"] == "nav"
+    assert saved_state["runtime"]["endpoint"] == "thunder_field"
+    assert saved_state["runtime"]["endpoint_transport"] == "lcm"
+    assert saved_state["cfg"]["robot"] == "thunder"
+    assert len(calls["product"]) == 1
+    assert calls["product"][0]["robot"] == "thunder"
+    assert calls["full_stack"] == []
+    assert system.started is True
+
+
+def test_cli_module_transport_override_reaches_runtime_build(
+    monkeypatch,
+    tmp_path,
+):
+    import cli.main as main_mod
+    import core.blueprints.profile_builder as builder_mod
+
+    gateway = _FakeGateway(run_result=True)
+    system = _FakeSystem(gateway)
+    calls = _install_cli_harness(monkeypatch, tmp_path, system)
+    sentinel_transport = object()
+
+    def fake_module_transport_for_resolved_config(config):
+        assert config["module_transport"] == "lcm"
+        return sentinel_transport
+
+    monkeypatch.setattr(
+        builder_mod,
+        "module_transport_for_resolved_config",
+        fake_module_transport_for_resolved_config,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lingtu.py", "thunder-nav", "--module-transport", "lcm", "--no-repl"],
+    )
+
+    main_mod.main()
+
+    assert os.environ["LINGTU_MODULE_TRANSPORT"] == "lcm"
+    assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "lcm"
+    assert calls["product"][0]["module_transport"] == "lcm"
+    assert system.build_transport is sentinel_transport
     assert system.started is True
 
 
@@ -231,6 +370,7 @@ def test_pct_mujoco_profile_defaults_to_pct_video_launcher(monkeypatch):
     assert captured["env"]["LINGTU_PROFILE"] == "sim_mujoco_pct_live"
     assert captured["env"]["LINGTU_ENDPOINT"] == "mujoco_live"
     assert captured["env"]["LINGTU_DATA_SOURCE"] == "mujoco_fastlio2_live"
+    assert captured["env"]["LINGTU_ENDPOINT_TRANSPORT"] == "local"
     assert captured["env"]["LINGTU_RUNTIME_CONTRACT"] == "mujoco_fastlio2_live"
     assert captured["check"] is False
 
@@ -298,7 +438,8 @@ def test_external_launcher_uses_runtime_run_spec_env(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert (
         "Runtime:  endpoint=mujoco_live data_source=mujoco_fastlio2_live "
-        "runtime_contract=mujoco_fastlio2_live command_sink=mujoco_velocity_adapter "
+        "runtime_contract=mujoco_fastlio2_live module_transport=local "
+        "endpoint_transport=local command_sink=mujoco_velocity_adapter "
         "simulation_only=true"
     ) in output
     assert (
@@ -331,6 +472,8 @@ def test_external_launcher_uses_runtime_run_spec_env(monkeypatch, capsys):
     assert captured["env"]["LINGTU_PROFILE"] == "explore"
     assert captured["env"]["LINGTU_ENDPOINT"] == "mujoco_live"
     assert captured["env"]["LINGTU_DATA_SOURCE"] == "mujoco_fastlio2_live"
+    assert captured["env"]["LINGTU_MODULE_TRANSPORT"] == "local"
+    assert captured["env"]["LINGTU_ENDPOINT_TRANSPORT"] == "local"
     assert captured["env"]["LINGTU_RUNTIME_CONTRACT"] == "mujoco_fastlio2_live"
     assert captured["env"]["LINGTU_COMMAND_SINK"] == "mujoco_velocity_adapter"
     assert captured["env"]["LINGTU_SIMULATION_ONLY"] == "1"
@@ -376,6 +519,7 @@ def test_external_launcher_overrides_stale_runtime_env(monkeypatch, capsys):
     assert captured["env"]["LINGTU_PROFILE"] == "explore"
     assert captured["env"]["LINGTU_ENDPOINT"] == "mujoco_live"
     assert captured["env"]["LINGTU_DATA_SOURCE"] == "mujoco_fastlio2_live"
+    assert captured["env"]["LINGTU_ENDPOINT_TRANSPORT"] == "local"
     assert captured["env"]["LINGTU_RUNTIME_CONTRACT"] == "mujoco_fastlio2_live"
     assert captured["env"]["LINGTU_COMMAND_SINK"] == "mujoco_velocity_adapter"
     assert captured["env"]["LINGTU_SIMULATION_ONLY"] == "1"
@@ -498,10 +642,10 @@ def test_switch_plan_prints_sim_to_real_boundary(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Runtime switch plan: PASS" in out
     assert "Current profile: profile=sim_mujoco_live endpoint=mujoco_live" in out
-    assert "Target profile: profile=explore endpoint=real_s100p" in out
+    assert "Target profile: profile=explore endpoint=thunder_field" in out
     assert "Current runtime: endpoint=mujoco_live data_source=mujoco_fastlio2_live" in out
-    assert "Target runtime: endpoint=real_s100p data_source=real_s100p" in out
-    assert "runtime_contract=real_s100p" in out
+    assert "Target runtime: endpoint=thunder_field data_source=thunder_field" in out
+    assert "runtime_contract=thunder_field" in out
     assert "slam_source=lingtu_fastlio_or_external_robot_slam" in out
     assert "mapping_source=slam_map_cloud" in out
     assert "lidar_extrinsic=real_mid360" in out
@@ -530,8 +674,8 @@ def test_switch_plan_json_prints_machine_payload(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert '"data_source": "mujoco_fastlio2_live"' in out
-    assert '"data_source": "real_s100p"' in out
-    assert '"runtime_contract": "real_s100p"' in out
+    assert '"data_source": "thunder_field"' in out
+    assert '"runtime_contract": "thunder_field"' in out
     assert '"slam_source": "lingtu_fastlio_or_external_robot_slam"' in out
     assert '"mapping_source": "slam_map_cloud"' in out
     assert '"lidar_extrinsic_profile": "real_mid360"' in out
@@ -561,7 +705,7 @@ def test_switch_plan_accepts_symmetric_current_endpoint(monkeypatch, capsys):
             "--current-endpoint",
             "mujoco_live",
             "--endpoint",
-            "real_s100p",
+            "thunder-field",
             "--json",
         ],
     )
@@ -571,17 +715,17 @@ def test_switch_plan_accepts_symmetric_current_endpoint(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert '"profile": "explore"' in out
     assert '"endpoint": "mujoco_live"' in out
-    assert '"endpoint": "real_s100p"' in out
+    assert '"endpoint": "thunder_field"' in out
     assert '"data_source": "mujoco_fastlio2_live"' in out
-    assert '"data_source": "real_s100p"' in out
+    assert '"data_source": "thunder_field"' in out
     assert '"simulation_only": true' in out
     assert '"simulation_only": false' in out
 
 
 def test_switch_plan_exits_when_current_boundary_is_invalid(monkeypatch, capsys):
     import cli.main as main_mod
-    from core.runtime_switch import RuntimeSwitchValidation
     import core.runtime_switch as switch_mod
+    from core.runtime_switch import RuntimeSwitchValidation
 
     calls = {"count": 0}
 
@@ -660,7 +804,9 @@ def test_runtime_spec_default_prints_operator_summary(monkeypatch, capsys):
     assert (
         "Runtime: endpoint=mujoco_live data_source=mujoco_fastlio2_live "
         "runtime_contract=mujoco_fastlio2_live "
-        "command_sink=mujoco_velocity_adapter simulation_only=true"
+        "module_transport=local endpoint_transport=local "
+        "command_sink=mujoco_velocity_adapter "
+        "simulation_only=true"
     ) in out
     assert "SLAM: slam_source=lingtu_fastlio2" in out
     assert "Frames: map=map odom=odom body=body lidar=lidar_link" in out
@@ -669,13 +815,31 @@ def test_runtime_spec_default_prints_operator_summary(monkeypatch, capsys):
     assert "Data flow:" in out
     assert "  endpoint_adapter[endpoint_adapter|native_to_canonical]" in out
     assert "Runtime env:" in out
+    assert "  LINGTU_MODULE_TRANSPORT=local" in out
+    assert "  LINGTU_ENDPOINT_TRANSPORT=local" in out
     assert "  LINGTU_RUNTIME_CONTRACT=mujoco_fastlio2_live" in out
+
+
+def test_runtime_spec_accepts_thunder_product_alias(monkeypatch, capsys):
+    import cli.main as main_mod
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lingtu.py", "runtime-spec", "thunder-explore", "--endpoint", "mujoco_live"],
+    )
+
+    main_mod.main()
+
+    out = capsys.readouterr().out
+    assert "Runtime spec: PASS" in out
+    assert "Profile: profile=explore endpoint=mujoco_live" in out
 
 
 def test_runtime_spec_exits_when_boundary_is_invalid(monkeypatch, capsys):
     import cli.main as main_mod
-    from core.runtime_switch import RuntimeSwitchValidation
     import core.runtime_switch as switch_mod
+    from core.runtime_switch import RuntimeSwitchValidation
 
     monkeypatch.setattr(
         switch_mod,
@@ -718,7 +882,7 @@ def test_runtime_contract_prints_canonical_manifest(monkeypatch, capsys):
         "required": True,
     }
     assert payload["topics"]["cmd_vel"] == "/nav/cmd_vel"
-    assert payload["runtime_data_flow_topics"]["real_s100p"] == [
+    assert payload["runtime_data_flow_topics"]["thunder_field"] == [
         "/nav/lidar_scan",
         "/nav/imu",
         "/nav/odometry",
@@ -733,6 +897,7 @@ def test_runtime_contract_prints_canonical_manifest(monkeypatch, capsys):
         "/nav/traversable_frontiers",
         "/nav/frontier_candidate",
         "/nav/global_path",
+        "/nav/way_point",
         "/nav/local_path",
         "/nav/cmd_vel",
         "/nav/added_obstacles",
@@ -763,11 +928,11 @@ def test_runtime_contract_default_prints_operator_summary(monkeypatch, capsys):
     assert "  endpoint_adapter" in out
     assert "Data sources:" in out
     assert (
-        "  real_s100p[hardware] source=/nav/lidar_scan,/nav/imu "
+        "  thunder_field[hardware] source=/nav/lidar_scan,/nav/imu "
         "normalized=/nav/lidar_scan,/nav/imu"
     ) in out
     assert "Profile bindings:" in out
-    assert "  nav->real_s100p mode=real_robot_saved_map_navigation" in out
+    assert "  nav->thunder_field mode=real_robot_saved_map_navigation" in out
     assert "Artifact formats:" in out
     assert "  tomogram path=tomogram.pickle type=pct_tomogram frame_role=map" in out
     assert "Adapter aliases:" in out
@@ -836,7 +1001,7 @@ def test_runtime_audit_prints_contract_gate(monkeypatch, capsys):
     assert '"sim/scripts/mujoco_fastlio2_live_gate.py"' in out
     assert '"sim/scripts/saved_map_relocalize_runtime_gate.py"' in out
     assert '"scripts/monitor/feishu_monitor_bot.py"' in out
-    assert '"required_real_s100p_topics": [' in out
+    assert '"required_thunder_field_topics": [' in out
 
 
 def test_runtime_audit_default_prints_operator_summary(monkeypatch, capsys):
@@ -872,7 +1037,7 @@ def test_runtime_audit_default_prints_operator_summary(monkeypatch, capsys):
     ) in out
     assert (
         "  step=3 real_runtime_evidence "
-        "required_when=before_claiming_real_s100p_runtime_or_field_navigation "
+        "required_when=before_claiming_thunder_field_runtime_or_field_navigation "
         "prior=runtime_audit"
     ) in out
     assert "Validation commands:" in out
@@ -1108,7 +1273,7 @@ def test_saved_map_artifact_gate_cli_invokes_script(monkeypatch, tmp_path):
             "--require-tomogram",
             "--require-occupancy",
             "--expected-data-source",
-            "real_s100p",
+            "thunder_field",
             "--expected-source-profile",
             "nav",
             "--expected-frame-id",
@@ -1126,7 +1291,7 @@ def test_saved_map_artifact_gate_cli_invokes_script(monkeypatch, tmp_path):
     assert cmd[2] == str(map_dir)
     assert "--require-tomogram" in cmd
     assert "--require-occupancy" in cmd
-    assert cmd[cmd.index("--expected-data-source") + 1] == "real_s100p"
+    assert cmd[cmd.index("--expected-data-source") + 1] == "thunder_field"
     assert cmd[cmd.index("--expected-source-profile") + 1] == "nav"
     assert cmd[cmd.index("--expected-frame-id") + 1] == "map"
     assert cmd[cmd.index("--json-out") + 1] == str(out_path)
@@ -1176,7 +1341,7 @@ def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(
             "--require-tomogram",
             "--require-occupancy",
             "--expected-data-source",
-            "real_s100p",
+            "thunder_field",
             "--expected-source-profile",
             "nav",
             "--expected-frame-id",
@@ -1196,7 +1361,7 @@ def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(
         "map_dir": str(map_dir),
         "require_tomogram": True,
         "require_occupancy": True,
-        "expected_data_source": "real_s100p",
+        "expected_data_source": "thunder_field",
         "expected_source_profile": "nav",
         "expected_frame_id": "map",
     }
@@ -1268,7 +1433,7 @@ def test_dataflow_cli_fetches_one_topic_without_ros2(monkeypatch, capsys):
     assert "gateway_rest:/api/v1/state" in out
     assert "gateway_sse:/api/v1/events" in out
     assert "communication=read_only" in out
-    assert "ros2_topic_required=false" in out
+    assert "endpoint_topic_required=false" in out
     assert "arbitrary_publish_supported=false" in out
 
 
@@ -1278,7 +1443,7 @@ def test_dataflow_cli_summary_json(monkeypatch, capsys):
     def _fake_get(gateway_url, path, *, timeout_sec, query=None):
         return {
             "schema_version": 1,
-            "runtime_contract": "real_s100p",
+            "runtime_contract": "thunder_field",
             "transport_layers": {
                 "module_port_bus": {"primary": True},
                 "ros2_adapter": {"primary": False},
@@ -1302,7 +1467,7 @@ def test_dataflow_cli_summary_json(monkeypatch, capsys):
     main_mod.main()
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["runtime_contract"] == "real_s100p"
+    assert payload["runtime_contract"] == "thunder_field"
     assert payload["transport_layers"]["module_port_bus"]["primary"] is True
 
 
@@ -1315,7 +1480,7 @@ def test_dataflow_cli_summary_includes_stage_and_command_closure(
     def _fake_get(gateway_url, path, *, timeout_sec, query=None):
         return {
             "schema_version": 1,
-            "runtime_contract": "real_s100p",
+            "runtime_contract": "thunder_field",
             "transport_layers": {
                 "module_port_bus": {"primary": True},
                 "ros2_adapter": {"primary": False},
@@ -1361,7 +1526,7 @@ def test_dataflow_cli_summary_includes_stage_and_command_closure(
     assert "topics=2 live_topics=2" in out
     assert "stages=2 live_stages=1 missing_stages=1" in out
     assert "commandable_topics=1 command_interfaces=3" in out
-    assert "ros2_adapter.primary=false" in out
+    assert "endpoint_adapter.primary=false" in out
 
 
 def test_dataflow_cli_gateway_failure_reports_fail(monkeypatch, capsys):
@@ -1418,7 +1583,7 @@ def test_dataflow_cli_unknown_topic_exits_nonzero(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Runtime dataflow topic: FAIL" in out
     assert "error=runtime_topic_not_found" in out
-    assert "ros2_topic_required=false" in out
+    assert "endpoint_topic_required=false" in out
 
 
 def test_cli_list_defaults_to_product_profiles_and_all_expands(
@@ -1432,8 +1597,11 @@ def test_cli_list_defaults_to_product_profiles_and_all_expands(
     out = capsys.readouterr().out
 
     assert "Available product profiles" in out
+    assert "lite" in out
+    assert "thunder-lite" in out
     assert "map" in out
     assert "nav" in out
+    assert "thunder-nav" in out
     assert "explore" in out
     assert "sim_mujoco_live" not in out
     assert "Use --list --all" in out
@@ -1496,7 +1664,7 @@ def test_real_runtime_evidence_cli_runs_read_only_collector(
         captured["check"] = check
         return types.SimpleNamespace(returncode=0)
 
-    out_path = tmp_path / "real_s100p_runtime" / "report.json"
+    out_path = tmp_path / "thunder_field_runtime" / "report.json"
     monkeypatch.setattr(subprocess, "run", _fake_run)
     monkeypatch.setattr(
         sys,
@@ -1527,7 +1695,7 @@ def test_real_runtime_evidence_cli_runs_read_only_collector(
     assert cmd[cmd.index("--duration-sec") + 1] == "3.5"
     assert cmd[cmd.index("--min-motion-m") + 1] == "0.2"
     assert cmd[cmd.index("--min-cmd-vel-norm") + 1] == "0.07"
-    assert cmd[cmd.index("--expected-contract") + 1] == "real_s100p"
+    assert cmd[cmd.index("--expected-contract") + 1] == "thunder_field"
     assert cmd[cmd.index("--expected-command-subscriber") + 1] == "s100p_driver"
     assert cmd[cmd.index("--json-out") + 1] == str(out_path)
     assert "--no-validate" not in cmd
@@ -1587,20 +1755,20 @@ def test_real_runtime_evidence_cli_prints_validation_blockers(
                     "hardware_boundary": {
                         "command_sink": "hardware_driver_after_cmd_vel_mux",
                     },
-                    "runtime_contract": {"name": "real_s100p", "ok": False},
+                    "runtime_contract": {"name": "thunder_field", "ok": False},
                     "runtime_evidence": {
                         "ok": False,
                         "validation_gate": {
                             "acceptance_step": 3,
                             "required_when": (
-                                "before_claiming_real_s100p_runtime_or_field_navigation"
+                                "before_claiming_thunder_field_runtime_or_field_navigation"
                             ),
                             "requires_prior_gates": ["runtime_audit"],
                             "conditional_prior_gates": [
                                 "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"
                             ],
                             "proves": [
-                                "observed_real_s100p_runtime_contract",
+                                "observed_thunder_field_runtime_contract",
                                 "observed_resolved_runtime_data_flow",
                             ],
                             "operator_summary_sections": [
@@ -1671,7 +1839,7 @@ def test_real_runtime_evidence_cli_prints_validation_blockers(
         )
         return types.SimpleNamespace(returncode=2)
 
-    out_path = tmp_path / "real_s100p_runtime" / "report.json"
+    out_path = tmp_path / "thunder_field_runtime" / "report.json"
     monkeypatch.setattr(subprocess, "run", _fake_run)
     monkeypatch.setattr(
         sys,
@@ -1691,11 +1859,11 @@ def test_real_runtime_evidence_cli_prints_validation_blockers(
     assert excinfo.value.code == 2
     assert f"Real runtime evidence report: {out_path}" in out
     assert "Real runtime evidence: FAIL" in out
-    assert "Runtime contract: name=real_s100p ok=false" in out
+    assert "Runtime contract: name=thunder_field ok=false" in out
     assert "Validation gate:" in out
     assert (
         "  step=3 "
-        "required_when=before_claiming_real_s100p_runtime_or_field_navigation "
+        "required_when=before_claiming_thunder_field_runtime_or_field_navigation "
         "prior=runtime_audit"
     ) in out
     assert "  real robot motion evidence missing" in out

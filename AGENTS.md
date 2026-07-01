@@ -209,7 +209,7 @@ profile.
 | `src/slam/slam_bridge_module.py` | ROS 2 SLAM bridge mode and localization health |
 | `src/gateway/gateway_module.py` | FastAPI REST/WS/SSE, map save hooks, drift watchdog |
 | `scripts/lingtu` | robot-side unified operations CLI |
-| `scripts/build_dufomap.sh` | aarch64 DUFOMap build helper |
+| `scripts/build/build_dufomap.sh` | aarch64 DUFOMap build helper |
 | `scripts/build/build_tare.sh` | TARE build helper |
 | `config/robot_config.yaml` | physical robot and calibration source of truth |
 | `config/devices.yaml` | hardware device registry |

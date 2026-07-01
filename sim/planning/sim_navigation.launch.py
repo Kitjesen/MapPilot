@@ -12,15 +12,15 @@ No physical robot, LiDAR, or SLAM service is required. Node topology:
 
 Usage:
   # Default Building2_9 corridor case.
-  ros2 launch tests/planning/sim_navigation.launch.py
+  ros2 launch sim/planning/sim_navigation.launch.py
 
   # Specify map and goal.
-  ros2 launch tests/planning/sim_navigation.launch.py \
+  ros2 launch sim/planning/sim_navigation.launch.py \
     map_path:=/home/sunrise/data/SLAM/navigation/src/global_planning/pct_planner/rsc/pcd/building2_9.pickle \
     goal_x:=5.0 goal_y:=-8.0
 
   # Alternative diagonal corridor case.
-  ros2 launch tests/planning/sim_navigation.launch.py goal_y:=-8.0
+  ros2 launch sim/planning/sim_navigation.launch.py goal_y:=-8.0
 
 Before launch, stop other navigation nodes:
   pkill -f 'pct_planner_astar|pct_path_adapter|localPlanner|pathFollower|sim_robot'
@@ -48,8 +48,8 @@ def _default_pickle():
     except Exception:
         pass
     # Fallback: derive the source-tree path from this launch file.
-    tests_dir = os.path.dirname(__file__)           # tests/planning/
-    src_root  = os.path.join(tests_dir, '..', '..', 'src')
+    planning_dir = os.path.dirname(__file__)        # sim/planning/
+    src_root  = os.path.join(planning_dir, '..', '..', 'src')
     return os.path.normpath(os.path.join(
         src_root, 'global_planning', 'pct_planner',
         'rsc', 'pcd', 'building2_9.pickle',

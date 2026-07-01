@@ -123,10 +123,10 @@ install_services.sh      # field-evaluation installer and robot-super-lio aliase
     active/map.pcd              # localizer reads this
 ```
 
-Source on the robot lives in `~/data/SLAM/navigation/` (a symlink to the active git
-checkout). The `lingtu.service` unit shipped under `docs/04-deployment/services/` runs
-out of `/opt/lingtu/current/`; the unit currently checked into `scripts/deploy/`
-points at `~/data/inovxio/lingtu/` instead — that's the developer-shell variant used
+Developer checkout on the robot lives in `~/data/inovxio/lingtu/`. The
+`lingtu.service` unit shipped under `docs/04-deployment/services/` runs out of
+`/opt/lingtu/current/`; the unit currently checked into `scripts/deploy/` points
+at the developer checkout instead — that's the developer-shell variant used
 during the migration to immutable releases. New robots should use the
 `docs/04-deployment/services/` files.
 
@@ -135,17 +135,17 @@ during the migration to immutable releases. New robots should use the
 ## Installing on a new robot
 
 ```bash
-# 1. Clone repo to ~/data/SLAM/navigation
-ssh sunrise@<robot> 'git clone https://github.com/Kitjesen/lingtu ~/data/SLAM/navigation'
+# 1. Clone repo to ~/data/inovxio/lingtu
+ssh sunrise@<robot> 'git clone https://github.com/Kitjesen/lingtu ~/data/inovxio/lingtu'
 
 # 2. Build native modules
-ssh sunrise@<robot> 'cd ~/data/SLAM/navigation && bash scripts/build_nav_core.sh'
+ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_nav_core.sh'
 
 # 3. Build ROS2 workspace
-ssh sunrise@<robot> 'cd ~/data/SLAM/navigation && source /opt/ros/humble/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release'
+ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && source /opt/ros/humble/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release'
 
 # 4. Install service units
-ssh sunrise@<robot> 'cd ~/data/SLAM/navigation && bash docs/04-deployment/services/install.sh'
+ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash docs/04-deployment/services/install.sh'
 
 # 5. Start everything
 ssh sunrise@<robot> 'sudo systemctl start lingtu.target'

@@ -79,8 +79,8 @@ def _seed_map_artifacts(map_dir: Path) -> None:
     (map_dir / "metadata.json").write_text(
         json.dumps({
             "schema_version": "lingtu.saved_map_artifacts.v1",
-            "source_profile": "real_s100p",
-            "data_source": "real_s100p",
+            "source_profile": "thunder_field",
+            "data_source": "thunder_field",
             "slam_source": "fastlio2",
             "localization_source": "fastlio2",
             "mapping_source": "fastlio2",
@@ -90,8 +90,8 @@ def _seed_map_artifacts(map_dir: Path) -> None:
                 "map_pcd": {
                     "path": "map.pcd",
                     "sha256": map_sha,
-                    "source_profile": "real_s100p",
-                    "data_source": "real_s100p",
+                    "source_profile": "thunder_field",
+                    "data_source": "thunder_field",
                     "slam_source": "fastlio2",
                     "frame_id": "map",
                     "point_count": 1,
@@ -100,8 +100,8 @@ def _seed_map_artifacts(map_dir: Path) -> None:
                     "path": "tomogram.pickle",
                     "sha256": tomogram_sha,
                     "source_map_sha256": map_sha,
-                    "source_profile": "real_s100p",
-                    "data_source": "real_s100p",
+                    "source_profile": "thunder_field",
+                    "data_source": "thunder_field",
                     "frame_id": "map",
                     "shape": [1],
                 },
@@ -679,22 +679,25 @@ def test_map_lifecycle_error_responses_use_stable_envelope(monkeypatch, tmp_path
 
 def test_map_save_falls_back_to_super_lio_live_cloud_snapshot(monkeypatch, tmp_path):
     import gateway.routes.maps as map_routes
+    from core.map_save import MapSaveError
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapLifecycleResponse
 
-    class FakeCompleted:
-        stdout = ""
-        stderr = "service unavailable"
+    class FakeMapSaveAdapter:
+        def save_nav_map(self, *args, **kwargs):
+            raise MapSaveError("service unavailable")
+
+        def save_pgo_map(self, *args, **kwargs):
+            return {"success": True}
 
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-    monkeypatch.setattr(map_routes.subprocess, "run", lambda *a, **k: FakeCompleted())
     monkeypatch.setattr(
         map_routes,
         "apply_dynamic_filter_step1half",
         lambda _save_dir: {"success": False, "skipped": True},
     )
 
-    gateway = GatewayModule()
+    gateway = GatewayModule(map_save_adapter=FakeMapSaveAdapter())
     gateway.setup()
     monkeypatch.setattr(gateway, "_get_slam_profile", lambda: "super_lio")
     with gateway._map_cloud_lock:
@@ -774,20 +777,23 @@ def test_binary_xyz_pcd_writer_keeps_numpy_fast_path(monkeypatch, tmp_path):
 
 
 def test_map_save_rejects_super_lio_relocation_profile(monkeypatch, tmp_path):
-    import gateway.routes.maps as map_routes
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapLifecycleResponse
 
     calls = []
 
-    def fake_run(*args, **kwargs):
-        calls.append((args, kwargs))
-        raise AssertionError("relocation map save should fail before ROS calls")
+    class FailingMapSaveAdapter:
+        def save_nav_map(self, *args, **kwargs):
+            calls.append(("nav", args, kwargs))
+            raise AssertionError("relocation map save should fail before adapter calls")
+
+        def save_pgo_map(self, *args, **kwargs):
+            calls.append(("pgo", args, kwargs))
+            raise AssertionError("relocation map save should fail before adapter calls")
 
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-    monkeypatch.setattr(map_routes.subprocess, "run", fake_run)
 
-    gateway = GatewayModule()
+    gateway = GatewayModule(map_save_adapter=FailingMapSaveAdapter())
     gateway.setup()
     monkeypatch.setattr(gateway, "_get_slam_profile", lambda: "super_lio_relocation")
 

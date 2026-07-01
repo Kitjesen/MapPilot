@@ -1023,7 +1023,7 @@ class _FakeROSOccupancyGrid:
 @pytest.mark.ros2
 class TestROS2PathBridgeModule(unittest.TestCase):
     def test_defaults_come_from_runtime_topic_contract(self):
-        from nav.ros2_path_bridge_module import ROS2PathBridgeModule
+        from compat.ros2.nav.path_bridge import ROS2PathBridgeModule
 
         bridge = ROS2PathBridgeModule()
 
@@ -1039,7 +1039,7 @@ class TestROS2PathBridgeModule(unittest.TestCase):
         )
 
     def test_explicit_default_frame_applies_to_both_path_topics(self):
-        from nav.ros2_path_bridge_module import ROS2PathBridgeModule
+        from compat.ros2.nav.path_bridge import ROS2PathBridgeModule
 
         bridge = ROS2PathBridgeModule(default_frame_id="odom")
 
@@ -1047,7 +1047,7 @@ class TestROS2PathBridgeModule(unittest.TestCase):
         self.assertEqual(bridge._local_default_frame_id, "odom")
 
     def test_global_path_conversion_uses_global_topic_frame_default(self):
-        from nav.ros2_path_bridge_module import ROS2PathBridgeModule
+        from compat.ros2.nav.path_bridge import ROS2PathBridgeModule
 
         fake_nav_msgs = types.SimpleNamespace(Path=_FakeROSPath)
         fake_geometry_msgs = types.SimpleNamespace(PoseStamped=_FakeROSPoseStamped)
@@ -1074,7 +1074,7 @@ class TestROS2PathBridgeModule(unittest.TestCase):
 @pytest.mark.ros2
 class TestROS2GridBridgeModule(unittest.TestCase):
     def test_default_frame_comes_from_exploration_grid_contract(self):
-        from nav.ros2_grid_bridge_module import ROS2GridBridgeModule
+        from compat.ros2.nav.grid_bridge import ROS2GridBridgeModule
 
         bridge = ROS2GridBridgeModule()
 
@@ -1085,7 +1085,7 @@ class TestROS2GridBridgeModule(unittest.TestCase):
         )
 
     def test_grid_conversion_uses_contract_frame_when_input_lacks_frame(self):
-        from nav.ros2_grid_bridge_module import ROS2GridBridgeModule
+        from compat.ros2.nav.grid_bridge import ROS2GridBridgeModule
 
         fake_nav_msgs = types.SimpleNamespace(OccupancyGrid=_FakeROSOccupancyGrid)
         fake_modules = {
@@ -1113,7 +1113,7 @@ class TestROS2GridBridgeModule(unittest.TestCase):
         self.assertEqual(msg.data, [0, 100])
 
     def test_grid_conversion_preserves_explicit_input_frame(self):
-        from nav.ros2_grid_bridge_module import ROS2GridBridgeModule
+        from compat.ros2.nav.grid_bridge import ROS2GridBridgeModule
 
         fake_nav_msgs = types.SimpleNamespace(OccupancyGrid=_FakeROSOccupancyGrid)
         fake_modules = {
@@ -1472,8 +1472,27 @@ class TestSafetyRingModule(unittest.TestCase):
 
         self.assertEqual(stop_cmds[-1], 2)
 
-    def test_stop_cmd_republishes_current_stop_level(self):
-        """Repeated safety checks in STOP should resend STOP to restarted downstreams."""
+    def test_stop_cmd_suppresses_reentrant_same_level_publish(self):
+        """A STOP callback that re-enters safety evaluation must not recurse forever."""
+        m = self._make_module()
+        m.odometry._deliver(self._make_odom())
+        m.localization_status._deliver({"state": "LOST"})
+
+        stop_cmds = []
+
+        def reenter_once(level):
+            stop_cmds.append(level)
+            if len(stop_cmds) == 1:
+                m._publish_safety()
+
+        m.stop_cmd._add_callback(reenter_once)
+
+        m._publish_safety()
+
+        self.assertEqual(stop_cmds, [2])
+
+    def test_stop_cmd_republishes_current_stop_level_after_delivery_returns(self):
+        """Repeated non-reentrant STOP checks may resend STOP to restarted downstreams."""
         m = self._make_module()
         m.odometry._deliver(self._make_odom())
 

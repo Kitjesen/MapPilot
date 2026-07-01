@@ -10,11 +10,11 @@ MapPilot 支持两种 LiDAR SLAM 算法，通过 launch 参数 `slam_profile` �
 | **Point-LIO** | `pointlio` | 逐点更新，更强抗振动能力，适合四足机器人 |
 
 ```bash
-# 使用 Fast-LIO2 (默认 — s100p profile 已配 fastlio2)
-python lingtu.py s100p
+# 使用 Fast-LIO2 建图
+python lingtu.py map
 
 # 使用 Point-LIO (临时覆盖 SLAM backend)
-python lingtu.py s100p --slam pointlio
+python lingtu.py nav --slam pointlio
 
 # 仅建图模式 (Fast-LIO2 + 保存 PCD)
 python lingtu.py map
@@ -89,13 +89,13 @@ sudo make install
 
 ## 实例数据集
 ```text
-链接: https://pan.baidu.com/s/1rTTUlVwxi1ZNo7ZmcpEZ7A?pwd=t6yb 提取码: t6yb 
+链接: https://pan.baidu.com/s/1rTTUlVwxi1ZNo7ZmcpEZ7A?pwd=t6yb 提取码: t6yb
 --来自百度网盘超级会员v7的分享
 ```
 
 ## 部分脚本
 
-### 1.激光惯性里程计 
+### 1.激光惯性里程计
 ```shell
 ros2 launch slam/launch/fastlio2_launch.py
 ros2 bag play your_bag_file
@@ -175,4 +175,3 @@ ros2 service call /hba/refine_map interface/srv/RefineMap "{"maps_path": "your m
 
 ### 参考
 4. [Point-LIO](https://github.com/hku-mars/Point-LIO)
-

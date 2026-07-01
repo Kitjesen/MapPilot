@@ -17,15 +17,15 @@
 ### 快速开始
 
 ```bash
-# 安装依赖
-pip3 install -r monitor/requirements_feishu.txt
+# 安装依赖（从仓库根目录运行）
+pip3 install -r scripts/monitor/requirements_feishu.txt
 
-# 配置：编辑 monitor/feishu_monitor_bot.py
+# 配置：编辑 scripts/monitor/feishu_monitor_bot.py
 # 填入 APP_ID / APP_SECRET / RECEIVE_ID
 
 # 运行（需先 source ROS2 环境）
 source /opt/ros/humble/setup.bash
-python3 monitor/feishu_monitor_bot.py
+python3 scripts/monitor/feishu_monitor_bot.py
 ```
 
 ### 飞书应用配置
@@ -59,6 +59,6 @@ python3 monitor/feishu_monitor_bot.py
 ## Telegram 机器人
 
 ```bash
-pip3 install -r monitor/requirements_telegram.txt
-python3 monitor/telegram_monitor_bot.py
+pip3 install -r scripts/monitor/requirements_telegram.txt
+python3 scripts/monitor/telegram_monitor_bot.py
 ```

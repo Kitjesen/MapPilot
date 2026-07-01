@@ -412,7 +412,7 @@ def _mark_relocalization_prerequisite_failed(
 def _run_plan_preview(args: argparse.Namespace, *, tomogram: Path, out_path: Path) -> dict[str, Any]:
     cmd = [
         sys.executable,
-        str(ROOT / "scripts/plan_preview.py"),
+        str(ROOT / "scripts/planning/plan_preview.py"),
         "--planner",
         "pct",
         "--tomogram",

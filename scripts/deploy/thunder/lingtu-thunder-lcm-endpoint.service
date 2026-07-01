@@ -1,0 +1,31 @@
+[Unit]
+Description=LingTu Thunder LCM endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_PROFILE=thunder-nav
+Environment=LINGTU_MODULE_TRANSPORT=local
+Environment=LINGTU_ENDPOINT=thunder_field
+Environment=LINGTU_ENDPOINT_TRANSPORT=lcm
+Environment=LINGTU_ENDPOINT_CONTRACT=thunder_field_lcm_v1
+Environment=LINGTU_ENDPOINT_SOURCES=thunder_field
+Environment=LINGTU_ENDPOINT_SOURCE=
+Environment=LINGTU_ENDPOINT_JSONL_PATH=
+Environment=LINGTU_ENDPOINT_JSONL_COMMAND=
+Environment=LINGTU_ENDPOINT_JSONL_RATE_HZ=0
+Environment=LINGTU_ENABLE_ROBOT_DRIVER=0
+Environment=LINGTU_COMMAND_OUTPUT_MODE=endpoint_only
+Environment=LINGTU_HARDWARE_CONTROL_BOUNDARY=lcm_endpoint_source
+Environment=LINGTU_PYTHON=python3
+ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh && args=(--contract "${LINGTU_ENDPOINT_CONTRACT}"); sources="${LINGTU_ENDPOINT_SOURCES:-${LINGTU_ENDPOINT_SOURCE:-}}"; if [ -n "${sources}" ]; then args+=(--source "${sources}"); fi; exec "${LINGTU_PYTHON}" scripts/deploy/thunder/run_lcm_endpoint_service.py "${args[@]}"'
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

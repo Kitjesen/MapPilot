@@ -756,6 +756,18 @@ class SlowPathMixin:
         """注入房间-物体知识图谱 (P1: KG-backed room adjacency prediction)。"""
         self._room_object_kg = kg
 
+    def set_topology_graph_snapshot(self, snapshot: dict | None) -> bool:
+        """Replace the internal TSG with a serialized SemanticMapper snapshot."""
+        if not isinstance(snapshot, dict):
+            return False
+        try:
+            from memory.spatial.topology_graph import TopologySemGraph
+            self._tsg = TopologySemGraph.from_dict(snapshot)
+            return True
+        except Exception as exc:
+            logger.debug("Failed to load topology graph snapshot: %s", exc)
+            return False
+
     def update_visited_room(self, room_id: int) -> None:
         """标记某房间已探索 (拓扑感知探索用)。"""
         if room_id >= 0:

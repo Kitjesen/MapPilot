@@ -88,10 +88,10 @@ def main() -> int:
     args = _parse_args()
     _log_dependency_status(args.detector, args.encoder)
 
-    from core.blueprints.full_stack import full_stack_blueprint
+    from core.blueprints.profile_builder import build_system_for_profile
     from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
-    system = full_stack_blueprint(
+    system = build_system_for_profile("sim", dict(
         robot="sim_mujoco",
         world=args.world,
         slam_profile=args.slam_profile,
@@ -102,7 +102,7 @@ def main() -> int:
         enable_semantic=True,
         enable_gateway=args.enable_gateway,
         render=args.render,
-    ).build()
+    ))
 
     driver = system.get_module("MujocoDriverModule")
     nav = system.get_module("NavigationModule")

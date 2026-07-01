@@ -4,11 +4,12 @@ This package provides drivers for real robot hardware. Each sub-package encapsul
 
 ## `thunder/` — Thunder Robot (gRPC via Brainstem)
 
-- **`__init__.py`** — Package init; exports `ThunderDriverModule` and `CameraBridgeModule`.
-- **`blueprints.py`** — Thunder stack blueprint: wires ThunderDriver + CameraBridge into a composable driver stack.
-- **`camera_bridge_module.py`** — Camera bridge: converts compressed camera frames from Thunder to standard Image messages.
+- **`__init__.py`** — Package init; exports the Thunder driver and connection surfaces.
+- **`blueprints.py`** — Legacy compatibility shim; product blueprints live under `core.blueprints.products.thunder`.
 - **`connection.py`** — Connection management: gRPC channel lifecycle, retry, and reconnection to brainstem control service.
 - **`han_dog_module.py`** — HanDog hardware module: low-level joint command interface for the Han robot variant.
+
+Camera bridge adapters live under `src/compat/ros2/camera_bridge.py` and are composed by the product/perception stack when camera input is enabled. The Thunder hardware package should not import ROS compatibility modules directly.
 
 ## `lidar/` — Livox MID-360 LiDAR Driver
 

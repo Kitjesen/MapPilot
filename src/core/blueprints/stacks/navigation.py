@@ -9,6 +9,77 @@ from core.blueprints.stacks._registry import optional_stack_module, stack_module
 
 logger = logging.getLogger(__name__)
 
+
+def _enabled(config: dict, name: str, legacy_name: str) -> bool:
+    if name in config:
+        return bool(config[name])
+    return bool(config.get(legacy_name, False))
+
+
+def _endpoint_egress_uses_lcm(config: dict) -> bool:
+    selected = str(
+        config.get("endpoint_path_bridge")
+        or config.get("endpoint_egress_adapter")
+        or ""
+    ).lower()
+    endpoint_transport = str(
+        config.get("_endpoint_transport")
+        or config.get("endpoint_transport")
+        or ""
+    ).lower()
+
+    return selected in {"lcm", "lcm_endpoint", "lcm_path_command_bridge"} or (
+        not selected and endpoint_transport == "lcm"
+    )
+
+
+def _endpoint_ingress_uses_lcm(config: dict) -> bool:
+    selected = str(
+        config.get("endpoint_command_bridge")
+        or config.get("endpoint_ingress_adapter")
+        or ""
+    ).lower()
+    endpoint_transport = str(
+        config.get("_endpoint_transport")
+        or config.get("endpoint_transport")
+        or ""
+    ).lower()
+
+    return selected in {"lcm", "lcm_endpoint", "lcm_navigation_command_bridge"} or (
+        not selected and endpoint_transport == "lcm"
+    )
+
+
+def _endpoint_path_bridge_spec(config: dict) -> tuple[str, str]:
+    if _endpoint_egress_uses_lcm(config):
+        return (
+            "lcm_path_command_bridge",
+            "compat.lcm.path_command_adapter.LCMPathCommandBridgeModule",
+        )
+    return (
+        "ros2_path_bridge",
+        "compat.ros2.nav.path_bridge.ROS2PathBridgeModule",
+    )
+
+
+def _endpoint_command_bridge_spec(config: dict) -> tuple[str, str]:
+    if _endpoint_ingress_uses_lcm(config):
+        return (
+            "lcm_navigation_command_bridge",
+            "compat.lcm.navigation_command_adapter.LCMNavigationCommandBridgeModule",
+        )
+    return (
+        "ros2_navigation_command_bridge",
+        "compat.ros2.nav.command_bridge.ROS2NavigationCommandBridgeModule",
+    )
+
+
+def _endpoint_bridge_seed_group(bridge_name: str) -> str:
+    if bridge_name.startswith("lcm_"):
+        return "navigation_lcm"
+    return "navigation_ros2"
+
+
 _NAVIGATION_CONFIG_KEYS = (
     "obstacle_thr",
     "waypoint_threshold",
@@ -53,7 +124,6 @@ def navigation_module_config(
     return {
         "planner": planner_backend,
         "tomogram": tomogram,
-        "enable_ros2_bridge": bool(config.get("enable_ros2_bridge", False)),
         **nav_config,
     }
 
@@ -178,49 +248,114 @@ def navigation(
         **navigation_module_config(planner_backend, tomogram, **config),
     )
 
-    if config.get("enable_ros2_bridge", False):
-        ROS2WaypointBridgeModule = optional_stack_module(
+    if _enabled(config, "enable_endpoint_command_bridge", "enable_ros2_command_bridge"):
+        bridge_name, bridge_fallback = _endpoint_command_bridge_spec(config)
+        EndpointCommandBridgeModule = optional_stack_module(
             "navigation",
-            "ros2_waypoint_bridge",
-            seed_group="navigation",
-            fallback="nav.ros2_waypoint_bridge_module.ROS2WaypointBridgeModule",
+            bridge_name,
+            seed_group=_endpoint_bridge_seed_group(bridge_name),
+            fallback=bridge_fallback,
         )
-        if ROS2WaypointBridgeModule is not None:
-            waypoint_bridge_config = {}
+        if EndpointCommandBridgeModule is not None:
+            command_bridge_config = {}
             if "planning_frame_id" in config:
-                waypoint_bridge_config["default_frame_id"] = config["planning_frame_id"]
+                command_bridge_config["default_frame_id"] = config["planning_frame_id"]
+            if bridge_name == "lcm_navigation_command_bridge":
+                endpoint_contract = config.get("_endpoint_contract") or config.get(
+                    "endpoint_contract"
+                )
+                if endpoint_contract:
+                    command_bridge_config["endpoint_contract"] = endpoint_contract
             bp.add(
-                ROS2WaypointBridgeModule,
-                alias="ROS2WaypointBridgeModule",
-                **waypoint_bridge_config,
+                EndpointCommandBridgeModule,
+                alias="EndpointCommandBridgeModule",
+                **command_bridge_config,
             )
             bp.wire(
+                "EndpointCommandBridgeModule",
+                "goal_pose",
                 "NavigationModule",
-                "waypoint",
-                "ROS2WaypointBridgeModule",
-                "waypoint",
+                "goal_pose",
+            )
+            bp.wire(
+                "EndpointCommandBridgeModule",
+                "cancel",
+                "NavigationModule",
+                "cancel",
+            )
+            bp.wire(
+                "EndpointCommandBridgeModule",
+                "instruction",
+                "NavigationModule",
+                "instruction",
             )
         else:
-            logger.warning("ROS2 waypoint bridge not available")
+            logger.warning("Endpoint command bridge not available")
 
-    if config.get("enable_ros2_path_bridge", False):
-        ROS2PathBridgeModule = optional_stack_module(
+    if _enabled(config, "enable_endpoint_waypoint_bridge", "enable_ros2_bridge"):
+        if _endpoint_egress_uses_lcm(config):
+            logger.debug(
+                "Endpoint waypoint egress is handled by the LCM path command bridge"
+            )
+        else:
+            EndpointWaypointBridgeModule = optional_stack_module(
+                "navigation",
+                "ros2_waypoint_bridge",
+                seed_group="navigation_ros2",
+                fallback="compat.ros2.nav.waypoint_bridge.ROS2WaypointBridgeModule",
+            )
+            if EndpointWaypointBridgeModule is not None:
+                waypoint_bridge_config = {}
+                if "planning_frame_id" in config:
+                    waypoint_bridge_config["default_frame_id"] = config[
+                        "planning_frame_id"
+                    ]
+                bp.add(
+                    EndpointWaypointBridgeModule,
+                    alias="EndpointWaypointBridgeModule",
+                    **waypoint_bridge_config,
+                )
+                bp.wire(
+                    "NavigationModule",
+                    "waypoint",
+                    "EndpointWaypointBridgeModule",
+                    "waypoint",
+                )
+            else:
+                logger.warning("Endpoint waypoint bridge not available")
+
+    if _enabled(config, "enable_endpoint_path_bridge", "enable_ros2_path_bridge"):
+        bridge_name, bridge_fallback = _endpoint_path_bridge_spec(config)
+        EndpointPathBridgeModule = optional_stack_module(
             "navigation",
-            "ros2_path_bridge",
-            seed_group="navigation",
-            fallback="nav.ros2_path_bridge_module.ROS2PathBridgeModule",
+            bridge_name,
+            seed_group=_endpoint_bridge_seed_group(bridge_name),
+            fallback=bridge_fallback,
         )
-        if ROS2PathBridgeModule is not None:
+        if EndpointPathBridgeModule is not None:
             path_bridge_config = {}
             if "planning_frame_id" in config:
                 path_bridge_config["default_frame_id"] = config["planning_frame_id"]
+            if bridge_name == "lcm_path_command_bridge":
+                endpoint_contract = config.get("_endpoint_contract") or config.get(
+                    "endpoint_contract"
+                )
+                if endpoint_contract:
+                    path_bridge_config["endpoint_contract"] = endpoint_contract
             bp.add(
-                ROS2PathBridgeModule,
-                alias="ROS2PathBridgeModule",
+                EndpointPathBridgeModule,
+                alias="EndpointPathBridgeModule",
                 **path_bridge_config,
             )
+            if bridge_name == "lcm_path_command_bridge":
+                bp.wire(
+                    "NavigationModule",
+                    "waypoint",
+                    "EndpointPathBridgeModule",
+                    "waypoint",
+                )
         else:
-            logger.warning("ROS2 path bridge not available")
+            logger.warning("Endpoint path bridge not available")
 
     if config.get("enable_frontier", False):
         try:

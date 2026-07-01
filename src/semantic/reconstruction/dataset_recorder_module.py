@@ -16,8 +16,8 @@
     └── metadata.json    — 录制会话信息（内参、机器人型号、时间戳等）
 
 该格式可直接送入:
-    python tools/reconstruct_local.py --dataset <save_dir> --backend tsdf
-    python tools/reconstruct_local.py --dataset <save_dir> --backend nerfstudio
+    python tools/reconstruction/reconstruct_local.py --dataset <save_dir> --backend tsdf
+    python tools/reconstruction/reconstruct_local.py --dataset <save_dir> --backend nerfstudio
     ns-train instant-ngp --data <save_dir>    (nerfstudio 原生)
 
 Ports:

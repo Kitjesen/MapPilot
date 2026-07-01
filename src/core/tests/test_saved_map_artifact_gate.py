@@ -289,7 +289,7 @@ def test_saved_map_artifact_gate_script_rejects_missing_required_tomogram(
     tmp_path: Path,
 ):
     artifact_dir = _write_same_source_map(tmp_path)
-    script = REPO_ROOT / "scripts" / "saved_map_artifact_gate.py"
+    script = REPO_ROOT / "scripts" / "gates" / "saved_map_artifact_gate.py"
 
     proc = subprocess.run(
         [
@@ -330,7 +330,7 @@ def test_saved_map_artifact_gate_script_prints_operator_summary_by_default(
     tmp_path: Path,
 ):
     artifact_dir = _write_same_source_map(tmp_path)
-    script = REPO_ROOT / "scripts" / "saved_map_artifact_gate.py"
+    script = REPO_ROOT / "scripts" / "gates" / "saved_map_artifact_gate.py"
 
     proc = subprocess.run(
         [sys.executable, str(script), str(artifact_dir), "--require-tomogram"],

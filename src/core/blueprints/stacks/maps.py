@@ -11,6 +11,12 @@ from core.blueprints.stacks._registry import optional_stack_module, stack_module
 logger = logging.getLogger(__name__)
 
 
+def _enabled(config: dict, name: str, legacy_name: str) -> bool:
+    if name in config:
+        return bool(config[name])
+    return bool(config.get(legacy_name, False))
+
+
 def maps(**config) -> Blueprint:
     """Real-time map layers from LiDAR point cloud, plus map lifecycle management.
 
@@ -76,17 +82,17 @@ def maps(**config) -> Blueprint:
                 og.get("raycast_free_inflation_radius", 0.0),
             ),
         )
-        if config.get("enable_ros2_grid_bridge", False):
-            ROS2GridBridgeModule = optional_stack_module(
+        if _enabled(config, "enable_endpoint_grid_bridge", "enable_ros2_grid_bridge"):
+            EndpointGridBridgeModule = optional_stack_module(
                 "map",
                 "ros2_grid_bridge",
-                seed_group="map",
-                fallback="nav.ros2_grid_bridge_module.ROS2GridBridgeModule",
+                seed_group="map_ros2",
+                fallback="compat.ros2.nav.grid_bridge.ROS2GridBridgeModule",
             )
-            if ROS2GridBridgeModule is not None:
-                bp.add(ROS2GridBridgeModule, alias="ROS2GridBridgeModule")
+            if EndpointGridBridgeModule is not None:
+                bp.add(EndpointGridBridgeModule, alias="EndpointGridBridgeModule")
             else:
-                logger.warning("ROS2 grid bridge not available")
+                logger.warning("Endpoint grid bridge not available")
 
         vg = cfg.raw.get("voxel_grid", {})
         bp.add(

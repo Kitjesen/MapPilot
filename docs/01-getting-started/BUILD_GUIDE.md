@@ -101,7 +101,7 @@ WebRTC code path is disabled.
 
 ### 5. DUFOMap (dynamic obstacle removal, optional)
 
-The Lingtu helper script `scripts/build_dufomap.sh` builds the DUFOMap
+The Lingtu helper script `scripts/build/build_dufomap.sh` builds the DUFOMap
 binary used by the offline post-mapping cleaner; rerun it on first
 install.
 
@@ -134,7 +134,7 @@ inside a ROS Humble shell. Use `make build-debug` for `-DCMAKE_BUILD_TYPE=Debug`
 make nav_core
 ```
 
-This drives `scripts/build_nav_core.sh` to produce `_nav_core.so` (the
+This drives `scripts/build/build_nav_core.sh` to produce `_nav_core.so` (the
 nanobind backend used by `LocalPlannerModule` / `PathFollowerModule`).
 
 ### Subsets

@@ -100,6 +100,7 @@ class SafetyRingModule(Module, layer=0):
         self._invalid_odom = False
         self._invalid_cmd_vel = False
         self._safety_level = SafetyLevel.SAFE
+        self._publishing_stop_cmd_level: int | None = None
 
         # Ring 2 state
         self._robot_xy = [0.0, 0.0]
@@ -206,11 +207,24 @@ class SafetyRingModule(Module, layer=0):
         level = self._check_links()
         self._safety_level = level
         if level == SafetyLevel.STOP:
-            self.stop_cmd.publish(2)
+            stop_level = 2
         elif level == SafetyLevel.WARN:
-            self.stop_cmd.publish(1)
+            stop_level = 1
         else:
-            self.stop_cmd.publish(0)
+            stop_level = 0
+
+        # Avoid recursive STOP storms: the stop command clears paths and
+        # publishes zero cmd_vel, which is looped back into this module for
+        # auditing through CmdVelMux.driver_cmd_vel. Suppress only re-entrant
+        # same-level publishes while the current stop_cmd delivery is active;
+        # later safety ticks may still resend STOP for restarted downstreams.
+        if stop_level == self._publishing_stop_cmd_level:
+            return
+        self._publishing_stop_cmd_level = stop_level
+        try:
+            self.stop_cmd.publish(stop_level)
+        finally:
+            self._publishing_stop_cmd_level = None
 
         self.safety_state.publish(SafetyState(
             level=level.value,

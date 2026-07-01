@@ -17,8 +17,10 @@
 set -uo pipefail
 # 注意: 不用 set -e, 因为部分命令 (ros2 topic hz, grpcurl) 可能返回非零
 
-NAV_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NAV_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PROTO_DIR="$NAV_DIR/src/robot_proto/proto"
+
 SKIP_GRPC=false
 [[ "${1:-}" == "--skip-grpc" ]] && SKIP_GRPC=true
 
@@ -315,7 +317,7 @@ else
       -proto control.proto \
       -d '{"base": {"request_id": "test-5a"}, "mode": "ROBOT_MODE_MAPPING"}' \
       127.0.0.1:50051 robot.v1.ControlService/SetMode 2>&1 || true)
-    
+
     if echo "$result" | grep -q "ROBOT_MODE_MAPPING"; then
       pass "5a SetMode MAPPING 返回正确"
     else

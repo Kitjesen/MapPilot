@@ -33,8 +33,10 @@ from typing import Any
 
 from core import In, Module, Out, skill
 from core.dynamic_filter import apply_dynamic_filter_step1half
+from core.map_save import MapSaveError, save_pgo_map_with_adapter
 from core.msgs.numpy_compat import np
 from core.msgs.sensor import PointCloud2
+from core.plugin_seed import seed_registered_plugins
 from core.registry import register
 from core.runtime_interface import TOPICS, topic_default_frame_id
 from core.same_source_map_artifacts import (
@@ -52,12 +54,16 @@ class _LiveMapCloudSnapshotSaved(Exception):
     """Internal control-flow marker after saving a live map_cloud snapshot."""
 
 
+class _MapSaveAdapterFailed(Exception):
+    """Internal wrapper for adapter failures already shaped for API responses."""
+
+
 @register("map", "manager", description="Saved-map lifecycle manager")
 class MapManagerModule(Module, layer=6):
     """Map and POI management module (hive Module).
 
     Maps are stored as subdirectories.  Each map directory contains:
-        map.pcd          -- SLAM point cloud saved via ROS2 SaveMaps service
+        map.pcd          -- SLAM point cloud saved via map-save adapter
         tomogram.pickle  -- global planning index auto-built from map.pcd
         occupancy.npz    -- static 2D occupancy grid derived from map.pcd
                            keys: grid (int8 HxW, 0=free/100=occupied),
@@ -113,11 +119,13 @@ class MapManagerModule(Module, layer=6):
             or os.environ.get("LINGTU_SLAM_PROFILE")
             or ""
         ).strip().lower()
+        self._map_save_adapter = config.get("map_save_adapter")
+        self._map_save_timeout_sec = float(config.get("map_save_timeout_sec", 30.0))
         self._runtime_data_source = str(
             config.get("data_source")
             or os.environ.get("LINGTU_RUNTIME_DATA_SOURCE")
-            or "real_s100p"
-        ).strip() or "real_s100p"
+            or "thunder_field"
+        ).strip() or "thunder_field"
         self._source_profile = str(
             config.get("source_profile")
             or config.get("profile")
@@ -222,11 +230,11 @@ class MapManagerModule(Module, layer=6):
         name: str,
         slam_profile: str | None = None,
     ) -> dict[str, Any]:
-        """Save SLAM map via ROS2 SaveMaps service, then build all planning artifacts.
+        """Save a SLAM map via adapter, then build all planning artifacts.
 
         Pipeline
         --------
-        1. ROS2 ``/pgo/save_maps`` -> ``<map_dir>/<name>/map.pcd``
+        1. map-save adapter -> ``<map_dir>/<name>/map.pcd``
            Raw SLAM point cloud; required for all downstream steps.
 
         2. ``_build_tomogram(name)`` -> ``<map_dir>/<name>/tomogram.pickle``
@@ -234,7 +242,7 @@ class MapManagerModule(Module, layer=6):
            file at startup.  This step is required; failure blocks the save.
 
         3. ``_build_occupancy_snapshot(name)`` -> ``<map_dir>/<name>/occupancy.npz``
-           Static 2D occupancy grid derived from map.pcd (numpy-only, no ROS2).
+           Static 2D occupancy grid derived from map.pcd (numpy-only).
            Stored as npz with keys: ``grid`` (int8 HxW, 0=free/100=occupied),
            ``resolution`` (float, metres per cell), ``origin`` (float[2],
            world-frame XY of grid[0,0]).
@@ -271,7 +279,7 @@ class MapManagerModule(Module, layer=6):
                 **capability_fields,
             }
 
-        # Step 1: call the ROS2 SLAM save_maps service.
+        # Step 1: save the raw SLAM point cloud through the selected adapter.
         try:
             if resolved_slam_profile == "super_lio":
                 snapshot_resp = self._save_live_map_cloud_snapshot(pcd_path)
@@ -285,54 +293,21 @@ class MapManagerModule(Module, layer=6):
                     }
                 raise _LiveMapCloudSnapshotSaved()
 
-            import subprocess
-
-            # save_patches=true makes PGO dump per-frame patch PCDs +
-            # poses.txt alongside map.pcd. DUFOMap (Step 1.5) and the
-            # raycasting occupancy builder both REQUIRE patches; without
-            # them DUFOMap silently no-ops (returns "PGO output incomplete")
-            # and dynamic-obstacle filtering is inert.
-            result = subprocess.run(
-                [
-                    "ros2",
-                    "service",
-                    "call",
-                    "/pgo/save_maps",
-                    "interface/srv/SaveMaps",
-                    json.dumps({"file_path": str(pcd_path), "save_patches": True}),
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-            )
-            if result.returncode != 0:
-                return {
-                    "action": "save",
-                    "success": False,
-                    "message": f"SaveMaps failed: {result.stderr}",
-                    "slam_profile": resolved_slam_profile,
-                    **capability_fields,
-                }
-        except FileNotFoundError as e:
+            adapter_result = self._save_map_with_adapter(pcd_path)
+            if adapter_result.get("success") is False:
+                raise _MapSaveAdapterFailed(
+                    str(adapter_result.get("message") or "Map save failed")
+                )
+        except _MapSaveAdapterFailed as e:
             return {
                 "action": "save",
                 "success": False,
-                "message": f"ROS2 not available: {e}",
+                "message": str(e),
                 "slam_profile": resolved_slam_profile,
                 **capability_fields,
             }
         except _LiveMapCloudSnapshotSaved:
             pass
-        except subprocess.TimeoutExpired as e:
-            return {
-                "action": "save",
-                "success": False,
-                "message": f"ROS2 not available: {e}",
-                "slam_profile": resolved_slam_profile,
-                **capability_fields,
-            }
 
         # Step 1.5: DUFOMap dynamic-obstacle filter (shared with gateway path).
         # Keep this in one helper so env-var, parameter, and error handling
@@ -476,6 +451,28 @@ class MapManagerModule(Module, layer=6):
         except Exception as e:
             logger.debug("_resolve_slam_profile: service_manager lookup failed: %s", e)
         return "unknown"
+
+    def _save_map_with_adapter(self, pcd_path: Path) -> dict[str, Any]:
+        """Save ``map.pcd`` through the configured map-save adapter."""
+        try:
+            if self._map_save_adapter is None:
+                seed_registered_plugins(
+                    groups=("map_save_adapter",),
+                    reload_loaded=False,
+                )
+            # save_patches=true makes PGO dump per-frame patch PCDs and
+            # poses.txt alongside map.pcd. DUFOMap and the raycasting occupancy
+            # builder require those artifacts; otherwise filtering no-ops.
+            result = save_pgo_map_with_adapter(
+                self._map_save_adapter,
+                pcd_path,
+                save_patches=True,
+                timeout_sec=self._map_save_timeout_sec,
+            )
+        except MapSaveError as e:
+            raise _MapSaveAdapterFailed(str(e)) from e
+
+        return result if isinstance(result, dict) else {"success": True}
 
     @staticmethod
     def _map_save_capability_fields(slam_profile: str | None) -> dict[str, Any]:
@@ -1258,7 +1255,7 @@ class MapManagerModule(Module, layer=6):
 
     @skill
     def save_map(self, name: str, slam_profile: str | None = None) -> str:
-        """Save current SLAM map as *name* (ROS2 SaveMaps) and build all artifacts."""
+        """Save current SLAM map as *name* and build all artifacts."""
         return json.dumps(self._map_save(name, slam_profile=slam_profile), default=str)
 
     @skill

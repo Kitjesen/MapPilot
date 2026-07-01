@@ -138,10 +138,10 @@ def test_camera_snapshot_returns_cached_gateway_jpeg(monkeypatch):
 
     from gateway.routes.camera import register_camera_routes
 
-    def fail_subprocess(*args, **kwargs):
+    def fail_legacy_snapshot():
         raise AssertionError("snapshot route should not probe ROS when JPEG is cached")
 
-    monkeypatch.setattr("gateway.routes.camera.subprocess.run", fail_subprocess)
+    monkeypatch.setattr("gateway.routes.camera._legacy_ros2_snapshot_jpeg", fail_legacy_snapshot)
 
     app = FastAPI()
     gw = SimpleNamespace(_latest_jpeg=b"\xff\xd8\xffcamera", _jpeg_lock=threading.Lock())
@@ -160,7 +160,7 @@ def test_camera_snapshot_uses_teleop_one_shot_encoder(monkeypatch):
 
     from gateway.routes.camera import register_camera_routes
 
-    def fail_subprocess(*args, **kwargs):
+    def fail_legacy_snapshot():
         raise AssertionError("snapshot route should use Teleop snapshot before ROS fallback")
 
     class Teleop:
@@ -171,7 +171,7 @@ def test_camera_snapshot_uses_teleop_one_shot_encoder(monkeypatch):
             self.calls += 1
             return b"\xff\xd8\xffteleop"
 
-    monkeypatch.setattr("gateway.routes.camera.subprocess.run", fail_subprocess)
+    monkeypatch.setattr("gateway.routes.camera._legacy_ros2_snapshot_jpeg", fail_legacy_snapshot)
 
     teleop = Teleop()
     app = FastAPI()
@@ -196,10 +196,10 @@ def test_camera_snapshot_fast_fails_when_gateway_reports_no_camera(monkeypatch):
 
     from gateway.routes.camera import register_camera_routes
 
-    def fail_subprocess(*args, **kwargs):
+    def fail_legacy_snapshot():
         raise AssertionError("snapshot route should not probe ROS when camera is unavailable")
 
-    monkeypatch.setattr("gateway.routes.camera.subprocess.run", fail_subprocess)
+    monkeypatch.setattr("gateway.routes.camera._legacy_ros2_snapshot_jpeg", fail_legacy_snapshot)
 
     app = FastAPI()
     gw = SimpleNamespace(_all_modules={})
@@ -447,7 +447,7 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
         "--json-out artifacts/saved_map_artifacts/report.json"
     )
     assert validation_gates["saved_map_artifact_gate"]["script"] == (
-        "scripts/saved_map_artifact_gate.py"
+        "scripts/gates/saved_map_artifact_gate.py"
     )
     assert validation_gates["saved_map_artifact_gate"]["artifact"] == (
         "artifacts/saved_map_artifacts/report.json"
@@ -476,27 +476,27 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
         validation_gates["saved_map_artifact_gate"]["proves"]
     )
     assert validation_gates["real_runtime_evidence"]["expected_runtime_contract"] == (
-        "real_s100p"
+        "thunder_field"
     )
     assert validation_gates["real_runtime_evidence"]["command"] == (
         "python lingtu.py real-runtime-evidence "
         "--duration-sec 20 "
-        "--json-out artifacts/real_s100p_runtime/report.json"
+        "--json-out artifacts/thunder_field_runtime/report.json"
     )
     assert validation_gates["real_runtime_evidence"]["collector_command"] == (
-        "python scripts/real_runtime_evidence_collect.py "
+        "python scripts/gates/real_runtime_evidence_collect.py "
         "--duration-sec 20 "
-        "--expected-contract real_s100p "
-        "--json-out artifacts/real_s100p_runtime/report.json"
+        "--expected-contract thunder_field "
+        "--json-out artifacts/thunder_field_runtime/report.json"
     )
     assert validation_gates["real_runtime_evidence"]["gate_command"] == (
-        "python scripts/real_runtime_evidence_gate.py "
-        "artifacts/real_s100p_runtime/report.json "
-        "--expected-contract real_s100p "
-        "--json-out artifacts/real_s100p_runtime/runtime_evidence.json"
+        "python scripts/gates/real_runtime_evidence_gate.py "
+        "artifacts/thunder_field_runtime/report.json "
+        "--expected-contract thunder_field "
+        "--json-out artifacts/thunder_field_runtime/runtime_evidence.json"
     )
     assert validation_gates["real_runtime_evidence"]["artifact"] == (
-        "artifacts/real_s100p_runtime/report.json"
+        "artifacts/thunder_field_runtime/report.json"
     )
     assert validation_gates["real_runtime_evidence"]["acceptance_step"] == 3
     assert validation_gates["real_runtime_evidence"]["requires_prior_gates"] == [
@@ -548,12 +548,12 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert "runtime_boundary" in frame_contract
     assert snapshots["runtime_contract"]["ok"] is True
     runtime_contract = snapshots["runtime_contract"]["data"]["manifest"]
-    assert runtime_contract["data_sources"]["real_s100p"]["command_sink"] == (
+    assert runtime_contract["data_sources"]["thunder_field"]["command_sink"] == (
         "hardware_driver_after_cmd_vel_mux"
     )
     real_flow = {
         stage["name"]: stage
-        for stage in runtime_contract["resolved_runtime_data_flow"]["real_s100p"]
+        for stage in runtime_contract["resolved_runtime_data_flow"]["thunder_field"]
     }
     assert list(real_flow["command_boundary"]["outputs"]) == [
         "hardware_driver_after_cmd_vel_mux"
@@ -597,7 +597,7 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
     body = response.json()
     assert body["manifest"]["schema_version"] == "lingtu.runtime_interface.v1"
     assert body["manifest"]["frame_links"]["map_to_odom"]["parent"] == "map"
-    assert body["manifest"]["data_sources"]["real_s100p"]["mapping_source"] == (
+    assert body["manifest"]["data_sources"]["thunder_field"]["mapping_source"] == (
         "slam_map_cloud"
     )
 
@@ -649,8 +649,8 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
         "received_frame": "camera_link",
     } in snapshot["mismatches"]
     runtime = snapshot["runtime_boundary"]
-    assert runtime["data_source"] == "real_s100p"
-    assert runtime["runtime_contract"] == "real_s100p"
+    assert runtime["data_source"] == "thunder_field"
+    assert runtime["runtime_contract"] == "thunder_field"
     assert runtime["frame_links"]["body_to_lidar"] == {
         "parent": "body",
         "child": "lidar_link",
@@ -1167,6 +1167,10 @@ def test_algorithm_benchmark_latest_diagnostic_includes_runtime_dataflow(
                 "pct_path_count": 8,
                 "selected_planner": "pct",
                 "fallback_used": False,
+                "source_planning_contract": {
+                    "pct_optimizer_enabled": False,
+                    "pct_planner_path_mode": "native_astar_raw_path",
+                },
                 "path_count": 2,
                 "max_path_poses": 5,
                 "local_path_samples": [{"points": [[0, 0, 0], [1, 0, 0]]}],
@@ -1210,8 +1214,9 @@ def test_algorithm_benchmark_latest_diagnostic_includes_runtime_dataflow(
 def test_algorithm_benchmark_latest_diagnostic_includes_aggregate_child_dataflow(
     tmp_path,
 ):
-    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
     from sim.scripts import dimos_gap_report
+
+    from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
 
     child_report = tmp_path / "moving_obstacle_sweep" / "children" / "report.json"
     child_report.parent.mkdir(parents=True, exist_ok=True)
@@ -1519,7 +1524,7 @@ def _write_real_runtime_evidence_report(
     validation = {
         "schema_version": "lingtu.real_runtime_evidence.validation.v1",
         "ok": True,
-        "expected_contract": "real_s100p",
+        "expected_contract": "thunder_field",
         "checked_real_motion_evidence": {"ok": True},
         "checked_hardware_boundary_evidence": {"ok": True},
         "checked_live_topic_freshness": {"/nav/odometry": {"ok": True}},
@@ -1541,7 +1546,7 @@ def _write_real_runtime_evidence_report(
         "simulation_only": False,
         "real_robot_motion": True,
         "cmd_vel_sent_to_hardware": True,
-        "runtime_contract": {"name": "real_s100p", "ok": True},
+        "runtime_contract": {"name": "thunder_field", "ok": True},
         "runtime_evidence": validation,
     }
     report_path = run_dir / "report.json"
@@ -1558,7 +1563,7 @@ def test_real_runtime_evidence_latest_diagnostic_reads_gate_artifact(tmp_path, m
         register_diagnostic_routes,
     )
 
-    run_dir = tmp_path / "real_s100p_runtime"
+    run_dir = tmp_path / "thunder_field_runtime"
     report_path = _write_real_runtime_evidence_report(run_dir)
     os.utime(report_path, (100, 100))
 
@@ -1571,7 +1576,7 @@ def test_real_runtime_evidence_latest_diagnostic_reads_gate_artifact(tmp_path, m
     assert payload["report_path"] == str(run_dir / "report.json")
     assert payload["report_age_s"] == 100.0
     assert payload["max_age_s"] == 1000.0
-    assert payload["runtime_contract"] == "real_s100p"
+    assert payload["runtime_contract"] == "thunder_field"
     assert payload["runtime_evidence_ok"] is True
     assert payload["simulation_only"] is False
     assert payload["real_robot_motion"] is True
@@ -1597,7 +1602,7 @@ def test_real_runtime_evidence_latest_diagnostic_reads_gate_artifact(tmp_path, m
 def test_real_runtime_evidence_latest_uses_newest_report_even_when_failing(tmp_path):
     from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
 
-    root = tmp_path / "real_s100p_runtime"
+    root = tmp_path / "thunder_field_runtime"
     old_report = _write_real_runtime_evidence_report(
         root / "old_pass"
     )
@@ -1606,7 +1611,7 @@ def test_real_runtime_evidence_latest_uses_newest_report_even_when_failing(tmp_p
         runtime_evidence={
             "schema_version": "lingtu.real_runtime_evidence.validation.v1",
             "ok": False,
-            "expected_contract": "real_s100p",
+            "expected_contract": "thunder_field",
             "checked_real_motion_evidence": {"ok": False},
             "checked_hardware_boundary_evidence": {"ok": True},
             "checked_live_topic_freshness": {"/nav/odometry": {"ok": True}},
@@ -1648,7 +1653,7 @@ def test_real_runtime_evidence_latest_diagnostic_rejects_stale_artifact(tmp_path
     from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
 
     report_path = _write_real_runtime_evidence_report(
-        tmp_path / "real_s100p_runtime"
+        tmp_path / "thunder_field_runtime"
     )
     os.utime(report_path, (100, 100))
 
@@ -1671,14 +1676,14 @@ def test_real_runtime_evidence_latest_diagnostic_rejects_missing_data_flow_secti
     validation = {
         "schema_version": "lingtu.real_runtime_evidence.validation.v1",
         "ok": True,
-        "expected_contract": "real_s100p",
+        "expected_contract": "thunder_field",
         "checked_real_motion_evidence": {"ok": True},
         "checked_hardware_boundary_evidence": {"ok": True},
         "checked_live_topic_freshness": {"/nav/odometry": {"ok": True}},
         "blockers": [],
     }
     report_path = _write_real_runtime_evidence_report(
-        tmp_path / "real_s100p_runtime",
+        tmp_path / "thunder_field_runtime",
         runtime_evidence=validation,
     )
     os.utime(report_path, (100, 100))

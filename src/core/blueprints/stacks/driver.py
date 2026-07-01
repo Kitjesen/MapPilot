@@ -7,8 +7,8 @@ Two resolution patterns are supported:
    → get("driver", "thunder") returns ThunderDriver
 
 2. New (profile → RobotProfile → @register("driver_protocol", ...)):
-   driver(profile="s100p")
-   → RobotProfile("s100p") resolves protocol="grpc_brainstem"
+   driver(profile="thunder")
+   → RobotProfile("thunder") resolves protocol="grpc_brainstem"
    → get("driver_protocol", "grpc_brainstem") returns ThunderDriver
 
 The profile-based pattern is preferred for new code because:
@@ -23,51 +23,35 @@ import logging
 from typing import Any
 
 from core.blueprint import Blueprint
+from core.blueprints.catalog.robots import (
+    ROBOT_DRIVER_PROFILES,
+    robot_driver_profile_names,
+)
 from core.config import get_config
-from core.plugin_seed import seed_builtin_plugins
+from core.plugin_seed import seed_registered_plugins
 from core.registry import auto_select, get
 
 logger = logging.getLogger(__name__)
 
 
 # Registry of known robot presets → (protocol, default params).
-# Kept in sync with ROBOT_PRESETS in core.runtime_profiles.
+# The catalog owns defaults; this local registry remains mutable for tests.
 _ROBOT_PROFILE_REGISTRY: dict[str, tuple[str, dict[str, Any]]] = {
-    "s100p": ("grpc_brainstem", {
-        "dog_host": "127.0.0.1",
-        "dog_port": 13145,
-        "auto_enable": False,
-        "auto_standup": False,
-    }),
-    "thunder": ("grpc_brainstem", {
-        "dog_host": "192.168.66.190",
-        "dog_port": 13145,
-        "auto_enable": False,
-        "auto_standup": False,
-    }),
-    "navigate": ("grpc_brainstem", {
-        "dog_host": "127.0.0.1",
-        "dog_port": 13145,
-        "auto_enable": False,
-        "auto_standup": False,
-    }),
-    "sim": ("mujoco_inproc", {}),
-    "sim_gazebo": ("ros2_bridge", {}),
-    "ros2": ("ros2_bridge", {}),
-    "stub": ("stub", {}),
+    name: (protocol, dict(params))
+    for name, (protocol, params) in ROBOT_DRIVER_PROFILES.items()
 }
 
 
 class RobotProfile:
     """Robot connection profile — resolves driver protocol and parameters.
 
-    Maps a robot preset name (e.g. "s100p", "sim") to a driver protocol
+    Maps a robot preset name (e.g. "thunder", "sim") to a driver protocol
     (registered under the "driver_protocol" registry category) and optional
     connection parameters.
 
     Usage::
 
-        profile = RobotProfile("s100p")
+        profile = RobotProfile("thunder")
         DriverCls = get("driver_protocol", profile.protocol)
         bp.add(DriverCls, **profile.params)
 
@@ -79,17 +63,17 @@ class RobotProfile:
         """Resolve a robot preset name to its driver protocol and params.
 
         Args:
-            name: Robot preset name (e.g. "s100p", "thunder", "sim").
+            name: Robot preset name (e.g. "thunder", "sim").
 
         Raises:
             KeyError: if ``name`` is not a known preset.
         """
         entry = _ROBOT_PROFILE_REGISTRY.get(name)
         if entry is None:
-            valid = ", ".join(sorted(_ROBOT_PROFILE_REGISTRY))
+            valid = ", ".join(robot_driver_profile_names(include_compat=False))
             raise KeyError(
                 f"Unknown RobotProfile '{name}'. "
-                f"Available presets: {valid}"
+                f"Canonical presets: {valid}"
             )
         self.protocol: str = entry[0]
         self.params: dict[str, Any] = dict(entry[1])
@@ -107,13 +91,23 @@ class RobotProfile:
         _ROBOT_PROFILE_REGISTRY[name] = (protocol, params)
 
     @classmethod
-    def known_presets(cls) -> list[str]:
-        """Return sorted list of all known preset names."""
-        return sorted(_ROBOT_PROFILE_REGISTRY)
+    def known_presets(cls, *, include_compat: bool = True) -> list[str]:
+        """Return known preset names, optionally hiding compatibility aliases."""
+
+        if include_compat:
+            return sorted(_ROBOT_PROFILE_REGISTRY)
+        return list(robot_driver_profile_names(include_compat=False))
 
 
-def _ensure_drivers_registered():
-    seed_builtin_plugins(groups=("driver",))
+def _ensure_drivers_registered(*, include_ros2: bool = False) -> None:
+    seed_registered_plugins(groups=("driver",))
+    if include_ros2:
+        seed_registered_plugins(groups=("driver_ros2",))
+
+
+def _import_core_driver_fallback(key: str) -> None:
+    if key == "stub":
+        import core.blueprints.stub  # noqa: F401
 
 
 def driver(robot: str = "thunder", **config) -> Blueprint:
@@ -124,7 +118,7 @@ def driver(robot: str = "thunder", **config) -> Blueprint:
 
     New pattern::
 
-        driver(profile="s100p")
+        driver(profile="thunder")
 
     Legacy pattern::
 
@@ -139,6 +133,9 @@ def driver(robot: str = "thunder", **config) -> Blueprint:
     if "profile" in config:
         profile_name = config.pop("profile")
         profile = RobotProfile(profile_name)
+        if profile.protocol == "ros2_bridge":
+            seed_registered_plugins(groups=("driver_ros2",))
+        _import_core_driver_fallback(profile.protocol)
         DriverCls = get("driver_protocol", profile.protocol)
         driver_config = {**profile.params, **dict(config)}
         logger.debug(
@@ -150,6 +147,9 @@ def driver(robot: str = "thunder", **config) -> Blueprint:
         if robot == "auto":
             import platform
             robot = auto_select("driver", platform=platform.machine().lower()) or "stub"
+        if robot in {"ros2", "sim_ros2"}:
+            seed_registered_plugins(groups=("driver_ros2",))
+        _import_core_driver_fallback(robot)
         DriverCls = get("driver", robot)
         driver_config = dict(config)
 
@@ -165,10 +165,11 @@ def driver(robot: str = "thunder", **config) -> Blueprint:
 
 def driver_name(robot: str) -> str:
     """Resolve driver class name for wiring."""
-    _ensure_drivers_registered()
+    _ensure_drivers_registered(include_ros2=robot in {"ros2", "sim_ros2"})
     if robot == "auto":
         import platform
         robot = auto_select("driver", platform=platform.machine().lower()) or "stub"
+    _import_core_driver_fallback(robot)
     return get("driver", robot).__name__
 
 

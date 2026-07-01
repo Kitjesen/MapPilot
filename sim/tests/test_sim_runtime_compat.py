@@ -2246,7 +2246,7 @@ def test_mujoco_driver_policy_candidates_prioritize_brainstem_default():
 
 
 def test_legacy_nova_nav_bridge_uses_current_robot_paths():
-    bridge = Path(__file__).resolve().parents[2] / "src" / "drivers" / "sim" / "nova_nav_bridge.py"
+    bridge = Path(__file__).resolve().parents[2] / "src" / "compat" / "ros2" / "nova_nav_bridge.py"
     source = bridge.read_text(encoding="utf-8")
 
     assert 'SIM_DIR / "robot"' not in source

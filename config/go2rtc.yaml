@@ -24,7 +24,7 @@
 # Override without editing this file:
 #   LINGTU_GO2RTC_CAMERA=/dev/video2 sudo -E systemctl restart go2rtc
 #   (reads the env var via the systemd unit's EnvironmentFile support —
-#    see scripts/install_go2rtc.sh to enable that pattern).
+#    see scripts/webrtc/install_go2rtc.sh to enable that pattern).
 
 api:
   # Bind to loopback only; GatewayModule reverse-proxies /api/v1/webrtc/whep

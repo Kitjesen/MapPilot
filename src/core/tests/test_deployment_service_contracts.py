@@ -24,7 +24,7 @@ def _read(path: str) -> str:
 def _load_soak_module():
     spec = importlib.util.spec_from_file_location(
         "lingtu_soak_under_test",
-        REPO_ROOT / "scripts" / "soak.py",
+        REPO_ROOT / "scripts" / "diagnostics" / "soak.py",
     )
     assert spec is not None
     assert spec.loader is not None
@@ -806,7 +806,7 @@ def test_qos_profiles_use_canonical_localization_topics():
 
 
 def test_record_bag_captures_canonical_localization_topics():
-    text = _read("scripts/record_bag.sh")
+    text = _read("scripts/hardware/record_bag.sh")
     topic_lines = {
         line.strip()
         for line in text.splitlines()
@@ -819,7 +819,7 @@ def test_record_bag_captures_canonical_localization_topics():
 
 
 def test_record_bag_captures_published_camera_intrinsics_topics():
-    text = _read("scripts/record_bag.sh")
+    text = _read("scripts/hardware/record_bag.sh")
     topic_lines = {
         line.strip()
         for line in text.splitlines()
@@ -1010,14 +1010,14 @@ def test_lingtu_doctor_non_motion_preview_fails_if_plan_changes_state(tmp_path):
 
 def test_lingtu_soak_is_read_only_non_motion_field_verification():
     text = _read("scripts/lingtu")
-    impl = _read("scripts/soak.py")
+    impl = _read("scripts/diagnostics/soak.py")
     start = text.index("cmd_soak()")
     end = text.index("# -- Subcommand: slamcheck --")
     soak = text[start:end]
 
     assert "Usage: lingtu soak [--duration SEC] [--interval SEC] [--json] [--strict]" in text
     assert "soak|field-soak|readiness-soak) shift; cmd_soak" in text
-    assert 'python3 "$SCRIPT_DIR/soak.py"' in soak
+    assert 'python3 "$SCRIPT_DIR/diagnostics/soak.py"' in soak
     assert "--duration)" in soak
     assert "--interval)" in soak
     for endpoint in (
@@ -1261,7 +1261,7 @@ def test_lingtu_slamcheck_validates_recovery_signal_and_action_contract():
     assert '[ "$recovery_action" = "$expected_recovery" ]' in text
     assert '[ "$recovery_signal_ok" = "1" ]' in text
     assert '[ "$recovery_action_ok" = "1" ]' in text
-    assert "LOC_DIVERGED" in _read("src/slam/slam_bridge_module.py")
+    assert "LOC_DIVERGED" in _read("src/compat/ros2/slam_bridge.py")
 
 
 def test_lingtu_slamcompare_is_non_motion_static_gate():
@@ -1272,7 +1272,7 @@ def test_lingtu_slamcompare_is_non_motion_static_gate():
 
     assert "Usage: lingtu slamcompare" in text
     assert "slamcompare|slam-compare|super-lio-compare" in text
-    assert 'python3 "$SCRIPT_DIR/static_localization_probe.py"' in impl
+    assert 'python3 "$SCRIPT_DIR/diagnostics/static_localization_probe.py"' in impl
     assert "cmd_slamcheck super_lio_relocation" in impl
     assert 'slamcompare_wait_ready "localizer"' in impl
     assert 'slamcompare_wait_ready "super_lio_relocation"' in impl
@@ -1317,7 +1317,7 @@ def test_lingtu_plan_preview_is_offline_non_motion_planner_gate():
 
     assert "Usage: lingtu plan-preview" in text
     assert "plan-preview|planpreview|preview-plan" in text
-    assert 'python3 "$SCRIPT_DIR/plan_preview.py"' in impl
+    assert 'python3 "$SCRIPT_DIR/planning/plan_preview.py"' in impl
     assert "--map-root \"$map_root\"" in impl
     assert "Gateway calls, goals, or cmd_vel" in impl
     assert "/api/v1/goal" not in impl
@@ -1998,6 +1998,15 @@ def test_robot_lidar_uses_installed_ros2_env_helper():
     assert "KillMode=control-group" in lidar_service
     assert "sed -n \"s/^Publisher count: //p\"" in lidar_service
     assert "ros2-env.conf" not in lidar_service
+
+
+def test_thunder_legacy_service_installer_installs_ros2_env_helper():
+    install = _read("scripts/deploy/s100p/install_services.sh")
+    thunder_install = _read("scripts/deploy/thunder/install_services.sh")
+
+    assert 'CONFIG_DIR="${LINGTU_CONFIG_DIR:-/opt/lingtu/config}"' in install
+    assert 'cp "${ROS2_ENV_SRC}" "${CONFIG_DIR}/ros2-env.sh"' in install
+    assert 'cp "${SCRIPT_DIR}/ros2-env.sh" "${CONFIG_DIR}/ros2-env.sh"' in thunder_install
 
 
 def test_gateway_service_contract_is_in_process_lingtu_service():

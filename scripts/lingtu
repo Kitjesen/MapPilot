@@ -26,7 +26,7 @@
 #   lingtu log tail            # 实时滚动 (journalctl -f)
 #   lingtu health              # REST /api/v1/health 详情
 #
-# 本机使用 (Windows/Mac SSH 到 S100P):
+# 本机使用 (Windows/Mac SSH 到 Thunder):
 #   ssh sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu status"
 #
 # 建议设 alias 到本机 ~/.bashrc:
@@ -44,7 +44,7 @@
 #   lingtu soak --duration 120 --json --strict # non-motion readiness soak
 #   lingtu slamcheck super_lio # switch, verify Super-LIO Gateway contract, rollback
 #   lingtu slamcompare --map <name> # localizer vs Super-LIO relocation non-motion gate
-#   lingtu runtime-spec nav --endpoint real_s100p # resolved profile data-flow/frame contract
+#   lingtu runtime-spec nav --endpoint thunder_field # resolved profile data-flow/frame contract
 #   lingtu runtime-contract --json # canonical topics, frames, and runtime contracts
 #   lingtu runtime-audit --json # static runtime contract guard
 #   lingtu dataflow [topic] # Gateway + ModulePorts runtime flow, no ROS2 topic inspection
@@ -2150,7 +2150,7 @@ cmd_soak() {
     local args=(--gateway "$GW" --duration "$duration" --interval "$interval")
     [ "$json" = "1" ] && args+=(--json)
     [ "$strict" = "1" ] && args+=(--strict)
-    python3 "$SCRIPT_DIR/soak.py" "${args[@]}"
+    python3 "$SCRIPT_DIR/diagnostics/soak.py" "${args[@]}"
 }
 
 # -- Subcommand: slamcheck --
@@ -2660,7 +2660,7 @@ PY
 
     slamcompare_wait_ready "localizer" || return 1
 
-    python3 "$SCRIPT_DIR/static_localization_probe.py" \
+    python3 "$SCRIPT_DIR/diagnostics/static_localization_probe.py" \
         --gateway "$GW" --phase localizer --duration "$duration" --interval "$interval" \
         > "$baseline_json" || return 1
 
@@ -2682,7 +2682,7 @@ PY
         --rollback none || return 1
     slamcompare_wait_ready "super_lio_relocation" || return 1
 
-    python3 "$SCRIPT_DIR/static_localization_probe.py" \
+    python3 "$SCRIPT_DIR/diagnostics/static_localization_probe.py" \
         --gateway "$GW" --phase super_lio_relocation --duration "$duration" --interval "$interval" \
         > "$candidate_json" || return 1
 
@@ -2832,11 +2832,11 @@ plan_preview_usage() {
 cmd_plan_preview() {
     local map_root
     map_root="$(lingtu_maps_root)"
-    if [ ! -f "$SCRIPT_DIR/plan_preview.py" ]; then
-        echo -e "${R}FAIL${N}: plan preview helper not found: $SCRIPT_DIR/plan_preview.py"
+    if [ ! -f "$SCRIPT_DIR/planning/plan_preview.py" ]; then
+        echo -e "${R}FAIL${N}: plan preview helper not found: $SCRIPT_DIR/planning/plan_preview.py"
         return 1
     fi
-    python3 "$SCRIPT_DIR/plan_preview.py" --map-root "$map_root" "$@"
+    python3 "$SCRIPT_DIR/planning/plan_preview.py" --map-root "$map_root" "$@"
 }
 
 # -- Subcommand: routecheck --
@@ -3847,7 +3847,7 @@ cmd_gateway_runtime_acceptance() {
 cmd_field_check_usage() {
     echo "Usage: lingtu field-check [map-dir] [--acceptance-mode non_motion|simulation|field] [--gateway-url URL] [--require-tomogram] [--require-occupancy] [--json] [--json-out PATH]"
     echo "Run the one-screen product readiness gate: Gateway acceptance plus optional saved-map artifact provenance."
-    echo "field mode consumes fresh real-runtime-evidence and should be run during an operator-controlled active real S100P session."
+    echo "field mode consumes fresh real-runtime-evidence and should be run during an operator-controlled active Thunder field session."
 }
 
 # -- Subcommand: field-check --
@@ -3913,7 +3913,7 @@ cmd_saved_map_artifact_gate() {
 # -- Subcommand: evidence --
 cmd_evidence_usage() {
     echo "Usage: lingtu evidence [--duration SEC] [--min-motion-m M] [--min-cmd-vel-norm V] [--json] [--json-out PATH] [--expected-command-subscriber NAME] [--no-validate]"
-    echo "Collect read-only real S100P runtime evidence for topics, frames, data flow, and command boundary."
+    echo "Collect read-only Thunder field runtime evidence for topics, frames, data flow, and command boundary."
     echo "Requires an active real run publishing /nav/odometry, /nav/map_cloud, /nav/localization_health, and /nav/localization_quality."
 }
 
@@ -3989,7 +3989,7 @@ cmd_evidence() {
     repo_root="$(lingtu_repo_root)"
     python_bin="$(lingtu_python)"
     if [ -z "$out_path" ]; then
-        out_path="$repo_root/artifacts/real_s100p_runtime/report.json"
+        out_path="$repo_root/artifacts/thunder_field_runtime/report.json"
     fi
     mkdir -p "$(dirname "$out_path")"
 

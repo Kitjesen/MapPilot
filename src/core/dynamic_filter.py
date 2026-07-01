@@ -1,8 +1,9 @@
 """DUFOMap offline dynamic-obstacle filter for saved PGO maps.
 
-Called from MapManagerModule._map_save as Step 1½ (after /pgo/save_maps,
-before occupancy-grid / tomogram build). Takes PGO output (patches + poses)
-and overwrites map.pcd with a statically-cleaned version.
+Called from map-save flows after the raw SLAM/PGO map-save adapter has produced
+map.pcd plus optional patches, and before occupancy-grid / tomogram build.
+Takes PGO output (patches + poses) and overwrites map.pcd with a
+statically-cleaned version.
 
 Design notes
 ------------

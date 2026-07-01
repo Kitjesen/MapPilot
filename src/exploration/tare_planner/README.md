@@ -38,7 +38,7 @@ archive will be downloaded into `or-tools/` here.
     ``exploration.native_factories.tare_explorer``.
   - Topic contract bridged by
     ``exploration.tare_explorer_module.TAREExplorerModule`` (cyclonedds /
-    rclpy / stub fallback chain).
+    stub fallback chain). Use ``compat.ros2.tare_bridge`` for rclpy topics.
   - Stack factory ``core.blueprints.stacks.exploration.exploration(backend="tare")``
     wires both together.
 

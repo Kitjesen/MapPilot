@@ -1,4 +1,4 @@
-﻿"""Pre-flight checks, port cleanup, health, daemon."""
+"""Pre-flight checks, port cleanup, health, daemon."""
 
 from __future__ import annotations
 

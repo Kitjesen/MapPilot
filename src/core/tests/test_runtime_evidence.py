@@ -26,35 +26,40 @@ from core.runtime_evidence import (
 )
 from core.runtime_interface import (
     FRAME_LINKS,
-    REAL_RUNTIME_CONTRACT as INTERFACE_REAL_RUNTIME_CONTRACT,
-    REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
+    LEGACY_REAL_RUNTIME_CONTRACT,
     REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS,
+    REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
     RUNTIME_DATA_FLOW,
     RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
+    THUNDER_FIELD_RUNTIME_CONTRACT,
     TOPICS,
     adapter_source_for_target,
     body_frame_id,
     camera_frame_id,
+    canonical_data_source_name,
     lidar_frame_id,
     map_frame_id,
     normalize_algorithm_interface_contract,
     normalize_runtime_frames_contract,
     odom_frame_id,
     real_lidar_frame_id,
-    runtime_algorithm_interface_contract,
     resolved_runtime_data_flow,
+    runtime_algorithm_interface_contract,
     runtime_contract_manifest,
     runtime_data_flow_topics,
     runtime_frames_contract,
-    runtime_topic_default_frame_ids,
     runtime_required_topic_frame_ids,
-    simulator_world_frame_id,
     runtime_stage_algorithm_interface_contract,
     runtime_topic_allowed_frame_contract,
-    runtime_topic_default_frame_id,
-    runtime_topic_default_frame_contract,
     runtime_topic_allowed_frame_ids,
+    runtime_topic_default_frame_contract,
+    runtime_topic_default_frame_id,
+    runtime_topic_default_frame_ids,
+    simulator_world_frame_id,
     topic_default_frame_id,
+)
+from core.runtime_interface import (
+    REAL_RUNTIME_CONTRACT as INTERFACE_REAL_RUNTIME_CONTRACT,
 )
 from core.runtime_validation_gates import (
     REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND,
@@ -68,14 +73,13 @@ from core.runtime_validation_gates import (
     RUNTIME_AUDIT_PROVES,
     RUNTIME_AUDIT_VALIDATE_CHECK_COVERAGE,
     RUNTIME_AUDIT_VALIDATES,
-    SAVED_MAP_ARTIFACT_GATE_PROVES,
-    SAVED_MAP_ARTIFACT_GATE_VALIDATES,
     SAVED_MAP_ARTIFACT_GATE_COMMAND,
     SAVED_MAP_ARTIFACT_GATE_OPERATOR_SUMMARY_SECTIONS,
+    SAVED_MAP_ARTIFACT_GATE_PROVES,
+    SAVED_MAP_ARTIFACT_GATE_VALIDATES,
     runtime_validation_gates,
     validate_runtime_validation_gates,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -446,7 +450,7 @@ def _real_report() -> dict:
     hardware_boundary = {
         "command_sink": REAL_HARDWARE_COMMAND_SINK,
         "hardware_command_route_observed": True,
-        "command_subscribers": ["/s100p_driver"],
+        "command_subscribers": ["/thunder_driver"],
         "unexpected_simulation_sinks": [],
     }
     return {
@@ -516,7 +520,7 @@ def _real_report() -> dict:
 
 
 def _load_real_runtime_collect_module():
-    script = REPO_ROOT / "scripts" / "real_runtime_evidence_collect.py"
+    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
     spec = importlib.util.spec_from_file_location(
         "real_runtime_evidence_collect_under_test",
         script,
@@ -807,7 +811,7 @@ def test_hardware_command_in_simulation_fails():
     report["cmd_vel_sent_to_hardware"] = True
     report["hardware_safety"]["topics"]["/cmd_vel"] = [
         "/vehicle_simulator",
-        "/s100p_driver",
+        "/thunder_driver",
     ]
 
     result = validate_runtime_evidence(report, "cmu_unity_external")
@@ -858,7 +862,7 @@ def test_real_runtime_validator_rejects_non_real_expected_contract():
 
     assert result.ok is False
     assert (
-        "real runtime evidence expected_contract is not real_s100p"
+        f"real runtime evidence expected_contract is not {REAL_RUNTIME_CONTRACT}"
         in result.blockers
     )
 
@@ -1395,7 +1399,7 @@ def test_real_runtime_rejects_wrong_local_path_frame_id():
 def test_real_runtime_evidence_gate_script_accepts_valid_report(tmp_path: Path):
     report_path = tmp_path / "real_runtime_report.json"
     report_path.write_text(json.dumps(_real_report()), encoding="utf-8")
-    script = REPO_ROOT / "scripts" / "real_runtime_evidence_gate.py"
+    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_gate.py"
 
     proc = subprocess.run(
         [sys.executable, str(script), str(report_path)],
@@ -1527,7 +1531,7 @@ def test_real_runtime_evidence_gate_script_accepts_valid_report(tmp_path: Path):
         "command_observed": True,
         "cmd_vel_sent_to_hardware": True,
         "hardware_command_route_observed": True,
-        "command_subscribers": ["/s100p_driver"],
+        "command_subscribers": ["/thunder_driver"],
         "expected_command_subscribers": [],
         "unexpected_simulation_sinks": [],
         "ok": True,
@@ -1595,7 +1599,7 @@ def test_real_runtime_evidence_gate_script_rejects_missing_hardware_boundary(
     report.pop("hardware_boundary")
     report_path = tmp_path / "real_runtime_missing_hardware_boundary.json"
     report_path.write_text(json.dumps(report), encoding="utf-8")
-    script = REPO_ROOT / "scripts" / "real_runtime_evidence_gate.py"
+    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_gate.py"
 
     proc = subprocess.run(
         [sys.executable, str(script), str(report_path)],
@@ -1664,7 +1668,7 @@ def test_real_runtime_evidence_gate_script_rejects_non_real_expected_contract(
 ):
     report_path = tmp_path / "real_runtime_report.json"
     report_path.write_text(json.dumps(_real_report()), encoding="utf-8")
-    script = REPO_ROOT / "scripts" / "real_runtime_evidence_gate.py"
+    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_gate.py"
 
     proc = subprocess.run(
         [
@@ -1681,7 +1685,7 @@ def test_real_runtime_evidence_gate_script_rejects_non_real_expected_contract(
     )
 
     assert proc.returncode == 2
-    assert "only supports expected contract real_s100p" in proc.stderr
+    assert f"only supports expected contract {REAL_RUNTIME_CONTRACT}" in proc.stderr
 
 
 def test_real_runtime_collector_builds_valid_report_from_read_only_observations():
@@ -1757,7 +1761,7 @@ def test_real_runtime_collector_builds_valid_report_from_read_only_observations(
             "body_to_lidar": 4,
             "body_to_camera": 4,
         },
-        command_subscribers=["/s100p_driver"],
+        command_subscribers=["/thunder_driver"],
         duration_sec=20.0,
         odom_positions=[(0.0, 0.0, 0.0), (0.12, 0.0, 0.0)],
     )
@@ -1922,7 +1926,7 @@ def test_real_runtime_collector_dependency_failure_preserves_contract_shape():
 
 
 def test_real_runtime_collector_script_rejects_non_real_expected_contract():
-    script = REPO_ROOT / "scripts" / "real_runtime_evidence_collect.py"
+    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
 
     proc = subprocess.run(
         [
@@ -1941,7 +1945,7 @@ def test_real_runtime_collector_script_rejects_non_real_expected_contract():
     )
 
     assert proc.returncode == 2
-    assert "only supports expected contract real_s100p" in proc.stderr
+    assert f"only supports expected contract {REAL_RUNTIME_CONTRACT}" in proc.stderr
 
 
 def test_real_runtime_collector_does_not_infer_hardware_route_without_observed_sink():
@@ -1999,7 +2003,7 @@ def test_real_runtime_collector_does_not_infer_hardware_route_without_observed_s
 
 
 def test_real_runtime_collector_script_does_not_publish_control_topics():
-    script = REPO_ROOT / "scripts" / "real_runtime_evidence_collect.py"
+    script = REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py"
     source = script.read_text(encoding="utf-8")
 
     assert ".create_publisher(" not in source
@@ -2026,7 +2030,7 @@ def test_robot_ops_cli_exposes_read_only_real_runtime_evidence_command():
     assert "--json-out" in evidence_block
     assert "--expected-command-subscriber" in evidence_block
     assert "--no-validate" in evidence_block
-    assert "artifacts/real_s100p_runtime/report.json" in evidence_block
+    assert "artifacts/thunder_field_runtime/report.json" in evidence_block
     assert ">&2" in evidence_block
     assert "curl " not in evidence_block
     assert "/api/v1/goal" not in evidence_block
@@ -2040,7 +2044,7 @@ def test_robot_ops_cli_exposes_read_only_runtime_contract_commands():
     end = source.index("# -- Subcommand: evidence --", start)
     runtime_block = source[start:end]
 
-    assert "lingtu runtime-spec nav --endpoint real_s100p" in source
+    assert "lingtu runtime-spec nav --endpoint thunder_field" in source
     assert "lingtu runtime-contract --json" in source
     assert "lingtu runtime-audit --json" in source
     assert "contract|runtime-contract)" in source
@@ -2068,6 +2072,12 @@ def test_real_runtime_collector_observed_topics_cover_resolved_real_data_flow():
 
 def test_real_runtime_contract_constant_lives_in_runtime_interface():
     assert REAL_RUNTIME_CONTRACT == INTERFACE_REAL_RUNTIME_CONTRACT
+    assert REAL_RUNTIME_CONTRACT == THUNDER_FIELD_RUNTIME_CONTRACT
+    assert REAL_RUNTIME_CONTRACT == "thunder_field"
+    assert canonical_data_source_name(LEGACY_REAL_RUNTIME_CONTRACT) == (
+        REAL_RUNTIME_CONTRACT
+    )
+    assert LEGACY_REAL_RUNTIME_CONTRACT == "real_s100p"
 
 
 def test_runtime_contract_audit_real_collector_uses_runtime_contract_constant(
@@ -2381,7 +2391,7 @@ def test_runtime_contract_audit_accepts_current_contract():
     assert payload["checks"]["runtime_validation_gates"]["commands"][
         "real_runtime_evidence_collector"
     ] == REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND
-    assert "--expected-contract real_s100p" in (
+    assert f"--expected-contract {REAL_RUNTIME_CONTRACT}" in (
         payload["checks"]["runtime_validation_gates"]["commands"][
             "real_runtime_evidence_collector"
         ]
@@ -2389,7 +2399,7 @@ def test_runtime_contract_audit_accepts_current_contract():
     assert payload["checks"]["runtime_validation_gates"]["commands"][
         "real_runtime_evidence_gate"
     ] == REAL_RUNTIME_EVIDENCE_GATE_COMMAND
-    assert "--expected-contract real_s100p" in (
+    assert f"--expected-contract {REAL_RUNTIME_CONTRACT}" in (
         payload["checks"]["runtime_validation_gates"]["commands"][
             "real_runtime_evidence_gate"
         ]
@@ -2572,7 +2582,7 @@ def test_runtime_contract_audit_accepts_current_contract():
     }
     assert acceptance["real_runtime_evidence"] == {
         "acceptance_step": 3,
-        "required_when": "before_claiming_real_s100p_runtime_or_field_navigation",
+        "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
         "requires_prior_gates": ["runtime_audit"],
         "conditional_prior_gates": [
             "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"
@@ -2791,7 +2801,7 @@ def test_runtime_contract_integrity_rejects_unresolved_resolved_flow_placeholder
 
     assert result["ok"] is False
     assert any(
-        "resolved real_s100p command_boundary contains unresolved placeholder"
+        f"resolved {REAL_RUNTIME_CONTRACT} command_boundary contains unresolved placeholder"
         == blocker
         for blocker in result["blockers"]
     )
@@ -2808,7 +2818,7 @@ def test_runtime_contract_integrity_rejects_command_sink_drift():
 
     assert result["ok"] is False
     assert any(
-        "resolved real_s100p command_boundary does not match data source sink"
+        f"resolved {REAL_RUNTIME_CONTRACT} command_boundary does not match data source sink"
         == blocker
         for blocker in result["blockers"]
     )
@@ -2826,7 +2836,10 @@ def test_runtime_contract_integrity_rejects_undeclared_artifact_reference():
 
     assert result["ok"] is False
     assert any(
-        "resolved real_s100p global_planning references undeclared artifact missing_tomogram"
+        (
+            f"resolved {REAL_RUNTIME_CONTRACT} global_planning "
+            "references undeclared artifact missing_tomogram"
+        )
         == blocker
         for blocker in result["blockers"]
     )
@@ -3047,7 +3060,7 @@ def test_runtime_contract_integrity_rejects_resolved_slam_input_drift():
 
     assert result["ok"] is False
     assert any(
-        "resolved real_s100p slam inputs drifted" == blocker
+        f"resolved {REAL_RUNTIME_CONTRACT} slam inputs drifted" == blocker
         for blocker in result["blockers"]
     )
 
@@ -3064,7 +3077,7 @@ def test_runtime_contract_integrity_rejects_resolved_map_layer_input_drift():
 
     assert result["ok"] is False
     assert any(
-        "resolved real_s100p map layer inputs drifted" == blocker
+        f"resolved {REAL_RUNTIME_CONTRACT} map layer inputs drifted" == blocker
         for blocker in result["blockers"]
     )
 
@@ -3082,13 +3095,18 @@ def test_runtime_contract_integrity_rejects_runtime_data_flow_topics_drift():
 
     assert result["ok"] is False
     assert any(
-        "runtime_data_flow_topics real_s100p does not match resolved data flow"
+        (
+            f"runtime_data_flow_topics {REAL_RUNTIME_CONTRACT} "
+            "does not match resolved data flow"
+        )
         == blocker
         for blocker in result["blockers"]
     )
     assert any(
-        "real_runtime_required_topic_frame_ids missing from real_s100p data flow: "
-        "/nav/cmd_vel"
+        (
+            "real_runtime_required_topic_frame_ids missing from "
+            f"{REAL_RUNTIME_CONTRACT} data flow: /nav/cmd_vel"
+        )
         == blocker
         for blocker in result["blockers"]
     )
@@ -3104,7 +3122,8 @@ def test_runtime_contract_integrity_rejects_resolved_stage_metadata_drift():
 
     assert result["ok"] is False
     assert any(
-        "resolved real_s100p global_planning frame_role drifted" == blocker
+        f"resolved {REAL_RUNTIME_CONTRACT} global_planning frame_role drifted"
+        == blocker
         for blocker in result["blockers"]
     )
 
@@ -3352,10 +3371,10 @@ def test_profile_runtime_specs_reject_endpoint_simulation_only_provider_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["real_s100p"]
+    endpoint = audit.RUNTIME_ENDPOINTS["thunder_field"]
     monkeypatch.setitem(
         audit.RUNTIME_ENDPOINTS,
-        "real_s100p",
+        "thunder_field",
         replace(endpoint, simulation_only=True),
     )
 
@@ -3363,7 +3382,7 @@ def test_profile_runtime_specs_reject_endpoint_simulation_only_provider_drift(
 
     assert result["ok"] is False
     assert (
-        "endpoint real_s100p simulation_only does not match data source provider"
+        "endpoint thunder_field simulation_only does not match data source provider"
         in result["blockers"]
     )
 
@@ -3478,7 +3497,7 @@ def test_profile_runtime_specs_reject_external_profile_data_source_drift(
 ):
     audit = _load_runtime_contract_audit_module()
     profile_data = dict(audit.PROFILES["sim_mujoco_live"])
-    profile_data["_endpoint_data_source"] = "real_s100p"
+    profile_data["_endpoint_data_source"] = "thunder_field"
     monkeypatch.setitem(audit.PROFILES, "sim_mujoco_live", profile_data)
 
     result = audit._check_profile_runtime_specs()
@@ -3499,7 +3518,7 @@ def test_profile_runtime_specs_reject_external_profile_binding_drift(
     monkeypatch.setitem(
         audit.PROFILE_DATA_SOURCE_BINDINGS,
         "sim_mujoco_live",
-        replace(binding, data_source="real_s100p"),
+        replace(binding, data_source="thunder_field"),
     )
 
     result = audit._check_profile_runtime_specs()
@@ -3568,10 +3587,10 @@ def test_profile_runtime_specs_reject_missing_endpoint_launcher(monkeypatch):
 
 def test_profile_runtime_specs_reject_hardware_endpoint_launcher(monkeypatch):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["real_s100p"]
+    endpoint = audit.RUNTIME_ENDPOINTS["thunder_field"]
     monkeypatch.setitem(
         audit.RUNTIME_ENDPOINTS,
-        "real_s100p",
+        "thunder_field",
         replace(
             endpoint,
             external_launcher="sim/scripts/fastlio2_rosbag_replay_gate.py",
@@ -3582,7 +3601,7 @@ def test_profile_runtime_specs_reject_hardware_endpoint_launcher(monkeypatch):
 
     assert result["ok"] is False
     assert (
-        "endpoint real_s100p hardware endpoint must not declare external launcher"
+        "endpoint thunder_field hardware endpoint must not declare external launcher"
         in result["blockers"]
     )
 
@@ -3802,7 +3821,7 @@ def test_runtime_validation_gate_check_rejects_command_drift():
 def test_runtime_validation_gate_check_rejects_collector_command_contract_drift():
     gates = runtime_validation_gates()
     gates["real_runtime_evidence"]["collector_command"] = (
-        "python scripts/real_runtime_evidence_collect.py --duration-sec 20"
+        "python scripts/gates/real_runtime_evidence_collect.py --duration-sec 20"
     )
 
     result = validate_runtime_validation_gates(gates)
@@ -3817,8 +3836,8 @@ def test_runtime_validation_gate_check_rejects_collector_command_contract_drift(
 def test_runtime_validation_gate_check_rejects_gate_command_contract_drift():
     gates = runtime_validation_gates()
     gates["real_runtime_evidence"]["gate_command"] = (
-        "python scripts/real_runtime_evidence_gate.py "
-        "artifacts/real_s100p_runtime/report.json"
+        "python scripts/gates/real_runtime_evidence_gate.py "
+        "artifacts/thunder_field_runtime/report.json"
     )
 
     result = validate_runtime_validation_gates(gates)
@@ -3989,7 +4008,7 @@ def test_runtime_validation_gate_check_rejects_saved_map_artifact_validates_drif
 
 
 def test_runtime_contract_audit_script_accepts_current_contract():
-    script = REPO_ROOT / "scripts" / "runtime_contract_audit.py"
+    script = REPO_ROOT / "scripts" / "gates" / "runtime_contract_audit.py"
 
     proc = subprocess.run(
         [sys.executable, str(script), "--json"],

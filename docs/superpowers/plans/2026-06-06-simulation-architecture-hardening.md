@@ -358,7 +358,7 @@ Verification:
 
 ```bash
 python -m pytest src\core\tests\ -q --tb=short -p no:cacheprovider
-python scripts\runtime_contract_audit.py --json
+python scripts\gates\runtime_contract_audit.py --json
 python -m pytest sim\tests\test_sim_full_system_validation.py sim\tests\test_server_sim_closure.py::test_server_sim_closure_rejects_missing_fastlio2_dynamic_inspection_video_file sim\tests\test_server_sim_closure.py::test_server_sim_closure_rejects_undecodable_fastlio2_dynamic_inspection_video_file sim\tests\test_server_sim_closure.py::test_server_sim_closure_accepts_fastlio2_dynamic_inspection_core_gate sim\tests\test_sim_runtime_compat.py -q -rs --tb=short -p no:cacheprovider
 python -m pytest src\gateway\tests\ -q --tb=short -p no:cacheprovider
 python -m py_compile src\global_planning\pct_planner\planner\scripts\global_planner.py src\global_planning\pct_planner\planner\scripts\pct_planner_astar.py src\global_planning\pct_planner\planner\scripts\fake_localization.py

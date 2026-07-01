@@ -37,6 +37,14 @@ def _optional_module(system: Any, name: str) -> Any | None:
         return None
 
 
+def _build_system_from_profile(profile: str, overrides: dict[str, Any]) -> Any:
+    """Build a simulation system through the shared product/compat selector."""
+
+    from core.blueprints.profile_builder import build_system_for_profile
+
+    return build_system_for_profile(profile, overrides)
+
+
 def build_fastlio2_frontier_stack(
     *,
     cloud_topic: str = TOPICS.registered_cloud,
@@ -55,9 +63,7 @@ def build_fastlio2_frontier_stack(
     planning, path following, cmd_vel muxing, and canonical /nav/* output.
     """
 
-    from core.blueprints.full_stack import full_stack_blueprint
-
-    system = full_stack_blueprint(
+    system = _build_system_from_profile("sim_mujoco_live", dict(
         robot="sim_ros2",
         slam_profile="none",
         detector="sim_scene",
@@ -129,7 +135,7 @@ def build_fastlio2_frontier_stack(
         latch_stop_signal=False,
         safety_stop_wiring=False,
         run_startup_checks=False,
-    ).build()
+    ))
 
     return MuJoCoLingTuStack(
         system=system,
@@ -175,13 +181,11 @@ def build_fastlio2_inspection_stack(
     plan, track, and replan while the robot is moving.
     """
 
-    from core.blueprints.full_stack import full_stack_blueprint
-
     planner_backend = str(planner_backend or "astar").strip().lower()
     if replan_on_costmap_update is None:
         replan_on_costmap_update = planner_backend != "pct"
 
-    system = full_stack_blueprint(
+    system = _build_system_from_profile("sim_mujoco_live", dict(
         robot="sim_ros2",
         slam_profile="none",
         detector="sim_scene",
@@ -259,7 +263,7 @@ def build_fastlio2_inspection_stack(
         latch_stop_signal=False,
         safety_stop_wiring=False,
         run_startup_checks=False,
-    ).build()
+    ))
 
     return MuJoCoLingTuStack(
         system=system,
@@ -291,9 +295,7 @@ def build_fastlio2_tare_stack(
     canonical /nav/* output contract.
     """
 
-    from core.blueprints.full_stack import full_stack_blueprint
-
-    system = full_stack_blueprint(
+    system = _build_system_from_profile("sim_mujoco_live", dict(
         robot="sim_ros2",
         slam_profile="none",
         detector="sim_scene",
@@ -360,7 +362,7 @@ def build_fastlio2_tare_stack(
         latch_stop_signal=False,
         safety_stop_wiring=False,
         run_startup_checks=False,
-    ).build()
+    ))
 
     return MuJoCoLingTuStack(
         system=system,

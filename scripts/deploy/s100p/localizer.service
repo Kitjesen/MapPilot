@@ -1,5 +1,5 @@
 [Unit]
-Description=S100P ICP Localizer
+Description=Thunder ICP Localizer
 After=slam.service
 Wants=slam.service
 StartLimitIntervalSec=300
@@ -11,8 +11,7 @@ Type=simple
 User=sunrise
 WorkingDirectory=/home/sunrise/data/inovxio/lingtu
 ExecStart=/bin/bash -c '\
-  source /opt/ros/humble/setup.bash && \
-  source ~/data/inovxio/lingtu/install/setup.bash && \
+  source /opt/lingtu/config/ros2-env.sh && \
   MAP_PATH=$${NAV_MAP_PATH:-/home/sunrise/data/nova/maps/active/map}; \
   exec ros2 run localizer localizer_node \
     --ros-args \

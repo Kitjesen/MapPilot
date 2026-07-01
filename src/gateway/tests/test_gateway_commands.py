@@ -59,8 +59,8 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "real_s100p",
-                "data_source": "real_s100p",
+                "source_profile": "thunder_field",
+                "data_source": "thunder_field",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -70,8 +70,8 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "real_s100p",
-                        "data_source": "real_s100p",
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -80,8 +80,8 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
                         "path": "tomogram.pickle",
                         "sha256": tomogram_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "real_s100p",
-                        "data_source": "real_s100p",
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
                         "frame_id": "map",
                         "shape": [1, 1, 1],
                     },
@@ -754,7 +754,7 @@ def test_runtime_switch_plan_endpoint_is_read_only_and_typed():
     assert model.motion is False
     assert model.publishes == []
     assert model.from_["runtime_contract"] == "mujoco_fastlio2_live"
-    assert model.to["runtime_contract"] == "real_s100p"
+    assert model.to["runtime_contract"] == "thunder_field"
     assert model.from_["command_sink"] == "mujoco_velocity_adapter"
     assert model.to["command_sink"] == "hardware_driver_after_cmd_vel_mux"
     assert "command_sink" in model.changed
@@ -818,7 +818,7 @@ def test_runtime_switch_plan_inherits_current_env_endpoint_when_profile_matches(
     assert model.from_["endpoint"] == "replay"
     assert model.from_["data_source"] == "rosbag_fastlio2_replay"
     assert model.from_["command_sink"] == "no_actuation_replay_sink"
-    assert model.to["endpoint"] == "real_s100p"
+    assert model.to["endpoint"] == "thunder_field"
     assert model.to["command_sink"] == "hardware_driver_after_cmd_vel_mux"
     assert gateway.goal_pose.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0
@@ -862,7 +862,7 @@ def test_runtime_switch_plan_endpoint_reports_invalid_current_boundary(monkeypat
     assert model.current_validation.ok is False
     assert "current runtime boundary: forced current blocker" in model.blockers
     assert model.from_["runtime_contract"] == "mujoco_fastlio2_live"
-    assert model.to["runtime_contract"] == "real_s100p"
+    assert model.to["runtime_contract"] == "thunder_field"
     assert model.changed
     assert gateway.goal_pose.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0

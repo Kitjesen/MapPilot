@@ -412,11 +412,11 @@ def validate_navigation_blueprint(repo_root: Path) -> ValidationCheck:
 def validate_frontier_exploration_runtime() -> ValidationCheck:
     np = _numpy()
 
-    from core.blueprints.full_stack import full_stack_blueprint
+    from core.blueprints.profile_builder import build_system_for_profile
     from core.msgs.geometry import Pose
     from core.msgs.nav import Odometry
 
-    system = full_stack_blueprint(
+    system = build_system_for_profile("sim_nav", dict(
         robot="stub",
         slam_profile="none",
         planner_backend="astar",
@@ -432,7 +432,7 @@ def validate_frontier_exploration_runtime() -> ValidationCheck:
         frontier_goal_timeout=0.5,
         frontier_rate=10.0,
         run_startup_checks=False,
-    ).build()
+    ))
     explorer = system.get_module("WavefrontFrontierExplorer")
     nav = system.get_module("NavigationModule")
 
@@ -609,10 +609,10 @@ def validate_mujoco_kinematic_nav_runtime(
             summary="mujoco is not installed in this environment",
         )
 
-    from core.blueprints.full_stack import full_stack_blueprint
+    from core.blueprints.profile_builder import build_system_for_profile
     from core.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
-    system = full_stack_blueprint(
+    system = build_system_for_profile("sim", dict(
         robot="sim_mujoco",
         world="open_field",
         slam_profile="none",
@@ -628,7 +628,7 @@ def validate_mujoco_kinematic_nav_runtime(
         waypoint_threshold=0.35,
         downsample_dist=0.5,
         run_startup_checks=False,
-    ).build()
+    ))
 
     driver = system.get_module("MujocoDriverModule")
     ogm = system.get_module("OccupancyGridModule")

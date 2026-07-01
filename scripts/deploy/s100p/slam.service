@@ -1,5 +1,5 @@
 [Unit]
-Description=S100P SLAM (Fast-LIO2)
+Description=Thunder SLAM (Fast-LIO2)
 After=lidar.service
 Wants=lidar.service
 # Restart-storm protection: at most 3 restarts in 5 min, otherwise stay failed.
@@ -12,8 +12,7 @@ Type=simple
 User=sunrise
 WorkingDirectory=/home/sunrise/data/inovxio/lingtu
 ExecStart=/bin/bash -c '\
-  source /opt/ros/humble/setup.bash && \
-  source ~/data/inovxio/lingtu/install/setup.bash && \
+  source /opt/lingtu/config/ros2-env.sh && \
   exec ros2 run fastlio2 lio_node \
     --ros-args \
     -p config_path:=/home/sunrise/data/inovxio/lingtu/install/fastlio2/share/fastlio2/config/lio_s100p.yaml \

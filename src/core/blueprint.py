@@ -468,6 +468,9 @@ def _resolve_transport(spec: Any) -> Transport | None:
             from .transport.adapter import TransportAdapter
             from .transport.shm import SHMTransport
             return TransportAdapter(SHMTransport())
+        if spec == "lcm":
+            from .transport.factory import create_transport_adapter
+            return create_transport_adapter("lcm")
         if spec == "local":
             return LocalTransport()
         raise ValueError(f"Unknown transport spec: '{spec}'")

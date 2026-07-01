@@ -90,6 +90,8 @@ class TestSemanticPlannerInit:
         assert isinstance(mod.odometry, In)
         assert isinstance(mod.detections, In)
         assert isinstance(mod.mission_status, In)
+        assert isinstance(mod.topo_summary, In)
+        assert isinstance(mod.room_graph, In)
 
     def test_out_ports(self):
         mod = SemanticPlannerModule()
@@ -134,6 +136,18 @@ class TestSemanticPlannerInit:
         assert hasattr(mod, "_frontier_scorer") and mod._frontier_scorer is not None
         mod.stop()
 
+    def test_semantic_prior_import_uses_memory_package(self):
+        mod = _make_module(llm_backend="mock")
+        try:
+            assert mod._goal_resolver is not None
+            assert mod._goal_resolver._semantic_prior_engine is not None
+            assert (
+                mod._goal_resolver._semantic_prior_engine.__class__.__module__
+                == "memory.knowledge.semantic_prior"
+            )
+        finally:
+            mod.stop()
+
 
 # ---------------------------------------------------------------------------
 # 2. State updates
@@ -161,6 +175,35 @@ class TestSemanticPlannerStateUpdate:
         dets = [Detection3D(id="99", label="box", position=Vector3(1, 1, 0))]
         # _on_detections accepts a list — just verify it does not crash
         self.mod._on_detections(dets)
+
+    def test_topology_context_cached(self):
+        self.mod._on_topo_summary("Rooms: lab, corridor")
+        assert self.mod._agent_context()["topology_context"] == "Rooms: lab, corridor"
+
+    def test_room_graph_snapshot_updates_goal_resolver_tsg(self):
+        snapshot = {
+            "nodes": [
+                {
+                    "node_id": 1,
+                    "node_type": "room",
+                    "name": "lab",
+                    "center": {"x": 1.0, "y": 2.0},
+                    "room_type": "lab",
+                    "semantic_labels": ["desk"],
+                    "visited": True,
+                    "visit_count": 1,
+                }
+            ],
+            "edges": [],
+            "current_room_id": 1,
+            "traversal_count": 0,
+        }
+
+        self.mod._on_room_graph(snapshot)
+
+        assert self.mod._latest_room_graph == snapshot
+        assert self.mod._goal_resolver.topology_graph is not None
+        assert self.mod._goal_resolver.topology_graph.current_room_id == 1
 
     def test_scene_graph_does_not_republish_same_goal(self):
         class _Result:

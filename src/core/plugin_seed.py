@@ -1,8 +1,7 @@
-"""Central import seeds for built-in registry plugins.
+"""Generic registry plugin import seeding utilities.
 
-The registry is intentionally explicit: modules register themselves through
-``@register`` at import time. This helper keeps those import seeds in one
-place so stack factories do not grow their own partial plugin catalogs.
+Core owns the registry mechanics, not LingTu's product plugin catalog. Runtime
+or product packages pass their catalog into :func:`seed_plugin_modules`.
 """
 
 from __future__ import annotations
@@ -17,156 +16,136 @@ from core.registry import restore_entries, snapshot
 logger = logging.getLogger(__name__)
 
 
-BUILTIN_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
-    "device": (
-        "core.devices.manager",
-    ),
-    "driver": (
-        "core.blueprints.stub",
-        "drivers.real.thunder.han_dog_module",
-        "drivers.real.thunder.connection",
-        "drivers.sim.mujoco_driver_module",
-        "drivers.sim.ros2_sim_driver",
-    ),
-    # Co-located with "driver": each module above also carries a
-    # @register("driver_protocol", ...) decorator for protocol-based lookup.
-    "driver_protocol": (
-        "core.blueprints.stub",
-        "drivers.real.thunder.han_dog_module",
-        "drivers.real.thunder.connection",
-        "drivers.sim.mujoco_driver_module",
-        "drivers.sim.ros2_sim_driver",
-    ),
-    "lidar": (
-        "drivers.real.lidar.lidar_module",
-    ),
-    "camera": (
-        "drivers.real.thunder.camera_bridge_module",
-    ),
-    "teleop": (
-        "drivers.teleop_module",
-    ),
-    "map": (
-        "nav.occupancy_grid_module",
-        "nav.voxel_grid_module",
-        "nav.esdf_module",
-        "nav.elevation_map_module",
-        "nav.traversability_cost_module",
-        "nav.ros2_grid_bridge_module",
-        "nav.services.map_manager_module",
-    ),
-    "safety": (
-        "nav.safety_ring_module",
-        "nav.cmd_vel_mux_module",
-        "nav.services.geofence_manager_module",
-    ),
-    "planner_backend": (
-        "global_planning.pct_adapters.global_planner_module",
-    ),
-    "navigation": (
-        "nav.navigation_module",
-        "nav.ros2_waypoint_bridge_module",
-        "nav.ros2_path_bridge_module",
-        "nav.frontier_explorer_module",
-        "nav.traversable_frontier_module",
-    ),
-    "autonomy": (
-        "base_autonomy.modules.terrain_module",
-        "base_autonomy.modules.local_planner_module",
-        "base_autonomy.modules.path_follower_module",
-    ),
-    "slam": (
-        "slam.slam_module",
-        "slam.slam_bridge_module",
-        "slam.depth_visual_odom_module",
-        "slam.gnss_module",
-        "slam.gnss_bridge",
-        "slam.ntrip_client_module",
-    ),
-    "sim_lidar": (
-        "drivers.sim.sim_pointcloud_provider",
-    ),
-    "exploration": (
-        "exploration.tare_explorer_module",
-        "exploration.tare_ros2_bridge_module",
-        "exploration.exploration_supervisor_module",
-    ),
-    "perception": (
-        "semantic.perception.perception_module",
-        "semantic.perception.detector_module",
-        "semantic.perception.encoder_module",
-        "semantic.perception.api.factory",
-    ),
-    "reconstruction": (
-        "semantic.reconstruction.reconstruction_module",
-        "semantic.reconstruction.dataset_recorder_module",
-        "semantic.reconstruction.keyframe_exporter_module",
-    ),
-    "semantic": (
-        "semantic.planner.semantic_planner_module",
-        "semantic.planner.visual_servo_module",
-    ),
-    "llm": (
-        "semantic.planner.llm_client",
-        "semantic.planner.llm_module",
-    ),
-    "memory": (
-        "memory.modules.semantic_mapper_module",
-        "memory.modules.episodic_module",
-        "memory.modules.tagged_locations_module",
-        "memory.modules.vector_memory_module",
-        "memory.modules.temporal_memory_module",
-        "memory.modules.mission_logger_module",
-        "memory.modules.topological_module",
-    ),
-    "gateway": (
-        "gateway.gateway_module",
-        "gateway.mcp_server",
-        "gateway.rerun_bridge_module",
-    ),
-    "visualization": (
-        "core.rerun_module",
-        "gateway.rerun_bridge_module",
-    ),
-    "webrtc": (
-        "webrtc.webrtc_stream_module",
-    ),
-}
+PluginModuleCatalog = Mapping[str, tuple[str, ...]]
+_CatalogEntry = tuple[PluginModuleCatalog, tuple[str, ...]]
+
+_REGISTERED_PLUGIN_CATALOGS: dict[str, _CatalogEntry] = {}
 
 
-DEFAULT_BUILTIN_PLUGIN_GROUPS: tuple[str, ...] = (
-    "device",
-    "driver",
-    "lidar",
-    "camera",
-    "teleop",
-    "map",
-    "safety",
-    "planner_backend",
-    "navigation",
-    "autonomy",
-    "slam",
-    "exploration",
-    "perception",
-    "reconstruction",
-    "semantic",
-    "llm",
-    "memory",
-)
+def register_plugin_module_catalog(
+    name: str,
+    plugin_modules: PluginModuleCatalog,
+    *,
+    default_groups: Iterable[str] = (),
+    replace: bool = True,
+) -> None:
+    """Register a product/runtime plugin catalog with the core seed hook.
+
+    Core keeps the registry mechanics here, while product/runtime packages own
+    the concrete module catalog and register it during startup.
+    """
+
+    catalog_name = str(name or "").strip()
+    if not catalog_name:
+        raise ValueError("plugin catalog name must be non-empty")
+    if not replace and catalog_name in _REGISTERED_PLUGIN_CATALOGS:
+        raise ValueError(f"plugin catalog already registered: {catalog_name}")
+
+    _REGISTERED_PLUGIN_CATALOGS[catalog_name] = (
+        plugin_modules,
+        tuple(default_groups),
+    )
 
 
-def seed_builtin_plugins(
+def registered_plugin_catalog_names() -> tuple[str, ...]:
+    """Return registered plugin catalog names."""
+
+    return tuple(sorted(_REGISTERED_PLUGIN_CATALOGS))
+
+
+def seed_registered_plugins(
     groups: Iterable[str] | None = None,
     *,
+    catalog_names: Iterable[str] | None = None,
     reload_loaded: bool = False,
     strict: bool = False,
 ) -> dict[str, dict[str, list[str]]]:
-    """Import built-in plugin modules so their ``@register`` decorators run.
+    """Seed plugins from registered product/runtime catalogs.
 
     Args:
-        groups: Logical seed groups to import. ``None`` imports the safe core
-            default groups. Optional runtime surfaces such as Gateway, WebRTC,
-            and visualization must be seeded explicitly.
+        groups: Seed groups to import. ``None`` imports each catalog's default
+            groups.
+        catalog_names: Optional registered catalog names to use. ``None`` uses
+            all registered catalogs.
+        reload_loaded: Re-run decorators for already imported modules.
+        strict: Re-raise import errors instead of recording them.
+    """
+
+    selected_names = (
+        tuple(catalog_names)
+        if catalog_names is not None
+        else tuple(_REGISTERED_PLUGIN_CATALOGS)
+    )
+    requested = tuple(groups) if groups is not None else None
+    report: dict[str, dict[str, list[str]]] = {"loaded": {}, "failed": {}}
+    if not selected_names:
+        return report
+
+    unknown_catalogs = [
+        name for name in selected_names if name not in _REGISTERED_PLUGIN_CATALOGS
+    ]
+    if unknown_catalogs:
+        available = ", ".join(registered_plugin_catalog_names())
+        raise ValueError(
+            f"Unknown plugin catalog(s): {unknown_catalogs}. Available: {available}"
+        )
+
+    seeded_groups: set[str] = set()
+
+    for catalog_name in selected_names:
+        plugin_modules, default_groups = _REGISTERED_PLUGIN_CATALOGS[catalog_name]
+        catalog_groups = (
+            tuple(group for group in requested if group in plugin_modules)
+            if requested is not None
+            else default_groups
+        )
+        if not catalog_groups:
+            continue
+
+        seeded_groups.update(catalog_groups)
+        catalog_report = seed_plugin_modules(
+            plugin_modules,
+            catalog_groups,
+            default_groups=default_groups,
+            reload_loaded=reload_loaded,
+            strict=strict,
+        )
+        for kind in ("loaded", "failed"):
+            for group, values in catalog_report[kind].items():
+                report[kind].setdefault(group, []).extend(values)
+
+    if requested is not None:
+        missing = [group for group in requested if group not in seeded_groups]
+        if missing:
+            available_groups = sorted(
+                {
+                    group
+                    for catalog_name in selected_names
+                    for group in _REGISTERED_PLUGIN_CATALOGS[catalog_name][0]
+                }
+            )
+            available = ", ".join(available_groups)
+            raise ValueError(
+                f"Unknown plugin seed group(s): {missing}. Available: {available}"
+            )
+
+    return report
+
+
+def seed_plugin_modules(
+    plugin_modules: PluginModuleCatalog,
+    groups: Iterable[str] | None = None,
+    *,
+    default_groups: Iterable[str] = (),
+    reload_loaded: bool = False,
+    strict: bool = False,
+) -> dict[str, dict[str, list[str]]]:
+    """Import plugin modules so their ``@register`` decorators run.
+
+    Args:
+        plugin_modules: Mapping of seed group names to importable module names.
+        groups: Groups to import. ``None`` imports ``default_groups``.
+        default_groups: Groups used when ``groups`` is ``None``.
         reload_loaded: Re-run decorators for already imported modules. This is
             mainly useful after tests call ``core.registry.clear()``.
         strict: Re-raise import errors instead of recording them.
@@ -174,17 +153,18 @@ def seed_builtin_plugins(
     Returns:
         ``{"loaded": {group: [module, ...]}, "failed": {group: ["mod: err"]}}``.
     """
-    requested = tuple(groups) if groups is not None else DEFAULT_BUILTIN_PLUGIN_GROUPS
-    unknown = [group for group in requested if group not in BUILTIN_PLUGIN_MODULES]
+
+    requested = tuple(groups) if groups is not None else tuple(default_groups)
+    unknown = [group for group in requested if group not in plugin_modules]
     if unknown:
-        available = ", ".join(sorted(BUILTIN_PLUGIN_MODULES))
+        available = ", ".join(sorted(plugin_modules))
         raise ValueError(f"Unknown plugin seed group(s): {unknown}. Available: {available}")
 
     preserved_entries = snapshot()
     report: dict[str, dict[str, list[str]]] = {"loaded": {}, "failed": {}}
     try:
         for group in requested:
-            for module_name in BUILTIN_PLUGIN_MODULES[group]:
+            for module_name in plugin_modules[group]:
                 try:
                     if reload_loaded and module_name in sys.modules:
                         importlib.reload(sys.modules[module_name])
@@ -196,7 +176,7 @@ def seed_builtin_plugins(
                     report["failed"].setdefault(group, []).append(message)
                     if strict:
                         raise
-                    logger.debug("Built-in plugin seed failed for %s", module_name, exc_info=True)
+                    logger.debug("Plugin seed failed for %s", module_name, exc_info=True)
     finally:
         restore_entries(preserved_entries)
     return report

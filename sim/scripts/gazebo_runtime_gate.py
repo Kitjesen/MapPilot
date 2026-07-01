@@ -488,7 +488,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
                     if args.check_explored_map_pct and report["ok"]:
                         pct_preview_cmd = [
                             sys.executable,
-                            str(ROOT / "scripts" / "plan_preview.py"),
+                            str(ROOT / "scripts" / "planning" / "plan_preview.py"),
                             "--tomogram",
                             str(Path(args.frontier_tomogram_out)),
                             "--planner",

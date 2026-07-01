@@ -155,7 +155,10 @@ def test_pct_saved_map_navigation_rejects_mismatched_explicit_tomogram(
 
 
 def test_pct_saved_map_navigation_passes_short_route_progress_threshold() -> None:
-    from sim.scripts.pct_saved_map_navigation_gate import _build_parser
+    from sim.scripts.pct_saved_map_navigation_gate import (
+        DEFAULT_SAVED_MAP_GOAL,
+        _build_parser,
+    )
 
     args = _build_parser().parse_args([])
     script = Path("sim/scripts/pct_saved_map_navigation_gate.py").read_text(
@@ -163,7 +166,7 @@ def test_pct_saved_map_navigation_passes_short_route_progress_threshold() -> Non
     )
 
     assert args.min_route_progress_ratio == 0.90
-    assert args.goal == [9.0, 11.5]
+    assert args.goal == DEFAULT_SAVED_MAP_GOAL
     assert '"--min-route-progress-ratio"' in script
     assert '"--use-last-pose"' in script
     assert '"--map-root"' in script
@@ -328,7 +331,7 @@ def test_fastlio_live_gate_uses_trackable_path_defaults_for_live_explore() -> No
 def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> None:
     stack = Path("src/drivers/sim/mujoco_lingtu_stack.py")
     text = stack.read_text(encoding="utf-8")
-    full_stack = Path("src/core/blueprints/full_stack.py").read_text(
+    endpoint_catalog = Path("src/core/blueprints/catalog/endpoints.py").read_text(
         encoding="utf-8"
     )
     exploration_stack = Path("src/core/blueprints/stacks/exploration.py").read_text(
@@ -337,9 +340,9 @@ def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> Non
 
     assert "goal_frame_id=MUJOCO_LIVE_GOAL_FRAME_ID" in text
     assert "hold_active_goal_until_terminal=True" in text
-    assert '"goal_frame_id"' in full_stack
+    assert '"goal_frame_id"' in endpoint_catalog
     assert '"goal_frame_id"' in exploration_stack
-    assert '"hold_active_goal_until_terminal"' in full_stack
+    assert '"hold_active_goal_until_terminal"' in endpoint_catalog
     assert '"hold_active_goal_until_terminal"' in exploration_stack
 
 
@@ -411,11 +414,12 @@ def test_fastlio_live_gate_uses_src_mujoco_sensor_bridge() -> None:
     script = Path("sim/scripts/mujoco_fastlio2_live_gate.py")
     text = script.read_text(encoding="utf-8")
 
-    assert "from drivers.sim.mujoco_sensor_bridge import" in text
-    assert "def _make_imu_msg(" not in text
-    assert "def _make_pointcloud2(" not in text
-    assert "def _world_xyzi_to_sensor_xyzi(" not in text
-    assert "def _make_livox_custom_msg(" not in text
+    assert "from drivers.sim import mujoco_sensor_bridge" in text
+    assert "_MUJOCO_SENSOR_BRIDGE" in text
+    assert "return _mujoco_sensor_bridge().make_imu_msg" in text
+    assert "return _mujoco_sensor_bridge().make_pointcloud2" in text
+    assert "return _mujoco_sensor_bridge().world_xyzi_to_sensor_xyzi" in text
+    assert "return _mujoco_sensor_bridge().make_livox_custom_msg" in text
 
 
 def test_fastlio_live_gate_uses_src_fastlio2_bridge_service() -> None:
@@ -469,7 +473,8 @@ def test_fastlio_live_gate_uses_src_lingtu_stack_builder() -> None:
     assert "build_fastlio2_frontier_stack(" in text
     assert "build_fastlio2_tare_stack(" in text
     assert "full_stack_blueprint(" not in text
-    assert "full_stack_blueprint(" in stack
+    assert "full_stack_blueprint(" not in stack
+    assert "build_system_for_profile" in stack
     assert "occupancy_raycast_free_space=True" in stack
     assert 'exploration_backend="tare"' in stack
     assert "plan_safety_policy=\"reject\"" in stack

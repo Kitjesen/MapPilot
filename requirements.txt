@@ -1,7 +1,11 @@
-# LingTu core dependencies (S100P aarch64)
+# LingTu full/legacy runtime dependencies (Thunder aarch64).
+# For the no-ROS Thunder Lite runtime, use requirements-lite.txt.
+#
 # NOTE: numpy limited to <2.0 for ele_planner.so compatibility (requires numpy 1.x)
 #
 # Optional extras (pip install lingtu[<group>]):
+#   lite     - empty extra for the minimal local Thunder runtime
+#   gateway  - fastapi, uvicorn, websockets - REST/SSE/WS Gateway
 #   vision   - opencv-python-headless  - camera/image processing
 #   ml       - scikit-learn            - DBSCAN clustering room segmentation
 #   llm      - openai, anthropic       - LLM clients (Kimi, OpenAI, Claude)
@@ -20,6 +24,8 @@ numpy>=1.24,<2.0
 scipy>=1.10
 PyYAML>=6.0
 pydantic>=2.0
+
+# Gateway
 fastapi
 uvicorn
 websockets

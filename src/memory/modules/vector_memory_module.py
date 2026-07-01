@@ -29,7 +29,7 @@ from core.module import Module, skill
 from core.msgs.nav import Odometry
 from core.msgs.numpy_compat import np
 from core.msgs.semantic import SceneGraph
-from core.registry import register
+from core.registry import get, register
 from core.stream import In, Out
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,8 @@ class VectorMemoryModule(Module, layer=3):
         self._collection_name = collection_name
         self._store_interval = store_interval
         self._max_results = max_results
+        self._model_name = kw.get("encoder_model_name", "ViT-B/32")
+        self._device = kw.get("encoder_device", "auto")
 
         self._collection = None      # ChromaDB collection
         self._encoder: EncoderProtocol | None = None
@@ -98,49 +100,55 @@ class VectorMemoryModule(Module, layer=3):
         self._init_encoder()
         self._init_store()
 
+    def _init_registry_encoder(self, backend: str) -> bool:
+        """Create an encoder through the core registry instead of importing semantic/.
+
+        The provider may live in semantic.perception, but VectorMemoryModule only
+        depends on the core registry/protocol boundary. This keeps memory/ from
+        growing a direct business dependency on semantic/perception internals.
+        """
+
+        try:
+            from core.plugin_seed import seed_registered_plugins
+
+            seed_registered_plugins(groups=("perception",))
+            provider = get("encoder", backend)
+            candidate = provider.create(self)
+            candidate.load_model()
+            test_result = candidate.encode_text(["test"])
+            if test_result is not None and len(test_result) > 0:
+                self._encoder = candidate
+                self._encoder_type = backend
+                self._encoder_status.use(backend, degraded=False)
+                self._embedding_dim = int(np.array(test_result[0]).size)
+                logger.info("VectorMemoryModule: %s text encoder ready", backend)
+                return True
+            logger.info(
+                "VectorMemoryModule: %s smoke-test returned empty; trying next encoder",
+                backend,
+            )
+            return False
+        except ImportError:
+            logger.info("VectorMemoryModule: %s encoder not available", backend)
+            return False
+        except KeyError:
+            logger.info("VectorMemoryModule: %s encoder provider not registered", backend)
+            return False
+        except Exception as exc:
+            logger.warning("VectorMemoryModule: %s encoder init failed: %s", backend, exc)
+            return False
+
     def _init_encoder(self) -> None:
         # Attempt 1: MobileCLIP text encoder (preferred for robot text queries).
         # Encoder constructors do not load weights; load_model() is required
-        # before encode_text() can produce embeddings.
-        try:
-            from semantic.perception.mobileclip_encoder import MobileCLIPEncoder
+        # before encode_text() can produce embeddings. Attempt 2 keeps the older
+        # CLIP backend as a fallback. Both are resolved through core.registry so
+        # memory/ stays decoupled from semantic/perception concrete classes.
+        if self._init_registry_encoder("mobileclip"):
+            return
 
-            candidate = MobileCLIPEncoder(device="auto")
-            candidate.load_model()
-            test_result = candidate.encode_text(["test"])
-            if test_result is not None and len(test_result) > 0:
-                self._encoder = candidate
-                self._encoder_type = "mobileclip"
-                self._encoder_status.use("mobileclip", degraded=False)
-                self._embedding_dim = int(np.array(test_result[0]).size)
-                logger.info("VectorMemoryModule: MobileCLIP text encoder ready")
-                return
-            logger.info("VectorMemoryModule: MobileCLIP smoke-test returned empty; trying CLIP")
-        except ImportError:
-            logger.info("VectorMemoryModule: MobileCLIP encoder not available, trying CLIP")
-        except Exception as exc:
-            logger.warning("VectorMemoryModule: MobileCLIP init failed (%s), trying CLIP", exc)
-
-        # Attempt 1: CLIP encoder (preferred — full image+text support).
-        # A smoke-test encode call verifies the model weights are actually usable,
-        # not just that the class imports.
-        try:
-            from semantic.perception.clip_encoder import CLIPEncoder
-            candidate = CLIPEncoder(model_name="ViT-B/32", device="auto")
-            candidate.load_model()
-            test_result = candidate.encode_text(["test"])
-            if test_result is not None and len(test_result) > 0:
-                self._encoder = candidate
-                self._encoder_type = "clip"
-                self._encoder_status.use("clip", degraded=False)
-                self._embedding_dim = int(np.array(test_result[0]).size)
-                logger.info("VectorMemoryModule: CLIP encoder ready")
-                return
-            logger.info("VectorMemoryModule: CLIP encoder smoke-test returned empty — trying sentence-transformers")
-        except ImportError:
-            logger.info("VectorMemoryModule: CLIP encoder not available, trying sentence-transformers")
-        except Exception as exc:
-            logger.warning("VectorMemoryModule: CLIP encoder init failed (%s), trying sentence-transformers", exc)
+        if self._init_registry_encoder("clip"):
+            return
 
         # Attempt 2: sentence-transformers (CPU-safe, 384-dim, semantically meaningful).
         try:

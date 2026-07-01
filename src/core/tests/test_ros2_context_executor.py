@@ -113,7 +113,7 @@ def _install_fake_rclpy(monkeypatch, executors_module) -> None:
 
 
 def test_shared_executor_prefers_configured_multithreaded_executor(monkeypatch):
-    import core.ros2_context as ctx
+    import compat.ros2.context as ctx
 
     _reset_ros2_context(ctx)
     FakeMultiThreadedExecutor.instances = []
@@ -136,7 +136,7 @@ def test_shared_executor_prefers_configured_multithreaded_executor(monkeypatch):
 
 
 def test_shared_executor_falls_back_when_multithreaded_unavailable(monkeypatch):
-    import core.ros2_context as ctx
+    import compat.ros2.context as ctx
 
     _reset_ros2_context(ctx)
     FakeSingleThreadedExecutor.instances = []
@@ -155,7 +155,8 @@ def test_shared_executor_falls_back_when_multithreaded_unavailable(monkeypatch):
 
 def test_shared_executor_ignores_expected_destroyed_entity_race(monkeypatch, caplog):
     import logging
-    import core.ros2_context as ctx
+
+    import compat.ros2.context as ctx
 
     _reset_ros2_context(ctx)
     _install_fake_rclpy(
@@ -190,12 +191,12 @@ def test_camera_bridge_reconnect_removes_old_node_from_shared_executor(monkeypat
         _module("rclpy.qos", QoSProfile=QoSProfile, ReliabilityPolicy=ReliabilityPolicy),
     )
 
-    import core.ros2_context as ros2_context
+    import compat.ros2.context as ros2_context
 
     monkeypatch.setattr(ros2_context, "ensure_rclpy", lambda: None)
     monkeypatch.setattr(ros2_context, "get_shared_executor", lambda: executor)
 
-    from drivers.real.thunder.camera_bridge_module import CameraBridgeModule
+    from compat.ros2.camera_bridge import CameraBridgeModule
 
     module = CameraBridgeModule()
     assert module._create_ros2_node() is True
@@ -216,7 +217,7 @@ def test_camera_bridge_reconnect_removes_old_node_from_shared_executor(monkeypat
 
 
 def test_camera_bridge_service_recovery_is_opt_in(monkeypatch):
-    from drivers.real.thunder.camera_bridge_module import CameraBridgeModule
+    from compat.ros2.camera_bridge import CameraBridgeModule
 
     monkeypatch.delenv("LINGTU_CAMERA_ALLOW_SERVICE_RECOVERY", raising=False)
     module = CameraBridgeModule(max_reconnects=3)
@@ -234,8 +235,8 @@ def test_camera_bridge_service_recovery_is_opt_in(monkeypatch):
 def test_camera_bridge_recovery_uses_robot_camera_service(monkeypatch):
     import subprocess
 
-    import drivers.real.thunder.camera_bridge_module as camera_bridge
-    from drivers.real.thunder.camera_bridge_module import CameraBridgeModule
+    import compat.ros2.camera_bridge as camera_bridge
+    from compat.ros2.camera_bridge import CameraBridgeModule
 
     calls = []
 

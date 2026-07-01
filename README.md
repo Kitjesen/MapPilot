@@ -48,40 +48,59 @@ Dual-board architecture: **Nav Board** (S100P) runs LingTu; **Dog Board** runs B
 
 ## Quick Start
 
+### Python environment
+
+Use `uv` for reproducible Python installs. `uv.lock` is the source of truth for
+resolved package versions, and `.python-version` pins the default interpreter to
+Python 3.10.12 to match the S100P runtime.
+
+```bash
+uv sync --locked
+uv run --locked python lingtu.py --list
+```
+
+Install extras only for the profile you are running:
+
+```bash
+uv sync --locked --extra vision --extra ml --extra llm --extra nlp
+uv sync --locked --extra perception --extra vector   # heavy semantic deps
+uv sync --locked --extra dev                         # test/lint tooling
+```
+
 ### Framework tests (no hardware needed)
 
 ```bash
-python -m pytest src/core/tests/ -q    # framework tests only; not full algorithm closure
+uv run --locked --extra dev python -m pytest src/core/tests/ -q    # framework tests only; not full algorithm closure
 ```
 
 ### Run on robot
 
 ```bash
 # Interactive profile picker
-python lingtu.py
+uv run --locked python lingtu.py
 
 # Common profiles
-python lingtu.py stub                   # no hardware, framework testing
-python lingtu.py dev                    # semantic pipeline, no C++ nodes
-python lingtu.py sim                    # MuJoCo simulation (full stack)
-python lingtu.py map                    # SLAM mapping mode
-python lingtu.py nav                    # navigate using a saved map
-python lingtu.py explore                # exploration, no pre-built map
+uv run --locked python lingtu.py stub                   # no hardware, framework testing
+uv run --locked python lingtu.py dev                    # semantic pipeline, no C++ nodes
+uv run --locked python lingtu.py sim                    # MuJoCo simulation (full stack)
+uv run --locked python lingtu.py map                    # SLAM mapping mode
+uv run --locked python lingtu.py nav                    # navigate using a saved map
+uv run --locked python lingtu.py explore                # exploration, no pre-built map
 
 # Override flags
-python lingtu.py nav --llm mock         # real robot but mock LLM
-python lingtu.py nav --daemon           # background daemon (systemd)
+uv run --locked python lingtu.py nav --llm mock         # real robot but mock LLM
+uv run --locked python lingtu.py nav --daemon           # background daemon (systemd)
 ```
 
 ### Lifecycle commands
 
 ```bash
-python lingtu.py status                 # PID, profile, uptime, module count
-python lingtu.py status --json          # machine-readable
-python lingtu.py log -f                 # follow logs
-python lingtu.py stop                   # graceful stop
-python lingtu.py restart                # stop + relaunch
-python lingtu.py doctor                 # diagnostics
+uv run --locked python lingtu.py status                 # PID, profile, uptime, module count
+uv run --locked python lingtu.py status --json          # machine-readable
+uv run --locked python lingtu.py log -f                 # follow logs
+uv run --locked python lingtu.py stop                   # graceful stop
+uv run --locked python lingtu.py restart                # stop + relaunch
+uv run --locked python lingtu.py doctor                 # diagnostics
 ```
 
 ## Architecture
@@ -298,10 +317,10 @@ camera:
 
 lidar:
   offset_x: 0.0         # LiDAR-IMU extrinsics
-  
+
 occupancy_grid:
   resolution: 0.2       # Grid cell size (meters)
-  
+
 gateway:
   api_key: ""           # Set LINGTU_API_KEY env var to enable auth
 ```

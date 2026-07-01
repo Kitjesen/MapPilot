@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-from core.plugin_seed import seed_builtin_plugins
+from core.plugin_seed import seed_registered_plugins
 from core.registry import get
 
 
@@ -26,7 +26,7 @@ def stack_module(
     except KeyError:
         pass
 
-    seed_builtin_plugins(groups=(seed_group,), reload_loaded=False)
+    seed_registered_plugins(groups=(seed_group,), reload_loaded=False)
     try:
         return get(category, name)
     except KeyError:

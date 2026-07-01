@@ -79,13 +79,13 @@ Symptom -> change:
 ## 4. Global planner backend 鈥?`core.registry`
 
 Two backends are registered in `src/global_planning/`:
-- `astar` 鈥?pure Python, default for `stub`/`dev`/`s100p` profiles.
-- `pct` 鈥?C++ `ele_planner.so` (PCT planner).
+- `astar` 鈥?pure Python, default for `stub`/`dev`/`sim_nav` profiles.
+- `pct` 鈥?C++ `ele_planner.so` (PCT planner), default for the real `nav` profile.
 
 Switch via the profile flag or REPL:
 
 ```bash
-python lingtu.py s100p --planner pct
+python lingtu.py nav --planner pct
 ```
 
 PCT-specific tuning lives in `src/global_planning/pct_planner/config/params.yaml`.

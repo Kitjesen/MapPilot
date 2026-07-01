@@ -64,8 +64,8 @@ core-algorithm recheck:
 - Supplemental native/PCT/path-follower/MID-360 set:
   `src/core/tests/test_native_build_contracts.py`,
   `src/core/tests/test_mujoco_mid360_pattern.py`,
-  `tests/planning/test_path_follower_logic.py`, and
-  `tests/planning/test_pct_adapter_logic.py`: `58 passed`.
+  `sim/planning/test_path_follower_logic.py`, and
+  `sim/planning/test_pct_adapter_logic.py`: `58 passed`.
 - Core map/localization/SLAM/relocalize subset:
   `src/core/tests/test_algorithm_closure.py`,
   `src/core/tests/test_navigation_frame_contract.py`,
@@ -97,8 +97,8 @@ core-algorithm recheck:
   `test_native_pct_mujoco_gate.py`, `test_mujoco_mid360_pattern.py`,
   `test_dynamic_obstacle_local_planner_gate.py`,
   `test_terrain_local_planner_contract.py`,
-  `tests/planning/test_path_follower_logic.py`, and
-  `tests/planning/test_pct_adapter_logic.py`: `97 passed`.
+  `sim/planning/test_path_follower_logic.py`, and
+  `sim/planning/test_pct_adapter_logic.py`: `97 passed`.
 - `src/nav/core` C++ standalone tests:
   `2331/2331` passed with the default CMake configuration. The generated
   `CMakeCache.txt` records `NAV_CORE_BUILD_PYTHON_BINDINGS:BOOL=OFF`.
@@ -133,8 +133,8 @@ Defect found and fixed during the recheck:
 - `src/nav/core/CMakeLists.txt` now defaults
   `NAV_CORE_BUILD_PYTHON_BINDINGS=OFF` so standalone C++ algorithm tests do not
   depend on Python/nanobind headers. The dedicated Python extension path remains
-  `scripts/build_nav_core.sh`.
-- `scripts/build_nav_core.sh` was converted to ASCII-only output to avoid
+  `scripts/build/build_nav_core.sh`.
+- `scripts/build/build_nav_core.sh` was converted to ASCII-only output to avoid
   mojibake in server terminals.
 
 ## Prompt-To-Artifact Checklist

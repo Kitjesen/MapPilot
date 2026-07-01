@@ -123,9 +123,18 @@ python -m pytest sim/tests/test_server_sim_closure.py -q
 Simulation closure is useful algorithm evidence. It is not a substitute for
 real S100P runtime evidence.
 
+## Script Tests And Manual Smokes
+
+Script-related checks are split by how they should be run:
+
+- `tests/scripts/test_*.py` are pytest-collected script utility tests.
+- `tests/scripts/smoke/*.py` are manual S100P/ROS/Gateway smoke scripts migrated
+  from the old `scripts/test_*.py` paths. They are not pytest tests.
+- `tests/scripts/*.sh` are legacy/manual shell integration helpers; read each
+  script before running it on hardware.
+
 ## Legacy Integration Tests
 
-The scripts under `tests/integration` and `tests/planning` may still be useful
-for ROS-node or legacy deployment checks, but they are no longer the canonical
-product acceptance path. Prefer the Gateway/runtime gates above for
-Module-first field validation.
+The scripts under `tests/integration` may still be useful for ROS-node or legacy
+deployment checks, but they are no longer the canonical product acceptance path.
+Prefer the Gateway/runtime gates above for Module-first field validation.

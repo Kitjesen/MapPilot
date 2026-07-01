@@ -23,11 +23,12 @@ Usage::
 from __future__ import annotations
 
 import logging
-from importlib import import_module
+import sys
+from importlib import import_module, reload
 from typing import Any
 
 from core.blueprint import Blueprint
-from core.plugin_seed import seed_builtin_plugins
+from core.plugin_seed import seed_registered_plugins
 from core.registry import get
 
 logger = logging.getLogger(__name__)
@@ -63,8 +64,25 @@ def _module_for_backend(category: str, backend: str) -> type:
     try:
         return get(category, backend)
     except KeyError:
-        seed_builtin_plugins(groups=("autonomy",), reload_loaded=True)
-        return get(category, backend)
+        seed_registered_plugins(groups=("autonomy",), reload_loaded=True)
+        try:
+            return get(category, backend)
+        except KeyError:
+            _import_builtin_category(category)
+            return get(category, backend)
+
+
+def _import_builtin_category(category: str) -> None:
+    module_names = {
+        "terrain": ("base_autonomy.modules.terrain_module",),
+        "local_planner": ("base_autonomy.modules.local_planner_module",),
+        "path_follower": ("base_autonomy.modules.path_follower_module",),
+    }.get(category, ())
+    for module_name in module_names:
+        if module_name in sys.modules:
+            reload(sys.modules[module_name])
+        else:
+            import_module(module_name)
 
 
 def add_autonomy_stack(

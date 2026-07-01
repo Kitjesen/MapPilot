@@ -10,9 +10,9 @@ pct_path_adapter 纯 Python 单元测试 (无需 ROS2)
   - stuck 检测时序
 
 用法:
-    python3 tests/planning/test_pct_adapter_logic.py
+    python3 sim/planning/test_pct_adapter_logic.py
     # 或:
-    cd tests/planning && python3 -m pytest test_pct_adapter_logic.py -v
+    cd sim/planning && python3 -m pytest test_pct_adapter_logic.py -v
 """
 
 import math

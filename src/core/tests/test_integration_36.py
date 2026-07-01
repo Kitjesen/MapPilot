@@ -162,7 +162,7 @@ except Exception:
     pass
 
 # 12
-from drivers.real.thunder.camera_bridge_module import CameraBridgeModule
+from compat.ros2.camera_bridge import CameraBridgeModule
 
 cb = CameraBridgeModule()
 cb.setup()
@@ -304,7 +304,7 @@ if _failed:
             print(f"  FAIL: {name}")
 
 try:
-    from core.ros2_context import shutdown_shared_executor
+    from compat.ros2.context import shutdown_shared_executor
 
     shutdown_shared_executor()
     import rclpy

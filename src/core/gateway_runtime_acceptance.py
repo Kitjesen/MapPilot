@@ -379,17 +379,23 @@ def _check_dataflow(
             + "; run field mode during an active navigation session"
         )
 
-    ros2_topic_required = bool(dataflow.get("ros2_topic_required"))
-    if ros2_topic_required:
-        blockers.append("Gateway acceptance must not require ros2 topic")
+    endpoint_topic_required = bool(
+        dataflow.get("endpoint_topic_required", dataflow.get("ros2_topic_required"))
+    )
+    if endpoint_topic_required:
+        blockers.append("Gateway acceptance must not require endpoint topic inspection")
 
     transport_layers = _mapping(dataflow.get("transport_layers"))
     module_bus = _mapping(transport_layers.get("module_port_bus"))
+    endpoint_adapter = _mapping(
+        transport_layers.get("endpoint_adapter")
+        or transport_layers.get("ros2_adapter")
+    )
     ros2_adapter = _mapping(transport_layers.get("ros2_adapter"))
     if module_bus.get("primary") is not True:
         blockers.append("module_port_bus must be the primary dataflow boundary")
-    if ros2_adapter.get("primary") is True:
-        blockers.append("ros2_adapter must not be the primary acceptance boundary")
+    if endpoint_adapter.get("primary") is True:
+        blockers.append("endpoint_adapter must not be the primary acceptance boundary")
 
     control_boundary = _mapping(dataflow.get("control_boundary"))
     if control_boundary.get("arbitrary_publish_supported") is not False:
@@ -423,9 +429,9 @@ def _check_dataflow(
     return {
         "ok": not missing_topics
         and not non_observable
-        and not ros2_topic_required
+        and not endpoint_topic_required
         and module_bus.get("primary") is True
-        and ros2_adapter.get("primary") is not True
+        and endpoint_adapter.get("primary") is not True
         and control_boundary.get("arbitrary_publish_supported") is False
         and bool(command_interfaces)
         and not missing_command_paths
@@ -433,8 +439,10 @@ def _check_dataflow(
         and not missing_stream_interfaces
         and (mode not in MOTION_ACCEPTANCE_MODES or not missing_live),
         "runtime_contract": dataflow.get("runtime_contract"),
-        "ros2_topic_required": ros2_topic_required,
+        "endpoint_topic_required": endpoint_topic_required,
+        "ros2_topic_required": bool(dataflow.get("ros2_topic_required")),
         "module_port_bus_primary": module_bus.get("primary"),
+        "endpoint_adapter_primary": endpoint_adapter.get("primary"),
         "ros2_adapter_primary": ros2_adapter.get("primary"),
         "arbitrary_publish_supported": control_boundary.get(
             "arbitrary_publish_supported"
@@ -735,7 +743,7 @@ def _check_runtime_mode(
             check_blockers.append("simulation acceptance requires runtime_contract")
         if runtime_contract == REAL_RUNTIME_CONTRACT:
             check_blockers.append(
-                "simulation acceptance must not run against real_s100p runtime"
+                f"simulation acceptance must not run against {REAL_RUNTIME_CONTRACT} runtime"
             )
         if simulation_only is False:
             check_blockers.append("simulation acceptance requires simulation_only=true")
@@ -749,7 +757,9 @@ def _check_runtime_mode(
             )
     elif mode == "field":
         if runtime_contract != REAL_RUNTIME_CONTRACT:
-            check_blockers.append("field acceptance requires real_s100p runtime contract")
+            check_blockers.append(
+                f"field acceptance requires {REAL_RUNTIME_CONTRACT} runtime contract"
+            )
         if simulation_only is True:
             check_blockers.append("field acceptance must not run against simulation endpoint")
         if command_sink != HARDWARE_COMMAND_SINK:
@@ -1100,9 +1110,14 @@ def evaluate_gateway_runtime_acceptance(
         "real_robot_motion": top_level_real_robot_motion,
         "cmd_vel_sent_to_hardware": top_level_cmd_vel_sent_to_hardware,
         "target_result": (
-            "Gateway-only product runtime acceptance; ROS2 topic inspection is not required."
+            "Gateway-only product runtime acceptance; endpoint topic inspection "
+            "is not required."
         ),
         "runtime_contract": dataflow.get("runtime_contract"),
+        "endpoint_topic_required": dataflow.get(
+            "endpoint_topic_required",
+            dataflow.get("ros2_topic_required"),
+        ),
         "ros2_topic_required": dataflow.get("ros2_topic_required"),
         "blockers": blockers,
         "advisories": advisories,
@@ -1259,12 +1274,17 @@ def format_gateway_runtime_acceptance(payload: Mapping[str, Any]) -> str:
     """Operator-facing summary for the Gateway runtime acceptance report."""
 
     status = "PASS" if payload.get("ok") else "FAIL"
+    endpoint_topic_required = payload.get(
+        "endpoint_topic_required",
+        payload.get("ros2_topic_required"),
+    )
     lines = [
         f"Gateway runtime acceptance: {status}",
         f"Schema: {payload.get('schema_version')}",
         f"Mode: {payload.get('mode')}",
         f"Runtime contract: {payload.get('runtime_contract') or 'unknown'}",
-        f"ROS2 topic required: {str(payload.get('ros2_topic_required')).lower()}",
+        "Endpoint topic required: "
+        f"{str(bool(endpoint_topic_required)).lower()}",
     ]
     checks = _mapping(payload.get("checks"))
     stage_evidence = _mapping(checks.get("stage_evidence"))

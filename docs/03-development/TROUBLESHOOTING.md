@@ -67,7 +67,7 @@ export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$(pwd)/src/global_planning/pct_planner/
 ### `_nav_core` import fails after build
 
 ```bash
-bash scripts/build_nav_core.sh        # rebuild nanobind extension
+bash scripts/build/build_nav_core.sh        # rebuild nanobind extension
 ls src/_nav_core*.so                   # symlink should exist
 python3 -c "import sys; sys.path.insert(0, 'src'); import _nav_core; print(_nav_core.LocalPlannerCore)"
 ```
@@ -108,7 +108,7 @@ Common causes:
 |-----------------------------------|---------------------------------------------------------------|
 | `robot-fastlio2` not yet ready    | `lingtu` waits up to 60 s; check `journalctl -u robot-fastlio2` |
 | Missing API key for LLM module    | `eval $(grep MOONSHOT_API_KEY ~/.bashrc)` and re-`systemctl restart lingtu` |
-| `_nav_core.so` missing            | `bash scripts/build_nav_core.sh` then restart                  |
+| `_nav_core.so` missing            | `bash scripts/build/build_nav_core.sh` then restart                  |
 | Port 5050 / 8090 already bound    | `ss -tnlp | grep -E '5050|8090'` 鈥?kill stragglers             |
 
 ### TF chain `map -> odom -> body` broken

@@ -14,10 +14,10 @@ from typing import Any
 
 from core.msgs.numpy_compat import np
 from core.runtime_interface import TOPICS, topic_default_frame_id
-from nav.plan_safety import evaluate_backend_path_safety
 from core.same_source_map_artifacts import (
     validate_saved_map_artifact_dir,
 )
+from nav.plan_safety import evaluate_backend_path_safety
 
 logger = logging.getLogger(__name__)
 
@@ -1105,10 +1105,10 @@ class GlobalPlannerService:
         return f"saved map artifact gate failed: {detail}"
 
     def _create_backend(self, name: str | None = None):
-        from core.plugin_seed import seed_builtin_plugins
+        from core.plugin_seed import seed_registered_plugins
         from core.registry import get
         name = (name or self._planner_name).lower()
-        seed_builtin_plugins(groups=("planner_backend",))
+        seed_registered_plugins(groups=("planner_backend",))
         try:
             BackendCls = get("planner_backend", name)
         except KeyError as err:

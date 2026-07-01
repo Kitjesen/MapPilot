@@ -1,17 +1,17 @@
-"""Compatibility shim — bridge modules moved to src/drivers/sim/.
+"""Compatibility shim for legacy simulation bridge imports.
 
-Uses a lazy finder so heavy deps (mujoco, rclpy) are only loaded
-when someone actually imports ``sim.bridge.<module>``.
+Uses a lazy finder so heavy deps such as mujoco and rclpy are only loaded when
+someone actually imports ``sim.bridge.<module>``.
 """
+
 import importlib
 import importlib.abc
-import importlib.machinery
 import sys
 
 _REDIRECTS = {
-    "sim.bridge.mujoco_ros2_bridge": "drivers.sim.mujoco_ros2_bridge",
-    "sim.bridge.mujoco_viz_bridge": "drivers.sim.mujoco_viz_bridge",
-    "sim.bridge.nova_nav_bridge": "drivers.sim.nova_nav_bridge",
+    "sim.bridge.mujoco_ros2_bridge": "compat.ros2.mujoco_ros2_bridge",
+    "sim.bridge.mujoco_viz_bridge": "compat.ros2.mujoco_viz_bridge",
+    "sim.bridge.nova_nav_bridge": "compat.ros2.nova_nav_bridge",
 }
 
 

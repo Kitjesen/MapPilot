@@ -16,6 +16,47 @@ from core.transport.abc import TopicConfig, TransportStrategy
 from core.transport.local import LocalTransport, Transport
 
 
+class TestTransportDefaults:
+    """Default transport behavior must stay ROS-free and in-process."""
+
+    def test_topic_config_defaults_to_local(self):
+        assert TopicConfig(name="/test/default").strategy is TransportStrategy.LOCAL
+
+    def test_create_transport_defaults_to_shared_local(self):
+        from core.transport.factory import create_transport
+
+        first = create_transport()
+        second = create_transport(TransportStrategy.LOCAL)
+
+        assert isinstance(first, LocalTransport)
+        assert first is second
+        assert first.name == "local"
+
+    def test_create_transport_accepts_string_strategy(self):
+        from core.transport.factory import create_transport
+
+        assert create_transport("local") is create_transport()
+
+    def test_create_transport_rejects_unknown_string_strategy(self):
+        from core.transport.factory import create_transport
+
+        with pytest.raises(ValueError, match="Unknown strategy"):
+            create_transport("mqtt")
+
+    def test_shortcut_pub_sub_uses_shared_local_bus(self):
+        from core.transport.factory import create_publisher, create_subscriber
+
+        topic = "/test/default_local_shortcut"
+        received = []
+
+        sub = create_subscriber(topic, callback=received.append)
+        pub = create_publisher(topic)
+        pub.publish({"ok": True})
+
+        sub.close()
+        assert received == [{"ok": True}]
+
+
 class TestLocalTransport:
     """LocalTransport in-process bus tests."""
 
@@ -273,6 +314,129 @@ class TestTransportAdapter:
         assert out.msg_count == 1
 
         adapter.close()
+
+
+class TestLCMTransport:
+    """LCM is optional and stays behind the transport boundary."""
+
+    def test_lcm_transport_requires_optional_package(self, monkeypatch):
+        import core.transport.lcm as lcm_mod
+
+        monkeypatch.setattr(lcm_mod, "_LCM_AVAILABLE", False)
+        with pytest.raises(ImportError, match="lcm is not installed"):
+            lcm_mod.LCMTransport()
+
+    def test_lcm_factory_requires_optional_package(self, monkeypatch):
+        import core.transport.lcm as lcm_mod
+        from core.transport.factory import create_transport
+
+        monkeypatch.setattr(lcm_mod, "_LCM_AVAILABLE", False)
+        with pytest.raises(ImportError, match="lcm is not installed"):
+            create_transport(TransportStrategy.LCM)
+
+    def test_lcm_publisher_accepts_only_bytes(self):
+        from core.transport.lcm import LCMPublisher
+
+        class FakeLCM:
+            def __init__(self):
+                self.published = []
+
+            def publish(self, channel, data):
+                self.published.append((channel, data))
+
+        client = FakeLCM()
+        topic = TopicConfig(name="/test/lcm_bytes", strategy=TransportStrategy.LCM)
+        pub = LCMPublisher(topic, client)
+
+        with pytest.raises(TypeError, match="expects bytes"):
+            pub.publish({"not": "serialized"})
+
+        pub.publish(bytearray(b"serialized"))
+        assert client.published == [("/test/lcm_bytes", b"serialized")]
+
+    def test_lcm_subscriber_delivers_bytes_with_timestamp(self):
+        from core.transport.lcm import LCMSubscriber
+
+        class FakeLCM:
+            pass
+
+        received = []
+        topic = TopicConfig(name="/test/lcm_sub", strategy=TransportStrategy.LCM)
+        sub = LCMSubscriber(topic, lambda data, ts: received.append((data, ts)), FakeLCM())
+        sub._on_lcm_message("/test/lcm_sub", bytearray(b"payload"))
+
+        assert received
+        assert received[0][0] == b"payload"
+        assert isinstance(received[0][1], float)
+
+    def test_json_codec_roundtrips_core_message(self):
+        from core.msgs.geometry import Twist, Vector3
+        from core.transport.json_codec import dumps_message, loads_message
+
+        msg = Twist(linear=Vector3(1.0, 2.0, 0.0), angular=Vector3(0.0, 0.0, 0.5))
+        encoded = dumps_message(msg)
+        decoded = loads_message(encoded)
+
+        assert encoded.startswith(b"{")
+        assert b"lingtu.transport.json.v1" in encoded
+        assert isinstance(decoded, Twist)
+        assert decoded.linear.x == 1.0
+        assert decoded.linear.y == 2.0
+        assert decoded.angular.z == 0.5
+
+    def test_lcm_transport_adapter_uses_json_codec(self, monkeypatch):
+        from core.msgs.geometry import Twist, Vector3
+        from core.transport.abc import TopicConfig
+        import core.transport.factory as factory_mod
+
+        class BytesOnlyPublisher:
+            def __init__(self):
+                self.payloads = []
+
+            def publish(self, msg):
+                if not isinstance(msg, (bytes, bytearray)):
+                    raise TypeError("bytes required")
+                self.payloads.append(bytes(msg))
+
+            def close(self):
+                pass
+
+        class CapturingBackend:
+            name = "lcm"
+
+            def __init__(self):
+                self.publisher = BytesOnlyPublisher()
+                self.callback = None
+
+            def create_publisher(self, topic: TopicConfig):
+                return self.publisher
+
+            def create_subscriber(self, topic: TopicConfig, callback):
+                self.callback = callback
+                return type("Sub", (), {"start": lambda self: None, "close": lambda self: None})()
+
+            def close(self):
+                pass
+
+        backend = CapturingBackend()
+        monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None: backend)
+
+        transport = factory_mod.create_transport_adapter("lcm")
+        received = []
+        transport.subscribe("/nav/cmd_vel", received.append)
+        transport.publish(
+            "/nav/cmd_vel",
+            Twist(linear=Vector3(0.2, 0.0, 0.0), angular=Vector3(0.0, 0.0, -0.1)),
+        )
+
+        payload = backend.publisher.payloads[-1]
+        assert payload.startswith(b"{")
+        assert b"core.msgs.geometry.Twist" in payload
+        assert backend.callback is not None
+        backend.callback(payload, time.time())
+        assert isinstance(received[-1], Twist)
+        assert received[-1].linear.x == 0.2
+        assert received[-1].angular.z == -0.1
 
 
 class TestDDSTransport:

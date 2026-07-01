@@ -1,26 +1,9 @@
-"""core.transport — Unified transport layer for LingTu navigation system.
+"""Unified transport layer for LingTu navigation system.
 
-Consolidates all transport implementations under core:
-
-  Transport (Protocol)  — generic publish/subscribe/close interface
-  LocalTransport        — in-process zero-copy bus (testing & single-process)
-  TransportABC          — ABC factory for ROS2-style backends
-  Publisher / Subscriber — ABC message endpoints
-  TransportStrategy     — backend selection enum
-  TopicConfig           — per-topic configuration
-
-Backends (conditionally imported when deps are available):
-  SHMTransport   — POSIX SharedMemory (high-speed same-machine)
-  DDSTransport   — ROS2 CycloneDDS
-  DualTransport  — SHM + DDS dual-write
-
-Factory:
-  create_transport()  — instantiate a backend by strategy
-  create_publisher()  — shortcut for one-off publisher
-  create_subscriber() — shortcut for one-off subscriber
+Module code talks to the simple Transport protocol. Concrete backends are
+loaded lazily so optional IPC dependencies do not affect lightweight profiles.
 """
 
-# --- always-available core types ---
 from .abc import (
     Publisher,
     Subscriber,
@@ -36,6 +19,9 @@ _OPTIONAL_BACKENDS = {
     "SHMPublisher": ("shm", "SHMPublisher"),
     "SHMSubscriber": ("shm", "SHMSubscriber"),
     "SHMTransport": ("shm", "SHMTransport"),
+    "LCMPublisher": ("lcm", "LCMPublisher"),
+    "LCMSubscriber": ("lcm", "LCMSubscriber"),
+    "LCMTransport": ("lcm", "LCMTransport"),
     "DDSPublisher": ("dds", "DDSPublisher"),
     "DDSSubscriber": ("dds", "DDSSubscriber"),
     "DDSTransport": ("dds", "DDSTransport"),
@@ -55,6 +41,7 @@ def __getattr__(name: str):
     value = getattr(module, attr_name)
     globals()[name] = value
     return value
+
 
 __all__ = [
     "LocalTransport",

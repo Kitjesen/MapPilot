@@ -114,9 +114,9 @@ def test_slam_relocalization_service_uses_core_result_contract():
 def test_slam_bridge_auto_relocalize_checks_service_success_before_completion():
     tree = ast.parse(
         (
-            ROOT / "src" / "slam" / "slam_bridge_module.py"
+            ROOT / "src" / "compat" / "ros2" / "slam_bridge.py"
         ).read_text(encoding="utf-8-sig"),
-        filename="slam_bridge_module.py",
+        filename="slam_bridge.py",
     )
     matches = _function_defs(tree, "_auto_relocalize")
     assert len(matches) == 1
@@ -154,10 +154,10 @@ def test_slam_bridge_auto_relocalize_checks_service_success_before_completion():
 
 
 def test_slam_bridge_auto_relocalize_keeps_missing_map_fallback_reachable():
-    text = (ROOT / "src" / "slam" / "slam_bridge_module.py").read_text(
+    text = (ROOT / "src" / "compat" / "ros2" / "slam_bridge.py").read_text(
         encoding="utf-8-sig",
     )
-    tree = ast.parse(text, filename="slam_bridge_module.py")
+    tree = ast.parse(text, filename="slam_bridge.py")
     matches = _function_defs(tree, "_auto_relocalize")
     assert len(matches) == 1
     source = ast.get_source_segment(text, matches[0]) or ""

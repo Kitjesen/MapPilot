@@ -191,7 +191,7 @@ def _real_runtime_evidence_snapshot(
         "runtime_evidence_ok": ok,
         "report_age_s": age_s,
         "max_age_s": 3600.0,
-        "runtime_contract": "real_s100p",
+        "runtime_contract": "thunder_field",
         "simulation_only": False,
         "real_robot_motion": True,
         "cmd_vel_sent_to_hardware": True,
@@ -213,7 +213,7 @@ def _snapshots(
     from core.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
 
     simulation = mode == "simulation"
-    runtime_contract = "mujoco_fastlio2_live" if simulation else "real_s100p"
+    runtime_contract = "mujoco_fastlio2_live" if simulation else "thunder_field"
 
     return {
         "capabilities": {
@@ -254,7 +254,7 @@ def _snapshots(
             "_http_status": 200,
             "runtime_contract": runtime_contract,
             "runtime_boundary": {
-                "endpoint": "mujoco_live" if simulation else "real_s100p",
+                "endpoint": "mujoco_live" if simulation else "thunder_field",
                 "data_source": runtime_contract,
                 "runtime_contract": runtime_contract,
                 "simulation_only": simulation,
@@ -326,10 +326,10 @@ def test_gateway_runtime_acceptance_passes_non_motion_without_ros2_topic():
     payload = evaluate_gateway_runtime_acceptance(_snapshots(), mode="non_motion")
 
     assert payload["ok"] is True
-    assert payload["runtime_contract"] == "real_s100p"
+    assert payload["runtime_contract"] == "thunder_field"
     assert payload["ros2_topic_required"] is False
     assert payload["checks"]["module_first_dataflow"]["module_port_bus_primary"] is True
-    assert payload["checks"]["module_first_dataflow"]["ros2_adapter_primary"] is False
+    assert payload["checks"]["module_first_dataflow"]["endpoint_adapter_primary"] is False
     assert payload["checks"]["module_first_dataflow"]["missing_live_topics"]
     assert payload["checks"]["stage_evidence"]["ok"] is True
     assert payload["checks"]["stage_evidence"]["stage_count"] == 8
@@ -537,7 +537,7 @@ def test_gateway_runtime_acceptance_format_includes_stage_evidence():
     output = format_gateway_runtime_acceptance(payload)
 
     assert "Gateway runtime acceptance: PASS" in output
-    assert "ROS2 topic required: false" in output
+    assert "Endpoint topic required: false" in output
     assert "Stage evidence: ok=true stages=8 live=" in output
     assert "Frontier preview: ok=true source=traversable_frontier command_published=false" in output
     assert "global_planning" in output
@@ -566,7 +566,7 @@ def test_gateway_runtime_acceptance_simulation_rejects_real_runtime_boundary():
     )
 
     assert payload["ok"] is False
-    assert "simulation acceptance must not run against real_s100p runtime" in payload[
+    assert "simulation acceptance must not run against thunder_field runtime" in payload[
         "blockers"
     ]
     assert "simulation acceptance requires simulation_only=true" in payload["blockers"]
@@ -723,7 +723,7 @@ def test_gateway_runtime_acceptance_field_rejects_smoke_shape_without_real_evide
     evidence.update(
         {
             "_http_status": 200,
-            "runtime_contract": "real_s100p",
+            "runtime_contract": "thunder_field",
             "simulation_only": False,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
@@ -777,11 +777,14 @@ def test_gateway_runtime_acceptance_rejects_ros2_as_primary_boundary():
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
 
     assert payload["ok"] is False
-    assert "Gateway acceptance must not require ros2 topic" in payload["blockers"]
+    assert (
+        "Gateway acceptance must not require endpoint topic inspection"
+        in payload["blockers"]
+    )
     assert "module_port_bus must be the primary dataflow boundary" in payload[
         "blockers"
     ]
-    assert "ros2_adapter must not be the primary acceptance boundary" in payload[
+    assert "endpoint_adapter must not be the primary acceptance boundary" in payload[
         "blockers"
     ]
     assert "Gateway must not expose arbitrary publish as product control" in payload[
@@ -1144,7 +1147,7 @@ def test_gateway_runtime_acceptance_cli_writes_json(monkeypatch, tmp_path, capsy
             "mode": mode,
             "gateway_url": gateway_url,
             "timeout_sec": timeout_sec,
-            "runtime_contract": "real_s100p",
+            "runtime_contract": "thunder_field",
             "ros2_topic_required": False,
             "blockers": [],
             "advisories": [],

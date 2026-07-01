@@ -27,7 +27,7 @@ help:
 	@echo ""
 	@echo "  Launch (Module-First profiles via lingtu.py):"
 	@echo "    make mapping     - start mapping mode (lingtu.py map)"
-	@echo "    make navigation  - start navigation mode (lingtu.py s100p)"
+	@echo "    make navigation  - start navigation mode (lingtu.py nav)"
 	@echo ""
 
 build:
@@ -37,7 +37,7 @@ build:
 
 nav_core:
 	@echo "Building _nav_core.so (nanobind, no ROS2 needed)..."
-	@bash scripts/build_nav_core.sh
+	@bash scripts/build/build_nav_core.sh
 
 build-debug:
 	@echo "Building workspace (Debug)..."
@@ -60,11 +60,11 @@ clean:
 
 install:
 	@echo "Installing systemd services..."
-	@bash scripts/install_services.sh
+	@bash scripts/deploy/s100p/install_services.sh
 	@echo "Done."
 
 health:
-	@bash scripts/health_check.sh
+	@python3 lingtu.py health
 
 benchmark:
 	@bash tests/benchmark/run_all.sh
@@ -93,7 +93,7 @@ mapping:
 	@bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && python3 lingtu.py map"
 
 navigation:
-	@bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && python3 lingtu.py s100p"
+	@bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && python3 lingtu.py nav"
 
 sync-version:
 	@bash scripts/deploy/sync_versions.sh

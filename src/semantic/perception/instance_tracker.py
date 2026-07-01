@@ -48,10 +48,12 @@ from .tracked_objects import (  # noqa: E402
     BeliefMessage,
     FloorNode,
     PhantomNode,
+    Region,
     RoomNode,
     RoomTypePosterior,
     TrackedObject,
     ViewNode,
+    infer_room_type,
 )
 
 logger = logging.getLogger(__name__)

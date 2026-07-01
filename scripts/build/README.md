@@ -1,10 +1,21 @@
-# Workspace helper scripts (ROS / colcon)
+# Build helper scripts
 
-| Script | Root wrapper | Purpose |
-|--------|----------------|---------|
-| `mapping.sh` | `./mapping.sh` | Launch PCT mapping |
-| `planning.sh` | `./planning.sh` | Interactive PCT planning stack |
-| `save_map.sh` | `./save_map.sh` | Save map + optional tomogram |
-| `build_all.sh` | `./build_all.sh` | PCT core + `colcon` + OTA daemon |
+This folder contains build-time helpers. Runtime profile launches live in
+`lingtu.py`; robot deployment and service installation live under
+`scripts/deploy/` and `scripts/ota/`.
 
-Repo root keeps thin `*.sh` wrappers so existing docs (`./build_all.sh`, etc.) stay valid.
+Run commands from the repository root unless a script says otherwise.
+
+| Script | Purpose |
+|--------|---------|
+| `build_ros_workspace.sh` | Build the ROS 2 workspace with `colcon`. |
+| `build_tare.sh` | Build the external CMU TARE planner integration. |
+| `fetch_ortools.sh` | Fetch OR-Tools binaries for the TARE planner path. |
+| `build_ortools_from_source.sh` | Build OR-Tools locally when binaries are unavailable. |
+
+Related root-level helpers:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/build/build_nav_core.sh` | Build the Python `nav_core`/nanobind extension without a full ROS 2 workspace. |
+| `scripts/build/build_dufomap.sh` | Build the DUFOMap cleanup binary used by map-save filtering. |

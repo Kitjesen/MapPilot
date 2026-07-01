@@ -10,7 +10,7 @@ Tests the complete semantic navigation pipeline:
 5. Execute navigation
 
 Usage:
-    python scripts/test/test_end_to_end.py
+    python tests/scripts/test_end_to_end.py
 """
 
 import sys
@@ -19,9 +19,8 @@ import time
 import numpy as np
 from pathlib import Path
 
-# Add source paths
-sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "semantic_perception"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "semantic_planner"))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 print("=" * 80)
 print("3D Semantic Navigation System - End-to-End Test")

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+BUILD_DIR="${LINGTU_SLAM_CORE_BUILD_DIR:-$ROOT/build/slam_core}"
+BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
+JOBS="${LINGTU_BUILD_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+FASTLIO2_BACKEND="${LINGTU_SLAM_FASTLIO2:-${LINGTU_SLAM_WITH_FASTLIO2:-ON}}"
+
+if [ -n "${LINGTU_CYCLONEDDS_PREFIX:-}" ]; then
+  export CMAKE_PREFIX_PATH="${LINGTU_CYCLONEDDS_PREFIX}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
+fi
+
+cmake_bool_on() {
+  case "${1^^}" in
+    1|ON|TRUE|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_fastlio2_deps() {
+  local probe_dir="$BUILD_DIR/.fastlio2_dep_probe"
+  mkdir -p "$probe_dir"
+  cat > "$probe_dir/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.16)
+project(lingtu_fastlio2_dep_probe LANGUAGES CXX)
+find_package(Eigen3 REQUIRED)
+find_package(PCL REQUIRED COMPONENTS common io filters kdtree)
+find_package(yaml-cpp REQUIRED)
+CMAKE
+
+  if ! cmake -S "$probe_dir" -B "$probe_dir/build" >/tmp/lingtu_fastlio2_dep_probe.log 2>&1; then
+    cat >&2 <<'EOF'
+Fast-LIO2 native backend is ROS-free, but these C++ libraries must be visible to CMake:
+  Eigen3, PCL(common/io/filters/kdtree), yaml-cpp
+
+Ubuntu baseline:
+  sudo apt install -y libeigen3-dev libpcl-dev libyaml-cpp-dev
+
+Dependency probe output:
+EOF
+    cat /tmp/lingtu_fastlio2_dep_probe.log >&2
+    exit 2
+  fi
+}
+
+if cmake_bool_on "$FASTLIO2_BACKEND"; then
+  check_fastlio2_deps
+fi
+
+cmake -S "$ROOT/src/localization/slam/cpp" -B "$BUILD_DIR" \
+  -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+  -DLINGTU_SLAM_BUILD_TESTS="${LINGTU_SLAM_BUILD_TESTS:-ON}" \
+  -DLINGTU_SLAM_BUILD_PYTHON_BINDINGS="${LINGTU_SLAM_BUILD_PYTHON_BINDINGS:-ON}" \
+  -DLINGTU_SLAM_BUILD_DDS_RUNTIME="${LINGTU_SLAM_BUILD_DDS_RUNTIME:-${LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME:-${LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME:-OFF}}}" \
+  -DLINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME="${LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME:-OFF}" \
+  -DLINGTU_SLAM_FASTLIO2_BACKEND="$FASTLIO2_BACKEND"
+
+cmake --build "$BUILD_DIR" --parallel "$JOBS"
+
+if [[ "${LINGTU_SLAM_BUILD_TESTS:-ON}" == "ON" && -x "$BUILD_DIR/test_slam_contract" ]]; then
+  "$BUILD_DIR/test_slam_contract"
+fi

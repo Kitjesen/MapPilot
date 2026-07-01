@@ -101,6 +101,25 @@ class TestSHMTransportWiring(unittest.TestCase):
         handle.stop()
 
 
+class TestLCMTransportWiring(unittest.TestCase):
+    """wire(transport="lcm") is explicit and optional."""
+
+    def test_lcm_transport_missing_optional_package_raises(self):
+        import core.transport.lcm as lcm_mod
+
+        original_available = lcm_mod._LCM_AVAILABLE
+        lcm_mod._LCM_AVAILABLE = False
+        try:
+            bp = Blueprint()
+            bp.add(Producer)
+            bp.add(Consumer)
+            bp.wire("Producer", "data", "Consumer", "data", transport="lcm")
+            with self.assertRaisesRegex(ImportError, "lcm is not installed"):
+                bp.build()
+        finally:
+            lcm_mod._LCM_AVAILABLE = original_available
+
+
 class TestMixedTransportWiring(unittest.TestCase):
     """Same blueprint with both callback and transport connections."""
 

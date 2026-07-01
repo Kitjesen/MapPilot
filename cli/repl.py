@@ -1,4 +1,4 @@
-﻿"""Interactive cmd-loop REPL for LingTu."""
+"""Interactive cmd-loop REPL for LingTu."""
 
 from __future__ import annotations
 

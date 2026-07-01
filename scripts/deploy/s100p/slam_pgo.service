@@ -1,5 +1,5 @@
 [Unit]
-Description=S100P PGO (Pose Graph Optimization)
+Description=Thunder PGO (Pose Graph Optimization)
 After=slam.service
 Wants=slam.service
 StartLimitIntervalSec=300
@@ -11,8 +11,7 @@ Type=simple
 User=sunrise
 WorkingDirectory=/home/sunrise/data/inovxio/lingtu
 ExecStart=/bin/bash -c '\
-  source /opt/ros/humble/setup.bash && \
-  source ~/data/inovxio/lingtu/install/setup.bash && \
+  source /opt/lingtu/config/ros2-env.sh && \
   exec ros2 run pgo pgo_node \
     --ros-args \
     -p config_path:=/home/sunrise/data/inovxio/lingtu/install/pgo/share/pgo/config/pgo.yaml \

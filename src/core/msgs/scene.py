@@ -107,6 +107,10 @@ def infer_room_type(labels: list[str]) -> str:
 @dataclass
 class SpatialRelation:
     """Oriented spatial relation between two tracked objects (e.g. "on", "near")."""
+    subject_id: int = -1
+    relation: str = ""
+    object_id: int = -1
+    distance: float = 0.0
 
 
 @dataclass
@@ -118,26 +122,59 @@ class Region:
     name: str = ""
     node_ids: list[int] = field(default_factory=list)
     region_type: str = "unknown"
+    llm_named: bool = False
 
 
 @dataclass
 class GroupNode:
     """A semantic group within a room — objects sharing a sub-region and label."""
+    group_id: int = -1
+    room_id: int = -1
+    name: str = ""
+    center: np.ndarray | None = None
+    object_ids: list[int] = field(default_factory=list)
+    semantic_labels: list[str] = field(default_factory=list)
 
 
 @dataclass
 class RoomNode:
     """A named room in the topology graph with associated objects and groups."""
+    room_id: int = -1
+    name: str = ""
+    center: np.ndarray | None = None
+    object_ids: list[int] = field(default_factory=list)
+    group_ids: list[int] = field(default_factory=list)
+    semantic_labels: list[str] = field(default_factory=list)
+    floor_id: int = -1
+    llm_named: bool = False
+    clip_feature: np.ndarray | None = None
+    feature_count: int = 0
 
 
 @dataclass
 class FloorNode:
     """A floor level defined by a vertical Z range containing rooms and objects."""
+    floor_id: int = -1
+    floor_level: int = 0
+    z_range: tuple[float, float] = (0.0, 0.0)
+    object_ids: list[int] = field(default_factory=list)
+    room_ids: list[int] = field(default_factory=list)
+    center_z: float = 0.0
 
 
 @dataclass
 class PhantomNode:
     """A hypothesised object from KG prior with Beta-distribution existence belief."""
+    phantom_id: int = -1
+    label: str = ""
+    room_id: int = -1
+    room_type: str = ""
+    position: np.ndarray | None = None
+    belief_alpha: float = 1.0
+    belief_beta: float = 1.0
+    kg_prior_strength: float = 0.0
+    safety_level: str = "safe"
+    source: str = ""
 
     @property
     def existence_prob(self) -> float:
@@ -207,4 +244,3 @@ def __getattr__(name: str):
 
         return TrackedObject
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-

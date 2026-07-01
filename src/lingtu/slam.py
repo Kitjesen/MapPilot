@@ -7,6 +7,9 @@ import os
 
 import numpy as np
 
+from core.map_save import save_pgo_map_with_adapter
+from core.plugin_seed import seed_registered_plugins
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,7 +37,13 @@ class SLAM:
         slam.stop()
     """
 
-    def __init__(self, lidar=None, mode: str = "fastlio2"):
+    def __init__(
+        self,
+        lidar=None,
+        mode: str = "fastlio2",
+        map_save_adapter=None,
+        map_save_timeout_sec: float = 30.0,
+    ):
         """
         Args:
             lidar: LiDAR instance (optional, SLAM manages its own if None)
@@ -47,6 +56,8 @@ class SLAM:
         self._latest_odom = None
         self._latest_cloud = None
         self._started = False
+        self._map_save_adapter = map_save_adapter
+        self._map_save_timeout_sec = map_save_timeout_sec
 
     def start(self) -> SLAM:
         if self._started:
@@ -94,24 +105,27 @@ class SLAM:
 
     def save_map(self, name: str) -> bool:
         """Save current SLAM map to the active map dir (<map_dir>/<name>/)."""
-        import subprocess
         map_dir = os.path.join(_default_map_dir(), name)
         os.makedirs(map_dir, exist_ok=True)
         pcd_path = os.path.join(map_dir, "map.pcd")
         try:
-            result = subprocess.run(
-                ["ros2", "service", "call", "/pgo/save_maps",
-                 "interface/srv/SaveMaps", "{file_path: '%s'}" % pcd_path],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=30,
+            if self._map_save_adapter is None:
+                seed_registered_plugins(
+                    groups=("map_save_adapter",),
+                    reload_loaded=False,
+                )
+            result = save_pgo_map_with_adapter(
+                self._map_save_adapter,
+                pcd_path,
+                save_patches=True,
+                timeout_sec=self._map_save_timeout_sec,
             )
-            if result.returncode == 0:
+            if not isinstance(result, dict) or result.get("success", True):
                 logger.info("Map saved: %s", pcd_path)
                 self._build_tomogram(name)
                 return True
-            else:
-                logger.error("Map save failed: %s", result.stderr[:200])
-                return False
+            logger.error("Map save failed: %s", result.get("message", "unknown error"))
+            return False
         except Exception as e:
             logger.error("Map save error: %s", e)
             return False

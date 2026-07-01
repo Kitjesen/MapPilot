@@ -333,6 +333,7 @@ def _artifact_gate(token: str) -> dict[str, Any]:
         "token": token,
         "artifact": artifact_name,
         "ok": False,
+        "endpoint_topic_required": False,
         "ros2_topic_required": False,
         "transport": "saved_map_artifact",
         "map_root": str(map_root),
@@ -700,6 +701,7 @@ def _topic_inspection(
         "communicate": communication_allowed,
         "write_interfaces": list(communication.get("interfaces") or []),
         "arbitrary_publish_supported": False,
+        "endpoint_topic_required": False,
         "ros2_topic_required": False,
         "policy": (
             "observe via ModulePort stats plus declared Gateway REST/SSE/WS "
@@ -739,6 +741,7 @@ def _observability_summary(
         "live_module_samples": bool(observed_module_ports),
         "has_fresh_module_sample": bool(observed_module_ports),
         "fresh_stale_ms_limit": LIVE_MODULE_SAMPLE_STALE_MS,
+        "endpoint_topic_required": False,
         "ros2_topic_required": False,
     }
 
@@ -1002,11 +1005,18 @@ def _transport_layers() -> dict[str, Any]:
         },
         "endpoint_adapter": {
             "primary": False,
-            "description": "Runtime endpoint bridge normalizes external sources into canonical topics.",
+            "description": (
+                "Runtime endpoint bridge normalizes external sources into "
+                "canonical LingTu streams."
+            ),
         },
         "ros2_adapter": {
             "primary": False,
-            "description": "Optional endpoint transport for ROS2-backed sensors, SLAM, or simulators.",
+            "description": (
+                "Compatibility alias for ROS2-backed endpoint transports; "
+                "not the product boundary."
+            ),
+            "deprecated_by": "endpoint_adapter",
         },
     }
 
@@ -1035,6 +1045,7 @@ def build_runtime_dataflow_snapshot(gw: Any) -> dict[str, Any]:
         "runtime_contract": runtime_contract,
         "runtime_boundary": runtime_boundary,
         "transport_layers": _transport_layers(),
+        "endpoint_topic_required": False,
         "ros2_topic_required": False,
         "module_ports": module_ports,
         "topics": _topic_summaries(manifest, module_ports, runtime_contract, gw),
@@ -1113,6 +1124,7 @@ def build_runtime_dataflow_topic_detail(gw: Any, selector: str) -> dict[str, Any
                 "payload_available": False,
                 "communicate": False,
                 "arbitrary_publish_supported": False,
+                "endpoint_topic_required": False,
                 "ros2_topic_required": False,
             },
             "error": "runtime_topic_not_found",
@@ -1188,6 +1200,7 @@ def build_runtime_dataflow_subscription(gw: Any, request: Any) -> dict[str, Any]
         "ok": not blockers,
         "ts": time.time(),
         "read_only": True,
+        "endpoint_topic_required": False,
         "ros2_topic_required": False,
         "arbitrary_publish_supported": False,
         "publishes": [],

@@ -204,7 +204,7 @@ curl http://192.168.66.190:5050/api/v1/config | jq '.path_follower'
 For framework-side modules, REPL:
 
 ```bash
-python lingtu.py s100p
+python lingtu.py nav
 > config local_planner
 > module PathFollowerModule
 ```

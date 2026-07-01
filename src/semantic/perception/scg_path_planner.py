@@ -22,6 +22,8 @@ import logging
 import time
 from dataclasses import dataclass
 
+from typing import Any
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -472,7 +474,7 @@ class SCGPathPlanner:
             # 否则，返回两个中心的中点
             return 0.5 * (poly1.center + poly2.center)
 
-    def _find_edge(self, poly1_id: int, poly2_id: int) -> any | None:
+    def _find_edge(self, poly1_id: int, poly2_id: int) -> Any | None:
         """查找两个多面体之间的边。"""
         for edge in self.scg.edges:
             if (edge.from_id == poly1_id and edge.to_id == poly2_id) or \

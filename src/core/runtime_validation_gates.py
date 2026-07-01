@@ -16,22 +16,26 @@ RUNTIME_AUDIT_COMMAND = (
     "python lingtu.py runtime-audit "
     "--json-out artifacts/runtime_contract_audit.json"
 )
+REAL_RUNTIME_EVIDENCE_ARTIFACT = "artifacts/thunder_field_runtime/report.json"
+REAL_RUNTIME_EVIDENCE_GATE_ARTIFACT = (
+    "artifacts/thunder_field_runtime/runtime_evidence.json"
+)
 REAL_RUNTIME_EVIDENCE_COMMAND = (
     "python lingtu.py real-runtime-evidence "
     "--duration-sec 20 "
-    "--json-out artifacts/real_s100p_runtime/report.json"
+    f"--json-out {REAL_RUNTIME_EVIDENCE_ARTIFACT}"
 )
 REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND = (
-    "python scripts/real_runtime_evidence_collect.py "
+    "python scripts/gates/real_runtime_evidence_collect.py "
     "--duration-sec 20 "
-    "--expected-contract real_s100p "
-    "--json-out artifacts/real_s100p_runtime/report.json"
+    f"--expected-contract {REAL_RUNTIME_CONTRACT} "
+    f"--json-out {REAL_RUNTIME_EVIDENCE_ARTIFACT}"
 )
 REAL_RUNTIME_EVIDENCE_GATE_COMMAND = (
-    "python scripts/real_runtime_evidence_gate.py "
-    "artifacts/real_s100p_runtime/report.json "
-    "--expected-contract real_s100p "
-    "--json-out artifacts/real_s100p_runtime/runtime_evidence.json"
+    "python scripts/gates/real_runtime_evidence_gate.py "
+    f"{REAL_RUNTIME_EVIDENCE_ARTIFACT} "
+    f"--expected-contract {REAL_RUNTIME_CONTRACT} "
+    f"--json-out {REAL_RUNTIME_EVIDENCE_GATE_ARTIFACT}"
 )
 SAVED_MAP_ARTIFACT_GATE_COMMAND = (
     "python lingtu.py saved-map-artifact-gate "
@@ -44,7 +48,7 @@ SAVED_MAP_ARTIFACT_GATE_COMMAND = (
 RUNTIME_AUDIT_VALIDATES = (
     "runtime_manifest_vs_topic_contract_yaml",
     "profile_runtime_switch_specs",
-    "real_s100p_collector_topic_coverage",
+    "thunder_field_collector_topic_coverage",
     "canonical_frame_links",
     "topic_default_frame_integrity",
     "ros_frame_contract_doc_mirror",
@@ -70,7 +74,7 @@ RUNTIME_AUDIT_CHECKS = (
 RUNTIME_AUDIT_VALIDATE_CHECK_COVERAGE = {
     "runtime_manifest_vs_topic_contract_yaml": ("yaml_manifest",),
     "profile_runtime_switch_specs": ("profile_runtime_specs",),
-    "real_s100p_collector_topic_coverage": ("real_runtime_collector",),
+    "thunder_field_collector_topic_coverage": ("real_runtime_collector",),
     "canonical_frame_links": ("runtime_contract_integrity",),
     "topic_default_frame_integrity": ("runtime_contract_integrity",),
     "ros_frame_contract_doc_mirror": ("ros_frame_contract_doc",),
@@ -137,7 +141,7 @@ RUNTIME_AUDIT_OPERATOR_SUMMARY_SECTIONS = (
     "Validation commands",
 )
 REAL_RUNTIME_EVIDENCE_PROVES = (
-    "observed_real_s100p_runtime_contract",
+    "observed_thunder_field_runtime_contract",
     "observed_required_topic_frame_ids",
     "observed_map_odom_body_lidar_tf_links",
     "observed_resolved_runtime_data_flow",
@@ -192,9 +196,9 @@ _RUNTIME_VALIDATION_GATES: dict[str, dict[str, Any]] = {
     },
     "real_runtime_evidence": {
         "schema_version": "lingtu.real_runtime_evidence.v1",
-        "scope": "observed_real_s100p_runtime",
+        "scope": "observed_thunder_field_runtime",
         "acceptance_step": 3,
-        "required_when": "before_claiming_real_s100p_runtime_or_field_navigation",
+        "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
         "requires_prior_gates": ["runtime_audit"],
         "conditional_prior_gates": [
             "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"
@@ -206,7 +210,7 @@ _RUNTIME_VALIDATION_GATES: dict[str, dict[str, Any]] = {
         "command": REAL_RUNTIME_EVIDENCE_COMMAND,
         "collector_command": REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND,
         "gate_command": REAL_RUNTIME_EVIDENCE_GATE_COMMAND,
-        "artifact": "artifacts/real_s100p_runtime/report.json",
+        "artifact": REAL_RUNTIME_EVIDENCE_ARTIFACT,
         "expected_runtime_contract": REAL_RUNTIME_CONTRACT,
         "requires_ros": True,
         "requires_real_robot_runtime": True,
@@ -227,7 +231,7 @@ _RUNTIME_VALIDATION_GATES: dict[str, dict[str, Any]] = {
             SAVED_MAP_ARTIFACT_GATE_OPERATOR_SUMMARY_SECTIONS
         ),
         "command": SAVED_MAP_ARTIFACT_GATE_COMMAND,
-        "script": "scripts/saved_map_artifact_gate.py",
+        "script": "scripts/gates/saved_map_artifact_gate.py",
         "artifact": "artifacts/saved_map_artifacts/report.json",
         "requires_ros": False,
         "requires_real_robot_runtime": False,
@@ -259,7 +263,7 @@ _GATE_ACCEPTANCE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     },
     "real_runtime_evidence": {
         "acceptance_step": 3,
-        "required_when": "before_claiming_real_s100p_runtime_or_field_navigation",
+        "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
         "requires_prior_gates": ["runtime_audit"],
         "conditional_prior_gates": [
             "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"

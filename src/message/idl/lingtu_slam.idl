@@ -1,0 +1,117 @@
+module lingtu {
+module dds {
+
+struct Time {
+  long sec;
+  unsigned long nanosec;
+};
+
+struct Header {
+  Time stamp;
+  string frame_id;
+};
+
+struct Vector3 {
+  double x;
+  double y;
+  double z;
+};
+
+struct Quaternion {
+  double x;
+  double y;
+  double z;
+  double w;
+};
+
+struct Imu {
+  Header header;
+  Quaternion orientation;
+  double orientation_covariance[9];
+  Vector3 angular_velocity;
+  double angular_velocity_covariance[9];
+  Vector3 linear_acceleration;
+  double linear_acceleration_covariance[9];
+};
+
+struct LivoxPoint {
+  unsigned long offset_time;
+  float x;
+  float y;
+  float z;
+  octet reflectivity;
+  octet tag;
+  octet line;
+};
+
+struct LivoxFrame {
+  Header header;
+  unsigned long long timebase;
+  unsigned long point_num;
+  octet lidar_id;
+  octet rsvd[3];
+  sequence<LivoxPoint> points;
+};
+
+struct Point {
+  double x;
+  double y;
+  double z;
+};
+
+struct Pose {
+  Point position;
+  Quaternion orientation;
+};
+
+struct PoseWithCovariance {
+  Pose pose;
+  double covariance[36];
+};
+
+struct Twist {
+  Vector3 linear;
+  Vector3 angular;
+};
+
+struct TwistWithCovariance {
+  Twist twist;
+  double covariance[36];
+};
+
+struct Odometry {
+  Header header;
+  string child_frame_id;
+  PoseWithCovariance pose;
+  TwistWithCovariance twist;
+};
+
+struct PointField {
+  string name;
+  unsigned long offset;
+  octet datatype;
+  unsigned long count;
+};
+
+struct PointCloud2 {
+  Header header;
+  unsigned long height;
+  unsigned long width;
+  sequence<PointField> fields;
+  boolean is_bigendian;
+  unsigned long point_step;
+  unsigned long row_step;
+  sequence<octet> data;
+  boolean is_dense;
+};
+
+struct Float32 {
+  float data;
+};
+
+struct Text {
+  string data;
+};
+
+};
+};

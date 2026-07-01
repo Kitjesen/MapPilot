@@ -1,15 +1,8 @@
-"""core.transport.abc — Abstract base classes for pluggable transport backends.
+"""Abstract base classes for pluggable transport backends.
 
-Provides the ABC hierarchy used by ROS2-style transport backends (DDS, SHM,
-Dual).  Upper-layer nodes communicate through Publisher / Subscriber without
+Provides the ABC hierarchy used by Local, SHM, LCM, DDS, and dual transport
+backends. Upper layers communicate through Publisher / Subscriber without
 knowing the underlying implementation.
-
-Classes:
-    TransportStrategy — enum selecting which backend to use
-    TopicConfig       — per-topic configuration dataclass
-    Publisher         — abstract message publisher
-    Subscriber        — abstract message subscriber
-    TransportABC      — abstract factory creating Publisher / Subscriber
 """
 
 from abc import ABC, abstractmethod
@@ -21,8 +14,11 @@ from typing import Any
 
 class TransportStrategy(Enum):
     """Transport strategy selection."""
+
+    LOCAL = "local"
     DDS = "dds"
     SHM = "shm"
+    LCM = "lcm"
     AUTO = "auto"
     DUAL = "dual"
 
@@ -30,9 +26,10 @@ class TransportStrategy(Enum):
 @dataclass
 class TopicConfig:
     """Topic configuration."""
+
     name: str
     msg_type: Any = None
-    strategy: TransportStrategy = TransportStrategy.DDS
+    strategy: TransportStrategy = TransportStrategy.LOCAL
     buffer_size: int = 0
     qos_depth: int = 10
     reliable: bool = False
@@ -76,7 +73,7 @@ class Subscriber(ABC):
 
 
 class TransportABC(ABC):
-    """Transport layer factory (ABC counterpart for ROS2-style backends)."""
+    """Transport layer factory."""
 
     @abstractmethod
     def create_publisher(self, topic: TopicConfig) -> Publisher:

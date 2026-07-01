@@ -2,7 +2,7 @@
 
 # --- 根节点 ---
 # perception_node.py        ROS2 主节点，驱动完整感知流水线
-# perception_publishers.py  ROS2 话题统一发布出口
+# perception_publishers.py  legacy ROS2 publisher compatibility import
 
 # --- Detector 目标检测 (detector_base / yolo_world_detector / bpu_detector /
 #         yoloe_detector / grounding_dino_detector) ---

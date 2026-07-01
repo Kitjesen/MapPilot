@@ -41,8 +41,8 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "real_s100p",
-                "data_source": "real_s100p",
+                "source_profile": "thunder_field",
+                "data_source": "thunder_field",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -52,8 +52,8 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "real_s100p",
-                        "data_source": "real_s100p",
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -62,8 +62,8 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
                         "path": "tomogram.pickle",
                         "sha256": tomogram_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "real_s100p",
-                        "data_source": "real_s100p",
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
                         "frame_id": "map",
                         "shape": [1, 1, 1],
                     },
@@ -148,7 +148,7 @@ def _gateway_acceptance(*, ok: bool = True, mode: str = "field") -> dict:
                 "data_flow_ok": True,
                 "cmd_vel_sent_to_hardware": True,
                 "report_age_s": 12.0,
-                "runtime_contract": "real_s100p",
+                "runtime_contract": "thunder_field",
             },
         },
     }
@@ -202,9 +202,9 @@ def _runtime_switch_plan(*, ok: bool = True, dry_run: bool = True) -> dict:
         },
         "to": {
             "profile": "explore",
-            "endpoint": "real_s100p",
-            "data_source": "real_s100p",
-            "runtime_contract": "real_s100p",
+            "endpoint": "thunder_field",
+            "data_source": "thunder_field",
+            "runtime_contract": "thunder_field",
             "command_sink": "hardware_driver_after_cmd_vel_mux",
             "simulation_only": False,
         },
@@ -260,7 +260,7 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
         "cmd_vel": 0,
         "stop_cmd": 0,
     }
-    assert payload["evidence"]["real_s100p"] == "PASS"
+    assert payload["evidence"]["thunder_field"] == "PASS"
     assert payload["algorithm"]["strict_benchmark"]["status"] == "PASS"
     assert payload["algorithm"]["strict_benchmark"]["ros2_topic_required"] is False
     assert payload["algorithm"]["strict_benchmark"]["publishes"] == []
@@ -271,7 +271,7 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
     assert payload["runtime_switch"]["motion"] is False
     assert payload["runtime_switch"]["publishes"] == []
     assert payload["runtime_switch"]["from"]["endpoint"] == "mujoco_live"
-    assert payload["runtime_switch"]["to"]["endpoint"] == "real_s100p"
+    assert payload["runtime_switch"]["to"]["endpoint"] == "thunder_field"
 
 
 def test_product_field_check_rejects_stateful_runtime_switch_preflight():
@@ -334,7 +334,7 @@ def test_product_field_check_fails_field_mode_without_route_or_real_evidence():
     assert payload["ok"] is False
     assert payload["summary"] == "FAIL"
     assert "route preview is not passing or unavailable" in payload["blockers"]
-    assert "real S100P field evidence is not passing" in payload["blockers"]
+    assert "Thunder field evidence is not passing" in payload["blockers"]
     assert payload["map"]["provenance"] == "UNCHECKED"
     assert "map provenance not checked" in "\n".join(payload["advisories"])
 
@@ -388,10 +388,10 @@ def test_product_field_check_formats_one_screen_summary():
     assert "Frontier preview: status=PASS source=traversable_frontier command_published=false" in output
     assert (
         "Runtime switch: status=PASS dry_run=true motion=false publishes=none "
-        "from=mujoco_live to=real_s100p"
+        "from=mujoco_live to=thunder_field"
     ) in output
     assert "Navigation: can_send_goal=PASS route_preview=PASS" in output
-    assert "Evidence: real_s100p=PASS age=12.0s mode=field" in output
+    assert "Evidence: thunder_field=PASS age=12.0s mode=field" in output
     assert (
         "Algorithm: strict_benchmark=PASS claim_allowed=true missing=none"
         in output

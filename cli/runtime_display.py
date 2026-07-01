@@ -36,13 +36,22 @@ def format_runtime_boundary(runtime: Any) -> str:
     endpoint = _get_attr_or_item(runtime, "endpoint") or "in_process"
     runtime_contract = _get_attr_or_item(runtime, "runtime_contract") or "none"
     simulation_only = str(bool(_get_attr_or_item(runtime, "simulation_only"))).lower()
-    return (
+    text = (
         f"endpoint={endpoint} "
         f"data_source={_get_attr_or_item(runtime, 'data_source')} "
         f"runtime_contract={runtime_contract} "
+        f"module_transport={_get_attr_or_item(runtime, 'module_transport', 'local')} "
+        f"endpoint_transport={_get_attr_or_item(runtime, 'endpoint_transport', 'local')} "
         f"command_sink={_get_attr_or_item(runtime, 'command_sink')} "
         f"simulation_only={simulation_only}"
     )
+    endpoint_contract = _get_attr_or_item(runtime, "endpoint_contract")
+    if endpoint_contract:
+        text = f"{text} endpoint_contract={endpoint_contract}"
+    localization_adapter = _get_attr_or_item(runtime, "localization_adapter")
+    if localization_adapter:
+        text = f"{text} localization_adapter={localization_adapter}"
+    return text
 
 
 def format_runtime_sources(runtime: Any) -> str:
@@ -175,6 +184,8 @@ def format_product_runtime_boundary(runtime: Any) -> str:
     mode = "simulation" if simulation_only else "field"
     return (
         f"mode={mode} runtime_contract={runtime_contract} "
+        f"module_transport={_get_attr_or_item(runtime, 'module_transport', 'local')} "
+        f"endpoint_transport={_get_attr_or_item(runtime, 'endpoint_transport', 'local')} "
         "primary=Gateway+ModulePorts "
         "adapter=endpoint_only "
         "ros2_topic_inspection_required=false"
@@ -212,7 +223,7 @@ def format_product_acceptance_commands(runtime: Any) -> str:
         return f"{runtime_audit} | {gateway_simulation}"
     real_evidence = (
         "python lingtu.py real-runtime-evidence --duration-sec 20 "
-        "--json-out artifacts/real_s100p_runtime/report.json"
+        "--json-out artifacts/thunder_field_runtime/report.json"
     )
     gateway_field = (
         "python lingtu.py gateway-runtime-acceptance --acceptance-mode field "
@@ -731,7 +742,7 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
         ),
         (
             "Evidence: "
-            f"real_s100p={evidence.get('real_s100p', 'UNKNOWN')} "
+            f"thunder_field={evidence.get('thunder_field', 'UNKNOWN')} "
             f"age={age} mode={evidence.get('mode', payload.get('mode', 'unknown'))}"
         ),
         (
@@ -828,6 +839,8 @@ def _format_runtime_env(env: Mapping[str, Any]) -> str:
     keys = (
         "LINGTU_ENDPOINT",
         "LINGTU_DATA_SOURCE",
+        "LINGTU_MODULE_TRANSPORT",
+        "LINGTU_ENDPOINT_TRANSPORT",
         "LINGTU_RUNTIME_CONTRACT",
         "LINGTU_COMMAND_SINK",
         "LINGTU_SIMULATION_ONLY",

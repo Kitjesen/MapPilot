@@ -89,13 +89,13 @@ class TestTAREExplorerModule:
             )
 
     def test_preflight_returns_error_without_dds(self):
-        """Without cyclonedds or rclpy, preflight() must return an error string."""
+        """Without cyclonedds, preflight() must return an error string."""
         from exploration.tare_explorer_module import TAREExplorerModule
 
         mod = TAREExplorerModule()
         result = mod.preflight()
         assert result is not None
-        assert "cyclonedds or rclpy" in result
+        assert "cyclonedds-python" in result
 
     def test_lifecycle(self):
         """setup() -> start() -> stop() transitions without error."""
@@ -127,7 +127,7 @@ class TestTAREExplorerModule:
 
         mod.start()
         assert len(alive_values) >= 1
-        # Without DDS/rclpy, TARE publishes False for the alive port
+        # Without DDS, TARE publishes False for the alive port.
         assert alive_values[-1] is False
 
     def test_skill_methods_registered(self):

@@ -146,7 +146,7 @@ bash sim/scripts/launch_cmu_unity_lingtu_runtime.sh start --gate --rviz
 The wrapper starts CMU ROS first, waits for the Unity TCP endpoint on port
 `10000`, then starts the Unity binary, the LingTu adapter, and the LingTu
 simulation stack. With `--rviz`, it also opens the CMU operator layout from
-`tests/planning/cmu_unity_lingtu_runtime.rviz`. This LingTu-owned view opens
+`sim/planning/cmu_unity_lingtu_runtime.rviz`. This LingTu-owned view opens
 the CMU-derived global map cloud on `/nav/map_cloud`, the robot-local obstacle
 cloud on `/nav/registered_cloud`, CMU terrain evidence on
 `/nav/terrain_map_ext`, the TARE strategy path on `/exploration/local_path`,

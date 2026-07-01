@@ -1,7 +1,7 @@
 """Core relocalization capability contract.
 
-Gateway code depends on this protocol only. SLAM-side modules own the concrete
-ROS service calls and subprocess execution.
+Gateway code depends on this protocol only. Concrete ROS service calls live
+behind compatibility adapters.
 """
 
 from __future__ import annotations

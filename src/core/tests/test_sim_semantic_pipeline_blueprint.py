@@ -53,6 +53,8 @@ def test_sim_blueprint_wires_real_semantic_pipeline(robot, driver_name, camera_s
     assert has_conn("PerceptionModule", "SemanticPlannerModule", "scene_graph")
     assert has_conn("PerceptionModule", "VisualServoModule", "scene_graph")
     assert has_conn("PerceptionModule", "SemanticPlannerModule", "detections")
+    assert has_conn("SemanticMapperModule", "SemanticPlannerModule", "topo_summary")
+    assert has_conn("SemanticMapperModule", "SemanticPlannerModule", "room_graph")
 
 
 def test_sim_mujoco_blueprint_enables_camera_for_semantics():

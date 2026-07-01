@@ -7,8 +7,8 @@ import types
 
 import numpy as np
 
+from compat.ros2.sim_driver import ROS2SimDriverModule
 from core.msgs.geometry import Twist, Vector3
-from drivers.sim.ros2_sim_driver import ROS2SimDriverModule
 
 
 class FakeTwistStamped:
@@ -140,7 +140,7 @@ def _install_fake_ros(monkeypatch, executor: FakeExecutor) -> None:
         _module("rclpy.qos", QoSProfile=QoSProfile, ReliabilityPolicy=ReliabilityPolicy),
     )
 
-    import core.ros2_context as ros2_context
+    import compat.ros2.context as ros2_context
 
     monkeypatch.setattr(ros2_context, "ensure_rclpy", lambda: None)
     monkeypatch.setattr(ros2_context, "get_shared_executor", lambda: executor)

@@ -19,7 +19,7 @@
 pip install 'aiortc>=1.14' 'av>=13'
 
 # 首次跑：
-python lingtu.py s100p
+python lingtu.py nav
 ```
 
 启动日志应当看到：
@@ -116,7 +116,7 @@ Orbbec Gemini 335L
 
 ```bash
 # 1. 安装
-sudo bash scripts/install_go2rtc.sh
+sudo bash scripts/webrtc/install_go2rtc.sh
 # 2. 如果相机设备号不是 /dev/video0:
 v4l2-ctl --list-devices                          # 找到 RGB 节点
 sudo sed -i 's|/dev/video0|/dev/videoN|' /etc/go2rtc/go2rtc.yaml

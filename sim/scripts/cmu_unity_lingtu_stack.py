@@ -226,9 +226,9 @@ def main() -> int:
     sys.path.insert(0, str(ROOT / "src"))
     sys.path.insert(0, str(ROOT))
 
-    from core.blueprints.full_stack import full_stack_blueprint
+    from core.blueprints.profile_builder import build_system_for_profile
 
-    system = full_stack_blueprint(
+    system = build_system_for_profile("sim_cmu_tare", dict(
         robot="sim_ros2",
         # CMU Unity already enters LingTu through ROS2SimDriverModule via the
         # adapter's /nav/* topics. Do not add SlamBridgeModule here: its
@@ -300,7 +300,7 @@ def main() -> int:
         latch_stop_signal=False,
         safety_stop_wiring=False,
         gateway_port=args.gateway_port,
-    ).build()
+    ))
 
     stopped = threading.Event()
 

@@ -962,10 +962,13 @@ def _map_artifact_gate_status(nav_runtime: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _real_runtime_evidence_status(session: Mapping[str, Any]) -> dict[str, Any]:
+    from core.runtime_interface import canonical_data_source_name
+
     runtime_contract = (
         os.environ.get("LINGTU_RUNTIME_CONTRACT")
         or os.environ.get("LINGTU_DATA_SOURCE")
     )
+    runtime_contract = canonical_data_source_name(runtime_contract)
     required = (
         runtime_contract == REAL_RUNTIME_CONTRACT
         and _session_mode(session) in {"navigating", "exploring"}
@@ -1038,6 +1041,7 @@ def _navigation_frame_summary(
     odometry: Any,
 ) -> dict[str, Any]:
     from core.runtime_interface import TOPICS
+    from core.runtime_interface import canonical_data_source_name
     from core.runtime_interface import normalize_frame_id
     from core.runtime_interface import runtime_topic_default_frame_id
 
@@ -1045,6 +1049,7 @@ def _navigation_frame_summary(
         os.environ.get("LINGTU_RUNTIME_CONTRACT")
         or os.environ.get("LINGTU_DATA_SOURCE")
     )
+    runtime_contract = canonical_data_source_name(runtime_contract)
     default_planning_frame = runtime_topic_default_frame_id(
         runtime_contract,
         TOPICS.global_path,
@@ -1087,8 +1092,10 @@ def _navigation_frame_summary(
 
 
 def _runtime_boundary_status() -> dict[str, Any]:
+    from core.blueprints.runtime_endpoint import canonical_runtime_endpoint_name
     from core.runtime_interface import FRAMES
     from core.runtime_interface import RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES
+    from core.runtime_interface import canonical_data_source_name
     from core.runtime_interface import resolved_runtime_data_flow
     from core.runtime_interface import runtime_data_flow_topics
     from core.runtime_interface import runtime_contract_manifest
@@ -1105,8 +1112,13 @@ def _runtime_boundary_status() -> dict[str, Any]:
         "simulation_only": os.environ.get("LINGTU_SIMULATION_ONLY"),
     }
     declared = any(value not in (None, "") for value in env.values())
-    data_source = env["data_source"]
-    runtime_contract = env["runtime_contract"]
+    endpoint = (
+        canonical_runtime_endpoint_name(env["endpoint"])
+        if env["endpoint"]
+        else env["endpoint"]
+    )
+    data_source = canonical_data_source_name(env["data_source"])
+    runtime_contract = canonical_data_source_name(env["runtime_contract"])
     command_sink = env["command_sink"]
     blockers: list[str] = []
     manifest: dict[str, Any] = {}
@@ -1172,7 +1184,7 @@ def _runtime_boundary_status() -> dict[str, Any]:
         "ok": not blockers,
         "declared": declared,
         "profile": env["profile"],
-        "endpoint": env["endpoint"],
+        "endpoint": endpoint,
         "data_source": data_source,
         "runtime_contract": runtime_contract,
         "simulation_only": _as_optional_bool(env["simulation_only"]),
@@ -1212,6 +1224,7 @@ def _localization_frame_summary(
     runtime_boundary: Mapping[str, Any],
 ) -> dict[str, Any]:
     from core.runtime_interface import TOPICS
+    from core.runtime_interface import canonical_data_source_name
     from core.runtime_interface import normalize_frame_id
     from core.runtime_interface import runtime_required_topic_frame_ids
     from core.runtime_interface import runtime_topic_expected_frame_ids
@@ -1222,6 +1235,7 @@ def _localization_frame_summary(
         or os.environ.get("LINGTU_RUNTIME_CONTRACT")
         or os.environ.get("LINGTU_DATA_SOURCE")
     )
+    runtime_contract = canonical_data_source_name(runtime_contract)
     odometry_frame_id = (
         normalize_frame_id(_frame_from_payload(odometry))
         or _diagnostic_frame_id(diagnostics, "odometry_frame_id", "odom_frame_id")

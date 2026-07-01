@@ -26,9 +26,11 @@ from core.msgs.scene import (  # noqa: F401
     BeliefMessage,
     FloorNode,
     PhantomNode,
+    Region,
     RoomNode,
     RoomTypePosterior,
     ViewNode,
+    infer_room_type,
 )
 
 

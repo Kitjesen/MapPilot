@@ -14,7 +14,7 @@ def _field_check(*, ok: bool = True) -> dict:
         "ok": ok,
         "summary": "PASS" if ok else "FAIL",
         "mode": "field",
-        "blockers": [] if ok else ["real S100P field evidence is not passing"],
+        "blockers": [] if ok else ["Thunder field evidence is not passing"],
         "advisories": [],
     }
 
@@ -71,7 +71,7 @@ def test_inspection_acceptance_passes_field_ready_targets():
         "motion": False,
         "publishes": [],
         "from": {"endpoint": "mujoco_live"},
-        "to": {"endpoint": "real_s100p"},
+        "to": {"endpoint": "thunder_field"},
     }
 
     payload = build_inspection_acceptance(
@@ -97,7 +97,7 @@ def test_inspection_acceptance_passes_field_ready_targets():
     assert payload["evidence"]["frontier_preview"]["candidate"]["source"] == (
         "traversable_frontier"
     )
-    assert payload["evidence"]["runtime_switch"]["to"]["endpoint"] == "real_s100p"
+    assert payload["evidence"]["runtime_switch"]["to"]["endpoint"] == "thunder_field"
 
 
 def test_inspection_acceptance_formats_runtime_switch_preflight():
@@ -113,7 +113,7 @@ def test_inspection_acceptance_formats_runtime_switch_preflight():
         "motion": False,
         "publishes": [],
         "from": {"endpoint": "mujoco_live"},
-        "to": {"endpoint": "real_s100p"},
+        "to": {"endpoint": "thunder_field"},
     }
 
     payload = build_inspection_acceptance(
@@ -128,7 +128,7 @@ def test_inspection_acceptance_formats_runtime_switch_preflight():
     assert "LingTu Inspection Acceptance: PASS" in output
     assert (
         "Runtime switch: status=PASS dry_run=true motion=false publishes=none "
-        "from=mujoco_live to=real_s100p"
+        "from=mujoco_live to=thunder_field"
     ) in output
 
 
@@ -143,7 +143,7 @@ def test_inspection_acceptance_blocks_when_field_ready_fails():
 
     assert payload["ok"] is False
     assert payload["summary"] == "BLOCKED"
-    assert "field: real S100P field evidence is not passing" in payload["blockers"]
+    assert "field: Thunder field evidence is not passing" in payload["blockers"]
 
 
 def test_inspection_acceptance_fails_infeasible_goal_candidate_preview():

@@ -11,6 +11,8 @@ import time
 from collections import deque
 from pathlib import Path
 
+from core.runtime.resolver import PROFILE_ALIASES
+
 from . import term as T
 from .profiles_data import PROFILES
 from .run_state import clear_run_state, is_pid_alive, read_run_state, resolve_log_file
@@ -44,6 +46,7 @@ _TAGLINE = "  Autonomous Navigation for Quadruped Robots"
 
 # Profile icons and accent colors
 _PROFILE_META = {
+    "lite":    ("L", "Lightweight Thunder runtime",                  T.green),
     "nav":     ("◉", "Navigate using a saved map",                  T.green),
     "explore": ("◎", "Explore unknown area",                         T.cyan),
     "map":     ("⊕", "Build a new map",                              T.yellow),
@@ -57,9 +60,16 @@ _PROFILE_META = {
     "stub":    ("○", "Framework testing only",                       T.dim),
 }
 
-_PRODUCT_PROFILE_NAMES = ("map", "nav", "explore")
+_PRODUCT_PROFILE_NAMES = ("lite", "map", "nav", "explore")
 _ADVANCED_PROFILE_NAMES = ("tare_explore",)
 _EXPERIMENTAL_PROFILE_NAMES = ("super_lio", "super_lio_relocation")
+_PROFILE_ALIASES_BY_CANONICAL: dict[str, tuple[str, ...]] = {}
+for _alias, _canonical in PROFILE_ALIASES.items():
+    _PROFILE_ALIASES_BY_CANONICAL.setdefault(_canonical, ())
+    _PROFILE_ALIASES_BY_CANONICAL[_canonical] = (
+        *_PROFILE_ALIASES_BY_CANONICAL[_canonical],
+        _alias,
+    )
 
 
 def _profile_tier(name: str) -> str:
@@ -76,6 +86,13 @@ def _visible_profile_names(*, show_all: bool = False) -> list[str]:
     if show_all:
         return list(PROFILES.keys())
     return [name for name in _PRODUCT_PROFILE_NAMES if name in PROFILES]
+
+
+def _profile_alias_note(name: str) -> str:
+    aliases = _PROFILE_ALIASES_BY_CANONICAL.get(name, ())
+    if not aliases:
+        return ""
+    return f" alias={','.join(aliases)}"
 
 
 # Which wizard questions are relevant per profile.
@@ -335,7 +352,8 @@ def list_profiles(*, show_all: bool = False):
         p = PROFILES[name]
         tier = _profile_tier(name)
         tier_note = "" if tier == "product" else f" [{tier}]"
-        print(f"  {T.green(f'{name:10s}')} {p['_desc']}{T.dim(tier_note)}")
+        alias_note = _profile_alias_note(name)
+        print(f"  {T.green(f'{name:10s}')} {p['_desc']}{T.dim(tier_note + alias_note)}")
         parts = []
         if p.get("robot"):
             parts.append(f"robot={p['robot']}")

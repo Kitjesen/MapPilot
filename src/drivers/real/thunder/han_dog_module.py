@@ -9,9 +9,7 @@ Ports:
 
 Usage::
 
-    from core.blueprints.full_stack import full_stack_blueprint
-    system = full_stack_blueprint(robot="thunder", dog_host="192.168.66.190").build()
-    system.start()
+    python lingtu.py thunder-nav --dog-host 192.168.66.190
 """
 
 from __future__ import annotations

@@ -1,8 +1,14 @@
-"""SLAM stack: C++ runs as systemd service, Python bridges data via DDS.
+"""SLAM stack: bridge external/native SLAM data into Module ports.
 
 Optionally includes DepthVisualOdomModule for degeneracy-resilient fusion.
 When SLAM detects corridor/open-field degeneracy (SEVERE/CRITICAL),
 visual odometry from the depth camera selectively fuses into degenerate DOFs.
+
+External service startup belongs to the system stack
+(`core.blueprints.stacks.system.external_services`) and runs through
+ExternalServiceManagerModule during runtime startup. This stack factory must
+remain side-effect free so non-ROS and non-systemd profiles can build the same
+module graph.
 
 GNSS fusion: when GnssModule is present in the system (from full_stack.py's
 _gnss_bp), its ``gnss_odom`` port auto-wires into SlamBridgeModule.gnss_odom
@@ -12,10 +18,14 @@ wire() call needed — do not add one here unless the port names diverge.
 
 from __future__ import annotations
 
+import importlib
 import logging
+from typing import Any
 
 from core.blueprint import Blueprint
-from core.blueprints.stacks._registry import optional_stack_module, stack_module
+from core.blueprints.stacks._registry import optional_stack_module
+from core.plugin_seed import seed_registered_plugins
+from core.registry import get
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +33,20 @@ logger = logging.getLogger(__name__)
 def slam(
     profile: str = "fastlio2",
     enable_visual_backup: bool = True,
-    manage_services: bool = True,
+    manage_services: bool = False,
+    localization_adapter: str | None = None,
+    endpoint_contract: str | None = None,
 ) -> Blueprint:
     """SLAM / localization stack.
 
-    C++ SLAM always runs as a separate systemd service (correct DDS isolation).
-    Python only bridges ROS2 topics into Module ports.
+    The external SLAM process may be ROS2, native, or disabled depending on the
+    runtime endpoint. This factory only creates Module graph nodes.
 
     Args:
         profile: SLAM backend profile
         enable_visual_backup: Add DepthVisualOdomModule for degeneracy fallback
+        manage_services: Deprecated compatibility flag. Service orchestration
+            is now handled by the system stack, not this factory.
 
     Profiles:
       "fastlio2"  → start slam + slam_pgo services (mapping mode)
@@ -56,68 +70,23 @@ def slam(
 
     if not profile or profile == "none":
         return bp
-
-    # Start the right systemd services for this mode.
     if manage_services:
-        try:
-            from core.service_manager import get_service_manager
-            svc = get_service_manager()
-
-            if profile == "fastlio2":
-                svc.stop("localizer", "super_lio", "super_lio_relocation")  # stop nav/experimental modes if running
-                svc.ensure("slam", "slam_pgo")
-                svc.wait_ready("slam", timeout=10.0)
-                logger.info("SLAM mapping services started (slam + pgo)")
-
-            elif profile == "localizer":
-                svc.stop("slam_pgo", "super_lio", "super_lio_relocation")  # stop map/experimental modes if running
-                svc.ensure("slam", "localizer")
-                svc.wait_ready("slam", "localizer", timeout=10.0)
-                logger.info("SLAM localization services started (slam + localizer)")
-
-            elif profile == "super_lio":
-                svc.stop("slam", "slam_pgo", "localizer", "super_lio_relocation")
-                svc.ensure("lidar", "super_lio")
-                svc.wait_ready("lidar", "super_lio", timeout=10.0)
-                logger.info("Super-LIO service started as experimental external LIO backend")
-
-            elif profile == "super_lio_relocation":
-                svc.stop("slam", "slam_pgo", "localizer", "super_lio")
-                svc.ensure("lidar", "super_lio_relocation")
-                svc.wait_ready("lidar", "super_lio_relocation", timeout=10.0)
-                logger.info("Super-LIO relocation service started as experimental saved-map backend")
-
-            elif profile == "bridge":
-                pass  # assume SLAM already running
-
-        except Exception as e:
-            if profile in (
-                "fastlio2",
-                "localizer",
-                "super_lio",
-                "super_lio_relocation",
-            ):
-                logger.warning(
-                    "SLAM service manager unavailable (no systemd?): %s. "
-                    "SLAM C++ nodes will not be started automatically. "
-                    "On S100P, ensure systemd services are configured. "
-                    "On dev machines, SLAM is not needed (stub/dev profiles).", e)
-            else:
-                logger.debug("SLAM service manager: %s", e)
-
-    # Bridge ROS2 topics into Python Module ports
-    try:
-        SlamBridgeModule = stack_module(
-            "slam_bridge",
-            "default",
-            seed_group="slam",
-            fallback="slam.slam_bridge_module.SlamBridgeModule",
+        logger.debug(
+            "slam(manage_services=True) is ignored; external service startup "
+            "is handled by core.blueprints.stacks.system.external_services"
         )
+
+    # Resolve the localization role first; ROS2/DDS is only the current backend.
+    try:
+        LocalizationAdapterModule = _localization_adapter_module(localization_adapter)
         bridge_kwargs = _read_gnss_fusion_kwargs()
         bridge_kwargs["backend_profile"] = profile
-        bp.add(SlamBridgeModule, alias="SlamBridgeModule", **bridge_kwargs)
+        if endpoint_contract:
+            bridge_kwargs["endpoint_contract"] = endpoint_contract
+        # Keep the runtime alias stable until all downstream wires migrate.
+        bp.add(LocalizationAdapterModule, alias="SlamBridgeModule", **bridge_kwargs)
     except ImportError as e:
-        logger.warning("SlamBridgeModule not available: %s", e)
+        logger.warning("Localization adapter module not available: %s", e)
 
     # Depth camera visual odometry for degeneracy fallback
     if enable_visual_backup:
@@ -144,6 +113,47 @@ def slam_module_name(profile: str) -> str:
     if not profile or profile == "none":
         return ""
     return "SlamBridgeModule"
+
+
+def _localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
+    """Resolve the localization adapter while preserving legacy plugins."""
+    adapter = str(adapter_name or "").strip().lower()
+    if adapter in {"lcm", "lcm_endpoint", "thunder_field_lcm_v1"}:
+        preferred = (("localization_adapter", "lcm_endpoint"),)
+        fallback_module = "compat.lcm.localization_adapter"
+        fallback_class = "LCMLocalizationAdapterModule"
+        seed_group = "slam_lcm"
+    elif adapter and adapter not in {"auto", "default", "ros2", "ros2_slam_bridge"}:
+        preferred = (("localization_adapter", adapter),)
+        fallback_module = ""
+        fallback_class = ""
+        seed_group = "slam"
+    else:
+        preferred = (
+            ("localization_adapter", "ros2_slam_bridge"),
+            ("slam_bridge", "default"),
+        )
+        fallback_module = "compat.ros2.slam_bridge"
+        fallback_class = "SlamBridgeModule"
+        seed_group = "slam_ros2"
+
+    for category, name in preferred:
+        try:
+            return get(category, name)
+        except KeyError:
+            pass
+
+    seed_registered_plugins(groups=(seed_group,), reload_loaded=False)
+    for category, name in preferred:
+        try:
+            return get(category, name)
+        except KeyError:
+            pass
+
+    if fallback_module and fallback_class:
+        module = importlib.import_module(fallback_module)
+        return getattr(module, fallback_class)
+    raise ImportError(f"Localization adapter '{adapter_name}' not available")
 
 
 def normalize_slam_profile(profile: str) -> str:

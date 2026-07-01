@@ -1,0 +1,173 @@
+schema_version: lingtu.thunder_lite_package.v1
+profile: thunder-lite
+purpose: Minimal local Thunder runtime package with local transports and no ROS, Gateway, SLAM, maps, or semantic stack.
+
+deploy:
+  required_files:
+    - scripts/deploy/thunder/runtime-env.sh
+    - scripts/deploy/thunder/lingtu-thunder-lite.service
+    - scripts/deploy/thunder/install_lite_service.sh
+  forbidden_markers:
+    - /opt/ros
+    - ros2-env.sh
+    - ROS_DOMAIN_ID
+    - RMW_IMPLEMENTATION
+    - colcon
+    - rclpy
+
+python:
+  lite_extra: lite
+  gateway_extra: gateway
+  thunder_extra: thunder
+  lite_requirements: requirements-lite.txt
+  required_lite_dependencies:
+    - numpy
+    - scipy
+    - pyyaml
+    - pydantic
+  gateway_dependencies:
+    - fastapi
+    - uvicorn
+    - websockets
+  forbidden_base_dependencies:
+    - fastapi
+    - uvicorn
+    - websockets
+    - opencv-python-headless
+    - scikit-learn
+    - openai
+    - anthropic
+    - jieba
+    - langchain
+    - langchain-core
+    - langchain-openai
+    - torch
+    - ultralytics
+    - open-clip-torch
+    - chromadb
+  forbidden_lite_dependencies:
+    - fastapi
+    - uvicorn
+    - websockets
+    - opencv-python-headless
+    - scikit-learn
+    - openai
+    - anthropic
+    - jieba
+    - langchain
+    - langchain-core
+    - langchain-openai
+    - torch
+    - ultralytics
+    - open-clip-torch
+    - chromadb
+    - brainstem-api
+
+package:
+  include_paths:
+    - lingtu.py
+    - cli/
+    - requirements-lite.txt
+    - pyproject.toml
+    - config/robot_config.yaml
+    - config/devices.yaml
+    - config/topic_contract.yaml
+    - config/thunder_lite_package.yaml
+    - scripts/deploy/thunder/runtime-env.sh
+    - scripts/deploy/thunder/lingtu-thunder-lite.service
+    - scripts/deploy/thunder/install_lite_service.sh
+    - src/core/
+    - src/lingtu_runtime/
+    - src/drivers/__init__.py
+    - src/drivers/spec.py
+    - src/drivers/robot_profile.py
+    - src/drivers/sensor_suite.py
+    - src/drivers/real/__init__.py
+    - src/drivers/real/thunder/
+    - src/nav/navigation_module.py
+    - src/nav/safety_ring_module.py
+    - src/nav/cmd_vel_mux_module.py
+    - src/nav/services/__init__.py
+    - src/nav/services/geofence_manager_module.py
+    - src/base_autonomy/modules/
+  exclude_paths:
+    - src/compat/ros2/
+    - src/slam/
+    - src/semantic/
+    - src/memory/
+    - src/gateway/
+    - src/webrtc/
+    - src/exploration/
+    - src/drivers/sim/
+    - src/drivers/livox_ros_driver2/
+    - src/global_planning/
+    - sim/
+    - web/
+    - third_party/
+    - calibration/
+    - launch/
+  omit_paths:
+    - "**/__pycache__/"
+    - "**/*.pyc"
+    - "**/tests/"
+    - ".pytest_cache/"
+    - ".ruff_cache/"
+    - cli/runtime_audit.py
+    - cli/runtime_extra.py
+    - src/core/blueprints/full_stack.py
+    - src/core/blueprints/full_stack_wiring.py
+    - src/core/blueprints/multi_robot.py
+    - src/core/blueprints/profile_graph.py
+    - src/core/blueprints/simulation_contract.py
+    - src/core/blueprints/stacks/composition.py
+    - src/core/blueprints/stacks/exploration.py
+    - src/core/blueprints/stacks/gateway.py
+    - src/core/blueprints/stacks/lidar.py
+    - src/core/blueprints/stacks/maps.py
+    - src/core/blueprints/stacks/memory.py
+    - src/core/blueprints/stacks/perception.py
+    - src/core/blueprints/stacks/planner.py
+    - src/core/blueprints/stacks/sim_lidar.py
+    - src/core/blueprints/stacks/slam.py
+    - src/core/blueprints/stacks/system.py
+    - src/core/blueprints/wires/
+    - src/core/dds.py
+    - src/core/devices/
+    - src/core/dimos_gap.py
+    - src/core/native_install.py
+    - src/core/rerun_module.py
+    - src/core/transport/dds.py
+    - src/core/transport/dual.py
+    - src/core/transport/lcm.py
+    - src/core/transport/shm.py
+  forbidden_markers:
+    - rclpy
+    - sensor_msgs
+    - nav_msgs
+    - geometry_msgs
+    - launch_ros
+    - /opt/ros
+    - colcon
+
+runtime:
+  expected_spec:
+    endpoint: thunder_lite
+    data_source: thunder_lite_local
+    runtime_contract: thunder_lite_local
+    module_transport: local
+    endpoint_transport: local
+    endpoint_contract: null
+    localization_adapter: null
+    simulation_only: false
+    command_sink: hardware_driver_after_cmd_vel_mux
+  expected_config:
+    slam_profile: none
+    enable_gateway: false
+    enable_semantic: false
+    enable_map_modules: false
+    enable_gnss: false
+    manage_external_services: false
+    run_startup_checks: false
+    enable_native: false
+    python_autonomy_backend: simple
+    python_path_follower_backend: pid

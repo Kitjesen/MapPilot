@@ -1,7 +1,7 @@
 # Semantic Planner — Module Index
 
-> Source: `src/semantic/planner/semantic_planner/`  
-> Architecture: **Module-First** — every runtime unit is a `core.Module`.  
+> Source: `src/semantic/planner/`
+> Architecture: **Module-First** — every runtime unit is a `core.Module`.
 > No standalone ROS2 nodes. C++ / ROS2 integration is handled by `NativeModule` wrappers in `src/slam/` and `src/base_autonomy/`.
 
 ---
@@ -10,7 +10,7 @@
 
 | File | Layer | Ports (In → Out) | Role |
 |------|------:|-------------------|------|
-| `semantic_planner_module.py` | L4 | `instruction, agent_instruction, scene_graph, odometry, detections, mission_status` → `goal_pose, task_plan, planner_status, cancel, servo_target` | Unified planner: decompose → resolve → explore → execute. Embeds GoalResolver, FrontierScorer, TaskDecomposer, ActionExecutor as internal strategies. LERa 3-step recovery on STUCK/FAILED. **@skill**: `send_instruction`, `get_planner_status`, `decompose_task`. |
+| `semantic_planner_module.py` | L4 | `instruction, agent_instruction, scene_graph, odometry, detections, mission_status, topo_summary, room_graph` → `goal_pose, task_plan, planner_status, cancel, servo_target` | Unified planner: decompose → resolve → explore → execute. Embeds GoalResolver, FrontierScorer, TaskDecomposer, ActionExecutor as internal strategies. LERa 3-step recovery on STUCK/FAILED. Consumes `SemanticMapperModule` topology context. **@skill**: `send_instruction`, `get_planner_status`, `decompose_task`. |
 | `visual_servo_module.py` | L4 | `servo_target, image, detections, depth, odometry` → `goal_pose, cmd_vel, servo_status` | Visual servo: BBoxNavigator (far ≥3 m → goal_pose, near <3 m → cmd_vel). PersonTracker with Kalman + Re-ID. **@skill**: `find_object`, `follow_person`, `stop_servo`, `get_servo_status`. |
 | `llm_module.py` | L4 | `llm_request` → `llm_response` | Multi-backend LLM wrapper (kimi / openai / claude / qwen). Stateless; exposes `chat()` as an `@rpc`. |
 | `goal_resolver_module.py` | L4 | `instruction, scene_graph, odometry` → `goal_pose, resolver_status` | Thin Module wrapper around `GoalResolver` (Fast-Slow dual process). |
@@ -61,7 +61,7 @@ These are plain Python classes instantiated **inside** `SemanticPlannerModule` �
 | `episodic_memory.py` | Local copy / alias of `memory.spatial.episodic.EpisodicMemory`. Used by SemanticPlannerModule internally. |
 | `topological_memory.py` | Topology graph: TopoNode + FSR-VLN Jaccard edges + VLingMem region summaries. |
 | `tagged_locations.py` | Local copy / alias of `memory.spatial.tagged_locations.TaggedLocationStore`. |
-| `semantic_prior.py` | Semantic priors: place CLIP descriptions, `predict_room_type_from_labels()`, room-object co-occurrence. |
+| `memory/knowledge/semantic_prior.py` | Semantic priors: place CLIP descriptions, `predict_room_type_from_labels()`, room-object co-occurrence. |
 
 ---
 
@@ -99,7 +99,7 @@ These are plain Python classes instantiated **inside** `SemanticPlannerModule` �
 |------|------|
 | `implicit_fsm_policy.py` | LOVON-style implicit FSM navigation policy (no explicit state machine). |
 | `voi_scheduler.py` | VOI (Value of Information) scheduler: decides when to trigger perception / LLM queries. |
-| `room_object_kg.py` | Room-object knowledge graph: prior co-occurrence relations, `predict_room_type`, ESCA filter. |
+| `memory/knowledge/room_object_kg.py` | Room-object knowledge graph: prior co-occurrence relations, `predict_room_type`, ESCA filter. |
 | `vlm_scene_agent.py` | VLM-based scene agent: open-ended visual question answering over the scene graph. |
 | `agent_loop.py` | Multi-turn agent loop (observe → think → act), 7 tool calls, max 10 steps / 120 s timeout. |
 

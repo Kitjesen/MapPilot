@@ -1,5 +1,5 @@
 [Unit]
-Description=S100P Livox MID-360 LiDAR Driver
+Description=Thunder Livox MID-360 LiDAR Driver
 After=network.target
 StartLimitIntervalSec=300
 StartLimitBurst=3
@@ -10,8 +10,7 @@ Type=simple
 User=sunrise
 WorkingDirectory=/home/sunrise/data/inovxio/lingtu
 ExecStart=/bin/bash -c '\
-  source /opt/ros/humble/setup.bash && \
-  source ~/data/inovxio/lingtu/install/setup.bash && \
+  source /opt/lingtu/config/ros2-env.sh && \
   exec ros2 run livox_ros_driver2 livox_ros_driver2_node \
     --ros-args \
     -p xfer_format:=1 \

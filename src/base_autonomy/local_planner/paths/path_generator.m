@@ -14,7 +14,7 @@
 % To regenerate the path set (e.g. after changing vehicle geometry):
 %   1. Open MATLAB, run this script.
 %   2. Commit the updated PLY files.
-%   3. Rebuild nav_core: bash scripts/build_nav_core.sh
+%   3. Rebuild nav_core: bash scripts/build/build_nav_core.sh
 %
 % DO NOT delete this file — it is the canonical specification of the path set.
 
@@ -47,17 +47,17 @@ fprintf('\nGenerating paths\n');
 for shift1 = -angle : deltaAngle : angle
     wayptsStart = [0, 0, 0;
                    dis, shift1, 0];
-    
+
     pathStartR = 0 : 0.01 : dis;
     pathStartShift = spline(wayptsStart(:, 1), wayptsStart(:, 2), pathStartR);
-    
+
     pathStartX = pathStartR .* cos(pathStartShift * pi / 180);
     pathStartY = pathStartR .* sin(pathStartShift * pi / 180);
     pathStartZ = zeros(size(pathStartX));
-    
+
     pathStart = [pathStartX; pathStartY; pathStartZ; ones(size(pathStartX)) * groupID];
     pathStartAll = [pathStartAll, pathStart];
-    
+
     for shift2 = -angle * scale + shift1 : deltaAngle * scale : angle * scale + shift1
         for shift3 = -angle * scale^2 + shift2 : deltaAngle * scale^2 : angle * scale^2 + shift2
                 waypts = [pathStartR', pathStartShift', pathStartZ';
@@ -75,13 +75,13 @@ for shift1 = -angle : deltaAngle : angle
                 path = [pathX; pathY; pathZ; ones(size(pathX)) * pathID; ones(size(pathX)) * groupID];
                 pathAll = [pathAll, path];
                 pathList = [pathList, [pathX(end); pathY(end); pathZ(end); pathID; groupID]];
-                
+
                 pathID = pathID + 1;
 
                 plot3(pathX, pathY, pathZ);
         end
     end
-    
+
     groupID = groupID + 1
 end
 
@@ -150,7 +150,7 @@ for indX = 0 : voxelNumX - 1
 
         voxelPoints(indPoint, 1) = x;
         voxelPoints(indPoint, 2) = y;
-        
+
         indPoint  = indPoint + 1;
     end
 end
@@ -168,10 +168,10 @@ fileID = fopen('correspondences.txt', 'w');
 
 for i = 1 : voxelPointNum
     fprintf(fileID, '%d ', i - 1);
-    
+
     indVoxel = sort(ind{i});
     indVoxelNum = size(indVoxel, 2);
-    
+
     pathIndRec = -1;
     for j = 1 : indVoxelNum
         pathInd = pathAll(4, indVoxel(j));
@@ -183,7 +183,7 @@ for i = 1 : voxelPointNum
         pathIndRec = pathInd;
     end
     fprintf(fileID, '-1\n');
-    
+
     if mod(i, 1000) == 0
         i
     end

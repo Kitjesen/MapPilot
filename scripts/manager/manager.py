@@ -26,29 +26,58 @@ import asyncio
 import json
 import logging
 import os
+import re
+import shlex
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("lingtu-manager")
 
 app = FastAPI(title="LingTu Robot Manager", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
 NAV_DIR = os.environ.get("NAV_DIR", "/home/sunrise/data/inovxio/lingtu")
 MAP_DIR = os.environ.get("NAV_MAP_DIR", os.path.expanduser("~/data/inovxio/data/maps"))
 MANAGER_PORT = int(os.environ.get("LINGTU_PORT", "5050"))
+MANAGER_HOST = os.environ.get("LINGTU_MANAGER_HOST", "127.0.0.1")
+MANAGER_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "LINGTU_MANAGER_ORIGINS",
+        f"http://127.0.0.1:{MANAGER_PORT},http://localhost:{MANAGER_PORT}",
+    ).split(",")
+    if origin.strip()
+]
+_ALLOWED_PROFILES = {"map", "nav", "explore", "idle", "stub", "dev", "sim", "sim_nav"}
+_MAP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=MANAGER_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type", "X-LingTu-Token"],
+)
+
+
+def _safe_map_path(name: str) -> Path:
+    """Resolve a user map name under MAP_DIR and reject traversal/shell payloads."""
+    if not _MAP_NAME_RE.fullmatch(name):
+        raise ValueError("Map name must be 1-64 chars: letters, numbers, _, ., -")
+    root = Path(MAP_DIR).expanduser().resolve()
+    path = (root / name).resolve()
+    if path == root or root not in path.parents:
+        raise ValueError("Map path escapes map directory")
+    return path
 
 # ── State ────────────────────────────────────────────────────────────────────
 
@@ -97,13 +126,19 @@ def _is_active(service: str) -> bool:
 
 def _start_lingtu(profile: str, extra_args: str = "") -> bool:
     """Start lingtu navigation system as background process."""
+    if profile not in _ALLOWED_PROFILES:
+        state.last_error = f"Invalid profile: {profile}"
+        return False
     if state.lingtu_pid and _pid_alive(state.lingtu_pid):
         _stop_lingtu()
 
-    cmd = f"cd {NAV_DIR} && python3 lingtu.py {profile} --no-repl {extra_args}"
+    args = ["python3", "lingtu.py", profile, "--no-repl"]
+    if extra_args:
+        args.extend(shlex.split(extra_args))
     try:
         proc = subprocess.Popen(
-            ["bash", "-c", cmd],
+            args,
+            cwd=NAV_DIR,
             stdout=open("/tmp/lingtu_nav.log", "a"),
             stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
@@ -154,10 +189,11 @@ def _start_rerun():
     """Start rerun_live.py for 3D visualization."""
     import subprocess as _sp
     _sp.Popen(
-        ["bash", "-c",
+        ["bash", "-lc",
          "source /opt/ros/humble/setup.bash && "
          "source /opt/nav/install/setup.bash 2>/dev/null; "
-         f"cd {NAV_DIR} && exec python3 -u scripts/rerun_live.py"],
+         "exec python3 -u scripts/visualization/rerun_live.py"],
+        cwd=NAV_DIR,
         stdout=open("/tmp/rerun_live.log", "a"),
         stderr=_sp.STDOUT,
         preexec_fn=os.setsid,
@@ -234,40 +270,46 @@ def _list_maps() -> list:
 
 
 def _save_map(name: str) -> dict:
-    map_dir = os.path.join(MAP_DIR, name)
-    os.makedirs(map_dir, exist_ok=True)
-    pcd_path = os.path.join(map_dir, "map.pcd")
-    # Must source ROS2 env for ros2 CLI
-    cmd = (
-        "source /opt/ros/humble/setup.bash && "
-        "source /opt/nav/install/setup.bash 2>/dev/null; "
-        f"ros2 service call /nav/save_map interface/srv/SaveMaps "
-        f"\"{{file_path: '{pcd_path}'}}\""
-    )
     try:
-        result = subprocess.run(
-            ["bash", "-c", cmd],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-        )
-        if result.returncode != 0:
-            return {"success": False, "error": result.stderr[:200]}
-        return {"success": True, "pcd": pcd_path}
+        map_dir_path = _safe_map_path(name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    map_dir_path.mkdir(parents=True, exist_ok=True)
+    pcd_path = map_dir_path / "map.pcd"
+    try:
+        result = _save_nav_map_snapshot(pcd_path)
+        if result.get("success") is False:
+            return {"success": False, "error": str(result.get("message", "map save failed"))}
+        return {"success": True, "pcd": str(pcd_path)}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 
+def _save_nav_map_snapshot(pcd_path: Path) -> dict:
+    src_dir = Path(NAV_DIR).expanduser().resolve() / "src"
+    if src_dir.is_dir() and str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+
+    from core.map_save import save_nav_map_with_adapter
+    from core.plugin_seed import seed_registered_plugins
+    from lingtu_runtime.plugin_seed import install_builtin_plugin_catalog
+
+    install_builtin_plugin_catalog()
+    seed_registered_plugins(groups=("map_save_adapter",), reload_loaded=False)
+    return save_nav_map_with_adapter(None, pcd_path, timeout_sec=30.0)
+
+
 def _use_map(name: str) -> dict:
-    map_path = os.path.join(MAP_DIR, name)
-    if not os.path.isdir(map_path):
+    try:
+        map_path = _safe_map_path(name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if not map_path.is_dir():
         return {"success": False, "error": f"Map not found: {name}"}
-    active_link = os.path.join(MAP_DIR, "active")
-    if os.path.islink(active_link) or os.path.exists(active_link):
-        os.remove(active_link)
-    os.symlink(map_path, active_link)
+    active_link = Path(MAP_DIR).expanduser().resolve() / "active"
+    if active_link.is_symlink() or active_link.exists():
+        active_link.unlink()
+    active_link.symlink_to(map_path)
     state.active_map = name
     return {"success": True, "active": name}
 
@@ -388,8 +430,10 @@ async def api_camera_snapshot():
     """Grab one JPEG frame from ROS2 camera topic via cyclonedds."""
     try:
         sys.path.insert(0, os.path.join(NAV_DIR, "src"))
+        import io
+        import threading
+
         from core.dds import ROS2TopicReader
-        import threading, io
 
         result = {"data": None}
         evt = threading.Event()
@@ -821,7 +865,7 @@ async function checkRerun(){
       w.innerHTML='<iframe src="http://'+location.hostname+':9090" style="width:100%;height:400px;border:none;border-radius:12px"></iframe>';
     }else{
       s.textContent="OFF";s.style.color="var(--muted)";
-      w.innerHTML='<span style="color:var(--muted)">Rerun 未运行 — 启动: python3 scripts/rerun_live.py</span>';
+      w.innerHTML='<span style="color:var(--muted)">Rerun 未运行 — 启动: python3 scripts/visualization/rerun_live.py</span>';
     }
   }catch{}
 }
@@ -849,5 +893,11 @@ if __name__ == "__main__":
     else:
         state.mode = "idle"
 
-    logger.info("LingTu Manager starting on port %d (mode=%s)", MANAGER_PORT, state.mode)
-    uvicorn.run(app, host="0.0.0.0", port=MANAGER_PORT, log_level="warning")
+    logger.info(
+        "LingTu Manager starting on %s:%d (mode=%s, origins=%s)",
+        MANAGER_HOST,
+        MANAGER_PORT,
+        state.mode,
+        MANAGER_ALLOWED_ORIGINS,
+    )
+    uvicorn.run(app, host=MANAGER_HOST, port=MANAGER_PORT, log_level="warning")

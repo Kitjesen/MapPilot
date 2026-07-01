@@ -8,7 +8,8 @@ Pipeline:
   NavigationModule.mission_status (STUCK/FAILED) → LERa recovery → new goal
 
 Ports:
-  In:  instruction, scene_graph, odometry, detections, mission_status
+  In:  instruction, scene_graph, odometry, detections, mission_status,
+       topo_summary, room_graph
   Out: goal_pose, task_plan, planner_status, cancel
 
 Strategies:
@@ -88,6 +89,8 @@ class SemanticPlannerModule(Module, layer=4):
     odometry:          In[Odometry]
     detections:        In[list]
     mission_status:    In[dict]      # from NavigationModule — drives LERa recovery
+    topo_summary:      In[str]       # from SemanticMapperModule
+    room_graph:        In[dict]      # serialized TopologySemGraph snapshot
 
     # -- Outputs --
     goal_pose:       Out[PoseStamped]
@@ -154,6 +157,8 @@ class SemanticPlannerModule(Module, layer=4):
         self._agent_tool_registry: dict[str, Any] = {}
         self._agent_tool_list: list[dict[str, Any]] = []
         self._last_vector_memory_query_only: bool = False
+        self._latest_topo_summary: str = ""
+        self._latest_room_graph: dict[str, Any] | None = None
 
         # Latest camera frame for VLM tools in the agent loop
         self._latest_rgb: np.ndarray | None = None
@@ -215,6 +220,8 @@ class SemanticPlannerModule(Module, layer=4):
         self.odometry.subscribe(self._on_odom)
         self.detections.subscribe(self._on_detections)
         self.mission_status.subscribe(self._on_mission_status)
+        self.topo_summary.subscribe(self._on_topo_summary)
+        self.room_graph.subscribe(self._on_room_graph)
 
     def _init_backends(self) -> None:
         """Lazy-load algorithm backends. Each backend is independent — one failure doesn't block others."""
@@ -365,6 +372,19 @@ class SemanticPlannerModule(Module, layer=4):
     def _on_detections(self, dets: list) -> None:
         """Detection update — consumed by scene_graph path."""
         pass
+
+    def _on_topo_summary(self, summary: str) -> None:
+        self._latest_topo_summary = summary or ""
+
+    def _on_room_graph(self, snapshot: dict) -> None:
+        if not isinstance(snapshot, dict):
+            return
+        self._latest_room_graph = snapshot
+        if (
+            self._goal_resolver is not None
+            and hasattr(self._goal_resolver, "set_topology_graph_snapshot")
+        ):
+            self._goal_resolver.set_topology_graph_snapshot(snapshot)
 
     def _on_mission_status(self, status: dict) -> None:
         """NavigationModule failure → trigger LERa recovery.
@@ -824,6 +844,7 @@ class SemanticPlannerModule(Module, layer=4):
             "visible_objects": visible or "none",
             "nav_status": self._last_nav_state or "IDLE",
             "memory_context": memory_context,
+            "topology_context": self._latest_topo_summary,
             "camera_image": self._latest_rgb,
             "camera_available": self._latest_rgb is not None,
             "scene_graph": scene_graph,

@@ -288,7 +288,7 @@ build_nav_core_runtime() {
     return
   fi
   log "building nav_core nanobind runtime for production local planning"
-  bash "${ROOT}/scripts/build_nav_core.sh" --clean
+  bash "${ROOT}/scripts/build/build_nav_core.sh" --clean
 }
 
 verify_mid360_pattern_asset() {

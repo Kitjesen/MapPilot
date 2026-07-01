@@ -111,9 +111,11 @@ Robot presets (`ROBOT_PRESETS` in the same file): `stub`, `sim`, `ros2`, `s100p`
 | GNSS WTRTK-980 | `/gnss/fix` (NMEA serial -> DDS) | 10 Hz | GnssModule |
 | IMU (Livox) | `/nav/imu` | 200 Hz | Fast-LIO2 |
 
-CameraBridge has two subscriber back ends (`src/drivers/thunder/camera_bridge_module.py`):
+CameraBridge has two subscriber back ends (`src/compat/ros2/camera_bridge.py`):
 - DDS-first via raw cyclonedds 鈥?runs without a full ROS 2 environment, this is the production path.
 - rclpy fallback 鈥?used when ROS 2 Python is available; adds watchdog + USB reset + L1/L2/L3 self-recovery.
+
+The Thunder hardware package does not own ROS bridge code; camera bridge adapters stay in `compat/ros2` and are composed explicitly by the product stack when camera input is enabled.
 
 The camera is mounted vertically on the body, so `config/robot_config.yaml::camera.rotate=270`. CameraBridge applies `cv2.rotate` in `_on_ros2_color`; downstream modules always see "upright" frames.
 

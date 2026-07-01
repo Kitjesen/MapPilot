@@ -446,7 +446,11 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
         restore(saved)
 
 
-def test_maps_stack_prefers_registered_modules_with_canonical_aliases():
+@pytest.mark.parametrize(
+    "bridge_key",
+    ["enable_endpoint_grid_bridge", "enable_ros2_grid_bridge"],
+)
+def test_maps_stack_prefers_registered_modules_with_endpoint_bridge_aliases(bridge_key):
     from core.blueprints.stacks.maps import maps
 
     saved = snapshot()
@@ -474,7 +478,7 @@ def test_maps_stack_prefers_registered_modules_with_canonical_aliases():
             pass
 
         @register("map", "ros2_grid_bridge")
-        class FakeRos2GridBridge(Module, layer=2):
+        class FakeEndpointGridBridge(Module, layer=2):
             pass
 
         @register("map", "manager")
@@ -485,12 +489,12 @@ def test_maps_stack_prefers_registered_modules_with_canonical_aliases():
             grid_resolution=0.25,
             grid_radius=8.0,
             map_dir="/tmp/lingtu-test-maps",
-            enable_ros2_grid_bridge=True,
+            **{bridge_key: True},
         )
 
         assert _entry_classes(bp) == [
             FakeOccupancyGrid,
-            FakeRos2GridBridge,
+            FakeEndpointGridBridge,
             FakeVoxelGrid,
             FakeEsdf,
             FakeElevationMap,
@@ -499,7 +503,7 @@ def test_maps_stack_prefers_registered_modules_with_canonical_aliases():
         ]
         assert _entry_names(bp) == [
             "OccupancyGridModule",
-            "ROS2GridBridgeModule",
+            "EndpointGridBridgeModule",
             "VoxelGridModule",
             "ESDFModule",
             "ElevationMapModule",
@@ -512,7 +516,54 @@ def test_maps_stack_prefers_registered_modules_with_canonical_aliases():
         restore(saved)
 
 
-def test_navigation_stack_prefers_registered_ros2_path_bridge_module():
+@pytest.mark.parametrize(
+    "bridge_key",
+    ["enable_endpoint_waypoint_bridge", "enable_ros2_bridge"],
+)
+def test_navigation_stack_prefers_registered_endpoint_waypoint_bridge_module(bridge_key):
+    from core.blueprints.stacks.navigation import navigation
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("navigation", "default")
+        class FakeNavigation(Module, layer=5):
+            pass
+
+        @register("navigation", "ros2_waypoint_bridge")
+        class FakeEndpointWaypointBridge(Module, layer=5):
+            pass
+
+        bp = navigation(
+            **{bridge_key: True},
+            enable_native=False,
+            planning_frame_id="map",
+        )
+
+        assert _entry_classes(bp)[:2] == [
+            FakeNavigation,
+            FakeEndpointWaypointBridge,
+        ]
+        assert _entry_names(bp)[:2] == [
+            "NavigationModule",
+            "EndpointWaypointBridgeModule",
+        ]
+        assert bp._entries[1].config == {"default_frame_id": "map"}
+        assert any(
+            wire.out_module == "NavigationModule"
+            and wire.in_module == "EndpointWaypointBridgeModule"
+            for wire in bp._wires
+        )
+    finally:
+        restore(saved)
+
+
+@pytest.mark.parametrize(
+    "bridge_key",
+    ["enable_endpoint_path_bridge", "enable_ros2_path_bridge"],
+)
+def test_navigation_stack_prefers_registered_endpoint_path_bridge_module(bridge_key):
     from core.blueprints.stacks.navigation import navigation
 
     saved = snapshot()
@@ -524,17 +575,17 @@ def test_navigation_stack_prefers_registered_ros2_path_bridge_module():
             pass
 
         @register("navigation", "ros2_path_bridge")
-        class FakeRos2PathBridge(Module, layer=5):
+        class FakeEndpointPathBridge(Module, layer=5):
             pass
 
         bp = navigation(
-            enable_ros2_path_bridge=True,
+            **{bridge_key: True},
             enable_native=False,
             planning_frame_id="map",
         )
 
-        assert _entry_classes(bp)[:2] == [FakeNavigation, FakeRos2PathBridge]
-        assert _entry_names(bp)[:2] == ["NavigationModule", "ROS2PathBridgeModule"]
+        assert _entry_classes(bp)[:2] == [FakeNavigation, FakeEndpointPathBridge]
+        assert _entry_names(bp)[:2] == ["NavigationModule", "EndpointPathBridgeModule"]
         assert bp._entries[1].config == {"default_frame_id": "map"}
     finally:
         restore(saved)
@@ -682,7 +733,35 @@ def test_navigation_stack_prefers_registered_autonomy_modules_with_canonical_ali
         restore(saved)
 
 
-def test_slam_stack_prefers_registered_bridge_and_visual_odom_modules():
+def test_slam_stack_prefers_registered_localization_adapter():
+    from core.blueprints.stacks.slam import slam
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("localization_adapter", "ros2_slam_bridge")
+        class FakeLocalizationAdapter(Module, layer=1):
+            pass
+
+        @register("slam_bridge", "default")
+        class FakeLegacySlamBridge(Module, layer=1):
+            pass
+
+        @register("visual_odom", "depth")
+        class FakeDepthVisualOdom(Module, layer=1):
+            pass
+
+        bp = slam("bridge", enable_visual_backup=True, manage_services=False)
+
+        assert _entry_classes(bp) == [FakeLocalizationAdapter, FakeDepthVisualOdom]
+        assert _entry_names(bp) == ["SlamBridgeModule", "DepthVisualOdomModule"]
+        assert bp._entries[0].config["backend_profile"] == "bridge"
+    finally:
+        restore(saved)
+
+
+def test_slam_stack_accepts_legacy_registered_bridge_and_visual_odom_modules():
     from core.blueprints.stacks.slam import slam
 
     saved = snapshot()

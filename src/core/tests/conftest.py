@@ -69,7 +69,7 @@ def pytest_ignore_collect(collection_path, config):
 def pytest_sessionfinish(session, exitstatus):
     """Release shared ROS2 resources created by mixed module-level smoke tests."""
     try:
-        from core.ros2_context import shutdown_shared_executor
+        from compat.ros2.context import shutdown_shared_executor
 
         shutdown_shared_executor()
     except Exception:
