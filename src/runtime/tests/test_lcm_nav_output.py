@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from runtime.adapters.dds.nav import DDSNavOutModule
 from runtime.adapters.lcm.contracts import THUNDER_FIELD_LCM_CONTRACT_NAME, binding_for_topic
 from runtime.adapters.lcm.endpoint_codec import loads_endpoint_message
 from runtime.adapters.lcm.nav_output import LCMNavOutModule

@@ -76,11 +76,17 @@ def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     )
 
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in cmake
-    assert "CycloneDDS-CXX::ddscxx" in cmake
+    assert "CycloneDDS::ddsc" in cmake
+    assert "CycloneDDS-CXX" not in cmake
     assert "src/message/idl/lingtu_slam.idl" in cmake
     assert "LINGTU_LIVOX_SDK2_STREAM_HAS_DDS=1" in cmake
-    assert "dds::pub::DataWriter<lt::LivoxFrame>" in main
-    assert "dds::pub::DataWriter<lt::Imu>" in main
+    assert "#include \"dds/dds.h\"" in main
+    assert "dds_create_writer" in main
+    assert "lingtu_dds_LivoxFrame_desc" in main
+    assert "lingtu_dds_Imu_desc" in main
+    assert "kLidarRawPacket" in main
+    assert "ScanAccumulator" in main
+    assert "--publish-freq" in main
     assert "--dds" in main
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in build_script
     assert "LINGTU_CYCLONEDDS_PREFIX" in build_script

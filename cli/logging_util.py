@@ -29,8 +29,8 @@ _QUIET_PREFIXES = (
     "runtime.service_manager",                     # systemd service start/stop
     "runtime.blueprint",                           # "System started: N modules"
     "localization.bridge",                              # DDS transport choice
-    "perception.mobileclip_encoder",
-    "perception.encoder_module",
+    "perception.encoding.mobileclip_encoder",
+    "perception.encoding.encoder_module",
     "perception.perception_module",
     "decision.vision.person_tracker",
     "drivers.sim.ros2_sim_driver",

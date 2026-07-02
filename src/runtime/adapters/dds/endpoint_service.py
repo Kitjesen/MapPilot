@@ -27,6 +27,7 @@ from runtime.msgs.nav import Odometry, Path
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
+from runtime.tf import TF_STATIC_TOPIC, TF_TOPIC, tf_message_from_any
 from runtime.transport.abc import TopicConfig
 
 logger = logging.getLogger(__name__)
@@ -396,6 +397,24 @@ def _to_dds_pose_stamped(pose: PoseStamped) -> Any:
     )
 
 
+def _to_dds_tf_message(msg: Any) -> Any:
+    dds_mod = _dds()
+    tf_msg = tf_message_from_any(msg)
+    return dds_mod.DDS_TFMessage(
+        transforms=[
+            dds_mod.DDS_TransformStamped(
+                header=_to_dds_header(transform.frame_id, transform.ts),
+                child_frame_id=str(transform.child_frame_id),
+                transform=dds_mod.DDS_Transform(
+                    translation=_to_dds_vector(transform.translation),
+                    rotation=_to_dds_quaternion(transform.rotation),
+                ),
+            )
+            for transform in tf_msg.transforms
+        ]
+    )
+
+
 def _to_dds_string(value: Any) -> Any:
     return _dds().DDS_String(data=str(value or ""))
 
@@ -409,6 +428,8 @@ def _to_dds_float32(value: Any) -> Any:
 
 
 def _to_dds_message(topic: str, msg: Any) -> Any:
+    if topic in {TF_TOPIC, TF_STATIC_TOPIC}:
+        return _to_dds_tf_message(msg)
     if topic == TOPICS.lidar_scan:
         return _to_dds_livox_custom_msg(msg)
     if topic in {TOPICS.registered_cloud, TOPICS.map_cloud, TOPICS.saved_map_cloud}:
@@ -447,6 +468,8 @@ def _to_vector3(value: Any) -> Any:
 
 
 def _from_dds_message(topic: str, msg: Any) -> Any:
+    if topic in {TF_TOPIC, TF_STATIC_TOPIC}:
+        return tf_message_from_any(msg)
     if topic == TOPICS.lidar_scan:
         return _from_dds_lidar_scan(msg)
     if topic in {TOPICS.global_path, TOPICS.local_path}:

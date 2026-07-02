@@ -27,9 +27,9 @@ from pathlib import Path
 
 import numpy as np
 
-from perception.baseline_wrappers import create_planner
-from perception.dataset_loader import create_dataset_loader
-from perception.evaluation_framework import (
+from perception.research.baseline_wrappers import create_planner
+from perception.research.dataset_loader import create_dataset_loader
+from perception.research.evaluation_framework import (
     BenchmarkFramework,
     BenchmarkResult,
     MemoryEvaluator,
@@ -222,7 +222,7 @@ class EndToEndEvaluator:
 
         # 平均路径指标
         if path_metrics_list:
-            from perception.evaluation_framework import PathMetrics
+            from perception.research.evaluation_framework import PathMetrics
             avg_path_metrics = PathMetrics(
                 path_length=np.mean([m.path_length for m in path_metrics_list]),
                 path_smoothness=np.mean([m.path_smoothness for m in path_metrics_list]),

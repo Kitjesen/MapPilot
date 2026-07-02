@@ -21,15 +21,89 @@ PATH_START_REPLACE_TOLERANCE_M = 0.5
 PATH_START_INSERT_MAX_M = 2.0
 
 
+class _MapOnlyPreviewPlanner:
+    def __init__(self, planner: Any) -> None:
+        self._planner = planner
+
+    @property
+    def is_ready(self) -> bool:
+        return bool(getattr(self._planner, "is_ready", False))
+
+    @property
+    def has_map(self) -> bool:
+        return bool(getattr(self._planner, "has_map", False))
+
+    @property
+    def planner_name(self) -> str:
+        return str(getattr(self._planner, "planner_name", "octoplanner3d"))
+
+    @property
+    def plan_safety_policy(self) -> str:
+        return "map_only"
+
+    @property
+    def map_artifact_gate(self) -> dict[str, Any]:
+        gate = getattr(self._planner, "map_artifact_gate", {}) or {}
+        return dict(gate) if isinstance(gate, dict) else {}
+
+    @property
+    def last_plan_report(self) -> dict[str, Any]:
+        report = getattr(self._planner, "last_plan_report", {}) or {}
+        return dict(report) if isinstance(report, dict) else {}
+
+    def backend_status(self) -> dict[str, Any]:
+        status = getattr(self._planner, "backend_status", None)
+        if callable(status):
+            value = status()
+            return dict(value) if isinstance(value, dict) else {}
+        return {}
+
+    def plan_request(self, request: GlobalPlanRequest) -> GlobalPlanResult:
+        try:
+            path, plan_ms = self._planner.plan_map_only(request.start, request.goal)
+        except Exception as exc:
+            report = self.last_plan_report
+            return GlobalPlanResult(
+                error=str(exc) or type(exc).__name__,
+                frame_id=request.frame_id,
+                request_id=request.request_id,
+                map_version=request.map_version,
+                diagnostics=dict(report.get("planner_diagnostics", {}) or {}),
+                report=report,
+            )
+        report = self.last_plan_report
+        return GlobalPlanResult(
+            path=path,
+            plan_ms=float(plan_ms),
+            reached_goal=bool(report.get("reached_goal", True)),
+            frame_id=request.frame_id,
+            request_id=request.request_id,
+            map_version=request.map_version,
+            adjusted_goal=report.get("adjusted_goal"),
+            diagnostics=dict(report.get("planner_diagnostics", {}) or {}),
+            report=report,
+        )
+
+
 class NavigationPlanningMixin:
-    def preview_plan(self, x: float, y: float, z: float = 0.0) -> dict[str, Any]:
+    def preview_plan(
+        self,
+        x: float,
+        y: float,
+        z: float = 0.0,
+        *,
+        map_only: bool = False,
+    ) -> dict[str, Any]:
         """Return a client-facing path preview without changing mission state."""
         frame_blocker = self._frame_contract.planning_frame_blocker(
             self._odom_frame_id,
             self._costmap_frame_id,
         )
+        planner = self._planner_svc
+        if map_only and hasattr(self._planner_svc, "plan_map_only"):
+            planner = _MapOnlyPreviewPlanner(self._planner_svc)
         return self._plan_preview.preview(
-            planner=self._planner_svc,
+            planner=planner,
             start=self._robot_pos,
             goal=[x, y, z],
             frame_id=self._planning_frame_id,

@@ -18,12 +18,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.polyhedron_expansion import (
+from perception.scene_understanding.polyhedron_expansion import (
     PolyhedronExpander,
     PolyhedronExpansionConfig,
 )
-from perception.scg_builder import SCGBuilder, SCGConfig
-from perception.scg_path_planner import PathSmoother, SCGPathPlanner
+from perception.scene_understanding.scg_builder import SCGBuilder, SCGConfig
+from perception.scene_understanding.scg_path_planner import PathSmoother, SCGPathPlanner
 
 
 def create_test_scg():

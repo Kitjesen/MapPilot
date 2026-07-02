@@ -1,4 +1,4 @@
-﻿[Unit]
+[Unit]
 Description=Thunder SLAM (Fast-LIO2)
 After=lidar.service
 Wants=lidar.service
@@ -15,7 +15,7 @@ ExecStart=/bin/bash -c '\
   source /opt/lingtu/config/ros2-env.sh && \
   exec ros2 run fastlio2 lio_node \
     --ros-args \
-    -p config_path:=/home/sunrise/data/inovxio/lingtu/install/fastlio2/share/fastlio2/config/lio_s100p.yaml \
+    -p config_path:=/home/sunrise/data/inovxio/lingtu/install/fastlio2/share/fastlio2/config/mid360_s100p.yaml \
     -r /cloud_registered:=/slam/registered_cloud \
     -r /cloud_map:=/slam/map_cloud \
     -r /Odometry:=/slam/odometry \

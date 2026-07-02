@@ -1,0 +1,24 @@
+[Unit]
+Description=LingTu native navigation DDS endpoint
+After=network-online.target lingtu-thunder-lite.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_cyclone_endpoint
+Environment=LINGTU_GATEWAY_HOST=127.0.0.1
+Environment=LINGTU_GATEWAY_PORT=5050
+Environment=LINGTU_DDS_DOMAIN_ID=0
+Environment=LINGTU_NAV_DDS_TICK_HZ=20
+Environment=LINGTU_NAV_DDS_PUBLISH_HZ=5
+Environment=LINGTU_CYCLONEDDS_PREFIX=
+ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh; if [ -n "${LINGTU_CYCLONEDDS_PREFIX}" ] && [ -d "${LINGTU_CYCLONEDDS_PREFIX}/lib" ]; then export LD_LIBRARY_PATH="${LINGTU_CYCLONEDDS_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; fi; exec "${LINGTU_NAV_DDS_BIN}" --domain-id "${LINGTU_DDS_DOMAIN_ID}" --gateway-host "${LINGTU_GATEWAY_HOST}" --gateway-port "${LINGTU_GATEWAY_PORT}" --tick-hz "${LINGTU_NAV_DDS_TICK_HZ}" --publish-hz "${LINGTU_NAV_DDS_PUBLISH_HZ}" --log-status-s 5'
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

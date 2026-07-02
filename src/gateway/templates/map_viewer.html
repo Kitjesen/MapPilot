@@ -61,6 +61,9 @@ body{background:#05060d;overflow:hidden;font-family:-apple-system,BlinkMacSystem
 #camStatus{font-size:9px;color:rgba(80,140,255,0.50);margin-top:5px;letter-spacing:1px;text-align:center;}
 #locPanel{position:fixed;top:16px;right:16px;padding:12px 14px;z-index:50;min-width:138px;display:none;}
 #locBtns{display:flex;flex-direction:column;gap:5px;margin-top:2px;}
+#editPanel{position:fixed;top:136px;right:16px;padding:12px 14px;z-index:50;min-width:178px;}
+#editPanel select,#editPanel input{width:100%;margin-top:5px;background:rgba(8,20,55,0.78);border:1px solid rgba(55,110,240,0.35);border-radius:7px;color:#9fc4ff;padding:5px 8px;font-size:10px;outline:none;}
+#editPanel .edit-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
 #kbHud{position:fixed;bottom:80px;right:16px;display:grid;grid-template-columns:repeat(3,22px);grid-template-rows:repeat(2,22px);gap:3px;opacity:0;transition:opacity .3s;z-index:60;}
 .kk{width:22px;height:22px;border-radius:4px;background:rgba(15,40,110,0.45);border:1px solid rgba(50,100,220,0.28);font-size:9px;color:rgba(80,140,220,0.55);display:flex;align-items:center;justify-content:center;}
 .kk.on{background:rgba(40,90,200,0.75);border-color:rgba(100,160,255,0.75);color:#c8dcff;box-shadow:0 0 6px rgba(80,140,255,0.4);}
@@ -100,6 +103,25 @@ body{background:#05060d;overflow:hidden;font-family:-apple-system,BlinkMacSystem
 <div id="locPanel" class="glass">
   <div class="lbl">快速导航</div>
   <div id="locBtns"></div>
+</div>
+
+<div id="editPanel" class="glass">
+  <div class="lbl">Voxel Edit</div>
+  <button class="btn" id="editBtn" onclick="toggleVoxelEdit()" style="width:100%;">Edit Off</button>
+  <div class="edit-row">
+    <select id="editState">
+      <option value="occupied">occupied</option>
+      <option value="free">free</option>
+      <option value="preblocked">preblocked</option>
+      <option value="traversable">traversable</option>
+      <option value="clear">clear</option>
+    </select>
+    <input id="editRadius" type="number" min="0.05" max="10" step="0.05" value="0.30">
+  </div>
+  <select id="editShape">
+    <option value="sphere">sphere brush</option>
+    <option value="box">box brush</option>
+  </select>
 </div>
 
 <!-- WASD keyboard indicator -->
@@ -143,6 +165,7 @@ dLight2.position.set(-4, 4, 3);
 scene.add(dLight2);
 
 // ── Point cloud — cold blue height gradient ────────────────────────────────
+let _pointCloud = null;
 (function(){
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array({n*3});
@@ -169,9 +192,10 @@ scene.add(dLight2);
   }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+  _pointCloud = new THREE.Points(geo, new THREE.PointsMaterial({
     size:0.035, vertexColors:true, sizeAttenuation:true, transparent:true, opacity:0.88
-  })));
+  }));
+  scene.add(_pointCloud);
 })();
 
 // ── Ground grid ────────────────────────────────────────────────────────────
@@ -339,16 +363,95 @@ const _ray = new THREE.Raycaster();
 const _mv  = new THREE.Vector2();
 const _gp  = new THREE.Plane(new THREE.Vector3(0,0,1), 0);
 let _md    = null;
+const _viewerParams = new URLSearchParams(location.search);
+const _editMapName = _viewerParams.get('map') || '';
+let _voxelEditOn = false;
+let _voxelEditMarkers = [];
+
+function toggleVoxelEdit(){
+  _voxelEditOn = !_voxelEditOn;
+  const b = document.getElementById('editBtn');
+  b.textContent = _voxelEditOn ? 'Edit On' : 'Edit Off';
+  b.className = _voxelEditOn ? 'btn active' : 'btn';
+  if(_voxelEditOn && !_editMapName) showToast('Open a saved map before voxel editing', 3500);
+}
+
+function _pickMapTarget(e){
+  _mv.x=(e.clientX/innerWidth)*2-1;
+  _mv.y=-(e.clientY/innerHeight)*2+1;
+  _ray.setFromCamera(_mv, camera);
+  _ray.params.Points.threshold = 0.22;
+  if(_pointCloud){
+    const hits = _ray.intersectObject(_pointCloud);
+    if(hits.length) return hits[0].point.clone();
+  }
+  const tgt=new THREE.Vector3();
+  return _ray.ray.intersectPlane(_gp, tgt) ? tgt : null;
+}
+
+function _voxelEditColor(state){
+  if(state==='occupied') return 0xff6644;
+  if(state==='preblocked') return 0xffaa33;
+  if(state==='traversable') return 0x44ff99;
+  return 0x55aaff;
+}
+
+function _markVoxelEdit(tgt, state, radius){
+  const color = _voxelEditColor(state);
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(Math.max(radius,0.06),14,14),
+    new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.28,wireframe:true})
+  );
+  m.position.copy(tgt);
+  scene.add(m);
+  _voxelEditMarkers.push(m);
+}
+
+function _loadVoxelEditOverlay(){
+  if(!_editMapName) return;
+  fetch('/api/v1/maps/'+encodeURIComponent(_editMapName)+'/voxels/edits')
+    .then(r=>r.json())
+    .then(data=>{
+      const edits = (data.edits||[]).slice(-500);
+      edits.forEach(edit=>{
+        const c = edit.center||{};
+        _markVoxelEdit(
+          new THREE.Vector3(Number(c.x)||0, Number(c.y)||0, Number(c.z)||0),
+          edit.state||'occupied',
+          Number(edit.radius)||0.2
+        );
+      });
+      if(edits.length) showToast('Loaded '+edits.length+' voxel edits', 2500);
+    })
+    .catch(()=>{});
+}
+
+function _sendVoxelEdit(tgt){
+  if(!_editMapName){showToast('No saved map selected for editing', 3500); return;}
+  const state = document.getElementById('editState').value;
+  const shape = document.getElementById('editShape').value;
+  const radius = Math.max(0.05, Math.min(10, Number(document.getElementById('editRadius').value)||0.3));
+  fetch('/api/v1/maps/'+encodeURIComponent(_editMapName)+'/voxels/edit',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({state,x:tgt.x,y:tgt.y,z:tgt.z,radius,shape})
+  }).then(r=>r.json()).then(resp=>{
+    if(resp.success===false||resp.ok===false) throw new Error(resp.message||'edit failed');
+    _markVoxelEdit(tgt,state,radius);
+    const n = resp.edit && resp.edit.edited_voxels ? resp.edit.edited_voxels : 0;
+    showToast('Voxel edit '+state+' ('+n+')');
+  }).catch(e=>showToast('Voxel edit failed: '+e.message,4000));
+}
+
+_loadVoxelEditOverlay();
+
 renderer.domElement.addEventListener('mousedown', e=>{_md={x:e.clientX,y:e.clientY};});
 renderer.domElement.addEventListener('mouseup',   e=>{
   if(!_md) return;
   const dx=e.clientX-_md.x, dy=e.clientY-_md.y; _md=null;
   if(dx*dx+dy*dy>25) return;
-  _mv.x=(e.clientX/innerWidth)*2-1;
-  _mv.y=-(e.clientY/innerHeight)*2+1;
-  _ray.setFromCamera(_mv, camera);
-  const tgt=new THREE.Vector3();
-  if(!_ray.ray.intersectPlane(_gp, tgt)) return;
+  const tgt=_pickMapTarget(e);
+  if(!tgt) return;
+  if(_voxelEditOn){_sendVoxelEdit(tgt);return;}
   goalGroup.position.set(tgt.x, tgt.y, 0);
   goalGroup.visible=true;
   fetch('/api/v1/navigate/click',{

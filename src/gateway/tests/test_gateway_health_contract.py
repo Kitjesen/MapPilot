@@ -112,6 +112,25 @@ def test_health_uses_live_point_count_and_module_slam_rate(monkeypatch):
     assert health["sensors"]["slam"]["hz"] == 4.2
 
 
+def test_health_prefers_cpp_processed_scan_rate_over_gateway_odom_rate(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "state": "TRACKING",
+        "processed_scan_hz": 9.96,
+    }
+    gateway._all_modules = {}
+    monkeypatch.setattr(gateway, "_get_slam_hz_cached", lambda: 4.9)
+
+    health = asyncio.run(_endpoint(gateway, "/api/v1/health")())
+
+    assert health["slam_hz"] == 10.0
+    assert health["sensors"]["slam"]["source"] == "processed_scan_hz"
+    assert health["sensors"]["slam"]["odom_hz"] == 4.9
+
+
 def test_health_falls_back_to_cached_slam_rate_when_module_rate_missing(monkeypatch):
     from gateway.gateway_module import GatewayModule
 

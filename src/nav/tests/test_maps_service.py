@@ -12,11 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from runtime.msgs.sensor import PointCloud2
-from runtime.msgs.map import MapCloudFrame
 from nav.services.maps import MapService
 from nav.services.plan.global_planner.artifacts import SavedMapArtifacts
-
+from runtime.msgs.map import MapCloudFrame
+from runtime.msgs.sensor import PointCloud2
 
 # -- fixtures ------------------------------------------------------------------
 
@@ -66,6 +65,8 @@ def _fake_octomap_converter(tmp_path: Path) -> tuple[str, ...]:
         "parser.add_argument('--input', required=True)\n"
         "parser.add_argument('--output', required=True)\n"
         "parser.add_argument('--resolution', required=True)\n"
+        "parser.add_argument('--free-layers-above', required=True)\n"
+        "parser.add_argument('--free-dilation-cells', required=True)\n"
         "parser.add_argument('--frame', required=True)\n"
         "args = parser.parse_args()\n"
         "Path(args.output).write_bytes(\n"
@@ -83,8 +84,54 @@ def _fake_octomap_converter(tmp_path: Path) -> tuple[str, ...]:
         "{output}",
         "--resolution",
         "{resolution}",
+        "--free-layers-above",
+        "{free_layers_above}",
+        "--free-dilation-cells",
+        "{free_dilation_cells}",
         "--frame",
         "{frame}",
+    )
+
+
+def _fake_octomap_editor(tmp_path: Path) -> tuple[str, ...]:
+    script = tmp_path / "fake_octomap_editor.py"
+    script.write_text(
+        "from __future__ import annotations\n"
+        "import argparse\n"
+        "from pathlib import Path\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('--map', required=True)\n"
+        "parser.add_argument('--output', required=True)\n"
+        "parser.add_argument('--state', required=True)\n"
+        "parser.add_argument('--x', required=True)\n"
+        "parser.add_argument('--y', required=True)\n"
+        "parser.add_argument('--z', required=True)\n"
+        "parser.add_argument('--radius', required=True)\n"
+        "parser.add_argument('--shape', required=True)\n"
+        "args = parser.parse_args()\n"
+        "Path(args.output).write_bytes(Path(args.map).read_bytes() + b'\\nedited')\n"
+        "print('{\"ok\":true,\"edited_voxels\":7,\"effective_state\":\"occupied\"}')\n",
+        encoding="utf-8",
+    )
+    return (
+        sys.executable,
+        str(script),
+        "--map",
+        "{map}",
+        "--output",
+        "{output}",
+        "--state",
+        "{state}",
+        "--x",
+        "{x}",
+        "--y",
+        "{y}",
+        "--z",
+        "{z}",
+        "--radius",
+        "{radius}",
+        "--shape",
+        "{shape}",
     )
 
 
@@ -192,6 +239,47 @@ class TestMapService:
         """delete a POI that does not exist."""
         resp = _cmd(map_manager, {"action": "poi_delete", "name": "nope"})
         assert resp["success"] is False
+
+    def test_edit_voxels_updates_octomap_and_overlay(self, tmp_path):
+        """OctoMap voxel edits go through MapService."""
+        mod = MapService(
+            map_dir=str(tmp_path / "maps"),
+            data_dir=str(tmp_path / "data"),
+            octomap_editor_command=_fake_octomap_editor(tmp_path),
+        )
+        mod.setup()
+        responses: list[dict] = []
+        events: list[dict] = []
+        mod.map_response.subscribe(lambda r: responses.append(r))
+        mod.map_event.subscribe(lambda e: events.append(e))
+        mod._test_responses = responses
+        mod._test_events = events
+
+        demo = Path(mod._map_dir) / "demo"
+        demo.mkdir(parents=True)
+        (demo / "octomap.ot").write_bytes(b"octomap")
+
+        resp = _cmd(
+            mod,
+            {
+                "action": "edit_voxels",
+                "name": "demo",
+                "state": "preblocked",
+                "x": 1.0,
+                "y": 2.0,
+                "z": 0.5,
+                "radius": 0.3,
+            },
+        )
+
+        assert resp["success"] is True
+        assert resp["edit"]["state"] == "preblocked"
+        assert resp["edit"]["edited_voxels"] == 7
+        assert (demo / "octomap.ot").read_bytes().endswith(b"\nedited")
+        assert list(demo.glob("octomap.ot.preedit-*"))
+        overlay = json.loads((demo / "voxel_edits.json").read_text(encoding="utf-8"))
+        assert overlay["edits"][-1]["state"] == "preblocked"
+        assert events[-1]["event"] == "map.edited"
 
     def test_unknown_action(self, map_manager):
         """unknown action returns error."""
@@ -521,7 +609,101 @@ class TestMapService:
         assert bundle["schema_version"] == "map.bundle"
         assert bundle["capability"] == "navigation_safety_3d"
         assert bundle["artifact"]["type"] == "OCTOMAP_3D"
-        assert artifacts.planner_map_path("octoplanner3d").endswith("octomap.bt")
+        assert artifacts.planner_map_path("octoplanner3d").endswith("octomap.ot")
+
+    def test_map_save_without_octomap_is_partial_not_navigation_ready(
+        self,
+        map_manager,
+    ):
+        """map.pcd alone is a saved SLAM map, not an OctoPlanner3D-ready map."""
+        import numpy as np
+
+        map_manager._on_map_cloud_frame(
+            MapCloudFrame(
+                points=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.2]], dtype=np.float32),
+                mode="FULL",
+                frame_id="map",
+                source="native_slam:test",
+            )
+        )
+
+        saved = _cmd(
+            map_manager,
+            {"action": "save", "name": "pcd_only", "slam_profile": "super_lio"},
+        )
+
+        assert saved["success"] is True, saved
+        assert saved["status"] == "partial"
+        assert saved["navigation_ready"] is False
+        assert saved["octomap_ok"] is False
+        assert Path(saved["pcd"]).is_file()
+
+    def test_import_pcd_invalidates_old_derived_artifacts(self, map_manager, tmp_path):
+        src = tmp_path / "source.pcd"
+        src.write_text(
+            "VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\n"
+            "COUNT 1 1 1\nWIDTH 3\nHEIGHT 1\nPOINTS 3\nDATA ascii\n"
+            "0.0 0.0 0.0\n0.1 0.0 0.0\n2.0 0.0 0.0\n",
+            encoding="utf-8",
+        )
+        d = Path(map_manager._map_dir) / "imported"
+        d.mkdir()
+        (d / "octomap.ot").write_bytes(b"stale")
+        (d / "occupancy.npz").write_bytes(b"stale")
+        (d / "tomogram.pickle").write_bytes(b"stale")
+        (d / "poses.txt").write_text("stale", encoding="utf-8")
+        (d / "patches").mkdir()
+
+        resp = _cmd(
+            map_manager,
+            {
+                "action": "import_pcd",
+                "name": "imported",
+                "source_path": str(src),
+                "voxel_size": 0.5,
+            },
+        )
+
+        assert resp["success"] is True, resp
+        assert resp["status"] == "partial"
+        assert resp["point_count"] == 2
+        assert Path(resp["pcd"]).is_file()
+        assert not (d / "octomap.ot").exists()
+        assert not (d / "occupancy.npz").exists()
+        assert not (d / "tomogram.pickle").exists()
+        assert not (d / "poses.txt").exists()
+        assert any(path.name.startswith("patches.stale-") for path in d.iterdir())
+        metadata = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
+        assert set(metadata["artifacts"]) == {"map_pcd"}
+        assert resp["navigation_ready"] is False
+
+    def test_crop_map_invalidates_octomap_until_rebuilt(self, map_manager):
+        d = Path(map_manager._map_dir) / "cropped"
+        d.mkdir()
+        (d / "map.pcd").write_text(
+            "VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\n"
+            "COUNT 1 1 1\nWIDTH 3\nHEIGHT 1\nPOINTS 3\nDATA ascii\n"
+            "0.0 0.0 0.0\n1.0 0.0 0.0\n5.0 0.0 0.0\n",
+            encoding="utf-8",
+        )
+        (d / "octomap.ot").write_bytes(b"stale")
+
+        resp = _cmd(
+            map_manager,
+            {
+                "action": "crop",
+                "name": "cropped",
+                "bounds": {"min": [-0.5, -0.5, -0.5], "max": [1.5, 0.5, 0.5]},
+            },
+        )
+
+        assert resp["success"] is True, resp
+        assert resp["point_count"] == 2
+        assert resp["removed_points"] == 1
+        assert not (d / "octomap.ot").exists()
+        assert any(path.name.startswith("map.pcd.precrop-") for path in d.iterdir())
+        metadata = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
+        assert set(metadata["artifacts"]) == {"map_pcd"}
 
     def test_get_active_tomogram_none(self, map_manager):
         """get_active_tomogram returns None when no active map."""
@@ -535,7 +717,7 @@ class TestMapService:
         (d / "map.pcd").touch()
         (d / "tomogram.pickle").touch()
         (d / "occupancy.npz").touch()
-        (d / "octomap.bt").touch()
+        (d / "octomap.ot").touch()
 
         resp = _cmd(map_manager, {"action": "list"})
         entry = next(m for m in resp["maps"] if m["name"] == "mapwithall")
@@ -551,7 +733,7 @@ class TestMapService:
         map_manager,
         tmp_path,
     ):
-        """build_octomap creates octomap.bt and metadata without planning-time conversion."""
+        """build_octomap creates octomap.ot and metadata without planning-time conversion."""
         map_manager._map_artifact_converter_command = _fake_octomap_converter(tmp_path)
         d = Path(map_manager._map_dir) / "octomap_source"
         d.mkdir()
@@ -566,7 +748,7 @@ class TestMapService:
         assert metadata_path.is_file()
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         assert metadata["build_mode"] == "external_pcl_converter"
-        assert metadata["artifacts"]["octomap"]["path"] == "octomap.bt"
+        assert metadata["artifacts"]["octomap"]["path"] == "octomap.ot"
         assert metadata["artifacts"]["octomap"]["source_map_sha256"] == metadata["artifacts"]["map_pcd"]["sha256"]
         record_path = Path(resp["metadata"]["map_record"])
         assert record_path.is_file()
@@ -625,10 +807,10 @@ class TestMapService:
 
         assert resp["success"] is True, resp
         assert resp["active"] == "octomap_only"
-        assert resp["octomap"].endswith("octomap.bt")
-        assert map_manager.get_active_octomap().endswith("octomap.bt")
+        assert resp["octomap"].endswith("octomap.ot")
+        assert map_manager.get_active_octomap().endswith("octomap.ot")
         artifacts = map_manager.get_active_artifacts()
-        assert artifacts["octomap"].endswith("octomap.bt")
+        assert artifacts["octomap"].endswith("octomap.ot")
         assert artifacts["tomogram"] is None
         assert artifacts["artifacts"]["octomap"]["exists"] is True
         assert "global_3d_occupancy" in artifacts["map_classes"]
@@ -666,7 +848,7 @@ class TestMapService:
         assert "navigation_safety_3d" in resp["available_capabilities"]
         assert any(item["type"] == "POINTCLOUD" for item in resp["artifacts"])
         assert resp["record"]["schema_version"] == "map.record"
-        assert resp["artifact"]["uri"].endswith("octomap.bt")
+        assert resp["artifact"]["uri"].endswith("octomap.ot")
 
     def test_get_health_rejects_unknown_map(self, map_manager):
         resp = _cmd(map_manager, {"action": "get_health", "name": "ghost"})

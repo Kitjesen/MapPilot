@@ -54,7 +54,8 @@ class MapAPIService:
                     "has_pcd": (entry / "map.pcd").exists(),
                     "has_tomogram": (entry / "tomogram.pickle").exists(),
                     "has_occupancy": (entry / "occupancy.npz").exists(),
-                    "has_octomap": (entry / "octomap.bt").exists(),
+                    "has_octomap": (entry / "octomap.ot").exists()
+                    or (entry / "octomap.bt").exists(),
                     "map_classes": existing_map_classes(artifacts),
                     "artifacts": artifacts,
                     "record": record,

@@ -45,19 +45,19 @@ def _import_status(module_name: str) -> str:
 
 def _log_dependency_status(detector: str, encoder: str) -> None:
     detector_modules = {
-        "yoloe": "perception.yoloe_detector",
-        "yolo_world": "perception.yolo_world_detector",
-        "bpu": "perception.bpu_detector",
+        "yoloe": "perception.detection.yoloe_detector",
+        "yolo_world": "perception.detection.yolo_world_detector",
+        "bpu": "perception.detection.bpu_detector",
     }
     encoder_modules = {
-        "mobileclip": "perception.mobileclip_encoder",
-        "clip": "perception.clip_encoder",
+        "mobileclip": "perception.encoding.mobileclip_encoder",
+        "clip": "perception.encoding.clip_encoder",
     }
 
     checks = [
         ("runtime_utils", "runtime.utils.sanitize"),
         ("decision", "decision.llm_client"),
-        ("tracker", "perception.instance_tracker"),
+        ("tracker", "perception.tracking.instance_tracker"),
     ]
     if detector in detector_modules:
         checks.append((f"detector:{detector}", detector_modules[detector]))

@@ -109,9 +109,6 @@ def try_import_nav_kernel(
                 origin,
                 ", ".join(missing),
             )
-            if retry == 0:
-                sys.modules.pop(NAV_KERNEL_EXTENSION_MODULE, None)
-                continue
             return None
         except ImportError:
             if retry == 0:

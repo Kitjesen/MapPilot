@@ -512,6 +512,37 @@ def test_localization_status_covers_product_states():
     assert payload["degeneracy"] == "MILD"
     assert payload["reasons"] == []
 
+    gateway._icp_quality = 0.0
+    with gateway._state_lock:
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.66,
+            "quality": 0.66,
+            "backend": "fastlio2",
+            "health_source": "slam_runtime",
+            "pose_fresh": True,
+            "has_odom": True,
+            "map_odom_tf": {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            },
+        }
+    payload = build_localization_status(gateway)
+    assert payload["state"] == "ready"
+    assert payload["ready"] is True
+    assert payload["algorithm_healthy"] is True
+    assert payload["backend"] == "fastlio2"
+    assert payload["health_source"] == "slam_runtime"
+    assert payload["has_map_odom_tf"] is True
+
     gateway._session_mode = "navigating"
     gateway._icp_quality = 0.2
     with gateway._state_lock:
@@ -602,6 +633,25 @@ def test_localization_status_route_returns_stable_schema():
     assert payload["reported_state"] == "TRACKING"
 
 
+def test_localization_status_exposes_backend_reason():
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_localization_status
+
+    gateway = GatewayModule()
+    with gateway._state_lock:
+        gateway._odom = {"x": 0.0, "y": 0.0, "frame_id": "odom"}
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "reason": "tracking",
+        }
+
+    payload = build_localization_status(gateway)
+
+    assert payload["reason"] == "tracking"
+    assert payload["backend_reason"] == "tracking"
+
+
 def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypatch):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import LocalizationStatusResponse
@@ -627,6 +677,40 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
             "odom_age_ms": 80.0,
             "cloud_age_ms": 60.0,
             "map_cloud_fresh": True,
+            "status_target_hz": 10.0,
+            "imu_input_hz": 198.5,
+            "lidar_input_hz": 10.0,
+            "slam_tick_hz": 50.0,
+            "processed_scan_hz": 9.8,
+            "registered_points": 24000,
+            "map_points": 512000,
+            "imu_buffer": 4,
+            "lidar_buffer": 1,
+            "imu_batch": 20,
+            "dropped_lidar_frames": 0,
+            "dropped_imu_frames": 1,
+            "scan_start_s": 122.9,
+            "scan_end_s": 123.0,
+            "last_imu_s": 123.01,
+            "sync_wait_count": 2,
+            "imu_rollback_count": 0,
+            "lidar_rollback_count": 0,
+            "map_loaded": True,
+            "map_frame_jump": False,
+            "scene_mode": "outdoor",
+            "gnss_fusion_health": {"enabled": True, "alignment_locked": True},
+            "map_odom_tf": {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            },
         }
 
     payload = build_localization_status(gateway)
@@ -660,14 +744,37 @@ def test_localization_status_reports_runtime_boundary_and_topic_frames(monkeypat
     assert frames["odometry_frame_id"] == "odom"
     assert frames["registered_cloud_frame_id"] == "body"
     assert frames["map_cloud_frame_id"] == "map"
+    assert payload["registered_cloud_frame_id"] == "body"
+    assert payload["map_cloud_frame_id"] == "map"
     assert frames["odometry_expected_frame_ids"] == ["odom", "map"]
     assert frames["registered_cloud_expected_frame_ids"] == ["body"]
     assert frames["map_cloud_expected_frame_ids"] == ["map"]
     assert frames["missing_required_topic_frame_ids"] == []
     assert frames["mismatches"] == []
     assert frames["ok"] is True
+    assert payload["status_target_hz"] == 10.0
+    assert payload["imu_input_hz"] == 198.5
+    assert payload["lidar_input_hz"] == 10.0
+    assert payload["slam_tick_hz"] == 50.0
+    assert payload["processed_scan_hz"] == 9.8
+    assert payload["registered_points"] == 24000
+    assert payload["map_points"] == 512000
+    assert payload["imu_buffer"] == 4
+    assert payload["lidar_buffer"] == 1
+    assert payload["imu_batch"] == 20
+    assert payload["dropped_imu_frames"] == 1
+    assert payload["sync_wait_count"] == 2
+    assert payload["map_loaded"] is True
+    assert payload["map_frame_jump"] is False
+    assert payload["scene_mode"] == "outdoor"
+    assert payload["has_map_odom_tf"] is True
+    assert payload["gnss_fusion_health"]["alignment_locked"] is True
     assert model.runtime.data_source == "thunder_field"
     assert model.frames.ok is True
+    assert model.status_target_hz == 10.0
+    assert model.processed_scan_hz == 9.8
+    assert model.has_map_odom_tf is True
+    assert model.map_odom_tf["child_frame_id"] == "odom"
 
 
 def test_localization_status_exposes_gateway_diagnostic_age():
@@ -947,6 +1054,33 @@ def test_session_snapshot_exposes_super_lio_backend_capabilities():
     assert model.recovery_method == "restart_super_lio"
     assert model.relocalization_state == "unsupported"
     assert model.recovery_action == "restart_super_lio"
+
+
+def test_slam_profile_prefers_live_cpp_fastlio_status_over_stopped_session():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionResponse
+
+    gateway = GatewayModule()
+    gateway._manage_session_services = True
+    gateway._session_slam_profile = "stopped"
+    gateway._cached_slam_profile = "stopped"
+    gateway._localization_status = {
+        "backend": "fastlio2",
+        "state": "TRACKING",
+        "confidence": 0.95,
+        "pose_fresh": True,
+        "map_cloud_fresh": True,
+        "health_source": "slam_runtime",
+    }
+
+    assert gateway._get_slam_profile() == "fastlio2"
+
+    session = gateway._session_snapshot()
+    model = SessionResponse.model_validate(session)
+
+    assert model.slam_profile == "fastlio2"
+    assert model.localization_backend == "fastlio2"
+    assert model.map_save_supported is True
 
 
 def test_session_snapshot_exposes_super_lio_relocation_capabilities():
@@ -1533,6 +1667,53 @@ def test_gateway_odometry_preserves_frame_for_navigation_status():
             "received_frame": "odom",
         }
     ]
+
+
+def test_gateway_navigation_status_accepts_odom_when_map_odom_tf_is_valid():
+    from runtime.msgs.geometry import Pose, Quaternion, Vector3
+    from runtime.msgs.nav import Odometry
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_navigation_status
+
+    gateway = GatewayModule()
+    gateway._session_mode = "navigating"
+    gateway._icp_quality = 0.03
+    with gateway._state_lock:
+        gateway._mode = "autonomous"
+        gateway._mission = {
+            "state": "IDLE",
+            "planning_frame_id": "map",
+            "costmap_frame_id": "map",
+        }
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "map_odom_tf": {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            },
+        }
+
+    gateway._on_odometry(Odometry(
+        pose=Pose(position=Vector3(1.0, 2.0, 0.0), orientation=Quaternion()),
+        frame_id="odom",
+        child_frame_id="base_link",
+    ))
+    payload = build_navigation_status(gateway)
+
+    assert payload["frames"]["ok"] is True
+    assert payload["frames"]["mismatches"] == []
+    assert payload["frames"]["odometry_expected_frame_ids"] == ["map", "odom"]
+    assert payload["readiness"]["tf_ok"] is True
+    assert "frame_mismatch_odometry" not in payload["reason_codes"]
 
 
 def test_gateway_mission_event_pushes_navigation_status_update():

@@ -19,8 +19,8 @@ _SRC_DIR = os.path.join(_REPO_ROOT, "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from perception.instance_tracker import InstanceTracker
-from perception.projection import Detection3D
+from perception.tracking.instance_tracker import InstanceTracker
+from perception.tracking.projection import Detection3D
 
 # ─────────────────────────────────────────────
 #  Helpers

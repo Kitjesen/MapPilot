@@ -16,6 +16,7 @@ Run commands from the repository root unless a script says otherwise.
 | `build_orbbec_native.sh` | Build the no-ROS Orbbec SDK RGB-D stream executable used by `OrbbecNativeCameraModule`. |
 | `build_livox_sdk2_stream.sh` | Build the no-ROS Livox SDK2 stream executable used by `LidarModule(transport="sdk2")`. |
 | `build_slam_core.sh` | Build the C++ SLAM core, optional Python `_native` runner, and optional C++ DDS runtime. Uses `LINGTU_SLAM_FASTLIO2=ON` by default; set `OFF` only for contract tests. |
+| `build_nav_endpoint.sh` | Build the no-ROS C++ CycloneDDS navigation endpoint that bridges DDS goal/cancel/instruction and Gateway path/cmd output. |
 
 ## Native SLAM build
 
@@ -48,7 +49,7 @@ That produces `build/slam_core/lingtu_slam_cyclone_runtime`. The runtime uses
 CycloneDDS C++ plus `src/message/idl/lingtu_slam.idl`; it does not link ROS 2,
 `rclcpp`, `sensor_msgs`, or `livox_ros_driver2`.
 
-To publish real MID-360 SDK2 packets directly onto the same native DDS topics,
+To publish real MID-360 SDK2 scans directly onto the native DDS topics,
 build the Livox stream with DDS enabled:
 
 ```bash
@@ -56,8 +57,22 @@ LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON \
 bash scripts/build/build_livox_sdk2_stream.sh
 ```
 
-Run it with `--dds --domain-id <N>` so it publishes `rt/lidar/raw_frame` as
-`lingtu.dds.LivoxFrame` and `rt/imu/raw` as `lingtu.dds.Imu`.
+Run it with `--dds --domain-id <N> --publish-freq 10` so it publishes
+scan-level `rt/lidar/raw_frame` as `lingtu.dds.LivoxFrame`, diagnostic
+packet-level `rt/lidar/raw_packet`, and `rt/imu/raw` as `lingtu.dds.Imu`.
+
+Build the native navigation DDS boundary:
+
+```bash
+bash scripts/build/build_nav_endpoint.sh
+```
+
+That produces `build/nav_endpoint/lingtu_nav_cyclone_endpoint`. It subscribes
+to `rt/nav/goal_pose`, `rt/nav/cancel`, and `rt/nav/semantic/instruction`, calls
+the Gateway's canonical command APIs, then republishes Gateway's latest
+`global_path`, `local_path`, and muxed `cmd_vel` on native DDS topics. This
+replaces the field responsibility of the Python `nav.in` / `nav.out` DDS
+adapters.
 
 The older `LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME=ON` target produces
 `lingtu_slam_dds_runtime`, which is C++ but still uses `rclcpp` and ROS 2
@@ -70,13 +85,13 @@ Related root-level helpers:
 | `scripts/build/build_nav_kernel.sh` | Build the Python `lingtu_nav_kernel` nanobind extension without a full ROS 2 workspace. |
 | `scripts/build/build_dufomap.sh` | Build the DUFOMap cleanup binary used by map-save filtering. |
 
-## OctoPlanner3D converter-native build on WSL/Linux
+## OctoPlanner3D PCD converter build on WSL/Linux
 
 There are two separate native PCL scopes:
 
-- `octoplanner3d-converter-native`: PCL `common`/`io`/`octree` plus the
+- `octoplanner3d-pcd-converter`: PCL `common`/`io`/`octree` plus the
   upstream OctoMap libraries used by `octoplanner3d_headless` to convert
-  `.pcd -> .bt`. This is **not** a full SLAM-native PCL pack and does not imply
+  `.pcd -> .bt`. This is **not** a full SLAM PCL pack and does not imply
   Fast-LIO2/localizer/PGO support.
 - `slam-native`: broader PCL components for SLAM/native packages. Use it only
   when that larger surface is intentionally being built.
@@ -87,24 +102,24 @@ Exact WSL sequence used for the OctoPlanner3D converter subset:
 # From the repository root inside WSL/Linux, for example:
 #   cd /mnt/d/inovxio/brain/lingtu
 
-export LINGTU_PCL_PROFILE=octoplanner3d-converter-native
+export LINGTU_PCL_PROFILE=octoplanner3d-pcd-converter
 export LINGTU_PCL_VERSION=pcl-1.14.1
 export LINGTU_PCL_PREFIX="$PWD/third_party/install/pcl-1.14.1-wsl-io2"
 export LINGTU_PCL_BUILD_DIR="$PWD/third_party/build/pcl-1.14.1-wsl-io2"
 export LINGTU_BUILD_JOBS="${LINGTU_BUILD_JOBS:-$(nproc)}"
 
-bash scripts/build/build_vendored_pcl.sh --profile octoplanner3d-converter-native
+bash scripts/build/build_vendored_pcl.sh --profile octoplanner3d-pcd-converter
 source "$LINGTU_PCL_PREFIX/lingtu-pcl-env.sh"
 
 export LINGTU_OCTOPLANNER3D_SOURCE_DIR="$PWD/third_party/OctoPlanner3D-ROS2"
 export LINGTU_OCTOPLANNER3D_BUILD_DIR="$PWD/build/octoplanner3d_headless_wsl_pcl"
 
-bash scripts/build/build_octoplanner3d.sh --converter-native --headless-only
+bash scripts/build/build_octoplanner3d.sh --require-pcl
 export LINGTU_OCTOPLANNER3D_EXECUTABLE="$LINGTU_OCTOPLANNER3D_BUILD_DIR/octoplanner3d_headless"
 ```
 
 For `.bt` OctoMap input only, PCL is not required; build the default headless
-wrapper without `--converter-native`. Windows/MuJoCo paths should consume `.bt`
+wrapper without `--require-pcl`. Windows/MuJoCo paths should consume `.bt`
 artifacts and should not require PCL/ROS 2 by default.
 
 Lightweight diagnostics after a WSL converter build:

@@ -241,7 +241,7 @@ T("29.MCP skills", mcp is not None and len(getattr(mcp, "_tool_list", [])) > 0)
 for pname, kw in [
     ("stub", dict(robot="stub", slam_profile="none",
                   enable_native=False, enable_semantic=False, enable_gateway=True)),
-    ("sim", dict(robot="sim_ros2", slam_profile="bridge",
+    ("sim", dict(robot="sim_mujoco", slam_profile="bridge",
                  enable_native=True, enable_semantic=True, enable_gateway=True))]:
     try:
         full_stack_blueprint(**kw).build()

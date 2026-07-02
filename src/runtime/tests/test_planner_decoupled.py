@@ -171,7 +171,7 @@ class TestFullDecoupledPipeline(unittest.TestCase):
         """Image → Detector → GoalResolver → LLM → Goal, all via Blueprint."""
         import numpy as np
 
-        from perception.detector_module import (
+        from perception.detection.detector_module import (
             DetectionResult,
             DetectorModule,
         )

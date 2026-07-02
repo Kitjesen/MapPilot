@@ -19,6 +19,7 @@ from gateway.schemas import (
     LocationOperationResponse,
     LocationUpsertRequest,
     LocationsResponse,
+    NavigationDdsSnapshotResponse,
     NavigationStatusResponse,
     PathResponse,
     ReadinessResponse,
@@ -252,6 +253,16 @@ def _pose_value(value: Any, key: str) -> float | None:
     except (TypeError, ValueError):
         return None
     return num if num == num and num not in (float("inf"), float("-inf")) else None
+
+
+def _positive_float(value: Any) -> float:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if num != num or num in (float("inf"), float("-inf")):
+        return 0.0
+    return num if num > 0.0 else 0.0
 
 
 def _current_pose(gw) -> tuple[float, float, float, float | None] | None:
@@ -610,6 +621,42 @@ def register_status_routes(app, gw) -> None:
         return build_path_response(path, robot)
 
     @app.get(
+        "/api/v1/navigation/dds_snapshot",
+        summary="Latest navigation data for the native DDS endpoint",
+        response_model=NavigationDdsSnapshotResponse,
+    )
+    async def get_navigation_dds_snapshot():
+        with gw._state_lock:
+            global_path = list(gw._last_path)
+            local_path = list(gw._last_local_path)
+            robot = gw._odom
+        navigation = build_navigation_status(gw)
+        cmd_vel = (
+            navigation.get("control", {})
+            .get("cmd_vel_mux", {})
+            .get("last_driver_cmd_vel")
+        )
+        if isinstance(cmd_vel, Mapping):
+            cmd_payload = {
+                "frame_id": "base_link",
+                "linear": dict(cmd_vel.get("linear") or {}),
+                "angular": dict(cmd_vel.get("angular") or {}),
+                "active_source": str(cmd_vel.get("active_source") or "none"),
+                "ts": cmd_vel.get("ts"),
+            }
+        else:
+            cmd_payload = None
+        return {
+            "schema_version": "lingtu.navigation.dds_snapshot.v1",
+            "global_path": build_path_response(global_path, robot),
+            "local_path": build_path_response(local_path, robot),
+            "cmd_vel": cmd_payload,
+            "navigation": navigation,
+            "ts": time.time(),
+            "source": "gateway_navigation_cache",
+        }
+
+    @app.get(
         "/api/v1/localization/status",
         summary="Localization status for app and web clients",
         response_model=LocalizationStatusResponse,
@@ -768,9 +815,24 @@ def register_status_routes(app, gw) -> None:
                     module_summary[name] = "error"
                     modules_fail += 1
 
-        slam_hz = float(sensors.get("slam", {}).get("hz") or 0.0)
-        if slam_hz <= 0.0:
-            slam_hz = gw._get_slam_hz_cached()
+        localization_status = getattr(gw, "_localization_status", None)
+        localization_status = localization_status if isinstance(localization_status, Mapping) else {}
+        processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
+        odom_hz = _positive_float(sensors.get("slam", {}).get("hz"))
+        if odom_hz <= 0.0:
+            odom_hz = _positive_float(gw._get_slam_hz_cached())
+        slam_hz = processed_scan_hz or odom_hz
+        if processed_scan_hz > 0.0:
+            slam_sensor = sensors.setdefault("slam", {})
+            slam_sensor.update(
+                {
+                    "status": str(localization_status.get("state") or "active").lower(),
+                    "hz": round(processed_scan_hz, 1),
+                    "processed_scan_hz": round(processed_scan_hz, 1),
+                    "odom_hz": round(odom_hz, 1),
+                    "source": "processed_scan_hz",
+                }
+            )
 
         brainstem_info = await _brainstem_health(gw, force_live=details)
 

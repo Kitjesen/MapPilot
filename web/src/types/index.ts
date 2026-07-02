@@ -4,6 +4,10 @@ export interface MapInfo {
   name: string
   has_pcd: boolean
   has_tomogram: boolean
+  has_occupancy?: boolean
+  has_octomap?: boolean
+  navigation_ready?: boolean
+  state?: string | null
   is_active: boolean
   size_mb?: number
   patch_count?: number
@@ -699,6 +703,11 @@ export interface ClientLinks {
   map_activate?: string
   map_rename?: string
   map_save?: string
+  map_import_pcd?: string
+  map_crop?: string
+  map_mark_zone?: string
+  map_build_octomap?: string
+  map_validate_plan?: string
   map_restore_predufo?: string
   map_cloud_reset?: string
   map_points?: string

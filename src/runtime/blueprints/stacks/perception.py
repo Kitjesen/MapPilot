@@ -106,7 +106,7 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
             "encoder",
             "pluggable",
             seed_group="perception",
-            fallback="perception.encoder_module.EncoderModule",
+            fallback="perception.encoding.encoder_module.EncoderModule",
         )
         if EncoderModule is not None:
             # Experimental tool module; the full-stack scene graph path uses

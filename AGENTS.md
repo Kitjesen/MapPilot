@@ -130,7 +130,7 @@ Factories live under `src/runtime/blueprints/stacks/`.
 
 | Surface | Backends |
 | --- | --- |
-| Driver | `thunder`, `stub`, `sim_mujoco`, `sim_ros2` |
+| Driver | `thunder`, `stub`, `sim_mujoco`, `sim_endpoint` |
 | SLAM | `fastlio2`, `pointlio`, `localizer`, `bridge`, `none` |
 | Detector | `yoloe`, `yolo_world`, `bpu`, `grounding_dino` |
 | Encoder | `clip`, `mobileclip` |
@@ -154,7 +154,7 @@ Current profile definitions are in `cli/profiles_data.py`.
 | `explore` | `s100p` | `fastlio2` | `qwen` | `octoplanner3d` | yes | wavefront frontier via `navigation(enable_frontier=True)` |
 | `tare_explore` | `s100p` | `fastlio2` | `qwen` | `octoplanner3d` | yes | CMU TARE stack; requires TARE binary |
 
-Robot presets include `stub`, `sim`, `ros2`, `s100p`, `navigate`, and
+Robot presets include `stub`, `sim`, `sim_endpoint`, `s100p`, `navigate`, and
 `thunder`. `s100p` is a robot preset, while `nav` is the real navigation
 profile.
 
@@ -445,8 +445,10 @@ Highest-priority active source wins.
 - SSH: `ssh sunrise@192.168.66.190`
 - Navigation code: `~/data/SLAM/navigation/` symlinked to `~/data/inovxio/lingtu/`
 - Deployment target: `/opt/lingtu/nav/`
-- CycloneDDS: `~/cyclonedds/install/`
-- Python: 3.10.12; `cyclonedds==0.10.5`
+- CycloneDDS runtime: C++ `dds/dds.h` + `idlc` from apt `cyclonedds-dev`/`cyclonedds-tools`
+  (S100P currently uses 0.8.2 successfully)
+- Python: 3.10.12; `cyclonedds-python` is optional for development diagnostics and
+  must not be required by the robot main path
 - DUFOMap binary: `~/src/dufomap/build/dufomap_run`
 - Map directory resolution: `$NAV_MAP_DIR`, then existing `~/data/nova/maps`, otherwise `~/data/lingtu/maps`
 

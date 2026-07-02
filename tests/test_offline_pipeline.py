@@ -38,10 +38,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from perception.instance_tracker import (
+from perception.tracking.instance_tracker import (
     TrackedObject, InstanceTracker, BELIEF_FRESHNESS_TAU,
 )
-from perception.projection import Detection3D
+from perception.tracking.projection import Detection3D
 from decision.goal_resolution.goal_resolver import (
     GoalResolver, GoalResult, TargetBeliefManager, TargetHypothesis,
 )
@@ -2156,8 +2156,8 @@ class TestSceneGraphDynamic:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import InstanceTracker, TrackedObject
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker, TrackedObject
+        from perception.tracking.projection import Detection3D
         self.InstanceTracker = InstanceTracker
         self.TrackedObject = TrackedObject
         self.Detection3D = Detection3D
@@ -2520,7 +2520,7 @@ class TestLoopyBeliefPropagation:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import (
+        from perception.tracking.instance_tracker import (
             InstanceTracker, Detection3D, TrackedObject,
             PhantomNode, RoomTypePosterior, BeliefMessage,
             BP_MAX_ITERATIONS, BP_CONVERGENCE_EPS,
@@ -2690,7 +2690,7 @@ class TestPhantomNodes:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import (
+        from perception.tracking.instance_tracker import (
             InstanceTracker, Detection3D, PhantomNode,
         )
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
@@ -2806,7 +2806,7 @@ class TestSafetyAwareCredibility:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import (
+        from perception.tracking.instance_tracker import (
             TrackedObject, SAFETY_THRESHOLDS_NAVIGATION,
             SAFETY_THRESHOLDS_INTERACTION, SAFETY_PRIOR_ALPHA_SCALE,
         )
@@ -2896,7 +2896,7 @@ class TestExplorationTargets:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import InstanceTracker, Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker, Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
@@ -2951,7 +2951,7 @@ class TestBPDiagnostics:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import InstanceTracker, Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker, Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.InstanceTracker = InstanceTracker
         self.Detection3D = Detection3D
@@ -3018,7 +3018,7 @@ class TestRoomTypePosteriorDataclass:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import RoomTypePosterior
+        from perception.tracking.instance_tracker import RoomTypePosterior
         self.RoomTypePosterior = RoomTypePosterior
 
     def test_empty_posterior(self):
@@ -3050,7 +3050,7 @@ class TestPhantomNodeDataclass:
 
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import PhantomNode
+        from perception.tracking.instance_tracker import PhantomNode
         self.PhantomNode = PhantomNode
 
     def test_phantom_existence_prob(self):
@@ -3448,8 +3448,8 @@ class TestModelIntegration:
             reason="belief_network module not available",
         )
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         from perception.belief_network import _TORCH_AVAILABLE
         self.InstanceTracker = InstanceTracker

@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from message.livox_frame import POINT_DTYPE, LivoxPointFrame
-from message.dds import from_dds_message, to_dds_message
+from message.dds import from_dds_message, to_dds_message, topic_spec
+from runtime.msgs.geometry import Transform, Vector3
 from runtime.msgs.numpy_compat import np
 from runtime.runtime_interface import TOPICS
+from runtime.tf import TFMessage, TF_TOPIC
 from runtime.transport.adapter import TransportAdapter
 
 
@@ -139,3 +141,25 @@ def test_livox_dds_contract_does_not_import_driver_layer() -> None:
     source = Path(livox_contract.__file__).read_text(encoding="utf-8")
 
     assert "drivers.real" not in source
+
+
+def test_tf_message_round_trips_through_registered_dds_payload() -> None:
+    msg = TFMessage(
+        (
+            Transform(
+                translation=Vector3(1.0, 2.0, 3.0),
+                frame_id="map",
+                child_frame_id="odom",
+                ts=7.5,
+            ),
+        )
+    )
+
+    dds_msg = to_dds_message(TF_TOPIC, msg)
+    roundtrip = from_dds_message(TF_TOPIC, dds_msg)
+
+    assert topic_spec(TF_TOPIC).cpp_type == "lingtu::dds::TFMessage"
+    assert dds_msg.transforms[0].header.frame_id == "map"
+    assert roundtrip.transforms[0].child_frame_id == "odom"
+    assert roundtrip.transforms[0].translation.x == 1.0
+    assert roundtrip.transforms[0].ts == 7.5

@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Mapping
 
 from nav.mission.model.state import MissionEvent, MissionState
+from runtime.msgs.geometry import Quaternion, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
+from runtime.runtime_interface import normalize_frame_id
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,60 @@ LOCALIZATION_MOTION_HOLD_ACTIONS = {"restart_localization_chain"}
 
 
 class NavigationLocalizationMixin:
+    def _on_map_odom_tf(self, msg: dict) -> None:
+        self._map_odom_tf = None
+        if isinstance(msg, Mapping) and msg.get("valid") is not False:
+            self._map_odom_tf = dict(msg)
+        self._frame_contract.set_map_odom_tf(self._map_odom_tf)
+
+    def _odom_pose_in_planning_frame(
+        self,
+        odom: Odometry,
+        yaw: float | None,
+    ) -> tuple[list[float], float | None]:
+        pos = [
+            float(odom.pose.position.x),
+            float(odom.pose.position.y),
+            float(odom.pose.position.z),
+        ]
+        odom_frame = normalize_frame_id(getattr(odom, "frame_id", None))
+        planning_frame = normalize_frame_id(self._planning_frame_id)
+        if not odom_frame or odom_frame == planning_frame:
+            return pos, yaw
+
+        tf = self._map_odom_tf
+        if not isinstance(tf, Mapping) or tf.get("valid") is False:
+            return pos, yaw
+        parent = normalize_frame_id(tf.get("frame_id"))
+        child = normalize_frame_id(tf.get("child_frame_id"))
+        if parent != planning_frame or child != odom_frame:
+            return pos, yaw
+
+        try:
+            rotation = Quaternion(
+                float(tf.get("qx", 0.0)),
+                float(tf.get("qy", 0.0)),
+                float(tf.get("qz", 0.0)),
+                float(tf.get("qw", 1.0)),
+            ).normalize()
+            translation = Vector3(
+                float(tf.get("tx", 0.0)),
+                float(tf.get("ty", 0.0)),
+                float(tf.get("tz", 0.0)),
+            )
+        except (TypeError, ValueError, ZeroDivisionError):
+            return pos, yaw
+
+        rotated = rotation.rotate_vector(Vector3(pos))
+        transformed = translation + rotated
+        transformed_yaw = yaw
+        if yaw is not None and math.isfinite(yaw):
+            transformed_yaw = math.atan2(
+                math.sin(yaw + rotation.yaw),
+                math.cos(yaw + rotation.yaw),
+            )
+        return transformed.to_list(), transformed_yaw
+
     def _on_localization_status(self, msg: dict) -> None:
         prev = self._loc_state
         self._loc_state = msg.get("state", "UNINIT")

@@ -32,8 +32,8 @@ result:   path, plan_ms, reached_goal, error, diagnostics, report
 ```
 
 `Navigation` and plan preview call `PlannerService.plan_request(request)`.
-`plan(start, goal, ...)` remains only as a compatibility wrapper. Native
-OctoPlanner3D still receives the JSON executable protocol described below.
+`plan(start, goal, ...)` remains only as a compatibility wrapper. The C++
+OctoPlanner3D executable receives the JSON protocol described below.
 
 The runtime path does not use the generic registry to select algorithms anymore.
 `GlobalPlanner` directly maps `octoplanner3d`, `pct`, and `direct` to their
@@ -48,8 +48,8 @@ compatibility and metadata tests.
 - `octoplanner3d_planner.py`: GlobalPlanner-compatible planner logic.
 - `octoplanner3d_protocol.py`: payload schema, constraint normalization, and path
   parsing.
-- `octoplanner3d_runtime.py`: native module discovery, executable discovery, WSL
-  path conversion, and subprocess execution.
+- `octoplanner3d_runtime.py`: C++ executable discovery, WSL path conversion, and
+  subprocess execution.
 - `direct_path.py`: mapless direct planner used by Thunder Lite.
 - `OctoPlanner3D/`: complete upstream OctoPlanner3D source plus the ROS-free
   runtime wrapper in `OctoPlanner3D/runtime`.
@@ -58,7 +58,7 @@ Algorithmically, the upstream OctoPlanner3D core runs a constrained 3D A*
 search over OctoMap cells. In LingTu, `octoplanner3d` is still the planner
 implementation name; `octomap_3d_astar` is exposed only as the internal search-kernel
 diagnostic. Product profiles pass quadruped body-envelope and terrain-support
-constraints into the native core instead of relying on the upstream hard-coded
+constraints into the C++ core instead of relying on the upstream hard-coded
 defaults.
 
 ## Build the headless executable
@@ -142,7 +142,7 @@ The executable protocol is JSON over stdin/stdout. Inputs:
 
 Input fields:
 
-- `map_source`: required generic map descriptor. Current native runtime consumes
+- `map_source`: required generic map descriptor. Current C++ runtime consumes
   file sources: `octomap_file` (`.bt`, `.ot`, `.octomap`) or `point_cloud_file`
   (`.pcd` when the binary was built with PCL conversion support).
 - `map_path`: legacy alias for `map_source.path`, kept for compatibility with
@@ -150,11 +150,11 @@ Input fields:
 - `map_format`: `bt`, `ot`, `octomap`, `pcd`, or `auto`.
 - `start`: required `[x, y, z]` in LingTu planning/map frame, meters.
 - `goal`: required `[x, y, z]` in LingTu planning/map frame, meters.
-- `obstacle_thr`: compatibility field from LingTu's planner service. Native
+- `obstacle_thr`: compatibility field from LingTu's planner service. C++
   OctoPlanner3D uses OctoMap occupancy, robot radius, ground support, and
   traversability checks for collision/traversal decisions.
-- `options`: native OctoPlanner3D options. LingTu product profiles set the
-  quadruped bounding radius and terrain-support constraints here; the native
+- `options`: C++ OctoPlanner3D options. LingTu product profiles set the
+  quadruped bounding radius and terrain-support constraints here; the C++
   wrapper applies them before calling `GlobalPlanner::setOctomap()`.
 
 Output:
@@ -182,10 +182,10 @@ Output:
 
 Output fields:
 
-- `ok`: true when the native planner returned a non-empty global path.
+- `ok`: true when the C++ planner returned a non-empty global path.
 - `path`: global waypoints as `[[x, y, z], ...]` in LingTu planning/map frame.
-- `reached_goal`: true when the final waypoint is inside native goal tolerance.
-- `diagnostics`: native run details such as source, path point count,
+- `reached_goal`: true when the final waypoint is inside C++ goal tolerance.
+- `diagnostics`: C++ run details such as source, path point count,
   `goal_error_m`, elapsed time, and failure reason.
 
 Supported map inputs:
@@ -201,5 +201,5 @@ diagnostics, so callers can discover the accepted map inputs and converter
 requirements without constructing ROS2 nodes or importing the upstream wrapper.
 
 When the executable is not configured or cannot be built on the current host, the
-implementation imports successfully and fails soft so existing PCT/A*/direct planner
-paths are unaffected.
+implementation imports successfully and reports the missing C++ runtime instead
+of falling back through a Python planning implementation.

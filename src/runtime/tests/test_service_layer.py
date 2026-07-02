@@ -129,7 +129,7 @@ class MockActionExecutor:
 class TestPerceptionService(unittest.TestCase):
 
     def _make_service(self, detector=True, encoder=True, tracker=True):
-        from perception.projection import CameraIntrinsics
+        from perception.tracking.projection import CameraIntrinsics
         from perception.service import PerceptionService
         svc = PerceptionService(
             detector=MockDetector() if detector else None,
@@ -198,7 +198,7 @@ class TestPerceptionService(unittest.TestCase):
         svc = self._make_service()
         svc.intrinsics = None
         self.assertIsNone(svc.intrinsics)
-        from perception.projection import CameraIntrinsics
+        from perception.tracking.projection import CameraIntrinsics
         svc.set_intrinsics(CameraIntrinsics(600, 600, 320, 240, 640, 480))
         self.assertIsNotNone(svc.intrinsics)
 

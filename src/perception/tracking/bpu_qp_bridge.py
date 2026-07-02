@@ -12,7 +12,7 @@ BPU → qp_perception 桥接层
     → TargetObservation (给 PersonTracker / 导航用)
 
 用法:
-    from perception.bpu_qp_bridge import create_perception_pipeline
+    from perception.tracking.bpu_qp_bridge import create_perception_pipeline
     pipeline = create_perception_pipeline()
     target = pipeline.process(frame, timestamp)
 """
@@ -59,7 +59,7 @@ def create_perception_pipeline(
     if class_whitelist is None:
         class_whitelist = ["person"]
 
-    from .bpu_detector import BPUDetector
+    from ..detection.bpu_detector import BPUDetector
     bpu = BPUDetector(
         confidence=bpu_confidence,
         iou_threshold=bpu_iou_threshold,

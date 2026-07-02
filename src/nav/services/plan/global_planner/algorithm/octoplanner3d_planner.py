@@ -181,7 +181,7 @@ class OctoPlanner3DPlanner:
             return []
 
         result = runtime_result.result
-        if runtime_result.stage == "native_plan_failed":
+        if runtime_result.stage == "cxx_plan_failed":
             self._last_plan_error = runtime_result.error_message
             self._last_plan_reached_goal = False
             diagnostics = {
@@ -189,7 +189,7 @@ class OctoPlanner3DPlanner:
                 **result_diagnostics(result),
             }
             self._last_plan_diagnostics = self._base_diagnostics(
-                stage="native_plan_failed",
+                stage="cxx_plan_failed",
                 available=True,
                 start_xyz=jsonable_point(start_xyz),
                 goal_xyz=jsonable_point(goal_xyz),
@@ -202,13 +202,8 @@ class OctoPlanner3DPlanner:
                 result.get("error") or result.get("message") or "octoplanner3d plan failed"
             )
             self._last_plan_reached_goal = False
-            stage = (
-                "in_process_native_failed"
-                if self.runtime_mode == "in_process_native"
-                else "native_plan_failed"
-            )
             self._last_plan_diagnostics = self._base_diagnostics(
-                stage=stage,
+                stage="cxx_plan_failed",
                 available=True,
                 start_xyz=jsonable_point(start_xyz),
                 goal_xyz=jsonable_point(goal_xyz),
@@ -234,13 +229,8 @@ class OctoPlanner3DPlanner:
         diagnostics = result_diagnostics(result)
         diagnostics.setdefault("path_points", len(path))
         diagnostics.setdefault("goal_reached", self._last_plan_reached_goal)
-        stage = (
-            "in_process_native_success"
-            if self.runtime_mode == "in_process_native"
-            else "native_plan_success"
-        )
         self._last_plan_diagnostics = self._base_diagnostics(
-            stage=stage,
+            stage="cxx_plan_success",
             available=True,
             start_xyz=jsonable_point(start_xyz),
             goal_xyz=jsonable_point(goal_xyz),
@@ -267,7 +257,6 @@ class OctoPlanner3DPlanner:
             "planner": "octoplanner3d",
             "runtime_mode": self.runtime_mode,
             "process_boundary": self._runtime.process_boundary,
-            "native_module": self._runtime.native_module_name,
             "executable_path": self._runtime.executable_path,
             "wsl_executable_path": self._runtime.wsl_executable_path,
             "map_path": self._map_path,
@@ -283,7 +272,6 @@ class OctoPlanner3DPlanner:
                 "generic_octomap_read": True,
                 "pcd_conversion": "requires PCL-enabled headless build",
                 "ros2_required": False,
-                "in_process_native": self.runtime_mode == "in_process_native",
                 "headless_executable": self._runtime.has_headless_executable,
             },
             "supported_map_formats": list(SUPPORTED_MAP_FORMATS),

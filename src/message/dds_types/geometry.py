@@ -42,9 +42,30 @@ class TwistStamped(IdlStruct, typename="lingtu::dds::TwistStamped"):
     twist: Twist
 
 
+@dataclass
+class Transform(IdlStruct, typename="lingtu::dds::Transform"):
+    translation: Vector3
+    rotation: Quaternion
+
+
+@dataclass
+class TransformStamped(IdlStruct, typename="lingtu::dds::TransformStamped"):
+    header: Header
+    child_frame_id: str
+    transform: Transform
+
+
+@dataclass
+class TFMessage(IdlStruct, typename="lingtu::dds::TFMessage"):
+    transforms: types.sequence[TransformStamped]
+
+
 DDS_Pose = Pose
 DDS_PoseWithCovariance = PoseWithCovariance
 DDS_Twist = Twist
 DDS_TwistWithCovariance = TwistWithCovariance
 DDS_PoseStamped = PoseStamped
 DDS_TwistStamped = TwistStamped
+DDS_Transform = Transform
+DDS_TransformStamped = TransformStamped
+DDS_TFMessage = TFMessage

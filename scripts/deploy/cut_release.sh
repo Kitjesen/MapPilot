@@ -6,7 +6,7 @@
 #
 # Default release gates are native-first:
 #   - LingTu native navigation kernel must be built.
-#   - OctoPlanner3D native module or headless executable must be available.
+#   - OctoPlanner3D C++ headless executable must be available.
 #   - ROS 2 compatibility install packages are checked only when
 #     LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1.
 #
@@ -56,11 +56,6 @@ ensure_nav_kernel_artifact() {
     NAV_KERNEL_ARTIFACT="$(find_nav_kernel_artifact)"
 }
 
-find_octoplanner3d_native_module() {
-    find -L "$DEV_DIR/src/nav/services/plan/global_planner/algorithm" \
-        -maxdepth 1 -type f \( -name '_native*.so' -o -name '_native*.pyd' \) -print -quit 2>/dev/null || true
-}
-
 find_octoplanner3d_executable() {
     if [ -n "${LINGTU_OCTOPLANNER3D_EXECUTABLE:-}" ]; then
         if [ -f "$LINGTU_OCTOPLANNER3D_EXECUTABLE" ]; then
@@ -83,6 +78,42 @@ find_octoplanner3d_executable() {
     done
 }
 
+find_octomap_editor_executable() {
+    if [ -n "${LINGTU_OCTOMAP_EDITOR:-}" ]; then
+        if [ -f "$LINGTU_OCTOMAP_EDITOR" ]; then
+            printf '%s\n' "$LINGTU_OCTOMAP_EDITOR"
+        fi
+        return 0
+    fi
+
+    for candidate in \
+        "$DEV_DIR/build/octoplanner3d_headless/octoplanner3d_edit_octomap" \
+        "$DEV_DIR/build/octoplanner3d_headless/Release/octoplanner3d_edit_octomap" \
+        "$DEV_DIR/build/octoplanner3d_headless/Debug/octoplanner3d_edit_octomap" \
+        "$DEV_DIR/build/octoplanner3d_headless/octoplanner3d_edit_octomap.exe" \
+        "$DEV_DIR/build/octoplanner3d_headless/Release/octoplanner3d_edit_octomap.exe" \
+        "$DEV_DIR/build/octoplanner3d_headless/Debug/octoplanner3d_edit_octomap.exe"; do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+}
+
+find_octomap_converter_executable() {
+    if [ -n "${LINGTU_MAP_ARTIFACT_CONVERTER:-}" ]; then
+        if [ -f "$LINGTU_MAP_ARTIFACT_CONVERTER" ]; then
+            printf '%s\n' "$LINGTU_MAP_ARTIFACT_CONVERTER"
+        fi
+        return 0
+    fi
+
+    local candidate="$DEV_DIR/build/octoplanner3d_headless/octoplanner3d_pcd_to_octomap"
+    if [ -f "$candidate" ]; then
+        printf '%s\n' "$candidate"
+    fi
+}
+
 require_native_artifacts() {
     ensure_nav_kernel_artifact
     if [ -z "$NAV_KERNEL_ARTIFACT" ]; then
@@ -90,16 +121,23 @@ require_native_artifacts() {
         exit 1
     fi
 
-    OCTO_NATIVE_MODULE="$(find_octoplanner3d_native_module)"
     OCTO_EXEC_SOURCE="$(find_octoplanner3d_executable)"
     if [ "$REQUIRE_OCTOPLANNER3D" = "1" ] \
-        && [ -z "$OCTO_NATIVE_MODULE" ] \
         && [ -z "$OCTO_EXEC_SOURCE" ]; then
-        echo "ERROR: OctoPlanner3D native runtime not found. Build the headless planner first:"
+        echo "ERROR: OctoPlanner3D C++ headless executable not found. Build it first:"
         echo "  cd $DEV_DIR && bash scripts/build/build_octoplanner3d.sh"
         echo "Or set LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D=0 for an explicit non-OctoPlanner release."
         exit 1
     fi
+
+    OCTOMAP_EDITOR_SOURCE="$(find_octomap_editor_executable)"
+    if [ "$REQUIRE_OCTOPLANNER3D" = "1" ] \
+        && [ -z "$OCTOMAP_EDITOR_SOURCE" ]; then
+        echo "ERROR: OctoMap voxel editor not found. Build it first:"
+        echo "  cd $DEV_DIR && bash scripts/build/build_octoplanner3d.sh"
+        exit 1
+    fi
+    OCTOMAP_CONVERTER_SOURCE="$(find_octomap_converter_executable)"
 }
 
 require_ros2_compat_install() {
@@ -139,6 +177,44 @@ copy_octoplanner3d_executable() {
     cp -L "$OCTO_EXEC_SOURCE" "$dest"
     chmod 0755 "$dest"
     echo ">>> Copied OctoPlanner3D headless executable: $dest"
+}
+
+copy_octomap_editor_executable() {
+    if [ -z "${OCTOMAP_EDITOR_SOURCE:-}" ]; then
+        return 0
+    fi
+
+    case "$OCTOMAP_EDITOR_SOURCE" in
+        "$TARGET_DIR"/*)
+            return 0
+            ;;
+    esac
+
+    local dest_dir="$TARGET_DIR/build/octoplanner3d_headless"
+    local dest="$dest_dir/$(basename "$OCTOMAP_EDITOR_SOURCE")"
+    mkdir -p "$dest_dir"
+    cp -L "$OCTOMAP_EDITOR_SOURCE" "$dest"
+    chmod 0755 "$dest"
+    echo ">>> Copied OctoMap voxel editor: $dest"
+}
+
+copy_octomap_converter_executable() {
+    if [ -z "${OCTOMAP_CONVERTER_SOURCE:-}" ]; then
+        return 0
+    fi
+
+    case "$OCTOMAP_CONVERTER_SOURCE" in
+        "$TARGET_DIR"/*)
+            return 0
+            ;;
+    esac
+
+    local dest_dir="$TARGET_DIR/build/octoplanner3d_headless"
+    local dest="$dest_dir/$(basename "$OCTOMAP_CONVERTER_SOURCE")"
+    mkdir -p "$dest_dir"
+    cp -L "$OCTOMAP_CONVERTER_SOURCE" "$dest"
+    chmod 0755 "$dest"
+    echo ">>> Copied OctoMap PCD converter: $dest"
 }
 
 unit_exists() {
@@ -193,12 +269,16 @@ echo "  Cutting LingTu Thunder release: $VERSION"
 echo "  From: $DEV_DIR"
 echo "  To:   $TARGET_DIR"
 echo "  Native local autonomy: $NAV_KERNEL_ARTIFACT"
-if [ -n "${OCTO_NATIVE_MODULE:-}" ]; then
-    echo "  OctoPlanner3D native module: $OCTO_NATIVE_MODULE"
-elif [ -n "${OCTO_EXEC_SOURCE:-}" ]; then
+if [ -n "${OCTO_EXEC_SOURCE:-}" ]; then
     echo "  OctoPlanner3D executable: $OCTO_EXEC_SOURCE"
 else
     echo "  OctoPlanner3D gate: skipped"
+fi
+if [ -n "${OCTOMAP_EDITOR_SOURCE:-}" ]; then
+    echo "  OctoMap editor: $OCTOMAP_EDITOR_SOURCE"
+fi
+if [ -n "${OCTOMAP_CONVERTER_SOURCE:-}" ]; then
+    echo "  OctoMap PCD converter: $OCTOMAP_CONVERTER_SOURCE"
 fi
 echo "========================================"
 
@@ -218,6 +298,8 @@ rsync -aL \
     --exclude=research \
     "$DEV_DIR/" "$TARGET_DIR/"
 copy_octoplanner3d_executable
+copy_octomap_editor_executable
+copy_octomap_converter_executable
 
 REL_SIZE="$(du -sh "$TARGET_DIR" | awk '{print $1}')"
 echo ">>> [1/5] Done; release size: $REL_SIZE"

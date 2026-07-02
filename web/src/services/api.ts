@@ -188,6 +188,14 @@ function locationDetailPath(name: string): string {
     : `/api/v1/locations/${encoded}`
 }
 
+function mapNamedPath(linkName: keyof ClientLinks, fallback: string, name: string): string {
+  const encoded = encodeURIComponent(name)
+  const template = apiPath(linkName, fallback)
+  return template.includes('{name}')
+    ? template.replace('{name}', encoded)
+    : fallback.replace('{name}', encoded)
+}
+
 function makeRequestId(prefix: string): string {
   if (globalThis.crypto?.randomUUID) {
     return `${prefix}-${globalThis.crypto.randomUUID()}`
@@ -600,6 +608,62 @@ export async function saveMap(name: string): Promise<SaveMapResult> {
     body: JSON.stringify({ name }),
   })
   return readMapLifecycle(res) as Promise<SaveMapResult>
+}
+
+export async function importPcdMap(
+  name: string,
+  sourcePath: string,
+  voxelSize = 0,
+): Promise<MapLifecycleResponse> {
+  const res = await fetch(apiPath('map_import_pcd', '/api/v1/maps/import_pcd'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, source_path: sourcePath, voxel_size: voxelSize }),
+  })
+  return readMapLifecycle(res)
+}
+
+export async function cropMap(
+  name: string,
+  bounds: Record<string, unknown>,
+): Promise<MapLifecycleResponse> {
+  const res = await fetch(mapNamedPath('map_crop', '/api/v1/maps/{name}/crop', name), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bounds }),
+  })
+  return readMapLifecycle(res)
+}
+
+export async function markMapZone(
+  name: string,
+  body: Record<string, unknown>,
+): Promise<MapLifecycleResponse> {
+  const res = await fetch(mapNamedPath('map_mark_zone', '/api/v1/maps/{name}/mark_zone', name), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return readMapLifecycle(res)
+}
+
+export async function buildMapOctomap(name: string): Promise<MapLifecycleResponse> {
+  const res = await fetch(mapNamedPath('map_build_octomap', '/api/v1/maps/{name}/build_octomap', name), {
+    method: 'POST',
+  })
+  return readMapLifecycle(res)
+}
+
+export async function validateMapPlan(
+  name: string,
+  x: number,
+  y: number,
+  z = 0,
+): Promise<Record<string, unknown>> {
+  return postJson<Record<string, unknown>>(
+    mapNamedPath('map_validate_plan', '/api/v1/maps/{name}/validate_plan', name),
+    { x, y, z, client_id: WEB_CLIENT_ID },
+  )
 }
 
 // --- Session state machine ---

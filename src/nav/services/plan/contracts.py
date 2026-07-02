@@ -740,6 +740,10 @@ class PlannerService(Protocol):
         """Return backend health and degradation status."""
         ...
 
+    def reload_map(self, map_path: str = "") -> dict[str, Any]:
+        """Reload saved-map artifacts through the planner boundary."""
+        ...
+
     def reload_tomogram(self, tomogram: str) -> dict[str, Any]:
-        """Reload map artifacts through the planner boundary."""
+        """Compatibility alias for reload_map()."""
         ...

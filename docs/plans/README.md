@@ -12,6 +12,7 @@ not a source of truth until the implementation and tests land.
 | [`PRD-map-bundle-global-planning-integration.md`](./PRD-map-bundle-global-planning-integration.md) | MapRecord bundle handoff into global planning. |
 | [`PRD-map-service-spatial-data-platform.md`](./PRD-map-service-spatial-data-platform.md) | MapService records, bundles, lifecycle events, and planner handoff. |
 | [`PRD-slam-transport-navigation-dataflow.md`](./PRD-slam-transport-navigation-dataflow.md) | SLAM, transport, and navigation dataflow. |
+| [`native-dds-map-planning-test-migration-plan.md`](./native-dds-map-planning-test-migration-plan.md) | Native DDS, pcd_to_octomap, global/local planning test and migration gates. |
 | [`octoplanner3d-map-artifact-closed-loop.md`](./octoplanner3d-map-artifact-closed-loop.md) | OctoPlanner3D map artifact loop. |
 | [`simulation-closure-plan.md`](./simulation-closure-plan.md) | Simulation validation closure plan. |
 

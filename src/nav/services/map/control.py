@@ -5,17 +5,26 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
-from runtime.same_source_map_artifacts import validate_saved_map_artifact_dir
 from nav.services.map.records import load_map_record
 from nav.services.map.storage import InvalidMapName, MapStorageService
+from nav.services.map.voxel_edit import edit_saved_octomap
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.same_source_map_artifacts import validate_saved_map_artifact_dir
 
 
 class MapControlService:
     """Owns map lifecycle mutations and active-map gating."""
 
-    def __init__(self, *, storage: MapStorageService) -> None:
+    def __init__(
+        self,
+        *,
+        storage: MapStorageService,
+        octomap_editor_command: Any = None,
+        octomap_edit_timeout_sec: float = 15.0,
+    ) -> None:
         self.storage = storage
+        self.octomap_editor_command = octomap_editor_command
+        self.octomap_edit_timeout_sec = float(octomap_edit_timeout_sec)
 
     def create(self, name: str) -> dict[str, Any]:
         try:
@@ -159,7 +168,8 @@ class MapControlService:
         )
         if not has_runtime_artifact:
             artifact_gate.setdefault("blockers", []).append(
-                "saved map has no usable runtime planning artifact: expected octomap.bt, tomogram.pickle, or occupancy.npz"
+                "saved map has no usable runtime planning artifact: expected "
+                "octomap.ot, octomap.bt, tomogram.pickle, or occupancy.npz"
             )
             artifact_gate["ok"] = False
         if artifact_gate.get("ok") is not True:
@@ -189,8 +199,34 @@ class MapControlService:
             "success": True,
             "active": name,
             "tomogram": str(map_dir / "tomogram.pickle") if (map_dir / "tomogram.pickle").exists() else None,
-            "octomap": str(map_dir / "octomap.bt") if (map_dir / "octomap.bt").exists() else None,
+            "octomap": self.storage.get_active_octomap(),
             "occupancy": str(map_dir / "occupancy.npz") if (map_dir / "occupancy.npz").exists() else None,
             "artifact_gate": artifact_gate,
             "record": record,
         }
+
+    def edit_voxels(self, name: str, cmd: dict[str, Any]) -> dict[str, Any]:
+        map_name = str(name or self.storage.active_map or "")
+        try:
+            map_dir = self.storage.map_path(map_name)
+        except InvalidMapName as exc:
+            return {"action": "edit_voxels", "success": False, "message": str(exc)}
+        if not map_dir.is_dir():
+            return {
+                "action": "edit_voxels",
+                "success": False,
+                "message": f"map not found: {map_name}",
+            }
+
+        resp = edit_saved_octomap(
+            map_dir,
+            cmd,
+            editor_command=self.octomap_editor_command,
+            timeout_sec=self.octomap_edit_timeout_sec,
+        )
+        if resp.get("success") is True:
+            resp["record"] = self.storage.write_map_record(
+                map_name,
+                state="ACTIVE" if self.storage.active_map == map_name else "READY",
+            )
+        return resp

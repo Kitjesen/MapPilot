@@ -19,8 +19,6 @@ _DRIVER_KEY_ALIASES = {
     "sim": "sim_mujoco",
     "mujoco_inproc": "sim_mujoco",
     "sim_gazebo": "sim_endpoint",
-    "ros2": "sim_ros2",
-    "ros2_bridge": "sim_ros2",
 }
 
 _DRIVER_FALLBACK_MODULES: dict[str, tuple[str, ...]] = {

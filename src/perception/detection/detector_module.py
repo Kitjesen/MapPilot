@@ -7,7 +7,7 @@ a one-line Blueprint change.
 Usage::
 
     from runtime.blueprints import Blueprint
-    from perception.detector_module import DetectorModule
+    from perception.detection.detector_module import DetectorModule
 
     # YOLO-World on GPU
     bp.add(DetectorModule, detector="yolo_world", model_size="l")

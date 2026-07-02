@@ -26,7 +26,7 @@ def create_nanobind_backend(
 ) -> NanobindLocalPlannerBackend:
     """Create the nanobind nav_kernel LocalPlanner backend, or report unavailability."""
     hint = build_hint_provider()
-    nav_kernel = nav_kernel_importer(("LocalPlannerParams", "nav.local_planner"))
+    nav_kernel = nav_kernel_importer(("LocalPlannerParams", "LocalPlanner"))
     if nav_kernel is None:
         return NanobindLocalPlannerBackend(
             core=None,

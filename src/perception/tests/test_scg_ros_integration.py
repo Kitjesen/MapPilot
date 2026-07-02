@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 SCG ROS2 闆嗘垚娴嬭瘯 鈥?绾?Python锛屾棤闇€ ROS2 杩愯鏃躲€?
 
@@ -20,13 +20,13 @@ import pytest
 _pkg_root = Path(__file__).parent.parent
 sys.path.insert(0, str(_pkg_root))
 
-from perception.polyhedron_expansion import (
+from perception.scene_understanding.polyhedron_expansion import (
     Polyhedron,
     PolyhedronExpander,
     PolyhedronExpansionConfig,
 )
-from perception.scg_builder import SCGBuilder, SCGConfig
-from perception.scg_path_planner import SCGPath, SCGPathPlanner
+from perception.scene_understanding.scg_builder import SCGBuilder, SCGConfig
+from perception.scene_understanding.scg_path_planner import SCGPath, SCGPathPlanner
 
 # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 #  Fixtures

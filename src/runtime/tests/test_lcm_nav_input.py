@@ -151,7 +151,10 @@ def test_navigation_stack_selects_ros2_nav_in_for_explicit_ros2_ingress() -> Non
 
 
 def test_thunder_field_nav_blueprint_accepts_commands_from_lcm_endpoint() -> None:
-    config = resolve_profile_config("nav")
+    # The "nav" profile defaults to DDS ingress (see
+    # docs/architecture/LINGTU_RUNTIME_BUS_DECISION.md); LCM remains an
+    # explicit opt-in for smoke/replay bridges, so force it here.
+    config = resolve_profile_config("nav", nav_in_adapter="lcm_nav_input")
     bp = blueprint_for_resolved_profile("nav", config)
     nav_in_entry = next(
         entry for entry in bp._entries if entry.name == "nav.in"

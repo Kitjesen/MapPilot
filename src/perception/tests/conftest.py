@@ -1,4 +1,4 @@
-﻿"""
+"""
 conftest.py 鈥?perception 娴嬭瘯鍏变韩澶瑰叿
 
 鎻愪緵:
@@ -37,7 +37,7 @@ import pytest
 @pytest.fixture
 def make_detection():
     """Test fixture."""
-    from perception.projection import Detection3D
+    from perception.tracking.projection import Detection3D
 
     def _factory(
         label: str = "chair",
@@ -112,7 +112,7 @@ def kg():
 @pytest.fixture
 def tracker():
     """Test fixture."""
-    from perception.instance_tracker import InstanceTracker
+    from perception.tracking.instance_tracker import InstanceTracker
     return InstanceTracker(merge_distance=0.5, clip_threshold=0.75)
 
 

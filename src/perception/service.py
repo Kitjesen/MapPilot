@@ -109,7 +109,7 @@ class PerceptionService:
 
     def _is_blurry(self, bgr: np.ndarray) -> bool:
         try:
-            from .laplacian_filter import is_blurry
+            from perception.detection.laplacian_filter import is_blurry
         except ImportError:
             return False
 
@@ -135,7 +135,7 @@ class PerceptionService:
             return []
 
         try:
-            from .projection import (
+            from perception.tracking.projection import (
                 Detection3D,
                 bbox_center_depth,
                 mask_to_pointcloud,

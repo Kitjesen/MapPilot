@@ -8,10 +8,38 @@
 | `src/message` | Wire-contract registry for typed DDS topic-to-type bindings, with native IDL in `src/message/idl/lingtu_slam.idl` and C++ metadata in `src/message/cpp/dds_topics.hpp`. |
 | First native Fast-LIO2 bring-up | Co-located process, local Module callbacks, enqueue-only sensor ingress. |
 | Endpoint autonomy if SLAM is unstable | Split SLAM into a supervised process; LiDAR/IMU enter through typed CycloneDDS. |
-| Generic pickle/JSON DDS | Not product-grade. Testing/compat only for unregistered topics. Product topics bind to IDL and generated C++ message types. |
+| Generic pickle/JSON DDS | Not product-grade. Testing/compat only for unregistered topics. Product topics bind to IDL and generated native DDS message types. |
 | Protobuf | Not on the point-cloud hot path. Add only for a real generated cross-language boundary. |
 | LCM | Legacy endpoint compatibility and JSONL feed validation. Not the default field bus. |
 | SHM | Only for large point clouds/images after a process split is proven necessary. |
+
+## 现场修正版：C++ DDS 主链路
+
+结论：机器人主链路不再依赖 `cyclonedds-python`。传感器、SLAM、导航命令这种运行时数据边界统一走 C++ CycloneDDS C API + `idlc` 生成类型；Python 只保留 Gateway/API、状态展示、任务编排和离线测试适配。
+
+板子上 apt 当前提供的是 `cyclonedds-dev 0.8.2` 和 `cyclonedds-tools 0.8.2`。这套包已经包含 C API、头文件、`idlc` 和 CMake 配置，足够支撑 C++ runtime。`cyclonedds==0.10.5` 是 Python 绑定包版本，不是现场 C++ 主链路要求；它会在板子上重新编译 Python 扩展，并要求构建脚本找到匹配的 CycloneDDS 开发包。这个依赖不稳定，不能作为机器人启动门槛。
+
+版本策略：
+
+| 层级 | 运行时要求 | 说明 |
+| --- | --- | --- |
+| 机器人主链路 | apt `cyclonedds-dev` + `cyclonedds-tools`，当前接受 0.8.2 | C++ 使用 `dds/dds.h` 和 `idlc -l c` 生成类型，避免 Python ABI/包构建问题。 |
+| Python Gateway | 不要求 `cyclonedds-python` | Gateway 读取 C++ runtime 的低频状态快照，或消费本地 Module 端口。 |
+| Python DDS adapter | 仅测试/兼容 | 可用于开发机调试 typed DDS，不允许成为现场必需依赖。 |
+| 未来升级 | 先升级 C++ CycloneDDS 包，再做全链路验证 | 不用为 Python 包版本倒逼系统库升级。 |
+
+当前落地边界：
+
+```text
+Livox-SDK2 C++ callback
+  -> C++ DDS publisher: rt/lidar/raw_frame, rt/imu/raw
+  -> C++ SLAM runtime: feedLidar/feedImu/tick
+  -> C++ DDS publisher: rt/slam/odometry, rt/slam/map_cloud, rt/slam/localization_health
+  -> C++ status snapshot: /tmp/lingtu_slam_status.json
+  -> Python Gateway reads snapshot for UI/API health only
+```
+
+这里的 JSON 快照不是实时控制通道，只用于 Gateway 健康页、状态审计和现场调试。导航闭环如果跨进程，必须继续走 C++ DDS/native endpoint；不能让 Python DDS 订阅成为路径规划或安全控制的硬依赖。
 
 ## Current Implementation Status
 
@@ -42,13 +70,21 @@ Completed:
   service for that C++ runtime. `scripts/deploy/thunder/install_services.sh`
   exposes `slam-dds` for the SLAM sidecar and `field-cpp` for DDS endpoint plus
   C++ SLAM runtime installation.
-- Remote CycloneDDS C++ validation passed on Ubuntu 22.04. The host uses
-  CycloneDDS C `0.8.2`; matching CycloneDDS-CXX tag `0.8.2` was built and
-  installed under the user prefix. `lingtu_slam_cyclone_runtime` compiled with
-  `idlc` + the `idlcxx` generator, started without ROS 2, and a native C++
-  probe published `rt/imu/raw` + `rt/lidar/raw_frame` then received
-  `rt/slam/map_cloud` with `width=3`, `frame=map`, plus
-  `rt/slam/localization_health` with `backend=cpp_cyclone_slam`.
+- `src/nav/services/endpoint/cpp/nav_cyclone_endpoint.cpp` provides the
+  process-split C++ CycloneDDS navigation endpoint. It subscribes to
+  `rt/nav/goal_pose`, `rt/nav/cancel`, and `rt/nav/semantic/instruction`,
+  forwards those commands into Gateway's canonical REST command APIs, and
+  republishes Gateway's cached `global_path`, `local_path`, and muxed
+  `cmd_vel` as typed DDS outputs.
+- `scripts/deploy/thunder/lingtu-nav-dds.service` is the explicit field service
+  for the C++ navigation endpoint. `install_slam_dds_service.sh` installs it
+  together with the Livox DDS and SLAM DDS services.
+- The native DDS path now targets the CycloneDDS C API plus `idlc` C-generated
+  types, so the robot only needs apt `cyclonedds-dev`/`cyclonedds-tools`; it
+  must not require `cyclonedds-python` or CycloneDDS-CXX.
+- `lingtu_slam_cyclone_runtime` writes a low-rate status snapshot when started
+  with `--status-json`. This gives Gateway status visibility without importing
+  Python DDS bindings.
 
 Not complete:
 
@@ -60,6 +96,14 @@ Not complete:
   `nav_out_adapter=dds_nav_output`, and `enable_lidar=false`, so endpoint
   operation consumes typed DDS raw LiDAR/IMU and SLAM outputs instead of the
   internal `LidarModule -> SlamModule` native path.
+- `localization_adapter=dds_endpoint` still contains a Python DDS compatibility
+  reader for development machines. On the robot, if Python DDS is unavailable,
+  it must fall back to the C++ SLAM status snapshot and report
+  `transport=status_file` instead of failing Gateway setup.
+- The Python `nav_in_adapter` / `nav_out_adapter` DDS modules now fail open as
+  `transport=disabled` when `cyclonedds-python` is absent. They are compatibility
+  and development adapters only; the product field navigation DDS boundary is
+  `lingtu_nav_cyclone_endpoint`.
 - The older `dds_runtime.cpp` path has been compile- and startup-smoke-tested
   with the contract backend on a ROS2/Livox-equipped Ubuntu host. The native
   CycloneDDS runtime has been compile-, startup-, and native pub/sub-tested

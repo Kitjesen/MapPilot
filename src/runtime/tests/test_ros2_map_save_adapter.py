@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lingtu.plugin_seed import seed_builtin_plugins
 from runtime.adapters.ros2.map_save import (
     MapSaveError,
     MapSaveTimeout,
@@ -17,7 +18,6 @@ from runtime.adapters.ros2.map_save import (
 )
 from runtime.map_save import default_map_save_adapter
 from runtime.registry import clear, list_plugins, restore, snapshot
-from lingtu.plugin_seed import seed_builtin_plugins
 
 
 def test_save_pgo_map_builds_legacy_ros2_command() -> None:
@@ -114,13 +114,13 @@ def test_ros2_map_save_adapter_delegates_to_legacy_services() -> None:
     assert pgo_resp["source"] == "pgo"
 
 
-def test_default_map_save_adapter_resolves_ros2_plugin_after_registry_clear(
+def test_default_map_save_adapter_resolves_ros2_when_explicitly_selected(
     monkeypatch,
 ) -> None:
     state = snapshot()
     clear()
     try:
-        monkeypatch.delenv("LINGTU_MAP_SAVE_ADAPTER", raising=False)
+        monkeypatch.setenv("LINGTU_MAP_SAVE_ADAPTER", "ros2")
         seed_builtin_plugins(groups=("map_save_adapter",), reload_loaded=True)
 
         adapter = default_map_save_adapter()
@@ -129,6 +129,7 @@ def test_default_map_save_adapter_resolves_ros2_plugin_after_registry_clear(
         assert type(adapter).__name__ == "Ros2MapSaveAdapter"
         assert callable(adapter.save_nav_map)
         assert callable(adapter.save_pgo_map)
+        assert "native_slam" in list_plugins("map_save_adapter")
         assert "ros2" in list_plugins("map_save_adapter")
     finally:
         restore(state)

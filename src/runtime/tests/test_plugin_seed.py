@@ -335,3 +335,22 @@ def test_optional_map_save_seed_reports_unavailable_for_lite_catalog(
     finally:
         if had_ros2_map_save_module:
             sys.modules["runtime.adapters.ros2.map_save"] = ros2_map_save_module
+
+
+def test_map_save_adapter_seed_prefers_native_slam_by_default() -> None:
+    from lingtu.plugin_seed import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from runtime.map_save import default_map_save_adapter
+
+    saved = snapshot()
+    seed_modules = {module for modules in BUILTIN_PLUGIN_MODULES.values() for module in modules}
+    modules_before = set(sys.modules)
+    try:
+        clear()
+
+        seed_builtin_plugins(groups=("map_save_adapter",), reload_loaded=True)
+
+        assert {"native_slam"} <= set(list_plugins("map_save_adapter"))
+        assert type(default_map_save_adapter()).__name__ == "NativeSlamMapSaveAdapter"
+    finally:
+        restore(saved)
+        _restore_import_state(seed_modules, modules_before)

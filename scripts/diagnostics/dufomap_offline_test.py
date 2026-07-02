@@ -115,7 +115,9 @@ def repack_patches(src_dir: Path, poses_path: Path, dst_dir: Path) -> int:
         pts, _ = read_pcd_binary(patch_file)
         # DUFOMap expects VIEWPOINT in the PCD header. poses.txt is
         # (tx,ty,tz,qw,qx,qy,qz) which matches PCL/UFO's pose6 format.
-        write_pcd_binary(dst_pcd / name, pts, poses[name])
+        # DUFOMap also parses PCD stems as numeric ids, so keep the saved map
+        # names unchanged and use numeric names only in this temporary input.
+        write_pcd_binary(dst_pcd / f"{n:06d}.pcd", pts, poses[name])
         n += 1
     return n
 
@@ -159,6 +161,9 @@ def main() -> int:
         t0 = time.time()
         n = repack_patches(patches_dir, poses_path, tmp)
         print(f"      repacked {n} patches in {time.time()-t0:.2f}s")
+        if n <= 0:
+            print("ERROR: no patches matched poses.txt", file=sys.stderr)
+            return 4
 
         print(f"[2/4] Run dufomap_run {tmp} {DUFOMAP_CONFIG}")
         t0 = time.time()

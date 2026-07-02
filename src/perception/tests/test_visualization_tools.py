@@ -21,7 +21,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.visualization_tools import (
+from perception.research.visualization_tools import (
     ComprehensiveVisualizer,
     PathVisualizer,
     PerformanceVisualizer,
@@ -55,8 +55,8 @@ def create_test_scg():
     """创建测试 SCG。"""
     from scipy.spatial import ConvexHull
 
-    from perception.polyhedron_expansion import Polyhedron
-    from perception.scg_builder import SCGBuilder, SCGConfig
+    from perception.scene_understanding.polyhedron_expansion import Polyhedron
+    from perception.scene_understanding.scg_builder import SCGBuilder, SCGConfig
 
     config = SCGConfig()
     scg_builder = SCGBuilder(config)
@@ -96,7 +96,7 @@ def create_test_scg():
 
 def create_test_results():
     """创建测试评估结果。"""
-    from perception.evaluation_framework import (
+    from perception.research.evaluation_framework import (
         BenchmarkResult,
         MemoryMetrics,
         PathMetrics,

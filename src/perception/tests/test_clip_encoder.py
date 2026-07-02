@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from perception.clip_encoder import CLIPEncoder
+from perception.encoding.clip_encoder import CLIPEncoder
 
 
 class TestCLIPEncoderInit(unittest.TestCase):

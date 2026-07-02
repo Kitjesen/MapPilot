@@ -61,7 +61,7 @@ ARTIFACT_SPECS: dict[str, dict[str, str]] = {
     },
     "octomap": {
         "type": "OCTOMAP_3D",
-        "filename": "octomap.bt",
+        "filename": "octomap.ot",
         "map_class": "global_3d_occupancy",
         "capability": "navigation_safety_3d",
         "role": "octoplanner3d_global_planning",

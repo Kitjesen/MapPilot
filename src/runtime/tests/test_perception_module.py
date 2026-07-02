@@ -486,7 +486,7 @@ class TestDetectorConfiguration:
         assert mod._detector_type == "constructor_test_detector"
         assert mod._encoder_type == "constructor_test_encoder"
 
-    @patch("perception.instance_tracker.InstanceTracker")
+    @patch("perception.tracking.instance_tracker.InstanceTracker")
     def test_setup_uses_tracking_iou_threshold(self, instance_tracker_cls):
         mod = PerceptionModule(
             merge_distance=0.8,
@@ -505,7 +505,7 @@ class TestDetectorConfiguration:
             max_objects=33,
         )
 
-    @patch("perception.yoloe_detector.YOLOEDetector")
+    @patch("perception.detection.yoloe_detector.YOLOEDetector")
     def test_init_yoloe_detector_forwards_recall_params(self, yoloe_cls):
         backend = MagicMock()
         yoloe_cls.return_value = backend
@@ -531,7 +531,7 @@ class TestDetectorConfiguration:
         backend.load_model.assert_called_once_with()
         assert created is backend
 
-    @patch("perception.yolo_world_detector.YOLOWorldDetector")
+    @patch("perception.detection.yolo_world_detector.YOLOWorldDetector")
     def test_init_yolo_world_detector_forwards_iou(self, yolo_world_cls):
         backend = MagicMock()
         yolo_world_cls.return_value = backend
@@ -555,7 +555,7 @@ class TestDetectorConfiguration:
         backend.load_model.assert_called_once_with()
         assert created is backend
 
-    @patch("perception.bpu_detector.BPUDetector")
+    @patch("perception.detection.bpu_detector.BPUDetector")
     def test_init_bpu_detector_forwards_recall_params(self, bpu_cls):
         backend = MagicMock()
         bpu_cls.return_value = backend
@@ -581,7 +581,7 @@ class TestDetectorConfiguration:
         backend.load_model.assert_called_once_with()
         assert created is backend
 
-    @patch("perception.bpu_tracker.BPUTracker")
+    @patch("perception.tracking.bpu_tracker.BPUTracker")
     def test_init_detector_tracker_for_bpu(self, tracker_cls):
         backend = MagicMock()
         tracker = MagicMock()

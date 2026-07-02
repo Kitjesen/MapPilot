@@ -16,7 +16,7 @@ import unittest
 
 import numpy as np
 
-from perception.global_coverage_mask import (
+from perception.scene_understanding.global_coverage_mask import (
     CoverageCell,
     GlobalCoverageMask,
 )

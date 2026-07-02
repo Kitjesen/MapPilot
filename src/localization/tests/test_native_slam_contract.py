@@ -153,7 +153,14 @@ def test_slam_module_save_map_writes_contract_artifacts(tmp_path) -> None:
     module.setup()
     module.start()
     try:
+        module.lidar_scan_in._deliver(
+            PointCloud2.from_numpy(
+                np.array([[1.0, 0.0, 0.5, 10.0]], dtype=np.float32),
+                frame_id="body",
+            )
+        )
         module.visual_odom._deliver(Odometry())
+        module._drain_inputs()
         result = module.save_map(str(tmp_path))
     finally:
         module.stop()
@@ -161,7 +168,9 @@ def test_slam_module_save_map_writes_contract_artifacts(tmp_path) -> None:
     assert result["ok"] is True
     assert (tmp_path / "map.pcd").exists()
     assert (tmp_path / "poses.txt").exists()
+    assert (tmp_path / "trajectory.txt").exists()
     assert (tmp_path / "patches").is_dir()
+    assert (tmp_path / "patches" / "latest_scan.pcd").exists()
 
 
 def test_slam_stack_defaults_to_native_slam_module() -> None:
@@ -258,11 +267,13 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "nanobind_add_module(_native bind.cpp)" in cmake
     assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in cmake
     assert "add_executable(lingtu_slam_dds_runtime cyclone_runtime.cpp)" in cmake
+    assert "OUTPUT_NAME lingtu_slam_cyclone_runtime" in cmake
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" in cmake
     assert "../../adapters/ros2/cpp/ros2_dds_runtime.cpp" in cmake
     assert "find_package(iceoryx_binding_c QUIET)" in cmake
     assert "find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)" in cmake
-    assert "CycloneDDS-CXX::idlcxx" in cmake
+    assert "CycloneDDS::ddsc" in cmake
+    assert "CycloneDDS-CXX" not in cmake
     assert "add_executable(lingtu_slam_cyclone_runtime ALIAS lingtu_slam_dds_runtime)" in cmake
     assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in build_script
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" in build_script
@@ -274,13 +285,22 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "create_subscription<livox_ros_driver2::msg::CustomMsg>" in ros2_dds_runtime
     assert "backend_->feedLidar" in ros2_dds_runtime
     assert "backend_->feedImu" in ros2_dds_runtime
-    assert "#include \"dds/dds.hpp\"" in cyclone_runtime
+    assert "#include \"dds/dds.h\"" in cyclone_runtime
     assert "rclcpp" not in cyclone_runtime
     assert "sensor_msgs" not in cyclone_runtime
     assert "livox_ros_driver2" not in cyclone_runtime
-    assert "dds::sub::DataReader<lt::LivoxFrame>" in cyclone_runtime
+    assert "dds_create_reader" in cyclone_runtime
+    assert "lingtu_dds_LivoxFrame_desc" in cyclone_runtime
+    assert "lingtu_dds_Imu_desc" in cyclone_runtime
+    assert "lingtu_dds_TFMessage_desc" in cyclone_runtime
+    assert "lingtu::message::kTf.dds_topic.data()" in cyclone_runtime
+    assert "lingtu::message::kTfStatic.dds_topic.data()" in cyclone_runtime
+    assert "dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL)" in cyclone_runtime
+    assert "dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT" in cyclone_runtime
+    assert "dds.writeTf(msg.msg)" in cyclone_runtime
     assert "backend->feedLidar" in cyclone_runtime
     assert "backend->feedImu" in cyclone_runtime
+    assert "--log-status-s" in cyclone_runtime
 
 
 def test_cpp_message_topic_contract_stays_ros_free() -> None:
@@ -336,7 +356,9 @@ def test_fastlio_feed_lidar_only_queues_raw_frame() -> None:
     sync = sync.split("void updateWaitingReason()", 1)[0]
 
     assert "toPclCloud" not in feed
-    assert "lidar_buffer_.push_back(frame)" in feed
+    assert "livox_scan_window" not in text
+    assert "pending_lidar_scan_" not in text
+    assert "pushLidarFrame(frame)" in feed
     assert "toPclCloud(lidar_buffer_.front(), builder_config_)" in sync
 
 

@@ -55,6 +55,7 @@ class DDSNavOutModule(Module, layer=5):
         self._publish_counts: Counter[str] = Counter()
         self._publish_errors: Counter[str] = Counter()
         self._last_publish_ts = 0.0
+        self._disabled_reason = ""
         self._path_frame_id = str(
             default_frame_id or topic_default_frame_id(TOPICS.global_path)
         )
@@ -68,7 +69,12 @@ class DDSNavOutModule(Module, layer=5):
         self._backend_status = BackendStatus.configured_as("dds_nav_output")
 
     def setup(self) -> None:
-        self._transport = self._transport or self._create_default_transport()
+        if self._transport is None:
+            try:
+                self._transport = self._create_default_transport()
+            except ImportError as exc:
+                self._disable(exc)
+                return
         self.global_path.subscribe(
             lambda path: self._publish_path(
                 TOPICS.global_path,
@@ -118,7 +124,8 @@ class DDSNavOutModule(Module, layer=5):
     def health(self) -> dict[str, Any]:
         return {
             **self._backend_status.as_health_fields(),
-            "transport": "dds",
+            "transport": "disabled" if self._disabled_reason else "dds",
+            "disabled_reason": self._disabled_reason,
             "published_topics": list(self._publishers),
             "publish_counts": dict(self._publish_counts),
             "publish_errors": dict(self._publish_errors),
@@ -131,6 +138,10 @@ class DDSNavOutModule(Module, layer=5):
         from runtime.transport.dds import DDSTransport
 
         return DDSTransport(domain_id=self._domain_id)
+
+    def _disable(self, exc: ImportError) -> None:
+        self._disabled_reason = str(exc)
+        logger.warning("DDS nav output disabled: %s", self._disabled_reason)
 
     def _publish_path(self, topic: str, path: Path | list[Any], frame_id: str) -> None:
         self._publish(topic, _to_dds_path(path, frame_id))
@@ -196,13 +207,19 @@ class DDSNavInModule(Module, layer=5):
         self._message_counts: Counter[str] = Counter()
         self._decode_errors: Counter[str] = Counter()
         self._last_message_ts = 0.0
+        self._disabled_reason = ""
         self._default_frame_id = str(
             default_frame_id or topic_default_frame_id(TOPICS.goal_pose)
         )
         self._backend_status = BackendStatus.configured_as("dds_nav_input")
 
     def setup(self) -> None:
-        self._transport = self._transport or self._create_default_transport()
+        if self._transport is None:
+            try:
+                self._transport = self._create_default_transport()
+            except ImportError as exc:
+                self._disable(exc)
+                return
         self._subscribe(TOPICS.goal_pose, self._on_goal_pose)
         self._subscribe(TOPICS.cancel, self._on_cancel)
         self._subscribe(TOPICS.semantic_instruction, self._on_instruction)
@@ -229,8 +246,9 @@ class DDSNavInModule(Module, layer=5):
     def health(self) -> dict[str, Any]:
         return {
             **self._backend_status.as_health_fields(),
-            "transport": "dds",
-            "subscribed_topics": [
+            "transport": "disabled" if self._disabled_reason else "dds",
+            "disabled_reason": self._disabled_reason,
+            "subscribed_topics": [] if self._disabled_reason else [
                 TOPICS.goal_pose,
                 TOPICS.cancel,
                 TOPICS.semantic_instruction,
@@ -246,6 +264,10 @@ class DDSNavInModule(Module, layer=5):
         from runtime.transport.dds import DDSTransport
 
         return DDSTransport(domain_id=self._domain_id)
+
+    def _disable(self, exc: ImportError) -> None:
+        self._disabled_reason = str(exc)
+        logger.warning("DDS nav input disabled: %s", self._disabled_reason)
 
     def _subscribe(self, topic: str, callback: Callable[[Any], None]) -> None:
         if self._transport is None:

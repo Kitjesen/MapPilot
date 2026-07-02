@@ -186,6 +186,69 @@ def test_path_route_accepts_core_path_messages_without_dropping_points():
     assert path.path[1].z == 0.1
 
 
+def test_navigation_dds_snapshot_exposes_paths_and_muxed_cmd_vel():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import NavigationDdsSnapshotResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    with gateway._state_lock:
+        gateway._last_path = [{"x": 1.0, "y": 2.0, "z": 0.3, "frame_id": "map"}]
+        gateway._last_local_path = [{"x": 0.2, "y": 0.1, "z": 0.0, "frame_id": "map"}]
+        gateway._odom = {"x": 0.0, "y": 0.0, "frame_id": "map"}
+        gateway._mode = "auto"
+        gateway._mission = {"state": "EXECUTING", "ts": 123.0}
+
+    class FakeMux:
+        def health(self):
+            return {
+                "active_source": "path_follower",
+                "sources": {},
+                "last_driver_cmd_vel": {
+                    "linear": {"x": 0.4, "y": 0.0, "z": 0.0},
+                    "angular": {"x": 0.0, "y": 0.0, "z": 0.2},
+                    "ts": 456.0,
+                    "active_source": "path_follower",
+                },
+            }
+
+    gateway._cmd_vel_mux = FakeMux()
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/navigation/dds_snapshot")())
+    snapshot = NavigationDdsSnapshotResponse.model_validate(payload)
+
+    assert snapshot.schema_version == "lingtu.navigation.dds_snapshot.v1"
+    assert snapshot.global_path.count == 1
+    assert snapshot.global_path.path[0].z == 0.3
+    assert snapshot.local_path.count == 1
+    assert snapshot.cmd_vel is not None
+    assert snapshot.cmd_vel.linear["x"] == 0.4
+    assert snapshot.cmd_vel.angular["z"] == 0.2
+    assert snapshot.cmd_vel.active_source == "path_follower"
+
+
+def test_velocity_mux_health_includes_latest_driver_command():
+    from runtime.msgs.geometry import Twist, Vector3
+    from nav.services.safety.velocity_mux import VelocityMux
+
+    mux = VelocityMux()
+    mux.setup()
+    mux._on_source(
+        "path_follower",
+        Twist(
+            linear=Vector3(0.3, 0.0, 0.0),
+            angular=Vector3(0.0, 0.0, 0.1),
+        ),
+    )
+
+    health = mux.health()
+
+    assert health["active_source"] == "path_follower"
+    assert health["last_driver_cmd_vel"]["linear"]["x"] == 0.3
+    assert health["last_driver_cmd_vel"]["angular"]["z"] == 0.1
+    assert health["last_driver_cmd_vel"]["active_source"] == "path_follower"
+
+
 def test_locations_route_is_empty_without_tagged_location_module():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import LocationsResponse

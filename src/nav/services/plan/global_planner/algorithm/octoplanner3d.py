@@ -17,9 +17,9 @@ from .octoplanner3d_protocol import (
     "planner_backend",
     "octoplanner3d",
     description=(
-        "Optional OctoPlanner3D constrained global planner via in-process "
-        "native kernel when available, with headless executable fallback; "
-        "internal search is OctoMap 3D A*, ROS2 wrapper is adapter/debug only"
+        "OctoPlanner3D constrained global planner via ROS-free C++ headless "
+        "executable; internal search is OctoMap 3D A*, ROS2 wrapper is "
+        "adapter/debug only"
     ),
 )
 class OctoPlanner3DBackend(OctoPlanner3DPlanner):

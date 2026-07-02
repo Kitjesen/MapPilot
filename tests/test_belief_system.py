@@ -23,11 +23,11 @@ import numpy as np
 sys.path.insert(0, "src/perception")
 sys.path.insert(0, "src/decision")
 
-from perception.instance_tracker import (
+from perception.tracking.instance_tracker import (
     TrackedObject, InstanceTracker, Region,
     BELIEF_FRESHNESS_TAU,
 )
-from perception.projection import Detection3D
+from perception.tracking.projection import Detection3D
 from decision.goal_resolution.goal_resolver import (
     TargetBeliefManager, TargetHypothesis, GoalResult,
 )

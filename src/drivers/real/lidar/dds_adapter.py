@@ -32,8 +32,9 @@ class LivoxDdsAdapter:
     def start(self) -> None:
         if not livox_dds.HAS_LIVOX_IDL:
             logger.warning(
-                "Lidar: cyclonedds not installed - on_cloud/get_cloud disabled.\n"
-                "  Install: pip install cyclonedds"
+                "Lidar: Python cyclonedds is not installed; Python cloud "
+                "diagnostics are disabled. Robot field ingest uses the C++ "
+                "Livox/CycloneDDS runtime."
             )
             return
 

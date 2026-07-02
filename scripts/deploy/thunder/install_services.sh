@@ -16,6 +16,9 @@ case "${MODE}" in
     slam-dds|cpp-slam)
         exec "${SCRIPT_DIR}/install_slam_dds_service.sh"
         ;;
+    nav-dds|cpp-nav)
+        exec "${SCRIPT_DIR}/install_nav_dds_service.sh"
+        ;;
     field-cpp|dds-cpp)
         "${SCRIPT_DIR}/install_dds_endpoint_service.sh"
         exec "${SCRIPT_DIR}/install_slam_dds_service.sh"
@@ -40,7 +43,7 @@ case "${MODE}" in
         exec "${LEGACY_INSTALLER}" "$@"
         ;;
     *)
-        echo "Usage: $0 [dds-endpoint|slam-dds|field-cpp|lcm-endpoint|lite|ros-compat]" >&2
+        echo "Usage: $0 [dds-endpoint|slam-dds|nav-dds|field-cpp|lcm-endpoint|lite|ros-compat]" >&2
         exit 2
         ;;
 esac

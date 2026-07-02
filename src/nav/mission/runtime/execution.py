@@ -128,17 +128,17 @@ class NavigationExecutionMixin:
             ):
                 self._block_for_frame_mismatch("odometry", self._odom_frame_id)
             return
-        self._robot_pos = [
-            odom.pose.position.x,
-            odom.pose.position.y,
-            odom.pose.position.z,
-        ]
+        raw_yaw: float | None = None
         try:
-            yaw = float(odom.yaw)
-            if math.isfinite(yaw):
-                self._robot_yaw = yaw
+            raw_yaw = float(odom.yaw)
+            if not math.isfinite(raw_yaw):
+                raw_yaw = None
         except (AttributeError, TypeError, ValueError):
-            pass
+            raw_yaw = None
+        robot_pos, robot_yaw = self._odom_pose_in_planning_frame(odom, raw_yaw)
+        self._robot_pos = robot_pos
+        if robot_yaw is not None and math.isfinite(robot_yaw):
+            self._robot_yaw = robot_yaw
 
         if self._paused_for_localization:
             return

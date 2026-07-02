@@ -33,7 +33,7 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert resolved.robot_runtime_config["detector"] == "bpu"
     assert resolved.robot_runtime_config["encoder"] == "mobileclip"
     assert "slam_profile" not in resolved.endpoint_config
-    assert resolved.endpoint_config["localization_adapter"] == "dds_endpoint"
+    assert resolved.endpoint_config["localization_adapter"] == "cpp_slam_status"
     assert resolved.endpoint_config["nav_in_adapter"] == "dds_nav_input"
     assert resolved.endpoint_config["nav_out_adapter"] == "dds_nav_output"
     assert resolved.endpoint_config["enable_robot_driver"] is False
@@ -42,7 +42,7 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert resolved.endpoint_config["enable_nav_in"] is True
     assert resolved.endpoint_config["enable_nav_out"] is True
     assert resolved.config["slam_profile"] == "localizer"
-    assert resolved.config["localization_adapter"] == "dds_endpoint"
+    assert resolved.config["localization_adapter"] == "cpp_slam_status"
     assert resolved.config["nav_in_adapter"] == "dds_nav_input"
     assert resolved.config["nav_out_adapter"] == "dds_nav_output"
     assert resolved.config["enable_robot_driver"] is False
@@ -58,7 +58,7 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert spec.module_transport == "local"
     assert spec.endpoint_transport == "dds"
     assert spec.endpoint_contract == "thunder_field_dds_v1"
-    assert spec.localization_adapter == "dds_endpoint"
+    assert spec.localization_adapter == "cpp_slam_status"
     assert spec.nav_in_adapter == "dds_nav_input"
     assert spec.nav_out_adapter == "dds_nav_output"
     assert spec.global_planner == "octoplanner3d"
@@ -73,7 +73,7 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert spec.env["LINGTU_MODULE_TRANSPORT"] == "local"
     assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert spec.env["LINGTU_ENDPOINT_CONTRACT"] == "thunder_field_dds_v1"
-    assert spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "dds_endpoint"
+    assert spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "cpp_slam_status"
     assert spec.env["LINGTU_NAV_IN_ADAPTER"] == "dds_nav_input"
     assert spec.env["LINGTU_NAV_OUT_ADAPTER"] == "dds_nav_output"
     assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"
@@ -134,7 +134,7 @@ def test_resolver_canonicalizes_thunder_field_endpoint_alias() -> None:
     assert spec.runtime_contract == "thunder_field"
     assert spec.endpoint_transport == "dds"
     assert spec.endpoint_contract == "thunder_field_dds_v1"
-    assert spec.localization_adapter == "dds_endpoint"
+    assert spec.localization_adapter == "cpp_slam_status"
     assert spec.nav_in_adapter == "dds_nav_input"
     assert spec.nav_out_adapter == "dds_nav_output"
     assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"

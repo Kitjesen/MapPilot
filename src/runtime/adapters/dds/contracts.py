@@ -10,6 +10,7 @@ from runtime.runtime_interface import (
     TOPICS,
     runtime_topic_allowed_frame_ids,
 )
+from runtime.tf import TF_STATIC_TOPIC, TF_TOPIC
 
 THUNDER_FIELD_DDS_CONTRACT_NAME = "thunder_field_dds_v1"
 DDS_PAYLOAD_FORMAT = "dds.idl.v1"
@@ -99,6 +100,20 @@ THUNDER_FIELD_DDS_CONTRACT = DDSEndpointContract(
     runtime_contract=THUNDER_FIELD_RUNTIME_CONTRACT,
     transport="dds",
     bindings=(
+        _binding(
+            TF_TOPIC,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.TFMessage",
+            required=False,
+            note="Dynamic frame transforms for the native runtime FrameTree.",
+        ),
+        _binding(
+            TF_STATIC_TOPIC,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.TFMessage",
+            required=False,
+            note="Static frame transforms for sensor mounts and calibration.",
+        ),
         _binding(
             TOPICS.lidar_scan,
             direction="endpoint_to_lingtu",

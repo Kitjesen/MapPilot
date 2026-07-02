@@ -985,6 +985,46 @@ class TestOccupancyGridModule(unittest.TestCase):
         self.assertTrue(np.any(results[0]["grid"] == 100),
                         "Expected outside-clear-radius point to stay occupied")
 
+    def test_robot_clear_body_footprint_uses_odometry_yaw(self):
+        """Body-frame footprint filtering removes near self returns outside the clear disk."""
+        m = self._make_module(
+            robot_clear_radius=0.0,
+            robot_clear_forward=0.8,
+            robot_clear_backward=0.6,
+            robot_clear_lateral=0.4,
+            inflation_radius=0.0,
+        )
+        odom = Odometry(
+            pose=Pose(
+                position=Vector3(0, 0, 0),
+                orientation=Quaternion.from_yaw(math.pi / 2.0),
+            )
+        )
+        m.odometry._deliver(odom)
+
+        pts = np.array(
+            [
+                [0.0, 0.7, 0.5],   # body +x: inside clear footprint
+                [0.7, 0.0, 0.5],   # body -y: outside lateral footprint
+            ],
+            dtype=np.float32,
+        )
+        cloud = PointCloud2.from_numpy(pts, frame_id="map")
+
+        results = []
+        m.costmap._add_callback(lambda msg: results.append(msg))
+        m.map_cloud._deliver(cloud)
+
+        self.assertEqual(len(results), 1)
+        grid = results[0]["grid"]
+        origin = np.asarray(results[0]["origin"], dtype=float)
+        inside_col = int(np.floor((0.0 - origin[0]) / results[0]["resolution"]))
+        inside_row = int(np.floor((0.7 - origin[1]) / results[0]["resolution"]))
+        outside_col = int(np.floor((0.7 - origin[0]) / results[0]["resolution"]))
+        outside_row = int(np.floor((0.0 - origin[1]) / results[0]["resolution"]))
+        self.assertEqual(float(grid[inside_row, inside_col]), 0.0)
+        self.assertEqual(float(grid[outside_row, outside_col]), 100.0)
+
     def test_raycast_mode_publishes_exploration_unknown_free_occupied_grid(self):
         """Raycast mode preserves unknown cells for real frontier exploration."""
         m = self._make_module(

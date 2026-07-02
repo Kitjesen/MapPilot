@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(lingtu_slam_contract LANGUAGES CXX)
+project(lingtu_slam_contract LANGUAGES C CXX)
 
 option(LINGTU_SLAM_BUILD_TESTS "Build native SLAM contract tests" ON)
 option(LINGTU_SLAM_FASTLIO2_BACKEND "Build the real Fast-LIO2 algorithm backend" OFF)
@@ -144,35 +144,45 @@ endif()
 
 if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
   find_package(iceoryx_binding_c QUIET)
-  find_package(CycloneDDS-CXX REQUIRED)
+  find_package(CycloneDDS REQUIRED)
 
   find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)
   set(_LINGTU_SLAM_IDL "${CMAKE_CURRENT_SOURCE_DIR}/../../../message/idl/lingtu_slam.idl")
-  set(_LINGTU_SLAM_IDL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/lingtu_slam.hpp")
+  set(_LINGTU_SLAM_IDL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/lingtu_slam.h")
+  set(_LINGTU_SLAM_IDL_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/lingtu_slam.c")
   add_custom_command(
-    OUTPUT "${_LINGTU_SLAM_IDL_HEADER}"
+    OUTPUT "${_LINGTU_SLAM_IDL_HEADER}" "${_LINGTU_SLAM_IDL_SOURCE}"
     COMMAND "${CYCLONEDDS_IDLC_EXECUTABLE}"
-            -l "$<TARGET_FILE:CycloneDDS-CXX::idlcxx>"
+            -l c
             "${_LINGTU_SLAM_IDL}"
-    DEPENDS "${_LINGTU_SLAM_IDL}" CycloneDDS-CXX::idlcxx
+    DEPENDS "${_LINGTU_SLAM_IDL}"
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     VERBATIM)
 
   add_custom_target(lingtu_slam_cyclone_idl_generate
-    DEPENDS "${_LINGTU_SLAM_IDL_HEADER}")
-  add_library(lingtu_slam_cyclone_idl INTERFACE)
-  target_sources(lingtu_slam_cyclone_idl INTERFACE "${_LINGTU_SLAM_IDL_HEADER}")
-  target_include_directories(lingtu_slam_cyclone_idl INTERFACE
-    "${CMAKE_CURRENT_BINARY_DIR}")
+    DEPENDS "${_LINGTU_SLAM_IDL_HEADER}" "${_LINGTU_SLAM_IDL_SOURCE}")
+  add_library(lingtu_slam_cyclone_idl STATIC "${_LINGTU_SLAM_IDL_SOURCE}")
+  target_include_directories(lingtu_slam_cyclone_idl PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+  target_link_libraries(lingtu_slam_cyclone_idl PUBLIC CycloneDDS::ddsc)
   add_dependencies(lingtu_slam_cyclone_idl lingtu_slam_cyclone_idl_generate)
 
   add_executable(lingtu_slam_dds_runtime cyclone_runtime.cpp)
   target_compile_features(lingtu_slam_dds_runtime PRIVATE cxx_std_17)
+  set_target_properties(lingtu_slam_dds_runtime PROPERTIES
+    OUTPUT_NAME lingtu_slam_cyclone_runtime)
   target_include_directories(lingtu_slam_dds_runtime PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
   target_link_libraries(lingtu_slam_dds_runtime
     lingtu_slam_contract
     lingtu_slam_cyclone_idl
-    CycloneDDS-CXX::ddscxx)
+    CycloneDDS::ddsc)
   add_executable(lingtu_slam_cyclone_runtime ALIAS lingtu_slam_dds_runtime)
+
+  add_executable(lingtu_slam_control slam_control.cpp)
+  target_compile_features(lingtu_slam_control PRIVATE cxx_std_17)
+  target_include_directories(lingtu_slam_control PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+  target_link_libraries(lingtu_slam_control
+    lingtu_slam_cyclone_idl
+    CycloneDDS::ddsc)
 endif()

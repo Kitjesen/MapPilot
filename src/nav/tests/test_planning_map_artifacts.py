@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ def test_saved_map_artifacts_resolve_planner_specific_active_files(
     maps_dir = tmp_path / "maps"
     active = maps_dir / "active"
     active.mkdir(parents=True)
-    octomap = active / "octomap.bt"
+    octomap = active / "octomap.ot"
     tomogram = active / "tomogram.pickle"
     octomap.write_bytes(b"octomap")
     tomogram.write_bytes(b"tomogram")
@@ -34,7 +34,7 @@ def test_saved_map_artifacts_explicit_existing_path_wins(
     maps_dir = tmp_path / "maps"
     active = maps_dir / "active"
     active.mkdir(parents=True)
-    (active / "octomap.bt").write_bytes(b"active")
+    (active / "octomap.ot").write_bytes(b"active")
     explicit = tmp_path / "explicit.bt"
     explicit.write_bytes(b"explicit")
     monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
@@ -44,6 +44,24 @@ def test_saved_map_artifacts_explicit_existing_path_wins(
     assert artifacts.planner_map_path("octoplanner3d") == str(explicit)
 
 
+def test_octoplanner3d_active_octomap_wins_over_explicit_legacy_pcd(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    maps_dir = tmp_path / "maps"
+    active = maps_dir / "active"
+    active.mkdir(parents=True)
+    explicit_pcd = active / "map.pcd"
+    octomap = active / "octomap.bt"
+    explicit_pcd.write_bytes(b"pcd")
+    octomap.write_bytes(b"octomap")
+    monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
+
+    artifacts = SavedMapArtifacts.from_runtime(str(explicit_pcd))
+
+    assert artifacts.planner_map_path("octoplanner3d") == str(octomap)
+
+
 def test_saved_map_artifacts_resolve_active_map_record_bundle(
     tmp_path: Path,
     monkeypatch,
@@ -51,7 +69,7 @@ def test_saved_map_artifacts_resolve_active_map_record_bundle(
     maps_dir = tmp_path / "maps"
     active = maps_dir / "active"
     active.mkdir(parents=True)
-    octomap = active / "octomap.bt"
+    octomap = active / "octomap.ot"
     octomap.write_bytes(b"octomap")
     write_map_record(active, build_map_record(active, map_id="active_map"))
     monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
@@ -65,6 +83,44 @@ def test_saved_map_artifacts_resolve_active_map_record_bundle(
     assert artifacts.planner_map_path("octoplanner3d") == str(octomap)
 
 
+def test_octoplanner3d_prefers_active_octomap_over_stale_record_uri(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    maps_dir = tmp_path / "maps"
+    active = maps_dir / "active"
+    active.mkdir(parents=True)
+    pcd = active / "map.pcd"
+    octomap = active / "octomap.bt"
+    pcd.write_bytes(b"pcd")
+    octomap.write_bytes(b"octomap")
+    (active / "map_record.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "map.record",
+                "map_id": "active_map",
+                "state": "ACTIVE",
+                "scope": {"frame_id": "map"},
+                "artifacts": [
+                    {
+                        "type": "OCTOMAP_3D",
+                        "uri": "map.pcd",
+                        "hash": "",
+                        "source_map_id": "active_map",
+                        "generator": "legacy_record",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
+
+    artifacts = SavedMapArtifacts.from_runtime()
+
+    assert artifacts.planner_map_path("octoplanner3d") == str(octomap)
+
+
 def test_saved_map_artifacts_bundle_ignores_missing_artifact_uri(
     tmp_path: Path,
     monkeypatch,
@@ -72,7 +128,7 @@ def test_saved_map_artifacts_bundle_ignores_missing_artifact_uri(
     maps_dir = tmp_path / "maps"
     active = maps_dir / "active"
     active.mkdir(parents=True)
-    octomap = active / "octomap.bt"
+    octomap = active / "octomap.ot"
     octomap.write_bytes(b"octomap")
     record = build_map_record(active, map_id="active_map").to_dict()
     octomap.unlink()
@@ -95,7 +151,7 @@ def test_saved_map_artifacts_resolve_static_occupancy_next_to_map_path(
     maps_dir = tmp_path / "maps"
     active = maps_dir / "active"
     active.mkdir(parents=True)
-    octomap = active / "octomap.bt"
+    octomap = active / "octomap.ot"
     occupancy = active / "occupancy.npz"
     octomap.write_bytes(b"octomap")
     occupancy.write_bytes(b"occupancy")

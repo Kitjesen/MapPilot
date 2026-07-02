@@ -102,12 +102,23 @@ class ControlCommandService:
             ),
         )
 
-    def preview_navigation_plan(self, body: PlanPreviewRequest) -> dict[str, Any]:
+    def preview_navigation_plan(
+        self,
+        body: PlanPreviewRequest,
+        *,
+        ignore_blockers: set[str] | None = None,
+        map_only: bool = False,
+    ) -> dict[str, Any]:
         from gateway.services.runtime_status import build_navigation_status
 
         status = build_navigation_status(self._gw)
         readiness = status.get("readiness", {})
-        blockers = list(readiness.get("blockers") or [])
+        ignored = ignore_blockers or set()
+        blockers = [
+            str(blocker)
+            for blocker in (readiness.get("blockers") or [])
+            if str(blocker) not in ignored
+        ]
         if blockers or not bool(status.get("has_odometry", False)):
             reasons = ["navigation_not_ready", *blockers]
             if not bool(status.get("has_odometry", False)):
@@ -116,6 +127,7 @@ class ControlCommandService:
                 body,
                 reasons=reasons,
                 source="gateway_readiness",
+                ignored_blockers=sorted(ignored),
             )
 
         nav = (getattr(self._gw, "_all_modules", {}) or {}).get("nav.mission")
@@ -127,7 +139,10 @@ class ControlCommandService:
             )
 
         try:
-            return nav.preview_plan(body.x, body.y, body.z)
+            try:
+                return nav.preview_plan(body.x, body.y, body.z, map_only=map_only)
+            except TypeError:
+                return nav.preview_plan(body.x, body.y, body.z)
         except Exception as exc:
             return self._plan_preview_unavailable(
                 body,
@@ -268,6 +283,7 @@ class ControlCommandService:
         reasons: list[str],
         source: str,
         error: str | None = None,
+        ignored_blockers: list[str] | None = None,
     ) -> dict[str, Any]:
         ts = time.time()
         return {
@@ -296,6 +312,7 @@ class ControlCommandService:
             "rejected_plans": [],
             "source": source,
             "reasons": list(dict.fromkeys(reasons)),
+            "ignored_blockers": list(ignored_blockers or []),
             "error": error,
             "ts": ts,
         }

@@ -13,12 +13,12 @@ import unittest
 
 import numpy as np
 
-from perception.instance_tracker import (
+from perception.tracking.instance_tracker import (
     InstanceTracker,
     TrackedObject,
     infer_room_type,
 )
-from perception.projection import Detection3D
+from perception.tracking.projection import Detection3D
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  辅助工厂

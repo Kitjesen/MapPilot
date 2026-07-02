@@ -112,7 +112,7 @@ class MapServiceFacadeMixin:
         return self.storage.get_active_tomogram()
 
     def get_active_octomap(self) -> str | None:
-        """Return the octomap.bt path for the active map, or None."""
+        """Return the active OctoMap path for the active map, or None."""
         return self.storage.get_active_octomap()
 
     def get_active_occupancy(self) -> str | None:

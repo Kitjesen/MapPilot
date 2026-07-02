@@ -21,6 +21,7 @@ from nav.services.plan.global_planner.backend_runtime import (
     plan_backend,
     push_backend_map_update,
 )
+from nav.services.plan.global_planner.service import GlobalPlanner
 from nav.services.plan.preview import PlanPreviewService
 
 
@@ -153,3 +154,25 @@ def test_plan_preview_exposes_global_plan_wire_payload():
     assert result["feasible"] is True
     assert result["global_plan"]["schema_version"] == GLOBAL_PLAN_SCHEMA_VERSION
     assert result["global_plan"]["path"] == [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+
+
+def test_reload_map_replays_live_safety_overlay_to_recreated_backend():
+    old_backend = _Backend()
+    new_backend = _Backend()
+    svc = GlobalPlanner(planner_name="octoplanner3d", plan_safety_policy="off")
+    svc._backend = old_backend
+    svc._create_backend = lambda _name=None: new_backend
+    svc._validate_map_artifact_gate = lambda: {
+        "required": True,
+        "ok": True,
+        "reason": "saved_map_artifact_ok",
+        "blockers": [],
+    }
+
+    svc.update_map(PlanningMap(grid=[[1.0]], resolution=0.4, origin=[2.0, 3.0]))
+    result = svc.reload_map()
+
+    assert result["ok"] is True
+    assert old_backend.map_update[1] == 0.4
+    assert new_backend.map_update[1] == 0.4
+    assert new_backend.map_update[2].tolist() == [2.0, 3.0]

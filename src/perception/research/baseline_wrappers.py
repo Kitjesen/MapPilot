@@ -325,12 +325,12 @@ class USSNavPlanner(BasePlanner):
         """初始化 USS-Nav 规划器。"""
         # 导入 USS-Nav 组件
         try:
-            from perception.global_coverage_mask import (
+            from perception.scene_understanding.global_coverage_mask import (
                 GlobalCoverageMask,
             )
-            from perception.local_rolling_grid import LocalRollingGrid
-            from perception.scg_builder import SCGBuilder, SCGConfig
-            from perception.scg_path_planner import SCGPathPlanner
+            from perception.scene_understanding.local_rolling_grid import LocalRollingGrid
+            from perception.scene_understanding.scg_builder import SCGBuilder, SCGConfig
+            from perception.scene_understanding.scg_path_planner import SCGPathPlanner
 
             # 创建组件
             self.scg_builder = SCGBuilder(SCGConfig())

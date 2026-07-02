@@ -58,8 +58,6 @@ REAL_LOCALIZATION_PROFILES = (
     "super_lio_relocation",
 )
 
-ENDPOINT_SLAM_MODULE = "SlamAdapterModule"
-
 SIMULATION_PROFILE_RUNTIME_MATRIX = {
     "stub": {
         "data_source": "in_process_stub",
@@ -263,8 +261,11 @@ def test_runtime_product_profile_uses_product_blueprint_entrypoint(monkeypatch):
 
     assert "nav.out" in modules
     assert "ThunderDriver" not in modules
-    assert ENDPOINT_SLAM_MODULE in modules
-    assert "SlamBridgeModule" not in modules
+    # "nav" defaults to the native cpp_slam_status localization adapter (see
+    # docs/architecture/LINGTU_RUNTIME_BUS_DECISION.md); the ROS2 SLAM bridge
+    # alias "SlamBridgeModule" only applies when localization_adapter is
+    # explicitly "ros2"/"ros2_slam_bridge".
+    assert "SlamAdapterModule" in modules
     assert "nav.safety.stop_cmd->nav.mission.stop_signal" in wires
     assert "nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel" in wires
     assert "nav.velocity_mux.driver_cmd_vel->ThunderDriver.cmd_vel" not in wires
@@ -517,24 +518,24 @@ def test_navigation_compute_contract_forbids_role_drift_edges():
             ), f"{profile}: terrain_map must not drive global planning ({wire})"
 
 
-def test_nav_profile_uses_endpoint_slam_localization_health_edges():
+def test_nav_profile_uses_slam_adapter_localization_health_edges():
     wires = _wire_set(graph_for_profile("nav"))
 
     health = TOPICS.localization_health
     quality = TOPICS.localization_quality
 
-    assert f"{ENDPOINT_SLAM_MODULE}.localization_status->nav.safety.localization_status@{health}" in wires
-    assert f"{ENDPOINT_SLAM_MODULE}.localization_status->nav.mission.localization_status@{health}" in wires
+    assert f"SlamAdapterModule.localization_status->nav.safety.localization_status@{health}" in wires
+    assert f"SlamAdapterModule.localization_status->nav.mission.localization_status@{health}" in wires
     assert (
-        f"{ENDPOINT_SLAM_MODULE}.localization_status->DepthVisualOdomModule.localization_status"
+        "SlamAdapterModule.localization_status->DepthVisualOdomModule.localization_status"
         f"@{health}"
         in wires
     )
-    assert f"{ENDPOINT_SLAM_MODULE}.localization_status->GatewayModule.localization_status@{health}" in wires
-    assert f"{ENDPOINT_SLAM_MODULE}.localization_quality->GatewayModule.localization_quality@{quality}" in wires
-    assert f"{ENDPOINT_SLAM_MODULE}.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
-    assert f"{ENDPOINT_SLAM_MODULE}.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
-    assert f"{ENDPOINT_SLAM_MODULE}.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
+    assert f"SlamAdapterModule.localization_status->GatewayModule.localization_status@{health}" in wires
+    assert f"SlamAdapterModule.localization_quality->GatewayModule.localization_quality@{quality}" in wires
+    assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
+    assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
+    assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
 
 
 def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
@@ -552,7 +553,7 @@ def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
 
         assert config["_runtime_endpoint"] == "thunder_field"
         assert config["_endpoint_transport"] == "dds"
-        assert config["localization_adapter"] == "dds_endpoint"
+        assert config["localization_adapter"] == "cpp_slam_status"
         assert config["enable_device_manager"] is False
         assert config["enable_robot_driver"] is False
         assert config["enable_lidar"] is False
@@ -562,8 +563,7 @@ def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
         assert "LidarModule" not in graph.modules
         assert "GnssBridgeModule" not in graph.modules
         assert "ROS2SimDriverModule" not in graph.modules
-        assert ENDPOINT_SLAM_MODULE in graph.modules
-        assert "SlamBridgeModule" not in graph.modules
+        assert "SlamAdapterModule" in graph.modules
         assert (
             f"nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel@{TOPICS.cmd_vel}"
             in wires
@@ -584,9 +584,9 @@ def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
                 f"nav.mission.waypoint->nav.out.waypoint@{TOPICS.nav_way_point}"
                 in wires
             )
-            assert f"{ENDPOINT_SLAM_MODULE}.odometry->nav.mission.odometry@{TOPICS.odometry}" in wires
+            assert f"SlamAdapterModule.odometry->nav.mission.odometry@{TOPICS.odometry}" in wires
             assert (
-                f"{ENDPOINT_SLAM_MODULE}.localization_status->nav.mission.localization_status"
+                "SlamAdapterModule.localization_status->nav.mission.localization_status"
                 f"@{TOPICS.localization_health}"
                 in wires
             )
@@ -642,7 +642,6 @@ def test_sim_gazebo_profile_uses_endpoint_driver_and_map_planning_frame():
     assert "SimEndpointDriverModule.map_cloud->OccupancyGridModule.map_cloud" in wires
     assert "SimEndpointDriverModule.map_cloud->nav.terrain.map_cloud" in wires
     assert "SimEndpointDriverModule.odometry->nav.mission.odometry" in wires
-    assert ENDPOINT_SLAM_MODULE not in graph.modules
     assert "SlamBridgeModule" not in graph.modules
     assert not graph.dangling_wires()
 
@@ -1012,7 +1011,6 @@ def test_sim_cmu_tare_profile_is_external_tare_simulation_entry():
     assert "ExplorationSupervisorModule" in graph.modules
     assert "nav.out" not in graph.modules
     assert "ThunderDriver" not in graph.modules
-    assert ENDPOINT_SLAM_MODULE not in graph.modules
     assert "SlamBridgeModule" not in graph.modules
     assert "TAREExplorerModule.exploration_goal->nav.mission.goal_pose" in wires
     assert "TAREExplorerModule.exploration_path->nav.mission.patrol_goals" in wires
@@ -1087,8 +1085,8 @@ def test_lite_profile_graph_stays_lightweight_and_python_only():
         "DeviceManager",
         "LidarModule",
         "SLAMModule",
-        "SlamAdapterModule",
         "SlamBridgeModule",
+        "SlamAdapterModule",
         "DepthVisualOdomModule",
         "OccupancyGridModule",
         "VoxelGridModule",
@@ -1127,10 +1125,10 @@ def test_lite_profile_graph_stays_lightweight_and_python_only():
 
 def test_navigation_profiles_use_localization_odometry_for_runtime_consumers():
     for profile in REAL_LOCALIZATION_PROFILES:
-        source = ENDPOINT_SLAM_MODULE
+        source = "SlamAdapterModule"
         graph = graph_for_profile(profile)
         wires = _wire_set(graph)
-        slam_topic = source in {"SlamModule", "SlamAdapterModule", "SlamBridgeModule"}
+        slam_topic = source in {"SlamModule", "SlamBridgeModule", "SlamAdapterModule"}
         odom_suffix = f"@{TOPICS.odometry}" if slam_topic else ""
         map_suffix = f"@{TOPICS.map_cloud}" if slam_topic else ""
         health_suffix = f"@{TOPICS.localization_health}" if slam_topic else ""
@@ -1168,21 +1166,20 @@ def test_navigation_profiles_use_localization_odometry_for_runtime_consumers():
             )
 
 
-def test_super_lio_profiles_wire_endpoint_localization_status_to_gateway():
+def test_super_lio_profiles_wire_adapter_localization_status_to_gateway():
     for profile in ("super_lio", "super_lio_relocation"):
         graph = graph_for_profile(profile)
         wires = _wire_set(graph)
 
-        assert ENDPOINT_SLAM_MODULE in graph.modules
-        assert "SlamBridgeModule" not in graph.modules
+        assert "SlamAdapterModule" in graph.modules
         assert (
-            f"{ENDPOINT_SLAM_MODULE}.localization_status->GatewayModule.localization_status"
+            "SlamAdapterModule.localization_status->GatewayModule.localization_status"
             f"@{TOPICS.localization_health}"
             in wires
         )
-        assert f"{ENDPOINT_SLAM_MODULE}.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
-        assert f"{ENDPOINT_SLAM_MODULE}.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
-        assert f"{ENDPOINT_SLAM_MODULE}.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
+        assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
+        assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
+        assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
         assert not graph.dangling_wires(), profile
 
 

@@ -48,10 +48,15 @@ def localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
     adapter = str(adapter_name or "").strip().lower()
     if not adapter or adapter in {"auto", "default"}:
         raise ImportError(
-            "Localization adapter must be explicit; choose 'dds_endpoint', "
+            "Localization adapter must be explicit; choose 'cpp_slam_status', "
             "'lcm_endpoint', or explicit 'ros2_slam_bridge' compatibility"
         )
-    if adapter in {"dds", "dds_endpoint"}:
+    if adapter in {"cpp_slam_status", "native_slam_status"}:
+        preferred = (("localization_adapter", "cpp_slam_status"),)
+        fallback_module = "runtime.adapters.native.localization_adapter"
+        fallback_class = "CppSlamStatusAdapterModule"
+        seed_group = "slam"
+    elif adapter in {"dds", "dds_endpoint"}:
         preferred = (("localization_adapter", "dds_endpoint"),)
         fallback_module = "runtime.adapters.dds.localization_adapter"
         fallback_class = "DDSLocalizationAdapterModule"

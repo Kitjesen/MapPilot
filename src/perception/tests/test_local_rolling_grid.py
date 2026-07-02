@@ -17,7 +17,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.local_rolling_grid import (
+from perception.scene_understanding.local_rolling_grid import (
     LocalRollingGrid,
     create_mock_point_cloud,
 )

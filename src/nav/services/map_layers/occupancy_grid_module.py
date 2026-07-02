@@ -16,6 +16,7 @@ Ports:
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Any
 
@@ -57,6 +58,9 @@ class OccupancyGridModule(Module, layer=2):
         z_max: float = 2.00,
         inflation_radius: float = 0.25,
         robot_clear_radius: float = 0.60,
+        robot_clear_forward: float = 0.0,
+        robot_clear_backward: float = 0.0,
+        robot_clear_lateral: float = 0.0,
         publish_hz: float = 2.0,
         frame_id: str | None = None,
         raycast_free_space: bool = False,
@@ -72,6 +76,9 @@ class OccupancyGridModule(Module, layer=2):
         self._z_max = float(z_max)
         self._inf_radius = float(inflation_radius)
         self._robot_clear_radius = float(robot_clear_radius)
+        self._robot_clear_forward = max(0.0, float(robot_clear_forward))
+        self._robot_clear_backward = max(0.0, float(robot_clear_backward))
+        self._robot_clear_lateral = max(0.0, float(robot_clear_lateral))
         self._interval = 1.0 / max(float(publish_hz), 1e-6)
         self._frame_id = str(frame_id or topic_default_frame_id(TOPICS.exploration_grid))
         self._raycast_free_space = bool(raycast_free_space)
@@ -82,11 +89,12 @@ class OccupancyGridModule(Module, layer=2):
             float(raycast_free_inflation_radius),
         )
         self._robot_xy = [0.0, 0.0]
+        self._robot_yaw = 0.0
         self._gs = int(2 * self._radius / self._res)
         self._kernel: np.ndarray | None = None
         self._free_kernel: np.ndarray | None = None
         self._robot_clear_radius_sq = self._robot_clear_radius * self._robot_clear_radius
-        self._clear_mask_cache_key: tuple[int, int, int, int] | None = None
+        self._clear_mask_cache_key: tuple[int, ...] | None = None
         self._clear_mask_cache: np.ndarray | None = None
 
     def setup(self) -> None:
@@ -115,6 +123,8 @@ class OccupancyGridModule(Module, layer=2):
     def _on_odom(self, odom: Odometry) -> None:
         self._robot_xy[0] = odom.x
         self._robot_xy[1] = odom.y
+        if math.isfinite(float(odom.yaw)):
+            self._robot_yaw = float(odom.yaw)
 
     def _robot_xy_array(self) -> np.ndarray:
         return np.asarray(self._robot_xy, dtype=np.float64)
@@ -305,7 +315,11 @@ class OccupancyGridModule(Module, layer=2):
     ) -> np.ndarray:
         dx = pts2d[:, 0] - self._robot_xy[0]
         dy = pts2d[:, 1] - self._robot_xy[1]
-        far = (dx * dx + dy * dy) >= self._robot_clear_radius_sq
+        inside_clear = (dx * dx + dy * dy) < self._robot_clear_radius_sq
+        footprint = self._footprint_mask_from_offsets(dx, dy)
+        if footprint is not None:
+            inside_clear = inside_clear | footprint
+        far = ~inside_clear
         if z_source is not None:
             return z_source[far]
         return pts2d[far]
@@ -344,14 +358,51 @@ class OccupancyGridModule(Module, layer=2):
         rx = int(np.floor((self._robot_xy[0] - origin_xy[0]) / self._res))
         ry = int(np.floor((self._robot_xy[1] - origin_xy[1]) / self._res))
         r = max(1, int(np.ceil(self._robot_clear_radius / self._res)))
-        key = (gs, rx, ry, r)
+        key = (
+            gs,
+            rx,
+            ry,
+            r,
+            int(round(self._robot_yaw * 1000.0)),
+            int(round(self._robot_clear_forward / self._res)),
+            int(round(self._robot_clear_backward / self._res)),
+            int(round(self._robot_clear_lateral / self._res)),
+        )
         if self._clear_mask_cache_key == key and self._clear_mask_cache is not None:
             return self._clear_mask_cache
 
         yy, xx = np.ogrid[:gs, :gs]
-        self._clear_mask_cache = (xx - rx) ** 2 + (yy - ry) ** 2 <= r**2
+        clear_mask = (xx - rx) ** 2 + (yy - ry) ** 2 <= r**2
+        footprint = self._footprint_mask_from_offsets(
+            (xx.astype(np.float64) - float(rx)) * self._res,
+            (yy.astype(np.float64) - float(ry)) * self._res,
+        )
+        if footprint is not None:
+            clear_mask = clear_mask | footprint
+        self._clear_mask_cache = clear_mask
         self._clear_mask_cache_key = key
         return self._clear_mask_cache
+
+    def _footprint_mask_from_offsets(
+        self,
+        dx: np.ndarray,
+        dy: np.ndarray,
+    ) -> np.ndarray | None:
+        if (
+            self._robot_clear_forward <= 0.0
+            or self._robot_clear_backward <= 0.0
+            or self._robot_clear_lateral <= 0.0
+        ):
+            return None
+        c = math.cos(self._robot_yaw)
+        s = math.sin(self._robot_yaw)
+        body_x = c * dx + s * dy
+        body_y = -s * dx + c * dy
+        return (
+            (body_x <= self._robot_clear_forward)
+            & (body_x >= -self._robot_clear_backward)
+            & (np.abs(body_y) <= self._robot_clear_lateral)
+        )
 
     @staticmethod
     def _make_circle_kernel(radius_m: float, res: float) -> np.ndarray:
@@ -390,6 +441,9 @@ class OccupancyGridModule(Module, layer=2):
             "z_range": [self._z_min, self._z_max],
             "inflation_m": self._inf_radius,
             "robot_clear_m": self._robot_clear_radius,
+            "robot_clear_forward_m": self._robot_clear_forward,
+            "robot_clear_backward_m": self._robot_clear_backward,
+            "robot_clear_lateral_m": self._robot_clear_lateral,
             "frame_id": self._frame_id,
             "raycast_free_space": self._raycast_free_space,
             "unknown_as_obstacle_for_costmap": self._unknown_as_obstacle_for_costmap,

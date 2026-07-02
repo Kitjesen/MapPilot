@@ -113,10 +113,20 @@ endif()
 # Source is in the parent directory (src/nav/kernel/)
 set(NAV_KERNEL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(LOCAL_PLANNER_CPP_SRC "${NAV_KERNEL_SRC}/../services/plan/local_planner/cpp")
-nanobind_add_module(lingtu_nav_kernel "${NAV_KERNEL_SRC}/bindings/bindings.cpp")
+add_subdirectory("${LOCAL_PLANNER_CPP_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/local_planner_cpp")
+set(NAV_KERNEL_BINDING_SOURCES
+  "${NAV_KERNEL_SRC}/bindings/bindings.cpp"
+  "${NAV_KERNEL_SRC}/bindings/bind_types.cpp"
+  "${NAV_KERNEL_SRC}/bindings/bind_map_layers.cpp"
+  "${NAV_KERNEL_SRC}/bindings/bind_path_follower.cpp"
+  "${NAV_KERNEL_SRC}/bindings/bind_waypoint_helpers.cpp"
+  "${NAV_KERNEL_SRC}/bindings/bind_local_planner.cpp"
+  "${NAV_KERNEL_SRC}/bindings/bind_terrain.cpp")
+nanobind_add_module(lingtu_nav_kernel ${NAV_KERNEL_BINDING_SOURCES})
 target_include_directories(lingtu_nav_kernel PRIVATE
   "${NAV_KERNEL_SRC}/include"
   "${LOCAL_PLANNER_CPP_SRC}")
+target_link_libraries(lingtu_nav_kernel PRIVATE local_planner_cpp)
 EOF
 
 cmake -B "$BUILD_DIR" -S "$BUILD_DIR" \

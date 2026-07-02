@@ -432,8 +432,8 @@ def test_switch_guard_accepts_normal_sim_and_real_targets():
     assert real_spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert real_spec.endpoint_contract == "thunder_field_dds_v1"
     assert real_spec.env["LINGTU_ENDPOINT_CONTRACT"] == "thunder_field_dds_v1"
-    assert real_spec.localization_adapter == "dds_endpoint"
-    assert real_spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "dds_endpoint"
+    assert real_spec.localization_adapter == "cpp_slam_status"
+    assert real_spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "cpp_slam_status"
     assert validate_runtime_switch(sim_spec).ok is True
     assert validate_runtime_switch(real_spec).ok is True
 

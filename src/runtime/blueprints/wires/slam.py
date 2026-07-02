@@ -85,7 +85,6 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             WireSpec(ctx.driver_module, "odometry", "SimPointCloudProvider", "odometry")
         )
     elif ctx.driver_module in {
-        "ROS2SimDriverModule",
         "MujocoDriverModule",
         "SimEndpointDriverModule",
     }:
@@ -150,6 +149,7 @@ def localization_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
                 topic=TOPIC_SLAM_LOCALIZATION_QUALITY,
             ),
             WireSpec(adapter, "map_odom_tf", "GatewayModule", "map_odom_tf"),
+            WireSpec(adapter, "map_odom_tf", "nav.mission", "map_odom_tf"),
         )
     )
     specs.extend(

@@ -135,7 +135,9 @@ class DDSTransport(TransportABC):
     def __init__(self, domain_id: int = 0):
         if not _CYCLONE_AVAILABLE:
             raise ImportError(
-                "cyclonedds-python is not installed. Run: pip install cyclonedds"
+                "cyclonedds-python is not installed; Python DDS is optional for "
+                "development diagnostics. Robot field paths use the C++ "
+                "CycloneDDS runtime."
             )
         self._participant = DomainParticipant(domain_id)
         self._publishers: list[DDSPublisher] = []

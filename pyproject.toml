@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lingtu"
-version = "2.2.0"
+version = "2.3.0"
 description = "LingTu autonomous navigation for quadruped robots"
 requires-python = ">=3.10"
 dependencies = [

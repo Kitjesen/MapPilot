@@ -84,6 +84,21 @@ struct TwistStamped {
   Twist twist;
 };
 
+struct Transform {
+  Vector3 translation;
+  Quaternion rotation;
+};
+
+struct TransformStamped {
+  Header header;
+  string child_frame_id;
+  Transform transform;
+};
+
+struct TFMessage {
+  sequence<TransformStamped> transforms;
+};
+
 struct TwistWithCovariance {
   Twist twist;
   double covariance[36];
@@ -120,10 +135,6 @@ struct Float32 {
 };
 
 struct Text {
-  string data;
-};
-
-struct String {
   string data;
 };
 

@@ -10,7 +10,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.polyhedron_expansion import (
+from perception.scene_understanding.polyhedron_expansion import (
     PolyhedronExpander,
     PolyhedronExpansionConfig,
     SphereSampler,
@@ -76,7 +76,7 @@ def debug_polyhedron_expansion():
         print(f"  中心: {candidates.mean(axis=0)}")
 
     # 2. 选择种子点
-    from perception.polyhedron_expansion import SeedSelector
+    from perception.scene_understanding.polyhedron_expansion import SeedSelector
     seed_selector = SeedSelector()
     seed = seed_selector.select_next_seed(candidates, [])
     print(f"\n种子点: {seed}")
@@ -119,7 +119,7 @@ def debug_polyhedron_expansion():
         return
 
     # 4. 计算凸包
-    from perception.polyhedron_expansion import ConvexHullComputer
+    from perception.scene_understanding.polyhedron_expansion import ConvexHullComputer
     hull_computer = ConvexHullComputer()
     hull_result = hull_computer.compute(sample_points)
 
@@ -139,7 +139,7 @@ def debug_polyhedron_expansion():
         return
 
     # 5. 碰撞检测
-    from perception.polyhedron_expansion import CollisionChecker
+    from perception.scene_understanding.polyhedron_expansion import CollisionChecker
     collision_checker = CollisionChecker()
 
     # 详细碰撞检测

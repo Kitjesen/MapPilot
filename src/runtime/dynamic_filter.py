@@ -148,12 +148,25 @@ def refilter_map(map_dir: str | Path, *, timeout_s: float = 300.0) -> dict:
             if patch.name not in pose_map:
                 continue
             pts = _read_pcd_binary(patch)
-            _write_pcd_binary(pcd_dir / patch.name, pts, pose_map[patch.name])
+            # DUFOMap parses patch stems as numeric ids. Keep LingTu's source
+            # patch names intact, but use numeric names in the temporary input.
+            dufomap_name = f"{repacked:06d}.pcd"
+            _write_pcd_binary(pcd_dir / dufomap_name, pts, pose_map[patch.name])
             repacked += 1
 
         if repacked == 0:
             return {"success": False, "error": "no patches matched poses.txt",
                     "elapsed_s": time.time() - t0}
+
+        min_patches = max(1, int(os.environ.get("LINGTU_DUFOMAP_MIN_PATCHES", "3")))
+        if repacked < min_patches:
+            return {
+                "success": False,
+                "error": f"insufficient patches for dufomap: {repacked} < {min_patches}",
+                "patch_count": repacked,
+                "min_patches": min_patches,
+                "elapsed_s": time.time() - t0,
+            }
 
         # dufomap_run overwrites output.pcd (or dufomap_output.pcd — depends on config)
         proc = subprocess.run(
@@ -220,7 +233,9 @@ def refilter_map(map_dir: str | Path, *, timeout_s: float = 300.0) -> dict:
                     "elapsed_s": time.time() - t0}
 
         elapsed = time.time() - t0
-        dropped = orig_count - clean_count if orig_count > 0 else 0
+        point_delta = clean_count - orig_count if orig_count > 0 else clean_count
+        dropped = max(0, orig_count - clean_count) if orig_count > 0 else 0
+        added = max(0, point_delta)
         logger.info(
             "dynamic_filter: %s %d→%d pts (-%d, %.1f%%) in %.1fs",
             map_dir.name, orig_count, clean_count, dropped,
@@ -232,6 +247,9 @@ def refilter_map(map_dir: str | Path, *, timeout_s: float = 300.0) -> dict:
             "orig_count": orig_count,
             "clean_count": clean_count,
             "dropped": dropped,
+            "dropped_points": dropped,
+            "added_points": added,
+            "point_delta": point_delta,
             "elapsed_s": elapsed,
             "backup": str(backup),
         }

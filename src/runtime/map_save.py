@@ -56,7 +56,10 @@ def default_map_save_adapter() -> MapSaveAdapter:
 
     from runtime.registry import get
 
-    adapter_name = os.environ.get("LINGTU_MAP_SAVE_ADAPTER", "ros2").strip() or "ros2"
+    adapter_name = (
+        os.environ.get("LINGTU_MAP_SAVE_ADAPTER", "native_slam").strip()
+        or "native_slam"
+    )
     try:
         adapter_cls = get("map_save_adapter", adapter_name)
     except KeyError as exc:

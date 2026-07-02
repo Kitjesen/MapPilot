@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from runtime.adapters.dds.localization_adapter import DDSLocalizationAdapterModule
-from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 from runtime.blueprints.stacks.slam import slam
+from runtime.msgs.geometry import Transform, Vector3
 from runtime.msgs.numpy_compat import np
-from runtime.profiles.resolver import resolve_profile_config
 from runtime.runtime_interface import TOPICS
+from runtime.tf import FrameTree, TFMessage, TF_TOPIC
 
 
 @dataclass
@@ -194,22 +195,67 @@ def test_dds_localization_adapter_publishes_map_cloud() -> None:
     assert np.allclose(clouds[-1].points, points)
 
 
+def test_dds_localization_adapter_updates_frame_tree_from_tf() -> None:
+    transport = _FakeDDSTransport()
+    tree = FrameTree()
+    adapter = DDSLocalizationAdapterModule(transport=transport, frame_tree=tree)
+    tf_seen = []
+    adapter.map_odom_tf.subscribe(tf_seen.append)
+    adapter.setup()
+
+    transport.emit(
+        TF_TOPIC,
+        TFMessage(
+            (
+                Transform(
+                    translation=Vector3(1.0, 2.0, 0.0),
+                    frame_id="map",
+                    child_frame_id="odom",
+                    ts=9.0,
+                ),
+            )
+        ),
+    )
+
+    assert tree.lookup("map", "odom", ts=9.0).translation.x == 1.0
+    assert tf_seen[-1]["child_frame_id"] == "odom"
+    assert tf_seen[-1]["tx"] == 1.0
+    assert adapter.health()["message_counts"][TF_TOPIC] == 1
+
+
+def test_dds_localization_adapter_updates_frame_tree_from_health_tf() -> None:
+    transport = _FakeDDSTransport()
+    tree = FrameTree()
+    adapter = DDSLocalizationAdapterModule(transport=transport, frame_tree=tree)
+    adapter.setup()
+
+    transport.emit(
+        TOPICS.localization_health,
+        DDS_String(
+            json.dumps(
+                {
+                    "state": "TRACKING",
+                    "map_odom_tf": {
+                        "valid": True,
+                        "tx": 3.0,
+                        "ty": 0.0,
+                        "tz": 0.0,
+                        "qx": 0.0,
+                        "qy": 0.0,
+                        "qz": 0.0,
+                        "qw": 1.0,
+                        "ts": 11.0,
+                    },
+                }
+            )
+        ),
+    )
+
+    assert tree.lookup("map", "odom", ts=11.0).translation.x == 3.0
+
+
 def test_slam_stack_can_select_dds_localization_adapter() -> None:
     bp = slam("bridge", enable_visual_backup=False, localization_adapter="dds_endpoint")
 
     assert bp._entries[0].name == "SlamAdapterModule"
     assert bp._entries[0].module_cls is DDSLocalizationAdapterModule
-
-
-def test_thunder_field_product_blueprints_use_dds_localization_adapter() -> None:
-    for profile in ("map", "nav", "explore", "tare_explore"):
-        config = resolve_profile_config(profile)
-        bp = blueprint_for_resolved_profile(profile, config)
-        slam_entry = next(entry for entry in bp._entries if entry.name == "SlamAdapterModule")
-
-        assert config["_runtime_endpoint"] == "thunder_field"
-        assert config["_endpoint_transport"] == "dds"
-        assert config["localization_adapter"] == "dds_endpoint"
-        assert config["nav_in_adapter"] == "dds_nav_input"
-        assert config["nav_out_adapter"] == "dds_nav_output"
-        assert slam_entry.module_cls is DDSLocalizationAdapterModule

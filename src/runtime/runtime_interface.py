@@ -14,7 +14,6 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
-
 THUNDER_FIELD_RUNTIME_CONTRACT = "thunder_field"
 LEGACY_REAL_RUNTIME_CONTRACT = "real_s100p"
 REAL_RUNTIME_CONTRACT = THUNDER_FIELD_RUNTIME_CONTRACT
@@ -93,6 +92,7 @@ class RuntimeTopics:
     """Canonical stream tokens for LingTu runtime modules."""
 
     raw_lidar_points: str = "/lidar/raw_frame"
+    raw_lidar_packet: str = "/lidar/raw_packet"
     raw_imu: str = "/imu/raw"
     lidar_scan: str = "/lidar/raw_frame"
     imu: str = "/imu/raw"
@@ -102,6 +102,8 @@ class RuntimeTopics:
     map_cloud: str = "/slam/map_cloud"
     cumulative_map_cloud: str = "/slam/cumulative_map_cloud"
     saved_map_cloud: str = "/slam/saved_map_cloud"
+    slam_map_command: str = "/slam/map_command"
+    slam_map_event: str = "/slam/map_event"
     save_map_service: str = "/slam/save_map"
     dog_odometry: str = "/nav/dog_odometry"
     localization_quality: str = "/slam/localization_quality"
@@ -540,7 +542,7 @@ MESSAGE_FORMATS = {
         ros_type="livox_ros_driver2/msg/CustomMsg",
         frame_role="lidar_or_body_raw_fastlio_input",
         required_fields=("offset_time", "x", "y", "z", "reflectivity", "tag", "line"),
-        note="Native Livox raw packet stream for Fast-LIO2 lidar_type=1.",
+        note="Scan-level Livox frame for Fast-LIO2 lidar_type=1.",
     ),
     "raw_timed_pointcloud2": MessageFormat(
         name="raw_timed_pointcloud2",
@@ -630,6 +632,8 @@ TOPIC_FORMATS = {
     TOPICS.camera_info: ("sensor_msgs/msg/CameraInfo",),
     TOPICS.cumulative_map_cloud: ("map_cloud",),
     TOPICS.saved_map_cloud: ("map_cloud",),
+    TOPICS.slam_map_command: ("std_msgs/msg/String",),
+    TOPICS.slam_map_event: ("std_msgs/msg/String",),
     TOPICS.exploration_grid: ("nav_msgs/msg/OccupancyGrid",),
     TOPICS.traversable_frontiers: ("traversable_frontier_candidates",),
     TOPICS.frontier_candidate: ("traversable_frontier_candidates",),
@@ -814,12 +818,12 @@ ARTIFACT_FORMATS = {
     ),
     "octomap": ArtifactFormat(
         name="octomap",
-        path="octomap.bt",
-        artifact_type="octomap_binary_tree",
+        path="octomap.ot",
+        artifact_type="octomap_full_tree",
         frame_role=FRAMES.map,
         required_fields=("occupancy_tree",),
         required_metadata=("source_map_sha256", "source_profile", "data_source", "frame_id"),
-        note="OctoMap .bt artifact consumed by the OctoPlanner3D headless backend.",
+        note="OctoMap full-tree artifact consumed by the OctoPlanner3D headless backend.",
     ),
     "point_cloud": ArtifactFormat(
         name="point_cloud",

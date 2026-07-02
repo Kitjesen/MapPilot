@@ -66,16 +66,46 @@ Status writePcd(const std::filesystem::path& path, const Cloud& cloud) {
   return Status::Ok("map_pcd_written");
 }
 
-Status writePoses(
+Status writePcdBinary(const std::filesystem::path& path, const Cloud& cloud) {
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  if (ec) {
+    return Status::Error("create_patch_dir_failed: " + ec.message());
+  }
+
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    return Status::Error("open_patch_pcd_failed");
+  }
+
+  out << "# .PCD v0.7 - Point Cloud Data file format\n";
+  out << "VERSION 0.7\n";
+  out << "FIELDS x y z intensity\n";
+  out << "SIZE 4 4 4 4\n";
+  out << "TYPE F F F F\n";
+  out << "COUNT 1 1 1 1\n";
+  out << "WIDTH " << cloud.points.size() << "\n";
+  out << "HEIGHT 1\n";
+  out << "VIEWPOINT 0 0 0 1 0 0 0\n";
+  out << "POINTS " << cloud.points.size() << "\n";
+  out << "DATA binary\n";
+  for (const auto& point : cloud.points) {
+    const float values[4] = {point.x, point.y, point.z, point.intensity};
+    out.write(reinterpret_cast<const char*>(values), sizeof(values));
+  }
+  return Status::Ok("patch_pcd_written");
+}
+
+Status writeTrajectory(
     const std::filesystem::path& map_dir,
     const std::vector<OdomSample>& pose_history) {
   if (pose_history.empty()) {
     return Status::Ok("no_pose_history");
   }
 
-  std::ofstream out(map_dir / "poses.txt");
+  std::ofstream out(map_dir / "trajectory.txt");
   if (!out) {
-    return Status::Error("open_poses_txt_failed");
+    return Status::Error("open_trajectory_txt_failed");
   }
   out << std::setprecision(12);
   for (const auto& sample : pose_history) {
@@ -83,7 +113,40 @@ Status writePoses(
     out << sample.stamp_s << ' ' << p.x << ' ' << p.y << ' ' << p.z << ' '
         << p.qx << ' ' << p.qy << ' ' << p.qz << ' ' << p.qw << '\n';
   }
+  return Status::Ok("trajectory_txt_written");
+}
+
+Status writePatchIndex(
+    const std::filesystem::path& map_dir,
+    const std::string& patch_name,
+    const Pose3d& pose) {
+  std::ofstream out(map_dir / "poses.txt");
+  if (!out) {
+    return Status::Error("open_poses_txt_failed");
+  }
+  out << std::setprecision(12)
+      << patch_name << ' ' << pose.x << ' ' << pose.y << ' ' << pose.z << ' '
+      << pose.qw << ' ' << pose.qx << ' ' << pose.qy << ' ' << pose.qz << '\n';
   return Status::Ok("poses_txt_written");
+}
+
+Status writeLatestPatch(
+    const std::filesystem::path& map_dir,
+    const std::optional<Cloud>& registered_cloud_body,
+    const std::optional<Pose3d>& odometry_odom_body) {
+  if (!registered_cloud_body.has_value() || registered_cloud_body->points.empty()) {
+    return Status::Ok("no_registered_cloud_patch");
+  }
+  if (!odometry_odom_body.has_value()) {
+    return Status::Ok("no_odometry_for_patch");
+  }
+  const std::string patch_name = "latest_scan.pcd";
+  const Status patch_status =
+      writePcdBinary(map_dir / "patches" / patch_name, *registered_cloud_body);
+  if (!patch_status.ok) {
+    return patch_status;
+  }
+  return writePatchIndex(map_dir, patch_name, *odometry_odom_body);
 }
 
 class ContractBackend final : public ISlamBackend {
@@ -245,7 +308,7 @@ class ContractBackend final : public ISlamBackend {
       return status;
     }
 
-    status = writePoses(pcd.parent_path(), pose_history_);
+    status = writeTrajectory(pcd.parent_path(), pose_history_);
     if (!status.ok) {
       return status;
     }
@@ -254,6 +317,11 @@ class ContractBackend final : public ISlamBackend {
     std::filesystem::create_directories(pcd.parent_path() / "patches", ec);
     if (ec) {
       return Status::Error("create_patches_dir_failed: " + ec.message());
+    }
+
+    status = writeLatestPatch(pcd.parent_path(), registered_cloud_body_, odometry_odom_body_);
+    if (!status.ok) {
+      return status;
     }
 
     saved_map_cloud_map_ = cloud;

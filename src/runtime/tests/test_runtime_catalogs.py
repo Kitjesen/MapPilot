@@ -144,7 +144,7 @@ def test_runtime_endpoint_resolver_reexports_endpoint_catalog() -> None:
         "enable_lidar": False,
         "command_output_mode": "endpoint_only",
         "hardware_control_boundary": "dds_endpoint_source",
-        "localization_adapter": "dds_endpoint",
+        "localization_adapter": "cpp_slam_status",
         "nav_in_adapter": "dds_nav_input",
         "nav_out_adapter": "dds_nav_output",
         "enable_nav_in": True,

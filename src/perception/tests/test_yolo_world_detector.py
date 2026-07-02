@@ -20,7 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from perception.yolo_world_detector import YOLOWorldDetector
+from perception.detection.yolo_world_detector import YOLOWorldDetector
 
 
 class TestYOLOWorldDetectorInit(unittest.TestCase):

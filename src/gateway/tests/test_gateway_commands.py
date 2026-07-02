@@ -348,6 +348,38 @@ def test_navigation_plan_preview_is_non_motion_and_typed():
     assert gateway.cmd_vel.msg_count == 0
 
 
+def test_map_plan_preview_can_ignore_inactive_navigation_session():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import PlanPreviewRequest
+    from gateway.services.control_commands import ControlCommandService
+
+    gateway = GatewayModule()
+    gateway.setup()
+    nav = _FakePlanPreviewNav()
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    gateway._session_mode = "idle"
+    with gateway._state_lock:
+        gateway._safety = {"level": 2}
+    service = ControlCommandService(gateway)
+
+    blocked = service.preview_navigation_plan(
+        PlanPreviewRequest(x=1.0, y=0.0, z=0.0),
+    )
+    preview = service.preview_navigation_plan(
+        PlanPreviewRequest(x=1.0, y=0.0, z=0.0),
+        ignore_blockers={"navigation_session_inactive", "safety_stop"},
+    )
+
+    assert nav.calls == [(1.0, 0.0, 0.0)]
+    assert blocked["feasible"] is False
+    assert "navigation_session_inactive" in blocked["reasons"]
+    assert "safety_stop" in blocked["reasons"]
+    assert preview["feasible"] is True
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+
+
 def test_navigation_plan_preview_does_not_publish_any_control_outputs():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import PlanPreviewRequest

@@ -234,8 +234,8 @@ def test_multi_robot_build_and_start():
     system = bp.build()
     system.start()
 
-    nav_0 = system.get_module("robot_0/Navigation")
-    nav_1 = system.get_module("robot_1/Navigation")
+    nav_0 = system.get_module("robot_0/nav.mission")
+    nav_1 = system.get_module("robot_1/nav.mission")
     assert nav_0 is not None
     assert nav_1 is not None
     assert nav_0 is not nav_1  # different instances

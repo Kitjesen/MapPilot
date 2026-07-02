@@ -52,11 +52,11 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
   const session = lastSession
   const mode: SessionMode = session?.mode ?? 'idle'
 
-  // Navigable maps = has both PCD and tomogram.
+  // Navigable maps = saved point cloud plus OctoPlanner3D map artifact.
   const loadMaps = useCallback(async () => {
     try {
       const all = await api.fetchMaps()
-      const navigable = all.filter(m => m.has_pcd && m.has_tomogram)
+      const navigable = all.filter(m => m.has_pcd && (m.navigation_ready === true || m.has_octomap === true))
       setMaps(navigable)
       if (!selectedMap && session?.active_map && navigable.some(m => m.name === session.active_map)) {
         setSelectedMap(session.active_map)
@@ -78,7 +78,7 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
 
   const requestStartNavigating = () => {
     if (!selectedMap) {
-      showToast('请先选择一张含 tomogram 的地图', 'error')
+      showToast('请先选择一张 navigation-ready 地图', 'error')
       return
     }
     setPending({
@@ -268,7 +268,7 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
         <p className={styles.sectionLabel}>导航巡航</p>
         {noNavigableMap ? (
           <p className={styles.warnHint}>
-            <AlertTriangle size={12} /> 没有可导航的地图。先建图并构建 tomogram，再来这里。
+            <AlertTriangle size={12} /> 没有可导航的地图。先建图并构建 OctoMap，再来这里。
           </p>
         ) : (
           <>

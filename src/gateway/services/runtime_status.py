@@ -293,6 +293,13 @@ def localizer_algorithm_healthy(
         and cloud_fresh
         and reported in {"", *TRACKING_STATES}
     )
+    cpp_status_snapshot_ok = (
+        health_source in {"slam_runtime", "cpp_slam_status_snapshot", "cpp_slam_status_json"}
+        and pose_fresh is not False
+        and reported in TRACKING_STATES
+        and float(diagnostics.get("quality", diagnostics.get("confidence", 0.0)) or 0.0)
+        >= 0.5
+    )
 
     return (
         reported in {"", *TRACKING_STATES}
@@ -300,7 +307,7 @@ def localizer_algorithm_healthy(
         and localizer_health in GOOD_LOCALIZER_HEALTH
         and not recovery_signal
         and cloud_fresh
-        and (icp_ok or odom_cloud_ok)
+        and (icp_ok or odom_cloud_ok or cpp_status_snapshot_ok)
     )
 
 
@@ -473,6 +480,8 @@ def build_localization_status_from_parts(
         diagnostics,
         runtime_boundary,
     )
+    buffers = _mapping(diagnostics.get("buffers"))
+    map_odom_tf = diagnostics.get("map_odom_tf")
     return {
         "schema_version": LOCALIZATION_STATUS_SCHEMA_VERSION,
         "state": state,
@@ -482,6 +491,8 @@ def build_localization_status_from_parts(
         "active_map": session.get("active_map"),
         "icp_quality": float(icp_quality),
         "reported_state": diagnostics.get("state"),
+        "reason": diagnostics.get("reason") or (reasons[0] if reasons else None),
+        "backend_reason": diagnostics.get("reason"),
         "confidence": diagnostics.get("confidence"),
         "algorithm_healthy": algorithm_healthy,
         "backend": backend,
@@ -502,6 +513,43 @@ def build_localization_status_from_parts(
         "ieskf_iter_num": _as_optional_int(diagnostics.get("ieskf_iter_num")),
         "ieskf_converged": _as_optional_bool(diagnostics.get("ieskf_converged")),
         "map_cloud_fresh": _as_optional_bool(diagnostics.get("map_cloud_fresh")),
+        "status_target_hz": _as_float(diagnostics.get("status_target_hz")),
+        "imu_input_hz": _as_float(diagnostics.get("imu_input_hz")),
+        "lidar_input_hz": _as_float(diagnostics.get("lidar_input_hz")),
+        "slam_tick_hz": _as_float(diagnostics.get("slam_tick_hz")),
+        "processed_scan_hz": _as_float(diagnostics.get("processed_scan_hz")),
+        "registered_points": _as_optional_int(diagnostics.get("registered_points")),
+        "map_points": _as_optional_int(diagnostics.get("map_points")),
+        "imu_buffer": _as_optional_int(diagnostics.get("imu_buffer", buffers.get("imu"))),
+        "lidar_buffer": _as_optional_int(diagnostics.get("lidar_buffer", buffers.get("lidar"))),
+        "imu_batch": _as_optional_int(diagnostics.get("imu_batch", buffers.get("imu_batch"))),
+        "dropped_lidar_frames": _as_optional_int(
+            diagnostics.get("dropped_lidar_frames", buffers.get("dropped_lidar_frames"))
+        ),
+        "dropped_imu_frames": _as_optional_int(
+            diagnostics.get("dropped_imu_frames", buffers.get("dropped_imu_frames"))
+        ),
+        "scan_start_s": _as_float(diagnostics.get("scan_start_s")),
+        "scan_end_s": _as_float(diagnostics.get("scan_end_s")),
+        "last_imu_s": _as_float(diagnostics.get("last_imu_s")),
+        "sync_wait_count": _as_optional_int(
+            diagnostics.get("sync_wait_count", buffers.get("sync_wait_count"))
+        ),
+        "imu_rollback_count": _as_optional_int(
+            diagnostics.get("imu_rollback_count", buffers.get("imu_rollback_count"))
+        ),
+        "lidar_rollback_count": _as_optional_int(
+            diagnostics.get("lidar_rollback_count", buffers.get("lidar_rollback_count"))
+        ),
+        "map_loaded": _as_optional_bool(diagnostics.get("map_loaded")),
+        "map_frame_jump": _as_optional_bool(diagnostics.get("map_frame_jump")),
+        "scene_mode": diagnostics.get("scene_mode"),
+        "gnss_fusion_health": _mapping(diagnostics.get("gnss_fusion_health")),
+        "map_odom_tf": dict(map_odom_tf) if isinstance(map_odom_tf, Mapping) else None,
+        "has_map_odom_tf": (
+            isinstance(map_odom_tf, Mapping)
+            and _as_optional_bool(map_odom_tf.get("valid")) is not False
+        ),
         "map_state": diagnostics.get("map_state"),
         "map_save_supported": map_save_supported,
         "map_save_source": map_save_source,
@@ -532,6 +580,8 @@ def build_localization_status_from_parts(
         "diag_age_ms": diag_age_ms,
         "runtime": runtime_boundary,
         "frames": frames,
+        "registered_cloud_frame_id": frames.get("registered_cloud_frame_id"),
+        "map_cloud_frame_id": frames.get("map_cloud_frame_id"),
         "can_relocalize": (
             saved_map_relocalization_supported
             and state in {"degraded", "lost"}
@@ -1073,7 +1123,20 @@ def _navigation_frame_summary(
         or _frame_from_payload(mission.get("goal"))
     )
     planning_frame = normalize_frame_id(planning_frame_id) or default_planning_frame
-    odometry_expected = (planning_frame,)
+    map_odom_tf = _mapping(mission.get("map_odom_tf"))
+    linked_odom_frame: str | None = None
+    if map_odom_tf and _as_optional_bool(map_odom_tf.get("valid")) is not False:
+        parent = normalize_frame_id(map_odom_tf.get("frame_id"))
+        child = normalize_frame_id(map_odom_tf.get("child_frame_id"))
+        if parent == planning_frame and child:
+            linked_odom_frame = child
+    odometry_expected = tuple(
+        dict.fromkeys(
+            frame
+            for frame in (planning_frame, linked_odom_frame)
+            if frame
+        )
+    )
     planning_expected = (planning_frame,)
     mismatches: list[dict[str, str]] = []
     for source, frame, expected_frames in (
@@ -1090,6 +1153,19 @@ def _navigation_frame_summary(
         "costmap_frame_id": costmap_frame_id,
         "goal_frame_id": goal_frame_id,
         "odometry_expected_frame_ids": list(odometry_expected),
+        "has_map_odom_tf": linked_odom_frame is not None,
+        "map_odom_tf": dict(map_odom_tf) if map_odom_tf else None,
+        "observed_frame_links": (
+            {
+                "map_to_odom": {
+                    "frame_id": planning_frame,
+                    "child_frame_id": linked_odom_frame,
+                    "valid": True,
+                }
+            }
+            if linked_odom_frame is not None
+            else {}
+        ),
         "ok": not mismatches,
         "mismatches": mismatches,
     }
@@ -1345,6 +1421,7 @@ def _readiness_summary(
         "odom_frame_id": frames.get("odom_frame_id"),
         "observed_frame_links": _mapping(
             real_runtime_evidence.get("checked_frame_link_evidence")
+            or frames.get("observed_frame_links")
         ),
         "map_artifact_gate": dict(map_artifact_gate),
         "real_runtime_evidence": dict(real_runtime_evidence),
@@ -1413,6 +1490,8 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
         value = _frame_id(nav_runtime.get(key))
         if value:
             frame_mission[key] = value
+    if isinstance(localization.get("map_odom_tf"), Mapping):
+        frame_mission["map_odom_tf"] = dict(localization["map_odom_tf"])
     frames = _navigation_frame_summary(frame_mission, odometry)
     map_artifact_gate = _map_artifact_gate_status(nav_runtime)
     real_runtime_evidence = _real_runtime_evidence_status(session)

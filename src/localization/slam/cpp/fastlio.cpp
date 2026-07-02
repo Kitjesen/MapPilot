@@ -12,6 +12,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -25,6 +26,13 @@ struct RuntimeConfig {
   double max_imu_gap_s = 0.25;
   std::size_t max_imu_buffer = 4000;
   std::size_t max_lidar_buffer = 64;
+};
+
+struct PatchSnapshot {
+  std::string name;
+  double stamp_s = 0.0;
+  Pose3d pose;
+  Cloud cloud;
 };
 
 bool finite(double value) {
@@ -218,19 +226,95 @@ void applyPose(State& state, const Pose3d& pose) {
   state.r_wi = q.toRotationMatrix();
 }
 
-Status writePoses(
+Status writeTrajectory(
     const std::filesystem::path& map_dir,
     const std::vector<OdomSample>& pose_history) {
-  std::ofstream out(map_dir / "poses.txt");
+  std::ofstream out(map_dir / "trajectory.txt");
   if (!out) {
-    return Status::Error("open_poses_txt_failed");
+    return Status::Error("open_trajectory_txt_failed");
   }
+  out << std::setprecision(12);
   for (const auto& sample : pose_history) {
     const auto& p = sample.odom_body;
     out << sample.stamp_s << ' ' << p.x << ' ' << p.y << ' ' << p.z << ' '
         << p.qx << ' ' << p.qy << ' ' << p.qz << ' ' << p.qw << '\n';
   }
+  return Status::Ok("trajectory_txt_written");
+}
+
+Status writeContractPcdBinary(const std::filesystem::path& path, const Cloud& cloud) {
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  if (ec) {
+    return Status::Error("create_patch_dir_failed: " + ec.message());
+  }
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    return Status::Error("open_patch_pcd_failed");
+  }
+  out << "# .PCD v0.7 - Point Cloud Data file format\n";
+  out << "VERSION 0.7\n";
+  out << "FIELDS x y z intensity\n";
+  out << "SIZE 4 4 4 4\n";
+  out << "TYPE F F F F\n";
+  out << "COUNT 1 1 1 1\n";
+  out << "WIDTH " << cloud.points.size() << "\n";
+  out << "HEIGHT 1\n";
+  out << "VIEWPOINT 0 0 0 1 0 0 0\n";
+  out << "POINTS " << cloud.points.size() << "\n";
+  out << "DATA binary\n";
+  for (const auto& point : cloud.points) {
+    const float values[4] = {point.x, point.y, point.z, point.intensity};
+    out.write(reinterpret_cast<const char*>(values), sizeof(values));
+  }
+  return Status::Ok("patch_pcd_written");
+}
+
+Status writePatchIndex(
+    const std::filesystem::path& map_dir,
+    const std::vector<PatchSnapshot>& patches) {
+  std::ofstream out(map_dir / "poses.txt");
+  if (!out) {
+    return Status::Error("open_poses_txt_failed");
+  }
+  out << std::setprecision(12);
+  for (const auto& patch : patches) {
+    const auto& pose = patch.pose;
+    out << patch.name << ' ' << pose.x << ' ' << pose.y << ' ' << pose.z << ' '
+        << pose.qw << ' ' << pose.qx << ' ' << pose.qy << ' ' << pose.qz << '\n';
+  }
   return Status::Ok("poses_txt_written");
+}
+
+Status writePatchBundle(
+    const std::filesystem::path& map_dir,
+    const std::vector<PatchSnapshot>& patches) {
+  if (patches.empty()) {
+    return Status::Ok("no_patches");
+  }
+  for (const auto& patch : patches) {
+    if (patch.cloud.points.empty()) {
+      continue;
+    }
+    const Status patch_status =
+        writeContractPcdBinary(map_dir / "patches" / patch.name, patch.cloud);
+    if (!patch_status.ok) {
+      return patch_status;
+    }
+  }
+  return writePatchIndex(map_dir, patches);
+}
+
+double planarDistance(const Pose3d& a, const Pose3d& b) {
+  const double dx = a.x - b.x;
+  const double dy = a.y - b.y;
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+std::string patchName(std::uint64_t sequence) {
+  std::ostringstream out;
+  out << "scan_" << std::setw(6) << std::setfill('0') << sequence << ".pcd";
+  return out.str();
 }
 
 class FastLioBackend final : public ISlamBackend {
@@ -313,13 +397,9 @@ class FastLioBackend final : public ISlamBackend {
       ++lidar_rollback_count_;
       reason_ = "lidar_time_rollback";
     }
-    lidar_buffer_.push_back(frame);
     last_lidar_time_ = frame.stamp_s;
     last_stamp_s_ = frame.stamp_s;
-    while (lidar_buffer_.size() > runtime_config_.max_lidar_buffer) {
-      lidar_buffer_.pop_front();
-      ++dropped_lidar_frames_;
-    }
+    pushLidarFrame(frame);
     return Status::Ok("lidar_accepted");
   }
 
@@ -408,6 +488,8 @@ class FastLioBackend final : public ISlamBackend {
     map_cloud_map_ =
         toContractCloud(world_cloud, package_.cloud_end_time, config_.map_frame);
 
+    recordPatchSnapshot();
+
     state_ = SlamState::Tracking;
     confidence_ = std::max(0.0, std::min(1.0, kf_->degeneracy().effective_ratio));
     reason_ = "tracking";
@@ -431,13 +513,19 @@ class FastLioBackend final : public ISlamBackend {
     if (!std::filesystem::exists(pcd)) {
       return Status::Error("map_pcd_write_failed");
     }
-    const Status pose_status = writePoses(pcd.parent_path(), pose_history_);
-    if (!pose_status.ok) {
-      return pose_status;
+    const Status trajectory_status = writeTrajectory(pcd.parent_path(), pose_history_);
+    if (!trajectory_status.ok) {
+      return trajectory_status;
     }
     std::filesystem::create_directories(pcd.parent_path() / "patches", ec);
     if (ec) {
       return Status::Error("create_patches_dir_failed: " + ec.message());
+    }
+    const std::vector<PatchSnapshot> patches(
+        patch_history_.begin(), patch_history_.end());
+    const Status patch_status = writePatchBundle(pcd.parent_path(), patches);
+    if (!patch_status.ok) {
+      return patch_status;
     }
     saved_map_cloud_map_ = map_cloud_map_;
     map_loaded_ = true;
@@ -531,6 +619,18 @@ class FastLioBackend final : public ISlamBackend {
     map_cloud_map_.reset();
     saved_map_cloud_map_.reset();
     pose_history_.clear();
+    patch_history_.clear();
+    patch_sequence_ = 0;
+    last_patch_stamp_s_ = 0.0;
+    has_last_patch_pose_ = false;
+  }
+
+  void pushLidarFrame(LidarFrame frame) {
+    lidar_buffer_.push_back(std::move(frame));
+    while (lidar_buffer_.size() > runtime_config_.max_lidar_buffer) {
+      lidar_buffer_.pop_front();
+      ++dropped_lidar_frames_;
+    }
   }
 
   bool prepareFastLioPackage() {
@@ -580,6 +680,13 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   void updateWaitingReason() {
+    if (state_ == SlamState::Tracking &&
+        odometry_odom_body_.has_value() &&
+        map_cloud_map_.has_value()) {
+      reason_ = "tracking";
+      updateBuilderState();
+      return;
+    }
     if (imu_buffer_.empty()) {
       reason_ = "waiting_for_imu";
     } else if (lidar_buffer_.empty()) {
@@ -588,6 +695,39 @@ class FastLioBackend final : public ISlamBackend {
       reason_ = "waiting_for_imu_to_cover_scan";
     }
     updateBuilderState();
+  }
+
+  void recordPatchSnapshot() {
+    if (!registered_cloud_body_.has_value() || registered_cloud_body_->points.empty()) {
+      return;
+    }
+    if (!odometry_odom_body_.has_value()) {
+      return;
+    }
+    const double stamp = registered_cloud_body_->stamp_s > 0.0
+        ? registered_cloud_body_->stamp_s
+        : last_stamp_s_;
+    const Pose3d pose = *odometry_odom_body_;
+    const bool time_ready =
+        last_patch_stamp_s_ <= 0.0 || (stamp - last_patch_stamp_s_) >= 1.0;
+    const bool motion_ready =
+        !has_last_patch_pose_ || planarDistance(pose, last_patch_pose_) >= 0.20;
+    if (!patch_history_.empty() && !time_ready && !motion_ready) {
+      return;
+    }
+
+    PatchSnapshot patch;
+    patch.name = patchName(patch_sequence_++);
+    patch.stamp_s = stamp;
+    patch.pose = pose;
+    patch.cloud = *registered_cloud_body_;
+    patch_history_.push_back(std::move(patch));
+    while (patch_history_.size() > 300) {
+      patch_history_.pop_front();
+    }
+    last_patch_stamp_s_ = stamp;
+    last_patch_pose_ = pose;
+    has_last_patch_pose_ = true;
   }
 
   void updateBuilderState() {
@@ -646,6 +786,11 @@ class FastLioBackend final : public ISlamBackend {
   std::optional<Cloud> saved_map_cloud_map_;
   GnssFusionHealth gnss_health_;
   std::vector<OdomSample> pose_history_;
+  std::deque<PatchSnapshot> patch_history_;
+  std::uint64_t patch_sequence_ = 0;
+  double last_patch_stamp_s_ = 0.0;
+  Pose3d last_patch_pose_;
+  bool has_last_patch_pose_ = false;
 };
 
 }  // namespace

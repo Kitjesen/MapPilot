@@ -46,6 +46,12 @@ public:
   // 主流程：读取 PCD -> 体素过滤 -> 连通域过滤 -> 生成 OctoMap -> 保存 .bt
   bool convert();
 
+  void setInputPcdFile(const std::string & path);
+  void setOutputBtFile(const std::string & path);
+  void setResolution(double resolution);
+  void setFreeEnvelopeLayers(int layers);
+  void setFreeEnvelopeDilationCells(int cells);
+
   // 查询接口
   bool isPointFree(const octomap::point3d & p) const;
   bool isSpaceFree(const octomap::point3d & min_pt, const octomap::point3d & max_pt) const;
@@ -67,6 +73,7 @@ private:
   void filterByPointCount();
   void filterByConnectedClusters();
   void fillOcTree();
+  void carveFreeEnvelope();
   bool saveOctomap() const;
 
 private:
@@ -77,6 +84,8 @@ private:
   double resolution_ = 0.2;          // Octomap 分辨率，单位：米
   int min_points_per_voxel_ = 3;     // 每个 voxel 至少多少个点才算占据
   int min_cluster_voxels_ = 4;       // 连通 voxel 数少于该值则视为噪点
+  int free_layers_above_ = 3;
+  int free_xy_dilation_cells_ = 1;
   // ===============================================================
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;

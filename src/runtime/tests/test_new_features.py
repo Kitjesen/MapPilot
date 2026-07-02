@@ -161,7 +161,7 @@ def test_33_no_api_key_startup():
 # =========================================================================
 def test_34_no_clip_startup():
     from runtime.blueprints.full_stack import full_stack_blueprint
-    from perception.encoder_module import EncoderModule
+    from perception.encoding.encoder_module import EncoderModule
     from unittest.mock import patch
 
     # Build dev profile 鈥?on Windows, open_clip is typically not installed.

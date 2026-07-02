@@ -102,7 +102,7 @@ uv run python -m pytest -q -p no:cacheprovider src/nav/tests/test_path_feasibili
 
 ---
 
-## Agent A5: Native/PCL packaging
+## Agent A5: C++/PCL packaging
 
 **Objective:** Turn the local PCL + OctoPlanner3D headless workaround into reproducible build/doctor surfaces.
 
@@ -110,10 +110,10 @@ uv run python -m pytest -q -p no:cacheprovider src/nav/tests/test_path_feasibili
 - Modify: `scripts/build/build_vendored_pcl.sh`
 - Modify: `scripts/build/build_octoplanner3d.sh`
 - Modify: `scripts/build/README.md`
-- Later add doctor: `tools/validate/validate_native_dependencies.py` or existing native diagnostics module
+- Later add doctor: `tools/validate/validate_cxx_dependencies.py`
 
 **Profiles:**
-- `octoplanner3d-converter-native`: PCL common/io/octree + OctoMap, no ROS2.
+- `octoplanner3d-pcd-converter`: PCL common/io/octree + OctoMap, no ROS2.
 - `slam-native`: broader Fast-LIO2/localizer/PGO dependencies; do not conflate this with the OctoPlanner3D converter subset.
 
 **Gate:**

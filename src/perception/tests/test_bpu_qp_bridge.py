@@ -9,7 +9,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
-from perception import bpu_qp_bridge as bridge
+from perception.tracking import bpu_qp_bridge as bridge
 
 
 @dataclass
@@ -129,7 +129,7 @@ class TestCreatePerceptionPipeline(unittest.TestCase):
 
         with patch.dict(sys.modules, _fake_qp_modules()):
             with patch(
-                "perception.bpu_detector.BPUDetector",
+                "perception.detection.bpu_detector.BPUDetector",
                 return_value=fake_bpu,
             ) as bpu_cls:
                 pipeline = bridge.create_perception_pipeline()
@@ -153,7 +153,7 @@ class TestCreatePerceptionPipeline(unittest.TestCase):
 
         with patch.dict(sys.modules, _fake_qp_modules()):
             with patch(
-                "perception.bpu_detector.BPUDetector",
+                "perception.detection.bpu_detector.BPUDetector",
                 return_value=fake_bpu,
             ) as bpu_cls:
                 pipeline = bridge.create_perception_pipeline(

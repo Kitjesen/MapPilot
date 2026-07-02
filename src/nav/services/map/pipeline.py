@@ -5,9 +5,26 @@ from __future__ import annotations
 import json
 import logging
 import pickle
+import shutil
+import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from nav.services.map.records import (
+    ARTIFACT_ALIASES,
+    ARTIFACT_SPECS,
+    CAPABILITY_TO_ARTIFACT_TYPE,
+)
+from nav.services.map.runtime_bridge import (
+    LiveMapCloudSnapshotSaved,
+    MapRuntimeBridge,
+    MapSaveAdapterFailed,
+)
+from nav.services.map.storage import InvalidMapName, MapStorageService
+from nav.services.map_layers.map_artifact_builder import (
+    MapArtifactBuilder,
+    MapArtifactBuilderConfig,
+)
 from runtime.dynamic_filter import apply_dynamic_filter_step1half
 from runtime.msgs.numpy_compat import np
 from runtime.runtime_interface import TOPICS, topic_default_frame_id
@@ -17,21 +34,6 @@ from runtime.same_source_map_artifacts import (
     validate_same_source_map_metadata,
     validate_saved_map_artifact_dir,
 )
-from nav.services.map_layers.map_artifact_builder import (
-    MapArtifactBuilder,
-    MapArtifactBuilderConfig,
-)
-from nav.services.map.runtime_bridge import (
-    LiveMapCloudSnapshotSaved,
-    MapRuntimeBridge,
-    MapSaveAdapterFailed,
-)
-from nav.services.map.records import (
-    ARTIFACT_ALIASES,
-    ARTIFACT_SPECS,
-    CAPABILITY_TO_ARTIFACT_TYPE,
-)
-from nav.services.map.storage import InvalidMapName, MapStorageService
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,135 @@ class MapPipelineService:
         if upper in {"OCCUPANCY", "TOMOGRAM", "OCTOMAP"}:
             return upper
         return upper
+
+    def import_pcd(
+        self,
+        name: str,
+        source_path: str,
+        *,
+        voxel_size: float = 0.0,
+        bounds: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Import a PCD into the canonical map package as map.pcd."""
+        if not name:
+            return {"action": "import_pcd", "success": False, "message": "missing map name"}
+        if not source_path:
+            return {"action": "import_pcd", "success": False, "message": "missing source_path"}
+        try:
+            map_dir = self.storage.map_path(name)
+        except InvalidMapName as exc:
+            return {"action": "import_pcd", "success": False, "message": str(exc)}
+
+        src = Path(source_path).expanduser()
+        if not src.is_file() or src.suffix.lower() != ".pcd":
+            return {
+                "action": "import_pcd",
+                "success": False,
+                "message": f"source PCD not found: {source_path}",
+            }
+        points = self.load_pcd_points(str(src))
+        if points is None or points.size == 0:
+            return {
+                "action": "import_pcd",
+                "success": False,
+                "message": f"source PCD has no readable XYZ points: {source_path}",
+            }
+        points = self._prepare_map_points(points, voxel_size=voxel_size, bounds=bounds)
+        if points.size == 0:
+            return {
+                "action": "import_pcd",
+                "success": False,
+                "message": "all points were removed by import filters",
+            }
+
+        map_dir.mkdir(parents=True, exist_ok=True)
+        pcd_path = map_dir / "map.pcd"
+        backup = self._backup_existing(pcd_path, "preimport")
+        self._clear_derived_artifacts(map_dir)
+        point_count = MapRuntimeBridge.write_binary_xyz_pcd(pcd_path, points)
+        metadata = self.write_saved_map_metadata(
+            name,
+            slam_profile=self.runtime_bridge.slam_profile,
+            mapping_source="map_workbench_import_pcd",
+            record_state="STALE",
+        )
+        return {
+            "action": "import_pcd",
+            "success": bool(metadata.get("ok")),
+            "status": "partial",
+            "map_id": name,
+            "map_dir": str(map_dir),
+            "pcd": str(pcd_path),
+            "source_path": str(src),
+            "point_count": point_count,
+            "backup": str(backup) if backup else None,
+            "metadata": metadata,
+            "navigation_ready": False,
+            "navigation_ready_reason": "octomap.ot and metadata.json are required for OctoPlanner3D",
+        }
+
+    def crop(
+        self,
+        name: str,
+        bounds: dict[str, Any],
+        *,
+        invert: bool = False,
+        voxel_size: float = 0.0,
+    ) -> dict[str, Any]:
+        """Crop an existing map.pcd and mark derived artifacts stale."""
+        if not name:
+            return {"action": "crop", "success": False, "message": "missing map name"}
+        try:
+            map_dir = self.storage.map_path(name)
+        except InvalidMapName as exc:
+            return {"action": "crop", "success": False, "message": str(exc)}
+        pcd_path = map_dir / "map.pcd"
+        if not pcd_path.is_file():
+            return {
+                "action": "crop",
+                "success": False,
+                "message": f"no PCD file at {pcd_path}",
+            }
+        points = self.load_pcd_points(str(pcd_path))
+        if points is None or points.size == 0:
+            return {
+                "action": "crop",
+                "success": False,
+                "message": f"map.pcd has no readable XYZ points: {pcd_path}",
+            }
+
+        kept = self._crop_points(points, bounds, invert=invert)
+        kept = self._prepare_map_points(kept, voxel_size=voxel_size)
+        if kept.size == 0:
+            return {
+                "action": "crop",
+                "success": False,
+                "message": "crop would remove all map points",
+            }
+
+        backup = self._backup_existing(pcd_path, "precrop")
+        self._clear_derived_artifacts(map_dir)
+        point_count = MapRuntimeBridge.write_binary_xyz_pcd(pcd_path, kept)
+        metadata = self.write_saved_map_metadata(
+            name,
+            slam_profile=self.runtime_bridge.slam_profile,
+            mapping_source="map_workbench_crop",
+            record_state="STALE",
+        )
+        return {
+            "action": "crop",
+            "success": bool(metadata.get("ok")),
+            "status": "partial",
+            "map_id": name,
+            "map_dir": str(map_dir),
+            "pcd": str(pcd_path),
+            "point_count": point_count,
+            "removed_points": int(points.shape[0] - kept.shape[0]),
+            "backup": str(backup) if backup else None,
+            "metadata": metadata,
+            "navigation_ready": False,
+            "navigation_ready_reason": "octomap.ot and metadata.json must be rebuilt after crop",
+        }
 
     def save(
         self,
@@ -180,23 +311,6 @@ class MapPipelineService:
 
         tomo_result = build_tomogram(name)
         tomo_ok = bool(tomo_result.get("success", False))
-        if not tomo_ok and resolved_slam_profile != "super_lio":
-            return {
-                "action": "save",
-                "success": False,
-                "message": (
-                    "Tomogram build failed; map was saved but is not ready "
-                    f"for navigation: {tomo_result.get('message', 'unknown error')}"
-                ),
-                "map_dir": str(map_dir),
-                "pcd": str(pcd_path),
-                "slam_profile": resolved_slam_profile,
-                "source": capability_fields["map_save_source"],
-                "tomogram": tomo_result.get("tomogram"),
-                "tomogram_ok": False,
-                "tomogram_message": tomo_result.get("message", ""),
-                **capability_fields,
-            }
 
         occ_result = build_occupancy_snapshot(name)
 
@@ -211,7 +325,7 @@ class MapPipelineService:
                 "success": False,
                 "status": "disabled",
                 "message": "octomap build on save disabled",
-                "octomap": str(map_dir / "octomap.bt"),
+                "octomap": str(map_dir / "octomap.ot"),
             }
         )
         octomap_ok = bool(octomap_result.get("success", False))
@@ -228,10 +342,13 @@ class MapPipelineService:
                 mapping_source=capability_fields["map_save_source"],
             )
         )
+        metadata_ok = bool(metadata_result.get("ok"))
+        navigation_ready = bool(octomap_ok and metadata_ok)
 
         resp: dict[str, Any] = {
             "action": "save",
             "success": True,
+            "status": "ready" if navigation_ready else "partial",
             "map_id": name,
             "map_dir": str(map_dir),
             "pcd": str(pcd_path),
@@ -245,7 +362,13 @@ class MapPipelineService:
             "octomap_ok": octomap_ok,
             "octomap_status": octomap_result.get("status", ""),
             "metadata": metadata_result.get("path"),
-            "metadata_ok": bool(metadata_result.get("ok")),
+            "metadata_ok": metadata_ok,
+            "navigation_ready": navigation_ready,
+            "navigation_ready_reason": (
+                "octomap_and_metadata_ok"
+                if navigation_ready
+                else "octomap.ot and metadata.json are required for OctoPlanner3D"
+            ),
             **capability_fields,
         }
         if resolved_slam_profile == "super_lio":
@@ -253,6 +376,12 @@ class MapPipelineService:
                 "Super-LIO: saved map uses a live map_cloud snapshot; "
                 "saved-map relocalization is unsupported"
             ]
+        elif not tomo_ok:
+            resp.setdefault("warnings", []).append(
+                "Legacy tomogram build failed; OctoPlanner3D uses octomap.ot "
+                "and is not blocked by tomogram.pickle"
+            )
+            resp["tomogram_message"] = tomo_result.get("message", "")
         if not occ_result.get("success"):
             resp["occupancy_message"] = occ_result.get("message", "")
         if not octomap_ok:
@@ -269,6 +398,7 @@ class MapPipelineService:
         mapping_source: str = "map_manager",
         tomogram_shape: list[int] | None = None,
         occupancy_shape: list[int] | None = None,
+        record_state: str = "READY",
     ) -> dict[str, Any]:
         """Write metadata.json binding map.pcd and derived planning artifacts."""
         try:
@@ -349,7 +479,7 @@ class MapPipelineService:
         )
         record = self.storage.write_map_record(
             name,
-            state="READY",
+            state=record_state,
             gate=gate,
         )
         return {
@@ -430,7 +560,7 @@ class MapPipelineService:
         *,
         slam_profile: str | None = None,
     ) -> dict[str, Any]:
-        """Build or reuse octomap.bt for OctoPlanner3D runtime planning."""
+        """Build or reuse octomap.ot for OctoPlanner3D runtime planning."""
         if not name:
             return {
                 "action": "build_octomap",
@@ -620,6 +750,103 @@ class MapPipelineService:
                 "success": False,
                 "message": str(exc),
             }
+
+    @classmethod
+    def _prepare_map_points(
+        cls,
+        points: np.ndarray,
+        *,
+        voxel_size: float = 0.0,
+        bounds: dict[str, Any] | None = None,
+    ) -> np.ndarray:
+        arr = np.asarray(points, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] < 3:
+            return np.empty((0, 3), dtype=np.float32)
+        arr = arr[:, :3]
+        arr = arr[np.isfinite(arr).all(axis=1)]
+        if bounds:
+            arr = cls._crop_points(arr, bounds)
+        return cls._voxel_downsample(arr, float(voxel_size))
+
+    @staticmethod
+    def _crop_points(
+        points: np.ndarray,
+        bounds: dict[str, Any],
+        *,
+        invert: bool = False,
+    ) -> np.ndarray:
+        lo, hi = MapPipelineService._bounds_arrays(bounds)
+        arr = np.asarray(points, dtype=np.float32)
+        mask = np.all((arr[:, :3] >= lo) & (arr[:, :3] <= hi), axis=1)
+        return arr[~mask if invert else mask, :3]
+
+    @staticmethod
+    def _bounds_arrays(bounds: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+        if not isinstance(bounds, dict):
+            raise ValueError("bounds must be an object")
+        if isinstance(bounds.get("min"), (list, tuple)) and isinstance(bounds.get("max"), (list, tuple)):
+            lo = np.asarray(bounds["min"][:3], dtype=np.float32)
+            hi = np.asarray(bounds["max"][:3], dtype=np.float32)
+        else:
+            lo = np.asarray(
+                [
+                    bounds.get("min_x", bounds.get("x_min", -np.inf)),
+                    bounds.get("min_y", bounds.get("y_min", -np.inf)),
+                    bounds.get("min_z", bounds.get("z_min", -np.inf)),
+                ],
+                dtype=np.float32,
+            )
+            hi = np.asarray(
+                [
+                    bounds.get("max_x", bounds.get("x_max", np.inf)),
+                    bounds.get("max_y", bounds.get("y_max", np.inf)),
+                    bounds.get("max_z", bounds.get("z_max", np.inf)),
+                ],
+                dtype=np.float32,
+            )
+        if lo.shape[0] != 3 or hi.shape[0] != 3:
+            raise ValueError("bounds min/max must contain x, y, z")
+        if not np.all(lo <= hi):
+            raise ValueError("bounds min must be <= max")
+        return lo, hi
+
+    @staticmethod
+    def _voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
+        arr = np.asarray(points, dtype=np.float32)
+        if arr.size == 0 or voxel_size <= 0.0:
+            return arr[:, :3].copy()
+        keys = np.floor(arr[:, :3] / float(voxel_size)).astype(np.int64)
+        _, indices = np.unique(keys, axis=0, return_index=True)
+        return arr[np.sort(indices), :3].copy()
+
+    @staticmethod
+    def _backup_existing(path: Path, label: str) -> Path | None:
+        if not path.exists():
+            return None
+        backup = path.with_name(f"{path.name}.{label}-{time.time_ns()}")
+        shutil.copy2(path, backup)
+        return backup
+
+    @staticmethod
+    def _clear_derived_artifacts(map_dir: Path) -> None:
+        for filename in (
+            "tomogram.pickle",
+            "occupancy.npz",
+            "octomap.ot",
+            "octomap.bt",
+            "map.pgm",
+            "map.yaml",
+            "metadata.json",
+            "voxel_edits.json",
+        ):
+            path = map_dir / filename
+            if path.exists():
+                path.unlink()
+        stamp = time.time_ns()
+        for filename in ("poses.txt", "patches"):
+            path = map_dir / filename
+            if path.exists():
+                path.rename(map_dir / f"{filename}.stale-{stamp}")
 
     @staticmethod
     def pcd_point_count(path: Path) -> int:

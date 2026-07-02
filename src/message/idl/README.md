@@ -25,9 +25,13 @@ Use the native IDL when the process must not link ROS 2, `rclcpp`, or
 LingTu IDL type on the same DDS topic; it is not wire-compatible with a ROS 2
 publisher using `livox_ros_driver2/msg/CustomMsg` on that topic.
 
-Direct CycloneDDS C++ publishers/subscribers need `idlcxx`-generated C++ types
-for the matching IDL. The fallback C++ structs in `dds_topics.hpp` are contract
-tags for portable builds, not DDS wire types.
+Direct native publishers/subscribers use `idlc` C-generated types plus the
+CycloneDDS C API. Do not require `cyclonedds-python` or CycloneDDS-CXX on the
+robot. The fallback C++ structs in `dds_topics.hpp` are contract tags for
+portable builds, not DDS wire types.
+
+`/lidar/raw_frame` carries scan-level `LivoxFrame` data for SLAM.
+`/lidar/raw_packet` carries packet-level `LivoxFrame` diagnostics only.
 
 Python native DDS product types live in `message.dds_types`. `runtime.dds` and
 `drivers.real.lidar._dds` are compatibility shims for old ROS2/Livox readers;

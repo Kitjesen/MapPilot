@@ -1,10 +1,12 @@
 
 #include "pcd2octomap_converter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <iostream>
+#include <limits>
 
 #include <pcl/io/pcd_io.h>
 
@@ -30,6 +32,33 @@ Pcd2OctomapConverter::Pcd2OctomapConverter()
 {
 }
 
+void Pcd2OctomapConverter::setInputPcdFile(const std::string & path)
+{
+  input_pcd_ = path;
+}
+
+void Pcd2OctomapConverter::setOutputBtFile(const std::string & path)
+{
+  output_bt_ = path;
+}
+
+void Pcd2OctomapConverter::setResolution(double resolution)
+{
+  if (resolution > 0.0) {
+    resolution_ = resolution;
+  }
+}
+
+void Pcd2OctomapConverter::setFreeEnvelopeLayers(int layers)
+{
+  free_layers_above_ = std::max(0, layers);
+}
+
+void Pcd2OctomapConverter::setFreeEnvelopeDilationCells(int cells)
+{
+  free_xy_dilation_cells_ = std::max(0, cells);
+}
+
 bool Pcd2OctomapConverter::convert()
 {
   if (!loadPointCloud()) {
@@ -42,6 +71,7 @@ bool Pcd2OctomapConverter::convert()
   filterByPointCount();
   filterByConnectedClusters();
   fillOcTree();
+  carveFreeEnvelope();
 
   if (!saveOctomap()) {
     return false;
@@ -175,6 +205,53 @@ void Pcd2OctomapConverter::fillOcTree()
   tree_->updateInnerOccupancy();
 }
 
+void Pcd2OctomapConverter::carveFreeEnvelope()
+{
+  if (!tree_ || free_layers_above_ <= 0 || occupied_keys_.empty()) {
+    return;
+  }
+
+  std::unordered_set<Key, KeyHash> free_keys;
+  const int dilation = std::max(0, free_xy_dilation_cells_);
+  const auto max_key = static_cast<long long>(std::numeric_limits<unsigned int>::max());
+
+  for (const auto & key : occupied_keys_) {
+    for (int dx = -dilation; dx <= dilation; ++dx) {
+      for (int dy = -dilation; dy <= dilation; ++dy) {
+        for (int dz = 1; dz <= free_layers_above_; ++dz) {
+          const long long x = static_cast<long long>(key.k[0]) + dx;
+          const long long y = static_cast<long long>(key.k[1]) + dy;
+          const long long z = static_cast<long long>(key.k[2]) + dz;
+          if (x < 0 || y < 0 || z < 0 || x > max_key || y > max_key || z > max_key) {
+            continue;
+          }
+          Key free_key{{
+            static_cast<unsigned int>(x),
+            static_cast<unsigned int>(y),
+            static_cast<unsigned int>(z)
+          }};
+          if (!occupied_keys_.count(free_key)) {
+            free_keys.insert(free_key);
+          }
+        }
+      }
+    }
+  }
+
+  for (const auto & key : free_keys) {
+    octomap::OcTreeKey octo_key;
+    octo_key.k[0] = key.k[0];
+    octo_key.k[1] = key.k[1];
+    octo_key.k[2] = key.k[2];
+    tree_->updateNode(tree_->keyToCoord(octo_key), false);
+  }
+
+  tree_->updateInnerOccupancy();
+  std::cout << "Free envelope cells: " << free_keys.size()
+            << " layers=" << free_layers_above_
+            << " xy_dilation=" << free_xy_dilation_cells_ << std::endl;
+}
+
 bool Pcd2OctomapConverter::saveOctomap() const
 {
   if (!tree_) {
@@ -182,7 +259,7 @@ bool Pcd2OctomapConverter::saveOctomap() const
     return false;
   }
 
-  if (tree_->writeBinary(output_bt_)) {
+  if (tree_->write(output_bt_)) {
     std::cout << "Success! Saved to " << output_bt_ << std::endl;
     return true;
   }

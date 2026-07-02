@@ -170,7 +170,6 @@ _KNOWN_DRIVER_CLASSES = frozenset({
     "StubDogModule",
     "MujocoDriverModule",
     "SimEndpointDriverModule",
-    "ROS2SimDriverModule",
     "NovaDogConnection",
     "StubConnection",
 })

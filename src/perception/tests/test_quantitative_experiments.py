@@ -25,7 +25,7 @@ from examples.run_quantitative_experiments import (
     StatisticalAnalyzer,
 )
 
-from perception.evaluation_framework import (
+from perception.research.evaluation_framework import (
     BenchmarkResult,
     MemoryMetrics,
     PathMetrics,

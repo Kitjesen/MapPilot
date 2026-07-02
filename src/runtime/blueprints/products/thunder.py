@@ -31,7 +31,7 @@ DEFAULT_SEMANTIC_DIR = os.path.join(os.path.expanduser("~"), ".nova", "semantic"
 _THUNDER_BASE_CONFIG: dict[str, Any] = {
     "robot": "thunder",
     "slam_profile": "localizer",
-    "localization_adapter": "dds_endpoint",
+    "localization_adapter": "cpp_slam_status",
     "detector": "bpu",
     "encoder": "mobileclip",
     "dog_host": "127.0.0.1",

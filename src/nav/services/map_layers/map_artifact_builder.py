@@ -2,7 +2,7 @@
 
 This module owns the bounded map-save/build conversion step from LingTu saved-map
 source data (``map.pcd``) to the OctoPlanner3D runtime artifact
-(``octomap.bt``).  It intentionally does not run conversion during each
+(``octomap.ot``).  It intentionally does not run conversion during each
 navigation plan call.
 """
 
@@ -27,7 +27,11 @@ from runtime.same_source_map_artifacts import (
 BUILDER_VERSION = "0.1.0"
 SUPPORTED_BUILD_MODES = ("raycast", "occupied_only", "external_pcl_converter")
 IMPLEMENTED_BUILD_MODES = ("external_pcl_converter",)
-_CONVERTER_ENV_VARS = ("LINGTU_MAP_ARTIFACT_CONVERTER", "LINGTU_OCTOMAP_CONVERTER")
+_CONVERTER_ENV_VARS = (
+    "LINGTU_MAP_ARTIFACT_CONVERTER",
+    "LINGTU_OCTOPLANNER3D_PCD_CONVERTER",
+    "LINGTU_OCTOMAP_CONVERTER",
+)
 
 
 @dataclass(slots=True)
@@ -38,6 +42,8 @@ class MapArtifactBuilderConfig:
     use_env_converter: bool = True
     build_mode: str = "external_pcl_converter"
     resolution: float = 0.20
+    free_layers_above: int = 3
+    free_dilation_cells: int = 1
     frame_id: str | None = None
     source_profile: str | None = None
     data_source: str | None = None
@@ -98,7 +104,7 @@ class MapArtifactBuilder:
         self.config = config or MapArtifactBuilderConfig()
 
     def build_for_saved_map(self, map_dir: Path | str) -> MapArtifactBuildReport:
-        """Build or reuse ``octomap.bt`` and write ``metadata.json`` for *map_dir*.
+        """Build or reuse ``octomap.ot`` and write ``metadata.json`` for *map_dir*.
 
         The first implementation slice supports an external PCL/OctoMap
         converter command only.  If no converter is configured and no reusable
@@ -108,7 +114,7 @@ class MapArtifactBuilder:
 
         root = Path(map_dir)
         pcd_path = root / "map.pcd"
-        octomap_path = root / "octomap.bt"
+        octomap_path = root / "octomap.ot"
         metadata_path = root / "metadata.json"
         existing_metadata = _read_json_object(metadata_path)
         frame_id = self._resolve_frame_id(existing_metadata)
@@ -295,6 +301,8 @@ class MapArtifactBuilder:
             "input": str(pcd_path),
             "output": str(octomap_path),
             "resolution": f"{float(self.config.resolution):g}",
+            "free_layers_above": str(max(0, int(self.config.free_layers_above))),
+            "free_dilation_cells": str(max(0, int(self.config.free_dilation_cells))),
             "frame": frame_id,
             "map_dir": str(pcd_path.parent),
         }
@@ -309,6 +317,10 @@ class MapArtifactBuilder:
             str(octomap_path),
             "--resolution",
             f"{float(self.config.resolution):g}",
+            "--free-layers-above",
+            str(max(0, int(self.config.free_layers_above))),
+            "--free-dilation-cells",
+            str(max(0, int(self.config.free_dilation_cells))),
             "--frame",
             frame_id,
         ]
@@ -323,7 +335,7 @@ class MapArtifactBuilder:
         frame_id: str,
     ) -> tuple[bool, str]:
         if not octomap_path.is_file():
-            return False, "octomap.bt missing"
+            return False, "octomap.ot missing"
         if not isinstance(metadata, Mapping):
             return False, "metadata.json missing or unreadable"
 
@@ -335,6 +347,16 @@ class MapArtifactBuilder:
             return False, "metadata build_mode differs"
         if not _float_equal(metadata.get("resolution"), self.config.resolution):
             return False, "metadata resolution differs"
+        metadata_free_layers = metadata.get("free_layers_above")
+        if metadata_free_layers is None:
+            return False, "metadata free_layers_above missing"
+        if int(metadata_free_layers) != max(0, int(self.config.free_layers_above)):
+            return False, "metadata free_layers_above differs"
+        metadata_free_dilation = metadata.get("free_dilation_cells")
+        if metadata_free_dilation is None:
+            return False, "metadata free_dilation_cells missing"
+        if int(metadata_free_dilation) != max(0, int(self.config.free_dilation_cells)):
+            return False, "metadata free_dilation_cells differs"
         if normalize_saved_map_frame_id(str(metadata.get("frame_id") or "")) != frame_id:
             return False, "metadata frame_id differs"
 
@@ -353,7 +375,7 @@ class MapArtifactBuilder:
         if actual_octomap_sha != declared_octomap_sha:
             return False, "octomap sha256 does not match metadata"
 
-        entry_path = _artifact_path(map_dir, octomap_entry, "octomap.bt")
+        entry_path = _artifact_path(map_dir, octomap_entry, "octomap.ot")
         if entry_path.resolve() != octomap_path.resolve():
             return False, "metadata octomap path differs"
         return True, ""
@@ -422,6 +444,8 @@ class MapArtifactBuilder:
             "data_source": data_source,
             "frame_id": frame_id,
             "resolution": float(self.config.resolution),
+            "free_layers_above": max(0, int(self.config.free_layers_above)),
+            "free_dilation_cells": max(0, int(self.config.free_dilation_cells)),
             "build_mode": self.config.build_mode,
             "builder": {
                 "name": self.config.builder_name,
@@ -443,6 +467,8 @@ class MapArtifactBuilder:
                 "build_mode": self.config.build_mode,
                 "supported_build_modes": list(SUPPORTED_BUILD_MODES),
                 "resolution": float(self.config.resolution),
+                "free_layers_above": max(0, int(self.config.free_layers_above)),
+                "free_dilation_cells": max(0, int(self.config.free_dilation_cells)),
                 "frame": frame_id,
                 "builder": {
                     "name": self.config.builder_name,

@@ -71,7 +71,7 @@ systemd.slice
 �?├── slam.service
 �?  ├── pid 1731  ros2 run fastlio2 lio_node
 �?  └── pid 2876  fastlio2 lio_node (3.1GB RAM, 23% CPU)
-�?                config: ~/data/inovxio/lingtu/install/fastlio2/.../lio_s100p.yaml
+�?                config: ~/data/inovxio/lingtu/install/fastlio2/.../mid360_s100p.yaml
 �?├── localizer.service
 �?  ├── pid 1733  ros2 run localizer localizer_node
 �?  └── pid 2900  localizer_node

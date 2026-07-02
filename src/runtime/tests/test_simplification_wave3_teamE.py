@@ -69,7 +69,7 @@ def _block_all_encoders_import(name, *args, **kwargs):
 
 
 def _make_mobileclip_module(fail_load: bool = False):
-    mod = types.ModuleType("perception.mobileclip_encoder")
+    mod = types.ModuleType("perception.encoding.mobileclip_encoder")
     mod.instances = []
 
     class FakeMobileCLIPEncoder:
@@ -95,7 +95,7 @@ def _make_mobileclip_module(fail_load: bool = False):
 
 
 def _make_clip_module():
-    mod = types.ModuleType("perception.clip_encoder")
+    mod = types.ModuleType("perception.encoding.clip_encoder")
     mod.instances = []
 
     class FakeCLIPEncoder:
@@ -135,7 +135,7 @@ class TestVectorMemorySemanticEncoderSelection(unittest.TestCase):
         with patch.dict(
             sys.modules,
             {
-                "perception.mobileclip_encoder": fake_mobileclip,
+                "perception.encoding.mobileclip_encoder": fake_mobileclip,
             },
         ):
             mod._init_encoder()
@@ -153,8 +153,8 @@ class TestVectorMemorySemanticEncoderSelection(unittest.TestCase):
         with patch.dict(
             sys.modules,
             {
-                "perception.mobileclip_encoder": fake_mobileclip,
-                "perception.clip_encoder": fake_clip,
+                "perception.encoding.mobileclip_encoder": fake_mobileclip,
+                "perception.encoding.clip_encoder": fake_clip,
             },
         ):
             mod._init_encoder()

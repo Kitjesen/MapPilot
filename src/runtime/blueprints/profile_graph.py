@@ -183,7 +183,7 @@ def _needs_camera_bridge(config: dict[str, Any], *, driver_module: str) -> bool:
 def _camera_bridge_module_enabled(config: dict[str, Any], *, driver_module: str) -> bool:
     return bool(config.get("enable_camera", True)) or bool(
         config.get("enable_ros2_camera_bridge")
-    ) or (driver_module == "ROS2SimDriverModule")
+    )
 
 
 def _static_device_manager_modules() -> tuple[str, ...]:

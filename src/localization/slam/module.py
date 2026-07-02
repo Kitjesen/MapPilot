@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import importlib
 import math
+import struct
 import threading
 import time
 from collections import deque
@@ -28,6 +29,7 @@ from runtime.msgs.gnss import GnssOdom
 from runtime.msgs.geometry import Pose, Quaternion, Vector3
 from runtime.msgs.map import MapCloudFrame
 from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu, PointCloud2
 
 logger = logging.getLogger(__name__)
@@ -524,6 +526,7 @@ class _PythonSlamRunner:
         self.scan_end_s = 0.0
         self.last_imu_s = 0.0
         self.last_lidar_s = 0.0
+        self.last_lidar_frame: dict[str, Any] | None = None
         self.imu_batch = 0
         self.sync_wait_count = 0
         self.imu_rollback_count = 0
@@ -590,6 +593,7 @@ class _PythonSlamRunner:
         if self.last_imu_s > 0.0 and self.last_imu_s < self.scan_end_s:
             self.sync_wait_count += 1
         self.lidar_buffer += 1
+        self.last_lidar_frame = frame
         return {"ok": True, "message": "lidar_accepted"}
 
     def feedGnss(self, sample: dict[str, Any]) -> dict[str, Any]:
@@ -634,19 +638,30 @@ class _PythonSlamRunner:
         pcd.parent.mkdir(parents=True, exist_ok=True)
         _write_empty_ascii_pcd(pcd)
         if self.pose_history:
-            poses_path = pcd.parent / "poses.txt"
-            poses_path.write_text(
+            trajectory_path = pcd.parent / "trajectory.txt"
+            trajectory_path.write_text(
                 "\n".join(_pose_line(item) for item in self.pose_history) + "\n",
                 encoding="utf-8",
             )
-        (pcd.parent / "patches").mkdir(exist_ok=True)
+        patches_dir = pcd.parent / "patches"
+        patches_dir.mkdir(exist_ok=True)
+        poses_txt = ""
+        if self.last_lidar_frame is not None and self.last_odom is not None:
+            patch_name = "latest_scan.pcd"
+            if _write_lidar_patch_pcd(patches_dir / patch_name, self.last_lidar_frame):
+                (pcd.parent / "poses.txt").write_text(
+                    _patch_pose_line(patch_name, self.last_odom) + "\n",
+                    encoding="utf-8",
+                )
+                poses_txt = str(pcd.parent / "poses.txt")
         self.map_loaded = True
         self.last_map_pcd = str(pcd)
         return {
             "ok": True,
             "message": "map_saved",
             "map_pcd": str(pcd),
-            "poses_txt": str(pcd.parent / "poses.txt") if self.pose_history else "",
+            "poses_txt": poses_txt,
+            "trajectory_txt": str(pcd.parent / "trajectory.txt") if self.pose_history else "",
             "patches_dir": str(pcd.parent / "patches"),
         }
 
@@ -752,7 +767,7 @@ def _default_slam_config_path(profile: str) -> str:
         return str(path) if path.exists() else ""
     if normalized not in {"fastlio2", "localizer"}:
         return ""
-    path = Path(__file__).resolve().parents[1] / "fastlio2" / "config" / "lio_s100p.yaml"
+    path = Path(__file__).resolve().parents[1] / "fastlio2" / "config" / "mid360_s100p.yaml"
     return str(path) if path.exists() else ""
 
 
@@ -985,6 +1000,69 @@ def _write_empty_ascii_pcd(path: Path) -> None:
     )
 
 
+def _write_lidar_patch_pcd(path: Path, frame: dict[str, Any]) -> bool:
+    points = frame.get("points")
+    if points is None:
+        return False
+    arr = np.asarray(points)
+    if arr.size == 0:
+        return False
+    names = getattr(arr.dtype, "names", None)
+    if names:
+        required = {"x", "y", "z"}
+        if not required.issubset(set(names)):
+            return False
+        xyz = np.column_stack([arr["x"], arr["y"], arr["z"]]).astype(np.float32)
+        intensity = (
+            np.asarray(arr["intensity"], dtype=np.float32)
+            if "intensity" in names
+            else np.zeros((arr.shape[0],), dtype=np.float32)
+        )
+    else:
+        arr = np.asarray(arr, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] < 3:
+            return False
+        xyz = arr[:, :3].astype(np.float32, copy=False)
+        intensity = (
+            arr[:, 3].astype(np.float32, copy=False)
+            if arr.shape[1] > 3
+            else np.zeros((arr.shape[0],), dtype=np.float32)
+        )
+    valid = np.isfinite(xyz).all(axis=1) & np.isfinite(intensity)
+    xyz = xyz[valid]
+    intensity = intensity[valid]
+    if xyz.shape[0] == 0:
+        return False
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        "# .PCD v0.7 - Point Cloud Data file format\n"
+        "VERSION 0.7\n"
+        "FIELDS x y z intensity\n"
+        "SIZE 4 4 4 4\n"
+        "TYPE F F F F\n"
+        "COUNT 1 1 1 1\n"
+        f"WIDTH {xyz.shape[0]}\n"
+        "HEIGHT 1\n"
+        "VIEWPOINT 0 0 0 1 0 0 0\n"
+        f"POINTS {xyz.shape[0]}\n"
+        "DATA binary\n"
+    )
+    with path.open("wb") as fh:
+        fh.write(header.encode("ascii"))
+        for point, value in zip(xyz, intensity):
+            fh.write(
+                struct.pack(
+                    "<ffff",
+                    float(point[0]),
+                    float(point[1]),
+                    float(point[2]),
+                    float(value),
+                )
+            )
+    return True
+
+
 def _read_ascii_pcd_xyz(path: Path) -> list[list[float]]:
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -1023,4 +1101,20 @@ def _pose_line(item: dict[str, Any]) -> str:
         f"{float(ori.get('y', 0.0)):.9f} "
         f"{float(ori.get('z', 0.0)):.9f} "
         f"{float(ori.get('w', 1.0)):.9f}"
+    )
+
+
+def _patch_pose_line(patch_name: str, item: dict[str, Any]) -> str:
+    pose = item.get("pose", {})
+    pos = pose.get("position", {})
+    ori = pose.get("orientation", {})
+    return (
+        f"{patch_name} "
+        f"{float(pos.get('x', 0.0)):.9f} "
+        f"{float(pos.get('y', 0.0)):.9f} "
+        f"{float(pos.get('z', 0.0)):.9f} "
+        f"{float(ori.get('w', 1.0)):.9f} "
+        f"{float(ori.get('x', 0.0)):.9f} "
+        f"{float(ori.get('y', 0.0)):.9f} "
+        f"{float(ori.get('z', 0.0)):.9f}"
     )

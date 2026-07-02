@@ -7,9 +7,9 @@ from typing import Any
 import numpy as np
 import pytest
 
+from nav.services.plan.global_planner.service import GlobalPlanner
 from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from runtime.same_source_map_artifacts import build_saved_map_metadata, sha256_file
-from nav.services.plan.global_planner.service import GlobalPlanner
 
 
 class _EmptyPctBackend:
@@ -91,7 +91,7 @@ def _write_active_octomap_map(tmp_path: Path, *, occupancy: bool = True) -> Path
     active_dir = maps_dir / "active"
     active_dir.mkdir(parents=True)
     pcd = active_dir / "map.pcd"
-    octomap = active_dir / "octomap.bt"
+    octomap = active_dir / "octomap.ot"
     _write_minimal_pcd(pcd)
     octomap.write_bytes(b"# OctoMap OcTree binary placeholder")
 
@@ -110,7 +110,7 @@ def _write_active_octomap_map(tmp_path: Path, *, occupancy: bool = True) -> Path
             "sha256": map_sha,
         },
         "octomap": {
-            "path": "octomap.bt",
+            "path": "octomap.ot",
             "source_map_sha256": map_sha,
             "source_profile": source_profile,
             "data_source": data_source,
@@ -217,7 +217,7 @@ def test_global_planner_canonicalizes_octplanner_alias():
     assert svc.planner_name == "octoplanner3d"
 
 
-def test_global_planner_status_reports_unavailable_primary_before_plan():
+def test_global_planner_status_reports_unavailable_octoplanner3d_without_fallback_before_plan():
     svc = GlobalPlanner(
         planner_name="octoplanner3d",
         plan_safety_policy="fallback_astar",
@@ -228,7 +228,7 @@ def test_global_planner_status_reports_unavailable_primary_before_plan():
     status = svc.backend_status()
 
     assert status["configured_backend"] == "octoplanner3d"
-    assert status["backend"] == "direct"
+    assert status["backend"] == "octoplanner3d"
     assert status["fallback_backend"] == "direct"
     assert status["degraded"] is True
     assert status["degraded_reason"] == (
@@ -236,10 +236,10 @@ def test_global_planner_status_reports_unavailable_primary_before_plan():
     )
 
 
-def test_global_planner_falls_back_when_primary_returns_empty_path():
+def test_global_planner_pct_falls_back_when_primary_returns_empty_path():
     fallback = _FallbackDirectBackend()
     svc = GlobalPlanner(
-        planner_name="octoplanner3d",
+        planner_name="pct",
         plan_safety_policy="fallback_astar",
         fallback_planner_name="direct",
     )
@@ -260,10 +260,10 @@ def test_global_planner_falls_back_when_primary_returns_empty_path():
     assert fallback.calls == 1
     assert len(path) == 2
     report = svc.last_plan_report
-    assert report["primary_planner"] == "octoplanner3d"
+    assert report["primary_planner"] == "pct"
     assert report["selected_planner"] == "direct"
     assert report["fallback_reason"] == "pct native plan raised exception"
-    assert report["rejected_plans"][0]["planner"] == "octoplanner3d"
+    assert report["rejected_plans"][0]["planner"] == "pct"
     assert report["rejected_plans"][0]["planner_diagnostics"]["stage"] == (
         "native_plan_exception"
     )
@@ -272,14 +272,14 @@ def test_global_planner_falls_back_when_primary_returns_empty_path():
     assert status["degraded"] is True
 
 
-def test_global_planner_falls_back_when_primary_plan_raises():
+def test_global_planner_pct_falls_back_when_primary_plan_raises():
     class RaisingBackend:
         def plan(self, _start, _goal):
             raise TimeoutError("planner timed out")
 
     fallback = _FallbackDirectBackend()
     svc = GlobalPlanner(
-        planner_name="octoplanner3d",
+        planner_name="pct",
         plan_safety_policy="fallback_astar",
         fallback_planner_name="direct",
     )
@@ -309,6 +309,35 @@ def test_global_planner_falls_back_when_primary_plan_raises():
     }
 
 
+def test_octoplanner3d_does_not_fallback_to_legacy_planner_when_primary_fails():
+    fallback = _FallbackDirectBackend()
+    svc = GlobalPlanner(
+        planner_name="octoplanner3d",
+        plan_safety_policy="fallback_astar",
+        fallback_planner_name="direct",
+    )
+    svc._backend = _EmptyPctBackend()
+    svc._map_artifact_gate = {
+        "required": False,
+        "ok": True,
+        "reason": "not_required",
+        "blockers": [],
+    }
+    svc._create_backend = lambda name=None: fallback
+
+    with pytest.raises(RuntimeError, match="pct native plan raised exception"):
+        svc.plan(
+            np.asarray([0.0, 0.0, 0.0], dtype=float),
+            np.asarray([1.0, 0.0, 0.0], dtype=float),
+        )
+
+    assert fallback.calls == 0
+    report = svc.last_plan_report
+    assert report["primary_planner"] == "octoplanner3d"
+    assert report["selected_planner"] == "octoplanner3d"
+    assert report["fallback_reason"] == "pct native plan raised exception"
+
+
 def test_octoplanner3d_resolves_active_octomap_and_requires_metadata_gate(
     tmp_path,
     monkeypatch,
@@ -318,18 +347,18 @@ def test_octoplanner3d_resolves_active_octomap_and_requires_metadata_gate(
 
     svc = GlobalPlanner(planner_name="octoplanner3d")
 
-    assert svc._resolve_tomogram_path().endswith("octomap.bt")
+    assert svc._resolve_tomogram_path().endswith("octomap.ot")
     gate = svc._validate_map_artifact_gate()
     assert gate["required"] is True
     assert gate["ok"] is True, gate
     assert gate["planner"] == "octoplanner3d"
-    assert gate["octomap"].endswith("octomap.bt")
+    assert gate["octomap"].endswith("octomap.ot")
     assert "octomap" in gate["checked_required_artifacts"]
 
 
 def test_octoplanner3d_active_gate_rejects_missing_octomap(tmp_path, monkeypatch):
     maps_dir = _write_active_octomap_map(tmp_path)
-    (maps_dir / "active" / "octomap.bt").unlink()
+    (maps_dir / "active" / "octomap.ot").unlink()
     monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
 
     svc = GlobalPlanner(planner_name="octoplanner3d")

@@ -6,18 +6,17 @@ import re
 from pathlib import Path
 from typing import Any
 
-from runtime.same_source_map_artifacts import (
-    validate_saved_map_artifact_dir,
-)
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
-from runtime.yaml_helpers import load_yaml, save_yaml
 from nav.services.map.records import (
     build_map_record,
     load_map_record,
     map_artifact_catalog,
     write_map_record,
 )
-
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.same_source_map_artifacts import (
+    validate_saved_map_artifact_dir,
+)
+from runtime.yaml_helpers import load_yaml, save_yaml
 
 MAP_ARTIFACT_CATALOG: dict[str, dict[str, str]] = map_artifact_catalog(
     include_aliases=True,
@@ -154,9 +153,11 @@ class MapStorageService:
         return None
 
     def get_active_octomap(self) -> str | None:
-        active = self.active_link() / "octomap.bt"
-        if active.exists():
-            return str(active)
+        active_dir = self.active_link()
+        for filename in ("octomap.ot", "octomap.bt"):
+            active = active_dir / filename
+            if active.exists():
+                return str(active)
         return None
 
     def get_active_occupancy(self) -> str | None:

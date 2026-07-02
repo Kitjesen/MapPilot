@@ -16,6 +16,43 @@ interface LocalizationCardProps {
   sseState: SSEState
 }
 
+function fmtInt(n: number | undefined): string {
+  return typeof n === 'number' && Number.isFinite(n) ? Math.round(n).toLocaleString() : '--'
+}
+
+function num(data: Record<string, unknown>, key: string): number | undefined {
+  const value = data[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function text(data: Record<string, unknown>, key: string): string | undefined {
+  const value = data[key]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function bool(data: Record<string, unknown>, key: string): boolean | undefined {
+  const value = data[key]
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    if (value === 'true' || value === '1') return true
+    if (value === 'false' || value === '0') return false
+  }
+  return undefined
+}
+
+function object(data: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = data[key]
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
 export function LocalizationCard({ sseState }: LocalizationCardProps) {
   const [tab, setTab] = useState<TabKey>('slam')
 
@@ -34,7 +71,6 @@ export function LocalizationCard({ sseState }: LocalizationCardProps) {
           </button>
         ))}
       </div>
-
       <div className={styles.body}>
         {tab === 'slam' && <SlamPanel sseState={sseState} />}
         {tab === 'gnss' && <GnssPanel sseState={sseState} />}
@@ -57,6 +93,7 @@ function labelFor(t: TabKey): string {
 function SlamPanel({ sseState }: { sseState: SSEState }) {
   const odom = sseState.odometry
   const slam = sseState.slamStatus
+  const diag = sseState.slamDiag?.data ?? {}
   const connected = sseState.connected
 
   const posX = fmt(odom?.x, 2)
@@ -66,6 +103,23 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
   const vx = fmt(odom?.vx, 2)
   const mode = slam?.mode ?? '离线'
   const hasFix = connected && odom != null
+  const slamHz = slam?.slam_hz ?? num(diag, 'status_target_hz')
+  const lidarHz = num(diag, 'lidar_input_hz')
+  const imuHz = num(diag, 'imu_input_hz')
+  const tickHz = num(diag, 'slam_tick_hz')
+  const targetHz = num(diag, 'status_target_hz')
+  const registeredPoints = num(diag, 'registered_points')
+  const mapPoints = num(diag, 'map_points') ?? slam?.map_points
+  const imuBuffer = num(diag, 'imu_buffer')
+  const lidarBuffer = num(diag, 'lidar_buffer')
+  const droppedLidar = num(diag, 'dropped_lidar_frames')
+  const droppedImu = num(diag, 'dropped_imu_frames')
+  const syncWait = num(diag, 'sync_wait_count')
+  const sceneMode = text(diag, 'scene_mode') ?? 'unknown'
+  const mapLoaded = bool(diag, 'map_loaded')
+  const mapFrameJump = bool(diag, 'map_frame_jump')
+  const tf = object(diag, 'map_odom_tf')
+  const hasTf = bool(diag, 'has_map_odom_tf') ?? bool(tf, 'valid') ?? false
 
   return (
     <>
@@ -76,6 +130,22 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
         <Field label="航向" value={yawDeg} unit="°" />
         <Field label="线速度" value={vx} unit="m/s" />
         <Field label="模式" value={mode} dim />
+      </div>
+      <div className={styles.grid}>
+        <Field label="SLAM Hz" value={fmt(slamHz, 1)} unit="Hz" />
+        <Field label="Target Hz" value={fmt(targetHz, 1)} unit="Hz" dim />
+        <Field label="LiDAR In" value={fmt(lidarHz, 1)} unit="Hz" />
+        <Field label="IMU In" value={fmt(imuHz, 1)} unit="Hz" />
+        <Field label="Tick" value={fmt(tickHz, 1)} unit="Hz" dim />
+        <Field label="Map TF" value={hasTf ? 'OK' : 'MISSING'} dim={!hasTf} />
+        <Field label="Reg Points" value={fmtInt(registeredPoints)} />
+        <Field label="Map Points" value={fmtInt(mapPoints)} />
+        <Field label="Buffers" value={`${fmtInt(imuBuffer)} / ${fmtInt(lidarBuffer)}`} unit="I/L" dim />
+        <Field label="Drops" value={`${fmtInt(droppedImu)} / ${fmtInt(droppedLidar)}`} unit="I/L" dim />
+        <Field label="Sync Wait" value={fmtInt(syncWait)} dim />
+        <Field label="Scene" value={sceneMode} dim />
+        <Field label="Map Loaded" value={mapLoaded ? 'YES' : 'NO'} dim={!mapLoaded} />
+        <Field label="Frame Jump" value={mapFrameJump ? 'YES' : 'NO'} dim={!mapFrameJump} />
       </div>
     </>
   )

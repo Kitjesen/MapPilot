@@ -12,6 +12,7 @@ import type {
   SlamProfile,
   LocationEntry,
   PlanPreviewResponse,
+  MapLifecycleResponse,
 } from '../types'
 import * as api from '../services/api'
 import { useCamera } from '../hooks/useCamera'
@@ -42,10 +43,12 @@ const GOAL_SPEED_OPTIONS = [0.25, 0.4, 0.6]
 const GOAL_RADIUS_OPTIONS = [0.25, 0.45, 0.8]
 
 const MAP_GROUPS: Array<{ label: string; filter: (m: MapInfo) => boolean }> = [
-  { label: '语义地图', filter: m => m.has_pcd && m.has_tomogram },
-  { label: '三维点云', filter: m => m.has_pcd && !m.has_tomogram },
+  { label: '可导航地图', filter: m => m.has_pcd && (m.navigation_ready === true || m.has_octomap === true) },
+  { label: '三维点云', filter: m => m.has_pcd && !(m.navigation_ready === true || m.has_octomap === true) },
   { label: '空地图',   filter: m => !m.has_pcd },
 ]
+
+type WorkbenchZoneState = 'preblocked' | 'traversable' | 'clear'
 
 function formatSaveMapSummary(r: api.SaveMapResult): string {
   const source = r.map_save_source ?? r.source ?? 'unknown'
@@ -83,6 +86,24 @@ function formatPlanSafetySummary(preview: PlanPreviewResponse | null | undefined
     preview.fallback_reason ? `fallback=${preview.fallback_reason}` : null,
     preview.rejected_plans?.length ? `rejected=${preview.rejected_plans.length}` : null,
   ].filter((v): v is string => Boolean(v)).join(' | ')
+}
+
+function formatMapLifecycleSummary(r: MapLifecycleResponse): string {
+  const status = r.ok || r.success ? 'ok' : 'failed'
+  const name = r.name ?? r.map_id ?? r.active ?? ''
+  const message = typeof r.message === 'string' && r.message.trim() ? r.message.trim() : ''
+  const ready = r.navigation_ready === true ? 'nav-ready' : r.navigation_ready === false ? 'not nav-ready' : ''
+  return [status, name, ready, message].filter(Boolean).join(' | ')
+}
+
+function parseWorkbenchBounds(text: string): Record<string, unknown> {
+  const raw = text.trim()
+  if (!raw) throw new Error('bounds JSON is empty')
+  const value = JSON.parse(raw) as unknown
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('bounds must be a JSON object')
+  }
+  return value as Record<string, unknown>
 }
 
 function formatPlanPreviewFailure(
@@ -145,6 +166,16 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
   const [locationBusy, setLocationBusy] = useState<string | null>(null)
   const [locationDeleteTarget, setLocationDeleteTarget] = useState<LocationEntry | null>(null)
   const [locationsOverride, setLocationsOverride] = useState<LocationEntry[] | null>(null)
+  const [workbenchMapName, setWorkbenchMapName] = useState('')
+  const [workbenchImportPath, setWorkbenchImportPath] = useState('')
+  const [workbenchVoxelSize, setWorkbenchVoxelSize] = useState('0.10')
+  const [workbenchBoundsJson, setWorkbenchBoundsJson] = useState(
+    '{"min_x":-5,"max_x":5,"min_y":-5,"max_y":5,"min_z":-1,"max_z":2}',
+  )
+  const [workbenchZoneState, setWorkbenchZoneState] = useState<WorkbenchZoneState>('preblocked')
+  const [workbenchZoneRadius, setWorkbenchZoneRadius] = useState('0.5')
+  const [workbenchBusy, setWorkbenchBusy] = useState<string | null>(null)
+  const [workbenchSummary, setWorkbenchSummary] = useState<string | null>(null)
 
   // Map management modals
   const [mapContextMenu, setMapContextMenu] = useState<{ name: string; x: number; y: number } | null>(null)
@@ -318,6 +349,7 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
 
   // ── Default active map for reloc panel ─────────────────────────
   const activeMapName = sseState.session?.active_map ?? null
+  const workbenchTargetMapName = workbenchMapName.trim() || activeMapName || ''
   useEffect(() => {
     if (!relocMap && activeMapName) setRelocMap(activeMapName)
   }, [activeMapName, relocMap])
@@ -325,7 +357,9 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
   // ── Handlers ──────────────────────────────────────────────────
   const handlePendingGoal = useCallback(async (x: number, y: number) => {
     if (!canSendGoal) {
-      showToast(`不能下发目标: ${goalDisabledReason}`, 'error')
+      setPendingGoal({ x, y })
+      setPendingGoalPreview(null)
+      showToast(`Map point selected; navigation blocked: ${goalDisabledReason}`, 'info')
       return
     }
     try {
@@ -556,6 +590,131 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
     } catch { showToast('保存失败', 'error') }
   }
 
+  const publishWorkbenchResult = useCallback((r: MapLifecycleResponse) => {
+    const summary = formatMapLifecycleSummary(r)
+    setWorkbenchSummary(summary)
+    showToast(summary, r.ok || r.success ? 'success' : 'error')
+  }, [showToast])
+
+  const handleWorkbenchImportPcd = useCallback(async () => {
+    const name = workbenchMapName.trim()
+    const sourcePath = workbenchImportPath.trim()
+    if (!name) {
+      showToast('Map name is required for PCD import', 'error')
+      return
+    }
+    if (!sourcePath) {
+      showToast('PCD source path is required', 'error')
+      return
+    }
+    setWorkbenchBusy('import')
+    try {
+      const res = await api.importPcdMap(name, sourcePath, Number(workbenchVoxelSize) || 0)
+      publishWorkbenchResult(res)
+      loadMaps()
+    } catch (e: unknown) {
+      showToast(`Import PCD failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    } finally {
+      setWorkbenchBusy(null)
+    }
+  }, [loadMaps, publishWorkbenchResult, showToast, workbenchImportPath, workbenchMapName, workbenchVoxelSize])
+
+  const handleWorkbenchCrop = useCallback(async () => {
+    if (!workbenchTargetMapName) {
+      showToast('Select or type a map name before crop', 'error')
+      return
+    }
+    setWorkbenchBusy('crop')
+    try {
+      const bounds = parseWorkbenchBounds(workbenchBoundsJson)
+      const res = await api.cropMap(workbenchTargetMapName, bounds)
+      publishWorkbenchResult(res)
+      loadMaps()
+    } catch (e: unknown) {
+      showToast(`Crop failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    } finally {
+      setWorkbenchBusy(null)
+    }
+  }, [loadMaps, publishWorkbenchResult, showToast, workbenchBoundsJson, workbenchTargetMapName])
+
+  const handleWorkbenchBuildOctomap = useCallback(async () => {
+    if (!workbenchTargetMapName) {
+      showToast('Select or type a map name before build', 'error')
+      return
+    }
+    setWorkbenchBusy('build')
+    try {
+      const res = await api.buildMapOctomap(workbenchTargetMapName)
+      publishWorkbenchResult(res)
+      loadMaps()
+    } catch (e: unknown) {
+      showToast(`Build OctoMap failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    } finally {
+      setWorkbenchBusy(null)
+    }
+  }, [loadMaps, publishWorkbenchResult, showToast, workbenchTargetMapName])
+
+  const handleWorkbenchMarkZone = useCallback(async () => {
+    if (!workbenchTargetMapName) {
+      showToast('Select or type a map name before marking', 'error')
+      return
+    }
+    if (!pendingGoal) {
+      showToast('Click a point in the 3D map first', 'error')
+      return
+    }
+    setWorkbenchBusy('mark')
+    try {
+      const res = await api.markMapZone(workbenchTargetMapName, {
+        state: workbenchZoneState,
+        shape: 'sphere',
+        center: { x: pendingGoal.x, y: pendingGoal.y, z: 0 },
+        radius: Number(workbenchZoneRadius) || 0.5,
+      })
+      publishWorkbenchResult(res)
+      loadMaps()
+    } catch (e: unknown) {
+      showToast(`Mark zone failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    } finally {
+      setWorkbenchBusy(null)
+    }
+  }, [
+    loadMaps,
+    pendingGoal,
+    publishWorkbenchResult,
+    showToast,
+    workbenchTargetMapName,
+    workbenchZoneRadius,
+    workbenchZoneState,
+  ])
+
+  const handleWorkbenchValidatePlan = useCallback(async () => {
+    if (!workbenchTargetMapName) {
+      showToast('Select or type a map name before preview', 'error')
+      return
+    }
+    if (!pendingGoal) {
+      showToast('Click a target point in the 3D map first', 'error')
+      return
+    }
+    setWorkbenchBusy('preview')
+    try {
+      const res = await api.validateMapPlan(workbenchTargetMapName, pendingGoal.x, pendingGoal.y, 0)
+      const preview = res.preview as PlanPreviewResponse | undefined
+      const summary = [
+        res.ok || res.success ? 'plan ok' : 'plan blocked',
+        preview?.selected_planner ?? preview?.planner ?? '',
+        preview ? formatPlanSafetySummary(preview) : '',
+      ].filter(Boolean).join(' | ')
+      setWorkbenchSummary(summary)
+      showToast(summary, res.ok || res.success ? 'success' : 'error')
+    } catch (e: unknown) {
+      showToast(`Plan preview failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    } finally {
+      setWorkbenchBusy(null)
+    }
+  }, [pendingGoal, showToast, workbenchTargetMapName])
+
   const handleActivate = (name: string) => {
     if (maps.find(m => m.name === name)?.is_active) {
       showToast(`当前已激活: ${name}`, 'info')
@@ -778,6 +937,115 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
                 Last save: {lastSaveSummary}
               </div>
             )}
+            <div className={styles.mapWorkbench}>
+              <div className={styles.workbenchHeader}>
+                <span>Map Workbench</span>
+                <span className={styles.workbenchActiveMap}>
+                  {workbenchTargetMapName || 'no map'}
+                </span>
+              </div>
+              <input
+                className={styles.workbenchInput}
+                value={workbenchMapName}
+                onChange={(e) => setWorkbenchMapName(e.target.value)}
+                placeholder={activeMapName ? `active: ${activeMapName}` : 'map name'}
+              />
+              <input
+                className={styles.workbenchInput}
+                value={workbenchImportPath}
+                onChange={(e) => setWorkbenchImportPath(e.target.value)}
+                placeholder="PCD path on gateway host"
+              />
+              <div className={styles.workbenchRow}>
+                <input
+                  className={styles.workbenchInput}
+                  value={workbenchVoxelSize}
+                  onChange={(e) => setWorkbenchVoxelSize(e.target.value)}
+                  placeholder="voxel m"
+                  inputMode="decimal"
+                />
+                <button
+                  type="button"
+                  className={styles.workbenchButton}
+                  disabled={workbenchBusy != null}
+                  onClick={handleWorkbenchImportPcd}
+                >
+                  Import PCD
+                </button>
+              </div>
+              <textarea
+                className={styles.workbenchTextarea}
+                value={workbenchBoundsJson}
+                onChange={(e) => setWorkbenchBoundsJson(e.target.value)}
+                spellCheck={false}
+              />
+              <div className={styles.workbenchRow}>
+                <button
+                  type="button"
+                  className={styles.workbenchButton}
+                  disabled={workbenchBusy != null}
+                  onClick={handleWorkbenchCrop}
+                >
+                  Crop
+                </button>
+                <button
+                  type="button"
+                  className={styles.workbenchButton}
+                  disabled={workbenchBusy != null}
+                  onClick={handleWorkbenchBuildOctomap}
+                >
+                  Build OctoMap
+                </button>
+              </div>
+              <div className={styles.workbenchRow}>
+                <select
+                  className={styles.workbenchInput}
+                  value={workbenchZoneState}
+                  onChange={(e) => setWorkbenchZoneState(e.target.value as WorkbenchZoneState)}
+                >
+                  <option value="preblocked">preblocked</option>
+                  <option value="traversable">traversable</option>
+                  <option value="clear">clear</option>
+                </select>
+                <input
+                  className={styles.workbenchInput}
+                  value={workbenchZoneRadius}
+                  onChange={(e) => setWorkbenchZoneRadius(e.target.value)}
+                  placeholder="radius m"
+                  inputMode="decimal"
+                />
+              </div>
+              <div className={styles.workbenchRow}>
+                <button
+                  type="button"
+                  className={styles.workbenchButton}
+                  disabled={workbenchBusy != null || !pendingGoal}
+                  onClick={handleWorkbenchMarkZone}
+                  title={pendingGoal ? 'Mark selected point in active OctoMap' : 'Click a map point first'}
+                >
+                  Mark Zone
+                </button>
+                <button
+                  type="button"
+                  className={styles.workbenchButton}
+                  disabled={workbenchBusy != null || !pendingGoal}
+                  onClick={handleWorkbenchValidatePlan}
+                  title={pendingGoal ? 'Run no-motion route preview' : 'Click a target point first'}
+                >
+                  Preview
+                </button>
+              </div>
+              {pendingGoal && (
+                <div className={styles.workbenchHint}>
+                  point {pendingGoal.x.toFixed(2)}, {pendingGoal.y.toFixed(2)}
+                </div>
+              )}
+              {workbenchSummary && (
+                <div className={styles.workbenchHint} title={workbenchSummary}>
+                  {workbenchSummary}
+                </div>
+              )}
+            </div>
             {maps.length === 0 && (
               <div className={styles.emptyState}>
                 <MapPinned size={32} className={styles.emptyIcon} strokeWidth={1.4} />
@@ -811,7 +1079,7 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
                       title="左键加载确认 · 右键管理"
                     >
                       <span>{m.name}</span>
-                      {m.has_tomogram && <span className={styles.mapBadge}>T</span>}
+                      {m.has_octomap && <span className={styles.mapBadge}>O</span>}
                     </button>
                   ))}
                 </div>
@@ -1284,7 +1552,7 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
       <PromptModal
         open={saveModalOpen}
         title="保存当前地图"
-        message="保存当前 SLAM 建图结果。系统会自动生成导航所需的 tomogram 和 occupancy 数据。"
+        message="保存当前 SLAM 建图结果。系统会自动生成导航所需的 OctoMap 和 occupancy 数据。"
         placeholder="例如 building_2f"
         confirmLabel="保存"
         icon={<Save size={18} />}

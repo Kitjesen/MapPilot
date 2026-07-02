@@ -223,7 +223,7 @@ def benchmark_clip_encoding(iterations: int = 100, warmup: int = 10) -> Benchmar
     )
 
     try:
-        from perception.clip_encoder import CLIPEncoder
+        from perception.encoding.clip_encoder import CLIPEncoder
         import numpy as np
 
         encoder = CLIPEncoder(model_name="ViT-B/32")
@@ -262,8 +262,8 @@ def benchmark_scene_graph(iterations: int = 50, warmup: int = 5) -> BenchmarkRes
     )
 
     try:
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
         import numpy as np
 
         tracker = InstanceTracker(max_objects=200)

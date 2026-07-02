@@ -251,6 +251,105 @@
 .drawerBody::-webkit-scrollbar-track { background: transparent; }
 .drawerBody::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
 
+.mapWorkbench {
+  display: grid;
+  gap: 6px;
+  padding: 8px 4px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.workbenchHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--t-overline-size);
+  font-weight: var(--t-overline-weight);
+  letter-spacing: var(--t-overline-track);
+  text-transform: uppercase;
+  color: var(--t-overline-color);
+}
+
+.workbenchActiveMap {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: none;
+}
+
+.workbenchRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.workbenchInput,
+.workbenchTextarea {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.workbenchTextarea {
+  height: 62px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  line-height: 1.35;
+}
+
+.workbenchButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 29px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--t-label-color);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s var(--ease-out),
+    color 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out);
+}
+
+.workbenchButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border-color: var(--border-hi);
+}
+
+.workbenchButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.workbenchHint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
 .mapGroup {
   margin-bottom: 8px;
 }

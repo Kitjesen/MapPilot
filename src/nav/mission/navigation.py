@@ -38,7 +38,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 from typing import Any
 
 from nav.mission.model.frame_contract import FrameContract
@@ -117,6 +116,7 @@ class Navigation(
     teleop_active: In[bool]
     localization_status: In[dict]
     traversability: In[dict]  # W2-8: terrain class from Terrain
+    map_odom_tf: In[dict]
     # P4: TF jump events from SlamBridgeModule. PGO loop closures and BBS3D
     # relocalisations can move map->odom by metres in a single tick. Cached
     # global path + waypoint then point at the wrong place. We force a replan
@@ -279,6 +279,7 @@ class Navigation(
         )
         self._odom_frame_id = "unknown"
         self._costmap_frame_id = "unknown"
+        self._map_odom_tf: dict[str, Any] | None = None
         self._goal_frame_id: str | None = None
         self._goal: np.ndarray | None = None
         self._active_path_terminal_goal: np.ndarray | None = None
@@ -346,6 +347,7 @@ class Navigation(
         self.teleop_active.subscribe(self._on_teleop_active)
         self.localization_status.subscribe(self._on_localization_status)
         self.traversability.subscribe(self._on_traversability)
+        self.map_odom_tf.subscribe(self._on_map_odom_tf)
         self.map_frame_jump_event.subscribe(self._on_map_frame_jump)
 
         self._set_state(MissionState.IDLE, reason="module setup complete")
@@ -377,14 +379,20 @@ class Navigation(
     def planner_backend_status(self) -> dict[str, Any]:
         return planner_backend_status(self._planner_svc)
 
-    def reload_planner_tomogram(self, tomogram: str) -> dict[str, Any]:
+    def reload_planner_map(self, map_path: str = "") -> dict[str, Any]:
+        reload_map = getattr(self._planner_svc, "reload_map", None)
+        if callable(reload_map):
+            return reload_map(map_path)
         reload_tomogram = getattr(self._planner_svc, "reload_tomogram", None)
-        if not callable(reload_tomogram):
-            return {
-                "ok": False,
-                "reason": "planner_reload_unsupported",
-            }
-        return reload_tomogram(tomogram)
+        if callable(reload_tomogram):
+            return reload_tomogram(map_path)
+        return {
+            "ok": False,
+            "reason": "planner_reload_unsupported",
+        }
+
+    def reload_planner_tomogram(self, tomogram: str) -> dict[str, Any]:
+        return self.reload_planner_map(tomogram)
 
     def health(self) -> dict[str, Any]:
         return build_navigation_health(self, super().port_summary())

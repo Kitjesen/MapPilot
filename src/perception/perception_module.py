@@ -50,7 +50,7 @@ class _YOLOEDetectorProvider:
 
     @staticmethod
     def create(module):
-        from perception.yoloe_detector import YOLOEDetector
+        from perception.detection.yoloe_detector import YOLOEDetector
 
         return YOLOEDetector(
             model_size=module._detector_model_size,
@@ -67,7 +67,7 @@ class _YOLOWorldDetectorProvider:
 
     @staticmethod
     def create(module):
-        from perception.yolo_world_detector import (
+        from perception.detection.yolo_world_detector import (
             YOLOWorldDetector,
         )
 
@@ -85,7 +85,7 @@ class _BPUDetectorProvider:
 
     @staticmethod
     def create(module):
-        from perception.bpu_detector import BPUDetector
+        from perception.detection.bpu_detector import BPUDetector
 
         return BPUDetector(
             model_path=module._detector_model_path,
@@ -102,7 +102,7 @@ class _SimSceneDetectorProvider:
 
     @staticmethod
     def create(module):
-        from perception.sim_scene_observer import (
+        from perception.detection.sim_scene_observer import (
             SimSceneObserver,
         )
 
@@ -117,7 +117,7 @@ class _CLIPEncoderProvider:
 
     @staticmethod
     def create(_module):
-        from perception.clip_encoder import CLIPEncoder
+        from perception.encoding.clip_encoder import CLIPEncoder
 
         return CLIPEncoder()
 
@@ -128,7 +128,7 @@ class _MobileCLIPEncoderProvider:
 
     @staticmethod
     def create(_module):
-        from perception.mobileclip_encoder import (
+        from perception.encoding.mobileclip_encoder import (
             MobileCLIPEncoder,
         )
 
@@ -141,7 +141,7 @@ class _BPUTrackerProvider:
 
     @staticmethod
     def create(module):
-        from perception.bpu_tracker import BPUTracker
+        from perception.tracking.bpu_tracker import BPUTracker
 
         return BPUTracker(module._detector, tracker_type="botsort")
 
@@ -377,7 +377,7 @@ class PerceptionModule(Module, layer=3):
         """Create components via direct lazy imports (original path)."""
         # Instance tracker
         try:
-            from perception.instance_tracker import InstanceTracker
+            from perception.tracking.instance_tracker import InstanceTracker
             self._tracker = InstanceTracker(
                 merge_distance=self._merge_distance,
                 iou_threshold=self._tracking_iou_threshold,
@@ -390,7 +390,7 @@ class PerceptionModule(Module, layer=3):
             )
         except ImportError:
             logger.warning(
-                "perception.instance_tracker not available -- "
+                "perception.tracking.instance_tracker not available -- "
                 "scene graph tracking disabled"
             )
 
@@ -430,7 +430,7 @@ class PerceptionModule(Module, layer=3):
         if self._latest_intrinsics is not None:
             return
         try:
-            from perception.projection import (
+            from perception.tracking.projection import (
                 CameraIntrinsics as ProjIntrinsics,
             )
             self._latest_intrinsics = ProjIntrinsics(
@@ -488,7 +488,7 @@ class PerceptionModule(Module, layer=3):
         # backend derives detections from world metadata and should not be blocked by image sharpness.
         if self._sim_scene_observer is None:
             try:
-                from perception.laplacian_filter import is_blurry
+                from perception.detection.laplacian_filter import is_blurry
                 if is_blurry(bgr, threshold=self._laplacian_threshold):
                     return
             except ImportError:
@@ -759,10 +759,10 @@ class PerceptionModule(Module, layer=3):
     ) -> list:
         """Project 2D detections to 3D (delegates to projection module)."""
         try:
-            from perception.projection import (
+            from perception.tracking.projection import (
                 Detection3D as ProjDetection3D,
             )
-            from perception.projection import (
+            from perception.tracking.projection import (
                 bbox_center_depth,
                 mask_to_pointcloud,
                 pointcloud_centroid,

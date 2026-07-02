@@ -1,19 +1,20 @@
 # Fast-LIO2 config optimized for S100P (RDK X5, 4xA55 ARM cores)
 #
 # Key differences from lio.yaml (desktop):
-#   scan_resolution:  0.15 → 0.25  (fewer points per frame, ~2x reduction)
-#   lidar_filter_num: 6    → 8     (more aggressive pre-filter from raw CustomMsg)
-#   near_search_num:  5    → 3     (faster KNN, stable for outdoor ≤1m/s)
-#   ieskf_max_iter:   kept at 5    (preserve convergence quality)
-#   max_map_points:   5M   → 1M    (smaller ikd-tree, critical for ARM KNN)
-#   map_resolution:   0.4  → 0.2   (finer ikd-tree voxels for better viz + indoor detail)
+#   scan_resolution:  0.15 -> 0.25  (fewer points per frame, ~2x reduction)
+#   lidar_filter_num: 6    -> 2     (keep enough MID-360 points for live maps)
+#   near_search_num:  5    -> 3     (faster KNN, stable for outdoor <= 1m/s)
+#   ieskf_max_iter:   kept at 5     (preserve convergence quality)
+#   max_map_points:   5M   -> 1M    (smaller ikd-tree, critical for ARM KNN)
+#   map_resolution:   0.4  -> 0.2   (finer ikd-tree voxels for viz + indoor detail)
 #
-# Target: ≥8Hz SLAM on S100P (was ~3Hz with desktop config)
+# Target: >= 10Hz processed LiDAR scans on S100P.
 
 imu_topic: /imu/raw
 lidar_topic: /lidar/raw_frame
 body_frame: body
 world_frame: odom
+
 # Keep per-frame timing logs off in production; WARN-level logging at 10Hz
 # competes with localization on the S100P CPU budget.
 print_time_cost: false
@@ -21,17 +22,21 @@ print_time_cost: false
 lidar_type: 1
 scan_line: 4
 timestamp_unit: 3
-acc_scale: 10.0
+
+# Drift control:
+# - MID-360 reports acceleration in g. Board live mean was ~0.990 g while static.
+# - Native SDK2 DDS publishes scan-level LivoxFrame messages.
+# - ZUPT below injects zero-velocity updates when the robot is stationary.
+acc_scale: 9.91
+
 # Applied IMU-side: t_imu_aligned = t_imu_raw - time_diff_lidar_to_imu.
 time_diff_lidar_to_imu: 0.0
+
 # Drop the current scan if the latest IMU is still this far behind scan end.
 # Normal LiDAR/IMU rate mismatch waits; this catches stopped IMU or bad clocks.
 max_imu_gap_s: 0.25
-# Keep Livox packets one-to-one. The driver already controls publish_freq;
-# a 0.1s aggregation window combines two ~8Hz packets into one ~4Hz SLAM frame.
-livox_scan_window: 0.0
 
-lidar_filter_num: 8
+lidar_filter_num: 2
 lidar_min_range: 0.5
 lidar_max_range: 20.0
 scan_resolution: 0.25
@@ -61,9 +66,14 @@ t_il: [-0.011, -0.02329, 0.04412]
 
 lidar_cov_inv: 1000.0
 
-# ZUPT (Zero velocity UPdaTe) — suppress covariance growth during static periods
-imu_static_acc_thresh: 0.04
-imu_static_gyro_thresh: 0.001
+# ZUPT (Zero velocity update) suppresses covariance growth during static periods.
+imu_static_acc_thresh: 0.25
+imu_static_gyro_thresh: 0.02
 zupt_min_static_frames: 5
 zupt_sigma_v: 0.02
 zupt_sigma_pos: 0.1
+
+# Keep disabled for outdoor/off-road. Enable only for flat-ground validation,
+# otherwise real slope motion can be incorrectly clamped.
+vertical_velocity_constraint_enabled: false
+vertical_velocity_sigma_v: 0.05

@@ -49,7 +49,7 @@ class _TextOnlyClip:
 # ── CLIPEncoder.encode_image (interface-gap fix) ──────────────────────────────
 
 def test_clip_encoder_has_encode_image():
-    from perception.clip_encoder import CLIPEncoder
+    from perception.encoding.clip_encoder import CLIPEncoder
 
     enc = CLIPEncoder()  # model not loaded
     assert hasattr(enc, "encode_image")

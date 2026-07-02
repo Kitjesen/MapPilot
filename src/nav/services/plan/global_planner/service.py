@@ -9,15 +9,12 @@ import logging
 import pickle
 from typing import Any
 
-from runtime.msgs.numpy_compat import np
 from nav.services.plan.contracts import (
     GlobalPlanRequest,
     GlobalPlanResult,
     PlanningMap,
     coerce_planning_map,
 )
-from nav.services.safety.plan_safety import evaluate_backend_path_safety
-from runtime.profiles.planner_backends import normalize_planner_name
 from nav.services.plan.global_planner.artifact_gate import GlobalPlannerArtifactGateMixin
 from nav.services.plan.global_planner.backend_runtime import (
     backend_plan_diagnostics,
@@ -31,6 +28,9 @@ from nav.services.plan.global_planner.backend_runtime import (
 )
 from nav.services.plan.global_planner.grid_safety import GlobalPlannerGridSafetyMixin
 from nav.services.plan.global_planner.postprocess import downsample_path
+from nav.services.safety.plan_safety import evaluate_backend_path_safety
+from runtime.msgs.numpy_compat import np
+from runtime.profiles.planner_backends import normalize_planner_name
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +421,7 @@ class GlobalPlanner(
                 }
                 raise RuntimeError(f"GlobalPlanner: {fallback_reason}")
             if self._plan_safety_policy == "fallback_astar":
-                if self._planner_name.lower() == self._fallback_planner_name.lower():
+                if not self._can_use_fallback_planner():
                     self._last_plan_report = {
                         "primary_planner": self._planner_name,
                         "selected_planner": self._planner_name,
@@ -431,7 +431,7 @@ class GlobalPlanner(
                         "policy": self._plan_safety_policy,
                     }
                     raise RuntimeError(
-                        "GlobalPlanner: plan safety failed and no distinct fallback planner is configured"
+                        "GlobalPlanner: plan safety failed and fallback planner is not allowed"
                     )
                 fb_backend = self._get_fallback_backend()
                 fb_path, fb_ms = self._plan_with_backend(fb_backend, start, goal)
@@ -551,6 +551,92 @@ class GlobalPlanner(
             report=report,
         )
 
+    def plan_map_only(
+        self,
+        start: np.ndarray,
+        goal: np.ndarray,
+    ) -> tuple[list[np.ndarray], float]:
+        """Run the configured map-backed backend without live safety overlays.
+
+        This is for saved-map validation and no-motion route preview. It proves
+        the active map artifact can drive OctoPlanner3D, but does not imply that
+        the current live costmap/local planner would allow motion.
+        """
+        if self._backend is None:
+            raise RuntimeError("GlobalPlanner: backend not set up")
+        if self._map_artifact_gate_blocks():
+            reason = self._map_artifact_gate_failure_reason()
+            self._last_plan_report = {
+                "primary_planner": self._planner_name,
+                "selected_planner": self._planner_name,
+                "selected_path_safety": None,
+                "rejected_plans": [
+                    {
+                        "planner": self._planner_name,
+                        "reason": reason,
+                        "artifact_gate": self.map_artifact_gate,
+                    }
+                ],
+                "fallback_reason": reason,
+                "policy": "map_only",
+                "reached_goal": False,
+            }
+            raise RuntimeError(f"GlobalPlanner: {reason}")
+
+        requested_goal = np.asarray(goal[:3], dtype=float).copy()
+        raw_path, plan_ms = self._plan_with_backend(self._backend, start, goal)
+        reached_goal = bool(getattr(self._backend, "_last_plan_reached_goal", True))
+        planner_diagnostics = backend_plan_diagnostics(self._backend)
+        if not raw_path:
+            reason = str(getattr(self._backend, "_last_plan_error", "") or "empty path")
+            self._last_plan_report = {
+                "primary_planner": self._planner_name,
+                "selected_planner": self._planner_name,
+                "selected_path_safety": None,
+                "rejected_plans": [
+                    {
+                        "planner": self._planner_name,
+                        "reason": reason,
+                        "planner_diagnostics": planner_diagnostics,
+                    }
+                ],
+                "fallback_reason": reason,
+                "policy": "map_only",
+                "reached_goal": False,
+                "planner_diagnostics": planner_diagnostics,
+            }
+            raise RuntimeError(f"GlobalPlanner: {reason}")
+
+        downsample_goal = goal
+        if not reached_goal and raw_path:
+            downsample_goal = np.asarray(raw_path[-1][:3], dtype=float)
+        path = downsample_path(raw_path, downsample_goal, self._downsample_dist)
+        accepted_goal = (
+            np.asarray(path[-1][:3], dtype=float).copy()
+            if path
+            else np.asarray(downsample_goal[:3], dtype=float).copy()
+        )
+        adjusted_goal = (
+            accepted_goal.tolist()
+            if not np.allclose(accepted_goal, requested_goal, atol=0.05)
+            else None
+        )
+        self._last_plan_report = {
+            "primary_planner": self._planner_name,
+            "selected_planner": self._planner_name,
+            "selected_path_safety": None,
+            "fallback_reason": "",
+            "rejected_plans": [],
+            "policy": "map_only",
+            "reached_goal": reached_goal,
+            "planner_diagnostics": planner_diagnostics,
+            "requested_goal": requested_goal.tolist(),
+            "accepted_goal": accepted_goal.tolist(),
+            "adjusted_goal": adjusted_goal,
+            "map_only_preview": True,
+        }
+        return path, plan_ms
+
     def update_map(
         self,
         grid: PlanningMap | np.ndarray,
@@ -588,6 +674,8 @@ class GlobalPlanner(
     def _can_use_fallback_planner(self) -> bool:
         fallback = str(self._fallback_planner_name or "").strip().lower()
         primary = str(self._planner_name or "").strip().lower()
+        if primary == "octoplanner3d":
+            return False
         return (
             self._plan_safety_policy == "fallback_astar"
             and bool(fallback)
@@ -635,6 +723,7 @@ class GlobalPlanner(
             }
         )
         return None
+
     def _get_fallback_backend(self):
         if self._fallback_backend is None:
             self._fallback_backend = self._create_backend(self._fallback_planner_name)
@@ -651,11 +740,12 @@ class GlobalPlanner(
         """Return planner backend status for health endpoints."""
         report = self.last_plan_report
         primary_unavailable_reason = backend_unavailable_reason(self._backend)
+        can_fallback = self._can_use_fallback_planner()
         selected = str(
             report.get("selected_planner")
             or (
                 self._fallback_planner_name
-                if primary_unavailable_reason and self._fallback_planner_name
+                if primary_unavailable_reason and can_fallback
                 else self.planner_name
             )
         )
@@ -671,8 +761,49 @@ class GlobalPlanner(
             "octoplanner3d_constraints": dict(self._octoplanner3d_constraints),
         }
 
+    def evaluate_current_path_safety(self, path: list) -> dict[str, Any] | None:
+        """Evaluate a precomputed path against the current live safety overlay.
+
+        This is intentionally not a planner call. It answers the product
+        question "is this already-planned route executable right now?" without
+        rerunning OctoPlanner3D or invoking legacy fallback repair.
+        """
+        if self._backend is None:
+            return None
+        return self._evaluate_path_safety(self._backend, path)
+
+    def reload_map(self, map_path: str = "") -> dict[str, Any]:
+        """Reload the saved-map artifact through the planner service boundary."""
+        self._tomogram = str(map_path or "")
+        self._map_artifact_gate = self._validate_map_artifact_gate()
+        if self._backend is None:
+            return {
+                "ok": False,
+                "backend": self._planner_name,
+                "reason": "planner_backend_not_ready",
+            }
+        if self._map_artifact_gate_blocks():
+            return {
+                "ok": False,
+                "backend": self._planner_name,
+                "reason": self._map_artifact_gate_failure_reason(),
+                "artifact_gate": self.map_artifact_gate,
+            }
+        self._backend = self._create_backend(self._planner_name)
+        if self._last_map_update is not None:
+            push_backend_map_update(self._backend, self._last_map_update)
+        return {
+            "ok": True,
+            "backend": self._planner_name,
+            "mode": "map",
+            "map_path": self._resolve_map_path(self._planner_name),
+            "artifact_gate": self.map_artifact_gate,
+        }
+
     def reload_tomogram(self, tomogram: str) -> dict[str, Any]:
-        """Reload the active tomogram/costmap through the planner service boundary."""
+        """Compatibility alias for old callers; use reload_map()."""
+        if not self._is_pct_planner():
+            return self.reload_map(tomogram)
         self._tomogram = str(tomogram or "")
         self._map_artifact_gate = self._validate_map_artifact_gate()
         if self._backend is None:

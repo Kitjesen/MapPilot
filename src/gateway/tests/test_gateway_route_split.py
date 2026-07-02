@@ -70,8 +70,15 @@ def test_map_routes_register_expected_paths():
 
     paths = {getattr(route, "path", "") for route in app.routes}
     assert "/api/v1/slam/maps" in paths
+    assert "/api/v1/maps/import_pcd" in paths
+    assert "/api/v1/maps/{name}/crop" in paths
+    assert "/api/v1/maps/{name}/mark_zone" in paths
+    assert "/api/v1/maps/{name}/build_octomap" in paths
+    assert "/api/v1/maps/{name}/validate_plan" in paths
     assert "/api/v1/maps/{name}/pcd" in paths
     assert "/api/v1/maps/{name}/points" in paths
+    assert "/api/v1/maps/{name}/voxels/edit" in paths
+    assert "/api/v1/maps/{name}/voxels/edits" in paths
     assert "/api/v1/map/points" in paths
     assert "/api/v1/map_cloud/reset" in paths
     assert "/map/viewer" in paths
@@ -80,6 +87,40 @@ def test_map_routes_register_expected_paths():
     assert "/api/v1/map/activate" in paths
     assert "/api/v1/map/rename" in paths
     assert "/api/v1/map/save" in paths
+
+
+def test_map_voxel_overlay_route_reads_saved_edits(monkeypatch, tmp_path):
+    from fastapi import FastAPI
+
+    from gateway.routes.maps import register_map_routes
+
+    monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
+    map_dir = tmp_path / "demo"
+    map_dir.mkdir()
+    (map_dir / "voxel_edits.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "edits": [
+                    {
+                        "state": "preblocked",
+                        "center": {"x": 1.0, "y": 2.0, "z": 0.4},
+                        "radius": 0.3,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = FastAPI()
+    register_map_routes(app, SimpleNamespace())
+
+    route = next(route for route in app.routes if route.path == "/api/v1/maps/{name}/voxels/edits")
+    payload = asyncio.run(route.endpoint("demo"))
+
+    assert payload["success"] is True
+    assert payload["edits"][0]["state"] == "preblocked"
 
 
 def test_diagnostics_maps_snapshot_uses_map_manager_private_list(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 
 import numpy as np
+import pytest
 
 from nav.mission.navigation import MissionState, Navigation
 from nav.mission.tracking.waypoint_tracker import EV_STUCK, TrackerStatus
@@ -319,6 +321,37 @@ def test_navigation_reports_frame_mismatch_when_odometry_is_not_in_planning_fram
     assert events[-1]["received_frame"] == "odom"
     assert nav._odom_frame_id == "odom"
     np.testing.assert_array_equal(nav._robot_pos, np.zeros(3))
+
+
+def test_navigation_accepts_odom_frame_when_map_odom_tf_is_valid():
+    nav = Navigation()
+    events: list[dict] = []
+    nav.adapter_status._add_callback(events.append)
+    nav._on_map_odom_tf({
+        "valid": True,
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "tx": 10.0,
+        "ty": -2.0,
+        "tz": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": math.sin(math.pi / 4.0),
+        "qw": math.cos(math.pi / 4.0),
+    })
+
+    nav._on_odom(Odometry(
+        pose=Pose(
+            position=Vector3(1.0, 0.0, 0.0),
+            orientation=Quaternion.from_yaw(0.0),
+        ),
+        frame_id="odom",
+    ))
+
+    assert not [event for event in events if event["event"] == "frame_mismatch"]
+    assert nav._odom_frame_id == "odom"
+    np.testing.assert_allclose(nav._robot_pos, [10.0, -1.0, 0.0], atol=1e-6)
+    assert nav._robot_yaw == pytest.approx(math.pi / 2.0)
 
 
 def test_navigation_reports_frame_mismatch_when_costmap_is_not_in_planning_frame():

@@ -29,7 +29,6 @@ CANONICAL_ROBOT_PRESETS: dict[str, dict[str, Any]] = {
     "stub": dict(robot="stub"),
     "sim": dict(robot="sim_mujoco"),
     "sim_endpoint": dict(robot="sim_endpoint"),
-    "ros2": dict(robot="sim_ros2"),
     "sim_gazebo": dict(robot="sim_endpoint"),
     **_THUNDER_CANONICAL_PRESETS,
 }
@@ -45,7 +44,6 @@ CANONICAL_ROBOT_DRIVER_PROFILES: dict[str, tuple[str, dict[str, Any]]] = {
     "sim": ("mujoco_inproc", {}),
     "sim_endpoint": ("sim_endpoint", {}),
     "sim_gazebo": ("sim_endpoint", {}),
-    "ros2": ("ros2_bridge", {}),
     "stub": ("stub", {}),
     **_THUNDER_CANONICAL_DRIVER_PROFILES,
 }
@@ -66,8 +64,6 @@ CANONICAL_ROBOT_DRIVER_MODULES: dict[str, str] = {
     "sim_mujoco": "MujocoDriverModule",
     "sim_endpoint": "SimEndpointDriverModule",
     "sim_gazebo": "SimEndpointDriverModule",
-    "sim_ros2": "ROS2SimDriverModule",
-    "ros2": "ROS2SimDriverModule",
     **_THUNDER_CANONICAL_DRIVER_MODULES,
 }
 

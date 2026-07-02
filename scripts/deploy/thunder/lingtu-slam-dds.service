@@ -10,12 +10,17 @@ Environment=LINGTU_REPO=/opt/lingtu/current
 Environment=LINGTU_SLAM_BIN=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime
 Environment=LINGTU_SLAM_BACKEND=fastlio2
 Environment=LINGTU_SLAM_MODE=mapping
-Environment=LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/lio_s100p.yaml
+Environment=LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml
 Environment=LINGTU_SLAM_MAP=
 Environment=LINGTU_SLAM_TICK_HZ=50
 Environment=LINGTU_DDS_DOMAIN_ID=0
+Environment=LINGTU_SLAM_LOG_STATUS_S=5
+Environment=LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json
+Environment=LINGTU_SLAM_STATUS_JSON_HZ=10
+Environment=LINGTU_SLAM_CLOUD_SNAPSHOT_DIR=/dev/shm/lingtu_slam
+Environment=LINGTU_SLAM_CLOUD_SNAPSHOT_HZ=5
 Environment=LINGTU_CYCLONEDDS_PREFIX=
-ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh; if [ -n "${LINGTU_CYCLONEDDS_PREFIX}" ] && [ -d "${LINGTU_CYCLONEDDS_PREFIX}/lib" ]; then export LD_LIBRARY_PATH="${LINGTU_CYCLONEDDS_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; fi; args=(--backend "${LINGTU_SLAM_BACKEND}" --mode "${LINGTU_SLAM_MODE}" --domain-id "${LINGTU_DDS_DOMAIN_ID}" --tick-hz "${LINGTU_SLAM_TICK_HZ}"); if [ -n "${LINGTU_SLAM_CONFIG}" ]; then args+=(--config "${LINGTU_SLAM_CONFIG}"); fi; if [ -n "${LINGTU_SLAM_MAP}" ]; then args+=(--map "${LINGTU_SLAM_MAP}"); fi; exec "${LINGTU_SLAM_BIN}" "${args[@]}"'
+ExecStart=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime --backend fastlio2 --mode mapping --config /opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml --domain-id 0 --tick-hz 50 --log-status-s 5 --status-json /tmp/lingtu_slam_status.json --status-json-hz 10 --cloud-snapshot-dir /dev/shm/lingtu_slam --cloud-snapshot-hz 5
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

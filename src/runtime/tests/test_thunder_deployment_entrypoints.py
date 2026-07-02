@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import ast
 from pathlib import Path
@@ -49,7 +49,7 @@ def test_thunder_service_installer_defaults_to_dds_endpoint() -> None:
     assert "field-cpp|dds-cpp" in text
     assert "install_lcm_endpoint_service.sh" in text
     assert "install_lite_service.sh" in text
-    assert "Usage: $0 [dds-endpoint|slam-dds|field-cpp|lcm-endpoint|lite|ros-compat]" in text
+    assert "Usage: $0 [dds-endpoint|slam-dds|nav-dds|field-cpp|lcm-endpoint|lite|ros-compat]" in text
     assert "../s100p/install_services.sh" in text
     assert "ros2-env.sh" in text
     assert 'exec "${LEGACY_INSTALLER}" "${SCRIPT_DIR}/../s100p"' in text
@@ -156,10 +156,11 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "LINGTU_SLAM_BIN=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime" in text
     assert "LINGTU_SLAM_BACKEND=fastlio2" in text
     assert "LINGTU_SLAM_MODE=mapping" in text
-    assert "LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/lio_s100p.yaml" in text
+    assert "LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml" in text
     assert "LINGTU_DDS_DOMAIN_ID=0" in text
-    assert "source /opt/lingtu/config/thunder-runtime-env.sh" in text
+    assert "LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json" in text
     assert "--domain-id" in text
+    assert "source /opt/lingtu/config/thunder-runtime-env.sh" not in text
     assert "source /opt/lingtu/config/ros2-env.sh" not in text
     assert "python" not in text.lower()
     assert "ros2 run fastlio2" not in text
@@ -227,7 +228,7 @@ def test_release_script_uses_thunder_product_wording() -> None:
 
     assert "LingTu Thunder release" in text
     assert "S100P" not in text
-    assert "闁" not in text
+    assert "\u95c1" not in text
 
 
 def test_release_script_does_not_gate_on_legacy_ros2_local_autonomy() -> None:

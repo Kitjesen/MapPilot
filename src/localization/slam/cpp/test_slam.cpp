@@ -50,7 +50,9 @@ int main() {
   check(save_status.ok, "save_map_failed");
   check(pathExists(dir / "map.pcd"), "map_pcd_missing");
   check(pathExists(dir / "poses.txt"), "poses_txt_missing");
+  check(pathExists(dir / "trajectory.txt"), "trajectory_txt_missing");
   check(pathExists(dir / "patches"), "patches_dir_missing");
+  check(pathExists(dir / "patches" / "latest_scan.pcd"), "latest_scan_patch_missing");
 
   const auto outputs = backend->outputs();
   check(outputs.alive, "not_alive");

@@ -119,17 +119,30 @@ class SavedMapArtifacts:
     def planner_map_path(self, planner_name: str) -> str:
         """Return the saved-map artifact a backend should receive."""
 
-        explicit = self.existing_explicit_path()
-        if explicit:
-            return explicit
-
         planner = normalize_planner_name(planner_name)
+        if planner == "octoplanner3d":
+            explicit = self.existing_explicit_path()
+            if explicit and Path(explicit).suffix.lower() in {".bt", ".ot", ".octomap"}:
+                return explicit
+            octomap = (
+                self.active_artifact("octomap.ot")
+                or self.active_artifact("octomap.bt")
+            )
+            if octomap:
+                return octomap
+            if explicit:
+                return explicit
+        else:
+            explicit = self.existing_explicit_path()
+            if explicit:
+                return explicit
+
         bundle = self.planner_map_bundle(planner)
         if bundle:
             return str((bundle.get("artifact") or {}).get("uri") or "")
 
         if planner == "octoplanner3d":
-            return self.active_artifact("octomap.bt")
+            return ""
         if planner == "pct":
             return self.active_artifact("tomogram.pickle")
         if planner == "astar":

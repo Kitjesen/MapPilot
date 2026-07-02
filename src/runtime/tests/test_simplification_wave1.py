@@ -370,7 +370,7 @@ class TestW1GnssRtcmAge(unittest.TestCase):
 
 class TestW1MobileCLIPDeadCodeRemoved(unittest.TestCase):
     def test_try_load_mobileclip_method_removed(self):
-        from perception.mobileclip_encoder import (
+        from perception.encoding.mobileclip_encoder import (
             MobileCLIPEncoder,
         )
         self.assertFalse(
@@ -386,7 +386,7 @@ class TestW1MobileCLIPDeadCodeRemoved(unittest.TestCase):
 
 class TestW1ClipDegradedFlag(unittest.TestCase):
     def test_is_degraded_property_exists(self):
-        from perception.clip_encoder import CLIPEncoder
+        from perception.encoding.clip_encoder import CLIPEncoder
         enc = CLIPEncoder.__new__(CLIPEncoder)  # avoid loading the model
         enc._degraded = False
         enc._degraded_reason = ""

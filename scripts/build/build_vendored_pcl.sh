@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a repo-local PCL install for one LingTu native feature profile.
+# Build a repo-local PCL install for one LingTu C++ feature profile.
 # The PCL source and install prefix live under third_party/ (ignored by git).
 # This avoids making LingTu's build depend on the Ubuntu-provided libpcl-dev
 # version, while still leaving PCL out of portable/default Python runtime paths.
 #
 # Profiles:
-#   octoplanner3d-converter-native: PCL common/io/octree for .pcd -> OctoMap
+#   octoplanner3d-pcd-converter: PCL common/io/octree for .pcd -> OctoMap
 #     conversion in OctoPlanner3D headless builds. No ROS 2 packages and no
-#     broader SLAM-native dependency promise.
+#     broader SLAM dependency promise.
 #   slam-native: broader PCL component set for Fast-LIO2/localizer/PGO-style
 #     native packages. Use this intentionally; it is not implied by the
 #     OctoPlanner3D converter profile.
@@ -20,7 +20,7 @@ cd "${ROOT}"
 PCL_VERSION="${LINGTU_PCL_VERSION:-pcl-1.14.1}"
 PCL_REPO="${LINGTU_PCL_REPO:-https://github.com/PointCloudLibrary/pcl.git}"
 THIRD_PARTY_ROOT="${LINGTU_THIRD_PARTY_ROOT:-${ROOT}/third_party}"
-PCL_PROFILE="${LINGTU_PCL_PROFILE:-octoplanner3d-converter-native}"
+PCL_PROFILE="${LINGTU_PCL_PROFILE:-octoplanner3d-pcd-converter}"
 BUILD_TYPE="${LINGTU_BUILD_TYPE:-Release}"
 BUILD_JOBS="${LINGTU_BUILD_JOBS:-}"
 CONFIGURE_ONLY="${LINGTU_PCL_CONFIGURE_ONLY:-0}"
@@ -36,7 +36,7 @@ Usage:
   bash scripts/build/build_vendored_pcl.sh [--profile PROFILE] [--configure-only]
 
 Profiles:
-  octoplanner3d-converter-native  PCL common/io/octree for OctoPlanner3D .pcd conversion; no ROS 2.
+  octoplanner3d-pcd-converter     PCL common/io/octree for OctoPlanner3D .pcd conversion; no ROS 2.
   slam-native                     Broader PCL pack for SLAM/native packages.
 
 Environment overrides:
@@ -82,8 +82,8 @@ parse_args() {
 
 set_profile_flags() {
   case "${PCL_PROFILE}" in
-    octoplanner3d-converter-native)
-      PCL_PROFILE_DESCRIPTION="PCL common/io/octree for OctoPlanner3D .pcd -> OctoMap conversion; no ROS 2 or full SLAM-native pack."
+    octoplanner3d-pcd-converter)
+      PCL_PROFILE_DESCRIPTION="PCL common/io/octree for OctoPlanner3D .pcd -> OctoMap conversion; no ROS 2 or full SLAM pack."
       PCL_CMAKE_COMPONENT_FLAGS=(
         -DBUILD_2d=OFF
         -DBUILD_common=ON

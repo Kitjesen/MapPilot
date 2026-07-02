@@ -70,6 +70,22 @@ def maps(**config) -> Blueprint:
             resolution=config.get("grid_resolution", og.get("resolution", 0.2)),
             map_radius=config.get("grid_radius", og.get("map_radius", 30.0)),
             inflation_radius=config.get("inflation_radius", og.get("inflation_radius", 0.5)),
+            robot_clear_radius=config.get(
+                "robot_clear_radius",
+                og.get("robot_clear_radius", 0.60),
+            ),
+            robot_clear_forward=config.get(
+                "robot_clear_forward",
+                og.get("robot_clear_forward", og.get("robot_clear_forward_m", 0.0)),
+            ),
+            robot_clear_backward=config.get(
+                "robot_clear_backward",
+                og.get("robot_clear_backward", og.get("robot_clear_backward_m", 0.0)),
+            ),
+            robot_clear_lateral=config.get(
+                "robot_clear_lateral",
+                og.get("robot_clear_lateral", og.get("robot_clear_lateral_m", 0.0)),
+            ),
             z_min=og.get("z_min", 0.10),
             z_max=og.get("z_max", 2.00),
             publish_hz=og.get("publish_hz", 2.0),

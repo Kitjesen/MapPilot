@@ -390,7 +390,7 @@ def test_octoplanner3d_preflight_points_to_standalone_builder(
     monkeypatch.setattr(
         runtime_extra,
         "_octoplanner3d_runtime_errors",
-        lambda _cfg: ("OctoPlanner3D native kernel/headless executable not configured",),
+        lambda _cfg: ("OctoPlanner3D C++ executable not configured",),
     )
 
     with pytest.raises(SystemExit) as exc:

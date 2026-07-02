@@ -65,7 +65,7 @@ def test_thunder_product_configs_lock_core_runtime_modes():
 
     nav = thunder_nav_config()
     assert nav["slam_profile"] == "localizer"
-    assert nav["localization_adapter"] == "dds_endpoint"
+    assert nav["localization_adapter"] == "cpp_slam_status"
     assert "endpoint_contract" not in nav
     assert nav["planner"] == "octoplanner3d"
     assert nav["tomogram"] == _resolve_octoplanner3d_map()

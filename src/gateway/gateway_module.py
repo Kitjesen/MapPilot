@@ -1424,6 +1424,7 @@ class GatewayModule(Module, layer=6):
                 invalid_fields,
             )
             return
+        self._frame_tree.update_odometry(odom)
         with self._state_lock:
             self._last_invalid_odometry = None
             self._odom = d
@@ -1649,7 +1650,11 @@ class GatewayModule(Module, layer=6):
             has_tomogram = (base / "tomogram.pickle").is_file()
         icp = self._icp_quality
         localization_status = self._localization_status or {}
-        slam_profile = self._get_slam_profile()
+        session_profile = str(self._session_slam_profile or "").strip().lower()
+        if self._session_mode != "idle" and session_profile not in {"", "stopped"}:
+            slam_profile = session_profile
+        else:
+            slam_profile = self._get_slam_profile()
         backend = str(
             localization_status.get("backend")
             or slam_profile
@@ -1910,13 +1915,50 @@ class GatewayModule(Module, layer=6):
             "bytes": len(buf),
         })
 
+    @staticmethod
+    def _slam_profile_from_status(status: dict | None) -> str:
+        """Return a live backend from localization_status when it is usable."""
+        if not isinstance(status, dict):
+            return ""
+        profile = str(status.get("backend") or "").strip().lower()
+        profile = {
+            "super-lio": "super_lio",
+            "superlio": "super_lio",
+            "super_lio_reloc": "super_lio_relocation",
+            "super-lio-reloc": "super_lio_relocation",
+            "point-lio": "pointlio",
+            "point_lio": "pointlio",
+        }.get(profile, profile)
+        if profile in {"", "none", "unknown", "stopped", "stop", "disabled"}:
+            return ""
+        state = str(
+            status.get("reported_state")
+            or status.get("state")
+            or ""
+        ).strip().upper()
+        if state in {
+            "STOPPED",
+            "DISABLED",
+            "UNINIT",
+            "UNINITIALIZED",
+            "LOST",
+            "DIVERGED",
+            "FAILED",
+            "ERROR",
+        }:
+            return ""
+        return profile
+
     def _get_slam_profile(self) -> str:
         """Return current SLAM profile (cached 5s)."""
+        live_profile = self._slam_profile_from_status(self._localization_status)
+        if live_profile:
+            self._cached_slam_profile = live_profile
+            self._slam_profile_ts = time.time()
+            return live_profile
         if not self._manage_session_services:
-            localization_status = self._localization_status or {}
             profile = str(
-                localization_status.get("backend")
-                or self._session_slam_profile
+                self._session_slam_profile
                 or self._cached_slam_profile
                 or "stopped"
             ).lower()
@@ -2051,8 +2093,8 @@ class GatewayModule(Module, layer=6):
         if not isinstance(state, dict):
             return
         d = dict(state)
-        profile = self._get_slam_profile()
-        if profile and profile != "unknown":
+        profile = self._slam_profile_from_status(d) or self._get_slam_profile()
+        if profile and profile != "unknown" and not d.get("backend"):
             d["backend"] = profile
         capability_defaults = backend_capability_defaults(profile)
         if profile in {"super_lio", "super_lio_relocation"}:
@@ -2187,7 +2229,11 @@ class GatewayModule(Module, layer=6):
             return
         try:
             points = [
-                {"x": float(p.pose.position.x), "y": float(p.pose.position.y)}
+                {
+                    "x": float(p.pose.position.x),
+                    "y": float(p.pose.position.y),
+                    "z": float(getattr(p.pose.position, "z", 0.0)),
+                }
                 for p in path.poses
             ] if hasattr(path, 'poses') else []
             with self._state_lock:

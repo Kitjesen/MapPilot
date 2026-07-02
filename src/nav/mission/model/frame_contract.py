@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from runtime.msgs.geometry import PoseStamped
@@ -39,6 +40,18 @@ class FrameContract:
         self._adapter_status_publish = publish_adapter_status
         # Suppress duplicate reports for the same (source, frame_id) pair.
         self._reported_frame_mismatches: set[tuple[str, str]] = set()
+        self._map_odom_link: tuple[str, str] | None = None
+
+    def set_map_odom_tf(self, tf: Mapping[str, Any] | None) -> None:
+        """Record an observed map->odom link for odometry frame validation."""
+        self._map_odom_link = None
+        if not isinstance(tf, Mapping) or tf.get("valid") is False:
+            return
+        parent = normalize_frame_id(tf.get("frame_id"))
+        child = normalize_frame_id(tf.get("child_frame_id"))
+        planning = normalize_frame_id(self._planning_frame_id) or PLANNING_FRAME_ID
+        if parent == planning and child and child != planning:
+            self._map_odom_link = (parent, child)
 
     # Pure helpers
 
@@ -61,6 +74,10 @@ class FrameContract:
             normalize_frame_id(self._planning_frame_id)
             or PLANNING_FRAME_ID
         )
+        if source == "odometry" and self._map_odom_link is not None:
+            parent, child = self._map_odom_link
+            if parent == planning_frame:
+                return tuple(dict.fromkeys((planning_frame, child)))
         return (planning_frame,)
 
     def expected_frame_label(self, source: str) -> str:

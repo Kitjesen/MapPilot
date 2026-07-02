@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.end_to_end_evaluation import EndToEndEvaluator
+from perception.research.end_to_end_evaluation import EndToEndEvaluator
 
 
 def create_mock_hm3d_dataset(root_dir: Path):

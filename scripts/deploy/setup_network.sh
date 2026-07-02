@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # ======================== 可修改参数 ========================
-LIDAR_IP="192.168.1.115"        # Livox MID360 LiDAR 地址
+LIDAR_IP="192.168.1.178"        # Livox MID360 LiDAR 地址
 HOST_IP="192.168.1.5"           # 本机在 LiDAR 子网的地址
 SUBNET_MASK="24"                # 子网掩码位数
 LIDAR_SUBNET="192.168.1.0/24"  # LiDAR 子网

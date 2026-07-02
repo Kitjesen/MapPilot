@@ -12,8 +12,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -21,8 +23,8 @@
 #include <vector>
 
 #if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
-#include "dds/dds.hpp"
-#include "lingtu_slam.hpp"
+#include "dds/dds.h"
+#include "lingtu_slam.h"
 #include "message/cpp/dds_topics.hpp"
 #endif
 
@@ -42,10 +44,6 @@ constexpr uint8_t kLineNumberHap = 6;
 constexpr uint8_t kTimestampTypeNoSync = 0;
 constexpr uint8_t kTimestampTypeGptpOrPtp = 1;
 constexpr uint8_t kTimestampTypeGps = 2;
-
-#if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
-namespace lt = lingtu::dds;
-#endif
 
 #pragma pack(push, 1)
 struct RecordHeader {
@@ -94,6 +92,7 @@ char g_enable_imu_command[] = "enable_imu";
 struct CliConfig {
   bool dds = false;
   int domain_id = 0;
+  double scan_window_s = 0.1;
   std::string lidar_frame = "livox_frame";
   std::string imu_frame = "imu_link";
   std::string config_path;
@@ -162,73 +161,142 @@ bool write_record(uint8_t record_type,
 }
 
 #if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
-lt::Header make_dds_header(uint64_t timestamp_ns, const std::string& frame_id) {
-  const auto sec = static_cast<std::int32_t>(timestamp_ns / 1000000000ULL);
-  const auto nsec = static_cast<std::uint32_t>(timestamp_ns % 1000000000ULL);
-  return lt::Header(lt::Time(sec, nsec), frame_id);
-}
-
 class DdsPublisher {
  public:
   DdsPublisher(int domain_id, std::string lidar_frame, std::string imu_frame)
       : lidar_frame_(std::move(lidar_frame)),
-        imu_frame_(std::move(imu_frame)),
-        participant_(domain_id),
-        publisher_(participant_),
-        lidar_topic_(participant_, std::string(lingtu::message::kLidarRawFrame.dds_topic)),
-        imu_topic_(participant_, std::string(lingtu::message::kImuRaw.dds_topic)),
-        lidar_writer_(publisher_, lidar_topic_),
-        imu_writer_(publisher_, imu_topic_) {}
+        imu_frame_(std::move(imu_frame)) {
+    participant_ = checked(
+        dds_create_participant(static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+        "dds_create_participant");
+    publisher_ = checked(dds_create_publisher(participant_, nullptr, nullptr),
+                         "dds_create_publisher");
+    lidar_topic_ = checked(
+        dds_create_topic(
+            participant_,
+            &lingtu_dds_LivoxFrame_desc,
+            lingtu::message::kLidarRawFrame.dds_topic.data(),
+            nullptr,
+            nullptr),
+        "dds_create_topic(lidar)");
+    raw_packet_topic_ = checked(
+        dds_create_topic(
+            participant_,
+            &lingtu_dds_LivoxFrame_desc,
+            lingtu::message::kLidarRawPacket.dds_topic.data(),
+            nullptr,
+            nullptr),
+        "dds_create_topic(raw_packet)");
+    imu_topic_ = checked(
+        dds_create_topic(
+            participant_,
+            &lingtu_dds_Imu_desc,
+            lingtu::message::kImuRaw.dds_topic.data(),
+            nullptr,
+            nullptr),
+        "dds_create_topic(imu)");
+    lidar_writer_ = checked(dds_create_writer(publisher_, lidar_topic_, nullptr, nullptr),
+                            "dds_create_writer(lidar)");
+    raw_packet_writer_ = checked(
+        dds_create_writer(publisher_, raw_packet_topic_, nullptr, nullptr),
+        "dds_create_writer(raw_packet)");
+    imu_writer_ = checked(dds_create_writer(publisher_, imu_topic_, nullptr, nullptr),
+                          "dds_create_writer(imu)");
+  }
+
+  ~DdsPublisher() {
+    if (participant_ > 0) {
+      dds_delete(participant_);
+    }
+  }
+
+  DdsPublisher(const DdsPublisher&) = delete;
+  DdsPublisher& operator=(const DdsPublisher&) = delete;
 
   void publish_cloud(uint8_t lidar_id,
                      uint64_t timestamp_ns,
                      const std::vector<WirePoint>& points) {
-    std::vector<lt::LivoxPoint> dds_points;
-    dds_points.reserve(points.size());
-    for (const auto& point : points) {
-      dds_points.emplace_back(
-          point.offset_time_ns,
-          point.x,
-          point.y,
-          point.z,
-          static_cast<std::uint8_t>(point.intensity),
-          point.tag,
-          point.line);
-    }
-    std::array<std::uint8_t, 3> reserved{};
-    std::lock_guard<std::mutex> lock(write_mutex_);
-    lidar_writer_.write(lt::LivoxFrame(
-        make_dds_header(timestamp_ns, lidar_frame_),
-        timestamp_ns,
-        static_cast<std::uint32_t>(dds_points.size()),
-        lidar_id,
-        reserved,
-        dds_points));
+    publish_cloud_to(lidar_writer_, lidar_id, timestamp_ns, points);
+  }
+
+  void publish_raw_packet(uint8_t lidar_id,
+                          uint64_t timestamp_ns,
+                          const std::vector<WirePoint>& points) {
+    publish_cloud_to(raw_packet_writer_, lidar_id, timestamp_ns, points);
   }
 
   void publish_imu(uint64_t timestamp_ns, const WireImu& imu) {
-    std::array<double, 9> covariance{};
-    covariance.fill(0.0);
     std::lock_guard<std::mutex> lock(write_mutex_);
-    imu_writer_.write(lt::Imu(
-        make_dds_header(timestamp_ns, imu_frame_),
-        lt::Quaternion(0.0, 0.0, 0.0, 1.0),
-        covariance,
-        lt::Vector3(imu.gyro_x, imu.gyro_y, imu.gyro_z),
-        covariance,
-        lt::Vector3(imu.acc_x, imu.acc_y, imu.acc_z),
-        covariance));
+    lingtu_dds_Imu msg{};
+    fill_header(msg.header, timestamp_ns, imu_frame_);
+    msg.orientation.w = 1.0;
+    msg.angular_velocity.x = imu.gyro_x;
+    msg.angular_velocity.y = imu.gyro_y;
+    msg.angular_velocity.z = imu.gyro_z;
+    msg.linear_acceleration.x = imu.acc_x;
+    msg.linear_acceleration.y = imu.acc_y;
+    msg.linear_acceleration.z = imu.acc_z;
+    checked(dds_write(imu_writer_, &msg), "dds_write(imu)");
   }
 
  private:
+  void publish_cloud_to(dds_entity_t writer,
+                        uint8_t lidar_id,
+                        uint64_t timestamp_ns,
+                        const std::vector<WirePoint>& points) {
+    std::vector<lingtu_dds_LivoxPoint> dds_points;
+    dds_points.reserve(points.size());
+    for (const auto& point : points) {
+      lingtu_dds_LivoxPoint out{};
+      out.offset_time = point.offset_time_ns;
+      out.x = point.x;
+      out.y = point.y;
+      out.z = point.z;
+      out.reflectivity = static_cast<std::uint8_t>(point.intensity);
+      out.tag = point.tag;
+      out.line = point.line;
+      dds_points.push_back(out);
+    }
+    std::lock_guard<std::mutex> lock(write_mutex_);
+    lingtu_dds_LivoxFrame msg{};
+    fill_header(msg.header, timestamp_ns, lidar_frame_);
+    msg.timebase = timestamp_ns;
+    msg.point_num = static_cast<std::uint32_t>(dds_points.size());
+    msg.lidar_id = lidar_id;
+    msg.points._maximum = msg.point_num;
+    msg.points._length = msg.point_num;
+    msg.points._buffer = dds_points.data();
+    msg.points._release = false;
+    checked(dds_write(writer, &msg), "dds_write(livox)");
+  }
+
+  static dds_entity_t checked(dds_return_t value, const char* what) {
+    if (value < 0) {
+      throw std::runtime_error(
+          std::string(what) + ": " + dds_strretcode(-value));
+    }
+    return static_cast<dds_entity_t>(value);
+  }
+
+  static void fill_header(
+      lingtu_dds_Header& header,
+      uint64_t timestamp_ns,
+      const std::string& frame_id) {
+    header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / 1000000000ULL);
+    header.stamp.nanosec = static_cast<std::uint32_t>(timestamp_ns % 1000000000ULL);
+    header.frame_id = const_cast<char*>(frame_id.c_str());
+  }
+
   std::string lidar_frame_;
   std::string imu_frame_;
-  dds::domain::DomainParticipant participant_;
-  dds::pub::Publisher publisher_;
-  dds::topic::Topic<lt::LivoxFrame> lidar_topic_;
-  dds::topic::Topic<lt::Imu> imu_topic_;
-  dds::pub::DataWriter<lt::LivoxFrame> lidar_writer_;
-  dds::pub::DataWriter<lt::Imu> imu_writer_;
+  dds_entity_t participant_ = DDS_RETCODE_ERROR;
+  dds_entity_t publisher_ = DDS_RETCODE_ERROR;
+  dds_entity_t lidar_topic_ = DDS_RETCODE_ERROR;
+  dds_entity_t raw_packet_topic_ = DDS_RETCODE_ERROR;
+  dds_entity_t imu_topic_ = DDS_RETCODE_ERROR;
+  dds_entity_t lidar_writer_ = DDS_RETCODE_ERROR;
+  dds_entity_t raw_packet_writer_ = DDS_RETCODE_ERROR;
+  dds_entity_t imu_writer_ = DDS_RETCODE_ERROR;
   std::mutex write_mutex_;
 };
 
@@ -254,6 +322,20 @@ bool emit_cloud(uint8_t lidar_id,
       static_cast<std::uint32_t>(points.size() * sizeof(WirePoint)));
 }
 
+void emit_raw_packet(uint8_t lidar_id,
+                     uint64_t timestamp_ns,
+                     const std::vector<WirePoint>& points) {
+#if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
+  if (g_dds_publisher) {
+    g_dds_publisher->publish_raw_packet(lidar_id, timestamp_ns, points);
+  }
+#else
+  (void)lidar_id;
+  (void)timestamp_ns;
+  (void)points;
+#endif
+}
+
 bool emit_imu(uint64_t timestamp_ns, const WireImu& imu) {
 #if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
   if (g_dds_publisher) {
@@ -262,6 +344,115 @@ bool emit_imu(uint64_t timestamp_ns, const WireImu& imu) {
   }
 #endif
   return write_record(kRecordImu, timestamp_ns, 1, &imu, sizeof(imu));
+}
+
+struct CloudBatch {
+  uint8_t lidar_id = 0;
+  uint64_t timestamp_ns = 0;
+  std::vector<WirePoint> points;
+};
+
+class ScanAccumulator {
+ public:
+  explicit ScanAccumulator(double window_s)
+      : window_ns_(static_cast<uint64_t>(
+            std::max(0.0, window_s) * 1000000000.0)) {}
+
+  std::vector<CloudBatch> submit(uint8_t lidar_id,
+                                 uint64_t timestamp_ns,
+                                 const std::vector<WirePoint>& points) {
+    std::vector<CloudBatch> ready;
+    if (points.empty()) {
+      return ready;
+    }
+    const uint64_t packet_end_ns = packet_end_time_ns(timestamp_ns, points);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (has_scan_ && timestamp_ns < scan_start_ns_) {
+      ready.push_back(take_locked());
+    }
+    if (has_scan_ && window_ns_ > 0 &&
+        packet_end_ns > scan_start_ns_ &&
+        packet_end_ns - scan_start_ns_ > window_ns_ &&
+        !points_.empty()) {
+      ready.push_back(take_locked());
+    }
+    if (!has_scan_) {
+      has_scan_ = true;
+      scan_start_ns_ = timestamp_ns;
+      lidar_id_ = lidar_id;
+    }
+    append_locked(timestamp_ns, points);
+    if (window_ns_ == 0) {
+      ready.push_back(take_locked());
+    }
+    return ready;
+  }
+
+  std::optional<CloudBatch> flush() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!has_scan_ || points_.empty()) {
+      return std::nullopt;
+    }
+    return take_locked();
+  }
+
+ private:
+  static uint64_t packet_end_time_ns(
+      uint64_t timestamp_ns,
+      const std::vector<WirePoint>& points) {
+    uint64_t max_offset_ns = 0;
+    for (const auto& point : points) {
+      max_offset_ns = std::max<uint64_t>(max_offset_ns, point.offset_time_ns);
+    }
+    return timestamp_ns + max_offset_ns;
+  }
+
+  void append_locked(uint64_t timestamp_ns, const std::vector<WirePoint>& points) {
+    const uint64_t base_offset =
+        timestamp_ns > scan_start_ns_ ? timestamp_ns - scan_start_ns_ : 0ULL;
+    points_.reserve(points_.size() + points.size());
+    for (const auto& point : points) {
+      WirePoint merged = point;
+      const uint64_t offset = base_offset + point.offset_time_ns;
+      merged.offset_time_ns = static_cast<uint32_t>(
+          std::min<uint64_t>(offset, std::numeric_limits<uint32_t>::max()));
+      points_.push_back(merged);
+    }
+  }
+
+  CloudBatch take_locked() {
+    CloudBatch batch;
+    batch.lidar_id = lidar_id_;
+    batch.timestamp_ns = scan_start_ns_;
+    batch.points.swap(points_);
+    has_scan_ = false;
+    scan_start_ns_ = 0;
+    lidar_id_ = 0;
+    return batch;
+  }
+
+  const uint64_t window_ns_;
+  std::mutex mutex_;
+  bool has_scan_ = false;
+  uint64_t scan_start_ns_ = 0;
+  uint8_t lidar_id_ = 0;
+  std::vector<WirePoint> points_;
+};
+
+std::unique_ptr<ScanAccumulator> g_scan_accumulator;
+
+void emit_lidar_packet(uint8_t lidar_id,
+                       uint64_t timestamp_ns,
+                       const std::vector<WirePoint>& points) {
+  emit_raw_packet(lidar_id, timestamp_ns, points);
+  if (!g_scan_accumulator) {
+    emit_cloud(lidar_id, timestamp_ns, points);
+    return;
+  }
+  for (const auto& batch : g_scan_accumulator->submit(lidar_id, timestamp_ns, points)) {
+    emit_cloud(batch.lidar_id, batch.timestamp_ns, batch.points);
+  }
 }
 
 void handle_high_points(uint8_t dev_type,
@@ -288,7 +479,7 @@ void handle_high_points(uint8_t dev_type,
     point.line = static_cast<uint8_t>(i % line_count);
     points[i] = point;
   }
-  emit_cloud(dev_type, base_time_ns, points);
+  emit_lidar_packet(dev_type, base_time_ns, points);
 }
 
 void handle_low_points(uint8_t dev_type,
@@ -315,7 +506,7 @@ void handle_low_points(uint8_t dev_type,
     point.line = static_cast<uint8_t>(i % line_count);
     points[i] = point;
   }
-  emit_cloud(dev_type, base_time_ns, points);
+  emit_lidar_packet(dev_type, base_time_ns, points);
 }
 
 void handle_spherical_points(uint8_t dev_type,
@@ -345,7 +536,7 @@ void handle_spherical_points(uint8_t dev_type,
     point.line = static_cast<uint8_t>(i % line_count);
     points[i] = point;
   }
-  emit_cloud(dev_type, base_time_ns, points);
+  emit_lidar_packet(dev_type, base_time_ns, points);
 }
 
 void point_cloud_callback(uint32_t /*handle*/,
@@ -439,6 +630,14 @@ CliConfig parse_args(int argc, const char* argv[]) {
       config.dds = true;
     } else if (arg == "--domain-id") {
       config.domain_id = std::stoi(next());
+    } else if (arg == "--scan-window") {
+      config.scan_window_s = std::max(0.0, std::stod(next()));
+    } else if (arg == "--publish-freq") {
+      const double hz = std::stod(next());
+      if (hz <= 0.0) {
+        throw std::runtime_error("--publish-freq must be positive");
+      }
+      config.scan_window_s = 1.0 / hz;
     } else if (arg == "--lidar-frame") {
       config.lidar_frame = next();
     } else if (arg == "--imu-frame") {
@@ -446,6 +645,7 @@ CliConfig parse_args(int argc, const char* argv[]) {
     } else if (arg == "--help" || arg == "-h") {
       throw std::runtime_error(
           "usage: livox_sdk2_stream [--dds] [--domain-id N] "
+          "[--publish-freq HZ|--scan-window SEC] "
           "[--lidar-frame FRAME] [--imu-frame FRAME] <MID360_config.json>");
     } else if (config.config_path.empty()) {
       config.config_path = arg;
@@ -456,6 +656,7 @@ CliConfig parse_args(int argc, const char* argv[]) {
   if (config.config_path.empty()) {
     throw std::runtime_error(
         "usage: livox_sdk2_stream [--dds] [--domain-id N] "
+        "[--publish-freq HZ|--scan-window SEC] "
         "[--lidar-frame FRAME] [--imu-frame FRAME] <MID360_config.json>");
   }
   return config;
@@ -492,6 +693,7 @@ int main(int argc, const char* argv[]) {
     return 2;
   }
 #endif
+  g_scan_accumulator = std::make_unique<ScanAccumulator>(cli.scan_window_s);
 
   std::signal(SIGINT, signal_stop);
   std::signal(SIGTERM, signal_stop);
@@ -517,6 +719,11 @@ int main(int argc, const char* argv[]) {
   {
     std::unique_lock<std::mutex> lock(g_quit_mutex);
     g_quit_cv.wait(lock, [] { return g_quit.load(std::memory_order_relaxed); });
+  }
+  if (g_scan_accumulator) {
+    if (auto batch = g_scan_accumulator->flush()) {
+      emit_cloud(batch->lidar_id, batch->timestamp_ns, batch->points);
+    }
   }
 
   LivoxLidarSdkUninit();

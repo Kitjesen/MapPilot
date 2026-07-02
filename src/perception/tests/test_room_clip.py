@@ -12,7 +12,7 @@ SRC_ROOT = Path(__file__).resolve().parents[2]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from perception.instance_tracker import InstanceTracker, Region, TrackedObject
+from perception.tracking.instance_tracker import InstanceTracker, Region, TrackedObject
 
 
 def _make_feature(seed: int, dim: int = 512) -> np.ndarray:

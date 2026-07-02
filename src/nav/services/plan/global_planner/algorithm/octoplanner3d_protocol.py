@@ -71,7 +71,7 @@ PLANNER_INPUT_SCHEMA = {
     "map_source": {
         "type": "object",
         "required": True,
-        "description": "Generic map source. Current native runtime consumes file sources and converts/loads them into OctoMap.",
+        "description": "Generic map source. Current C++ runtime consumes file sources and converts/loads them into OctoMap.",
         "fields": {
             "kind": {
                 "type": "string",
@@ -80,7 +80,7 @@ PLANNER_INPUT_SCHEMA = {
             },
             "path": {
                 "type": "string",
-                "description": "Runtime-visible path. Windows paths are converted to WSL paths when the native executable runs in WSL.",
+                "description": "Runtime-visible path. Windows paths are converted to WSL paths when the C++ executable runs in WSL.",
             },
             "format": {
                 "type": "string",
@@ -123,7 +123,7 @@ PLANNER_INPUT_SCHEMA = {
         "type": "float",
         "required": False,
         "compatibility": "legacy LingTu cost threshold",
-        "description": "Carried for backend compatibility; native OctoMap occupancy, ground support, and collision checks drive planning.",
+        "description": "Carried for backend compatibility; C++ OctoMap occupancy, ground support, and collision checks drive planning.",
     },
     "options": {
         "type": "object",
@@ -148,17 +148,17 @@ PLANNER_INPUT_SCHEMA = {
 }
 PLANNER_OUTPUT_SCHEMA = {
     "planner": {"type": "string", "description": "Planner id, expected to be octoplanner3d"},
-    "protocol_version": {"type": "integer", "description": "JSON protocol version emitted by the native wrapper/backend"},
-    "ok": {"type": "bool", "description": "True only when the native planner returned a non-empty path"},
+    "protocol_version": {"type": "integer", "description": "JSON protocol version emitted by the C++ wrapper/backend"},
+    "ok": {"type": "bool", "description": "True only when the C++ planner returned a non-empty path"},
     "path": {
         "type": "array[array[3]float]",
         "frame": "LingTu planning/map frame",
         "description": "Global path waypoints [x, y, z] in meters",
     },
-    "reached_goal": {"type": "bool", "description": "Whether final path point is within native goal tolerance"},
+    "reached_goal": {"type": "bool", "description": "Whether final path point is within C++ goal tolerance"},
     "diagnostics": {
         "type": "object",
-        "description": "Native planner details such as path point count, goal error, elapsed time, map source, build capabilities, and failure reason",
+        "description": "C++ planner details such as path point count, goal error, elapsed time, map source, build capabilities, and failure reason",
     },
 }
 

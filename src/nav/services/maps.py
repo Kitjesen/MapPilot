@@ -30,19 +30,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from runtime import In, Module, Out
-from runtime.msgs.numpy_compat import np
-from runtime.msgs.map import MapCloudFrame
-from runtime.msgs.sensor import PointCloud2
-from runtime.registry import register
-from nav.services.map.command_router import dispatch_map_command
-from nav.services.map.facade import MapServiceFacadeMixin
 from nav.services.map.api import MapAPIService
+from nav.services.map.command_router import dispatch_map_command
 from nav.services.map.control import MapControlService
+from nav.services.map.facade import MapServiceFacadeMixin
 from nav.services.map.pipeline import MapPipelineService
 from nav.services.map.records import load_map_record
 from nav.services.map.runtime_bridge import MapRuntimeBridge
 from nav.services.map.storage import MapStorageService
+from runtime import In, Module, Out
+from runtime.msgs.map import MapCloudFrame
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import PointCloud2
+from runtime.registry import register
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,17 @@ class MapService(Module, MapServiceFacadeMixin, layer=6):
             ),
             build_octomap_on_save=bool(config.get("build_octomap_on_save", True)),
         )
-        self.control = MapControlService(storage=self.storage)
+        self.control = MapControlService(
+            storage=self.storage,
+            octomap_editor_command=(
+                config.get("octomap_editor_command")
+                or os.environ.get("LINGTU_OCTOMAP_EDITOR")
+                or None
+            ),
+            octomap_edit_timeout_sec=float(
+                config.get("octomap_edit_timeout_sec", 15.0)
+            ),
+        )
         self.api = MapAPIService(storage=self.storage)
 
     def setup(self) -> None:
@@ -194,6 +204,7 @@ class MapService(Module, MapServiceFacadeMixin, layer=6):
             "build_occupancy_snapshot": "map.artifact_built",
             "build_octomap": "map.artifact_built",
             "build_artifact": "map.artifact_built",
+            "edit_voxels": "map.edited",
         }.get(action)
         if not success:
             message = str(resp.get("message") or "").lower()
@@ -283,6 +294,36 @@ class MapService(Module, MapServiceFacadeMixin, layer=6):
     def _build_artifact(self, name: str, artifact_type: str) -> dict[str, Any]:
         return self.pipeline.build_artifact(name, artifact_type)
 
+    def _import_pcd(
+        self,
+        name: str,
+        source_path: str,
+        *,
+        voxel_size: float = 0.0,
+        bounds: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.pipeline.import_pcd(
+            name,
+            source_path,
+            voxel_size=voxel_size,
+            bounds=bounds,
+        )
+
+    def _crop_map(
+        self,
+        name: str,
+        bounds: dict[str, Any],
+        *,
+        invert: bool = False,
+        voxel_size: float = 0.0,
+    ) -> dict[str, Any]:
+        return self.pipeline.crop(
+            name,
+            bounds,
+            invert=invert,
+            voxel_size=voxel_size,
+        )
+
     def _map_save(
         self,
         name: str,
@@ -365,7 +406,7 @@ class MapService(Module, MapServiceFacadeMixin, layer=6):
         *,
         slam_profile: str | None = None,
     ) -> dict[str, Any]:
-        """Build or reuse octomap.bt for OctoPlanner3D runtime planning."""
+        """Build or reuse octomap.ot for OctoPlanner3D runtime planning."""
         return self.pipeline.build_octomap_artifact(
             name,
             slam_profile=slam_profile,
@@ -452,6 +493,10 @@ class MapService(Module, MapServiceFacadeMixin, layer=6):
     def _map_set_active(self, name: str) -> dict[str, Any]:
         """Create/update the ``active`` symlink to point at the named map dir."""
         return self.control.set_active(name)
+
+    def _map_edit_voxels(self, name: str, cmd: dict[str, Any]) -> dict[str, Any]:
+        """Edit saved OctoMap voxels used by OctoPlanner3D."""
+        return self.control.edit_voxels(name, cmd)
 
     def _save_active_map(self) -> None:
         self.storage.save_active_map()

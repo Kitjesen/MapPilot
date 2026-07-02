@@ -1,4 +1,4 @@
-﻿"""
+"""
 NaviMind Habitat Agent 鈥?BA-HSG + Fast-Slow 闆舵牱鏈?ObjectNav 璇勬祴銆?
 
 鎰熺煡绛栫暐 (鎸変紭鍏堢骇):
@@ -38,8 +38,8 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from runtime.utils.sanitize import sanitize_position, safe_json_loads
-from perception.projection import Detection3D
-from perception.instance_tracker import InstanceTracker
+from perception.tracking.projection import Detection3D
+from perception.tracking.instance_tracker import InstanceTracker
 from decision.goal_resolver import GoalResolver, GoalResult
 from decision.llm_client import LLMConfig
 

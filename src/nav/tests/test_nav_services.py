@@ -402,11 +402,28 @@ class TestMapService(unittest.TestCase):
         "gateway.gateway_module._apply_dynamic_filter_step1half",
         return_value=None,
     )
-    def test_map_save_localizer_requires_navigation_tomogram(
+    def test_map_save_localizer_tomogram_failure_does_not_block_octomap(
         self,
         _filter,
     ):
-        adapter = MagicMock(return_value={"success": True, "source": "fake_adapter"})
+        def _fake_save_maps(pcd_path, **_kw):
+            Path(pcd_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(pcd_path).write_text(
+                "VERSION 0.7\n"
+                "FIELDS x y z\n"
+                "SIZE 4 4 4\n"
+                "TYPE F F F\n"
+                "COUNT 1 1 1\n"
+                "WIDTH 1\n"
+                "HEIGHT 1\n"
+                "POINTS 1\n"
+                "DATA ascii\n"
+                "0.0 0.0 0.0\n",
+                encoding="utf-8",
+            )
+            return {"success": True, "source": "fake_adapter"}
+
+        adapter = MagicMock(side_effect=_fake_save_maps)
         self.mod._map_save_adapter = adapter
 
         with patch.object(
@@ -417,21 +434,35 @@ class TestMapService(unittest.TestCase):
                 "message": "tomogram source has no occupied structure",
             },
         ):
-            with patch.object(self.mod, "_build_occupancy_snapshot") as occupancy:
-                resp = self.mod._map_save(
-                    "bad_nav_map",
-                    slam_profile="localizer",
-                )
+            with patch.object(
+                self.mod,
+                "_build_occupancy_snapshot",
+                return_value={"success": True, "occupancy": "occupancy.npz"},
+            ) as occupancy:
+                with patch.object(
+                    self.mod,
+                    "_build_octomap_artifact",
+                    return_value={
+                        "success": True,
+                        "octomap": "octomap.ot",
+                        "metadata": {"ok": True, "path": "metadata.json"},
+                    },
+                ):
+                    resp = self.mod._map_save(
+                        "bad_nav_map",
+                        slam_profile="localizer",
+                    )
 
-        self.assertFalse(resp["success"], resp)
+        self.assertTrue(resp["success"], resp)
         self.assertEqual(resp["slam_profile"], "localizer")
         self.assertTrue(resp["map_save_supported"])
         self.assertEqual(resp["map_save_source"], "slam_service")
         self.assertFalse(resp["tomogram_ok"])
-        self.assertIn("not ready for navigation", resp["message"])
         self.assertIn("tomogram source", resp["tomogram_message"])
+        self.assertTrue(resp["octomap_ok"])
+        self.assertIn("Legacy tomogram build failed", resp["warnings"][0])
         adapter.assert_called_once()
-        occupancy.assert_not_called()
+        occupancy.assert_called_once()
 
     @patch(
         "gateway.gateway_module._apply_dynamic_filter_step1half",

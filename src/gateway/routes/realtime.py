@@ -175,6 +175,7 @@ def register_realtime_routes(app, gw) -> None:
         finally:
             gw._cloud_unsubscribe(q)
 
-    app.add_websocket_route("/ws/teleop", ws_teleop_endpoint)
-    app.add_websocket_route("/ws/camera", ws_camera_endpoint)
-    app.add_websocket_route("/ws/cloud", ws_cloud_endpoint)
+    add_ws = getattr(app, "add_websocket_route", None) or app.add_api_websocket_route
+    add_ws("/ws/teleop", ws_teleop_endpoint)
+    add_ws("/ws/camera", ws_camera_endpoint)
+    add_ws("/ws/cloud", ws_cloud_endpoint)

@@ -15,9 +15,7 @@ class Text(IdlStruct, typename="lingtu::dds::Text"):
     data: str
 
 
-@dataclass
-class String(IdlStruct, typename="lingtu::dds::String"):
-    data: str
+String = Text
 
 
 DDS_Float32 = Float32

@@ -83,6 +83,7 @@ class VelocityMux(Module, layer=0):
 
         self._active: str = ""
         self._last_publish_time: float = 0.0
+        self._last_driver_twist: Twist = Twist.zero()
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._monitor_thread: threading.Thread | None = None
@@ -90,7 +91,11 @@ class VelocityMux(Module, layer=0):
 
     def freeze(self) -> None:
         self._frozen = True
-        self.driver_cmd_vel.publish(Twist.zero())
+        zero = Twist.zero()
+        with self._lock:
+            self._last_driver_twist = zero
+            self._last_publish_time = time.time()
+        self.driver_cmd_vel.publish(zero)
         logger.info("VelocityMux: frozen")
 
     def unfreeze(self) -> None:
@@ -170,6 +175,7 @@ class VelocityMux(Module, layer=0):
 
             if name == winner:
                 driver_twist = twist
+                self._last_driver_twist = twist
                 self._last_publish_time = now
 
         if active_update is not None:
@@ -191,6 +197,7 @@ class VelocityMux(Module, layer=0):
                 if winner
                 else Twist.zero()
             )
+            self._last_driver_twist = driver_twist
             self._last_publish_time = now
 
         self.active_source.publish(winner)
@@ -223,8 +230,24 @@ class VelocityMux(Module, layer=0):
                     "age_ms": round(age * 1000) if age is not None else None,
                 }
             active = self._active or "none"
+            twist = self._last_driver_twist
+            last_publish_time = self._last_publish_time
         return {
             "active_source": active,
             "source_timeout_s": float(self._source_timeout),
             "sources": sources,
+            "last_driver_cmd_vel": {
+                "linear": {
+                    "x": float(twist.linear.x),
+                    "y": float(twist.linear.y),
+                    "z": float(twist.linear.z),
+                },
+                "angular": {
+                    "x": float(twist.angular.x),
+                    "y": float(twist.angular.y),
+                    "z": float(twist.angular.z),
+                },
+                "ts": last_publish_time if last_publish_time > 0.0 else None,
+                "active_source": active,
+            },
         }

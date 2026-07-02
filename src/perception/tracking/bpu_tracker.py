@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .detector_base import Detection2D
+from ..detection.detector_base import Detection2D
 
 
 @dataclass

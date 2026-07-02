@@ -24,10 +24,34 @@ class TopicSpec:
 
 
 TOPIC_SPECS: dict[str, TopicSpec] = {
+    "/tf": TopicSpec(
+        "/tf",
+        "TFMessage",
+        "message.dds_types.geometry.TFMessage",
+        "lingtu.dds.TFMessage",
+        "lingtu::dds::TFMessage",
+        ros_compatible=False,
+    ),
+    "/tf_static": TopicSpec(
+        "/tf_static",
+        "TFMessage",
+        "message.dds_types.geometry.TFMessage",
+        "lingtu.dds.TFMessage",
+        "lingtu::dds::TFMessage",
+        ros_compatible=False,
+    ),
     # Native hardware wire. ROS2/Livox-compatible DDS is adapter-only and must
     # translate into this schema before entering the SLAM hot path.
     TOPICS.lidar_scan: TopicSpec(
         TOPICS.lidar_scan,
+        "LivoxFrame",
+        "message.dds_types.livox.LivoxFrame",
+        "lingtu.dds.LivoxFrame",
+        "lingtu::dds::LivoxFrame",
+        ros_compatible=False,
+    ),
+    TOPICS.raw_lidar_packet: TopicSpec(
+        TOPICS.raw_lidar_packet,
         "LivoxFrame",
         "message.dds_types.livox.LivoxFrame",
         "lingtu.dds.LivoxFrame",
@@ -90,6 +114,22 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "lingtu::dds::PointCloud2",
         ros_compatible=False,
     ),
+    TOPICS.slam_map_command: TopicSpec(
+        TOPICS.slam_map_command,
+        "Text",
+        "message.dds_types.scalar.Text",
+        "lingtu.dds.Text",
+        "lingtu::dds::Text",
+        ros_compatible=False,
+    ),
+    TOPICS.slam_map_event: TopicSpec(
+        TOPICS.slam_map_event,
+        "Text",
+        "message.dds_types.scalar.Text",
+        "lingtu.dds.Text",
+        "lingtu::dds::Text",
+        ros_compatible=False,
+    ),
     TOPICS.localization_quality: TopicSpec(
         TOPICS.localization_quality,
         "Float32",
@@ -140,18 +180,18 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
     ),
     TOPICS.cancel: TopicSpec(
         TOPICS.cancel,
-        "String",
-        "message.dds_types.scalar.String",
-        "lingtu.dds.String",
-        "lingtu::dds::String",
+        "Text",
+        "message.dds_types.scalar.Text",
+        "lingtu.dds.Text",
+        "lingtu::dds::Text",
         ros_compatible=False,
     ),
     TOPICS.semantic_instruction: TopicSpec(
         TOPICS.semantic_instruction,
-        "String",
-        "message.dds_types.scalar.String",
-        "lingtu.dds.String",
-        "lingtu::dds::String",
+        "Text",
+        "message.dds_types.scalar.Text",
+        "lingtu.dds.Text",
+        "lingtu::dds::Text",
         ros_compatible=False,
     ),
     TOPICS.cmd_vel: TopicSpec(
@@ -186,7 +226,7 @@ def to_dds_message(topic: str, msg: Any) -> Any:
     """Convert a runtime message to the registered DDS payload for a topic."""
 
     topic = str(topic)
-    if topic == TOPICS.raw_lidar_points:
+    if topic in {TOPICS.raw_lidar_points, TOPICS.raw_lidar_packet}:
         from message.dds_types.livox import livox_frame_to_msg
 
         return livox_frame_to_msg(msg)
@@ -199,7 +239,7 @@ def from_dds_message(topic: str, msg: Any) -> Any:
     """Convert a registered DDS payload back to a runtime message."""
 
     topic = str(topic)
-    if topic == TOPICS.raw_lidar_points:
+    if topic in {TOPICS.raw_lidar_points, TOPICS.raw_lidar_packet}:
         from message.dds_types.livox import livox_msg_to_frame
 
         return livox_msg_to_frame(msg)

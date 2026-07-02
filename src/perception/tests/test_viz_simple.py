@@ -16,8 +16,8 @@ from scipy.spatial import ConvexHull
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.polyhedron_expansion import Polyhedron
-from perception.scg_builder import SCGBuilder, SCGConfig
+from perception.scene_understanding.polyhedron_expansion import Polyhedron
+from perception.scene_understanding.scg_builder import SCGBuilder, SCGConfig
 
 
 def test_polyhedron_creation():

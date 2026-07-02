@@ -15,7 +15,7 @@
 robot:
   id: "robot_001"
   hw_id: "dog_v2"
-  firmware_version: "1.7.2"
+  firmware_version: "2.3.0"
 
 # ── 几何尺寸 (m) ──
 geometry:
@@ -59,7 +59,7 @@ driver:
 lidar:
   frame_id: "livox_frame"
   publish_freq: 10.0          # Hz
-  lidar_ip: "192.168.1.115"   # MID-360 device IP.
+  lidar_ip: "192.168.1.178"   # MID-360 device IP.
   host_ip: "192.168.1.5"      # Robot NIC IP on the Livox subnet.
   # LiDAR mounting extrinsics (body->lidar TF, metres/radians).
   # Used by static_transform_publisher and C++ coordinate transforms.
@@ -112,7 +112,10 @@ brainstem:
 
 # ── GNSS (WTRTK-980) ──
 # 硬件: WitMotion WTRTK-980 (UM980 芯片, 单天线 RTK, 50Hz)
-# 驱动: ironoa/um982_ros2_driver (systemd: gnss.service)
+# 驱动: 原生 GnssSerialDriver (pyserial + NMEA, 直读下方 device 指定的 UART) —
+#       这是默认路径, 不依赖任何 ROS2 systemd service。
+#       ROS2 wtrtk980_ros2_reader + DDS /gps/fix 仅作为兼容回退 (device 未配置或串口启动失败时),
+#       见 docs/architecture/ROS_ROLE_REPLACEMENT_MAP.md。
 # 融合: fastlio2_gnss backend (GTSAM PGO 全局约束)
 gnss:
   enabled: true                     # WTRTK-980 已接入
@@ -126,7 +129,7 @@ gnss:
     y: 0.00                        # 左右
     z: 0.45                        # 离地高度
 
-  # ROS2 topic (ironoa 驱动发布，LingTu 通过 DDS 订阅)
+  # DDS 兼容回退 topic (仅在原生串口路径不可用时使用; ROS2 wtrtk980_ros2_reader 兼容层发布)
   topic_fix: "/gps/fix"             # sensor_msgs/NavSatFix (50Hz)
   topic_odom: "/gps/odom"           # nav_msgs/Odometry (UTM, 50Hz)
   topic_vel: "/gps/vel"             # geometry_msgs/TwistStamped
@@ -331,6 +334,10 @@ occupancy_grid:
   z_min: 0.10                  # 忽略低于此高度的点 (m) — 地面
   z_max: 2.00                  # 忽略高于此高度的点 (m) — 天花板
   inflation_radius: 0.50       # 障碍膨胀半径 (m) ≈ 机器人半宽
+  robot_clear_radius: 0.60      # circular self-filter around current odometry
+  robot_clear_forward: 0.85     # body-frame self-filter in front of base
+  robot_clear_backward: 0.65    # body-frame self-filter behind base
+  robot_clear_lateral: 0.55     # body-frame self-filter half width
   publish_hz: 2.0              # 发布频率 (Hz)
 
 # ── 健康监控 ──

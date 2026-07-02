@@ -114,6 +114,7 @@ def test_refilter_map_incomplete_dir(tmp_path: Path, monkeypatch):
     fake_bin.touch()
     fake_bin.chmod(0o755)
     monkeypatch.setattr(df, "DUFOMAP_BIN", str(fake_bin))
+    monkeypatch.setenv("LINGTU_DUFOMAP_MIN_PATCHES", "1")
 
     # Empty map dir (no patches/, no poses.txt, no map.pcd)
     empty = tmp_path / "empty_map"
@@ -131,6 +132,7 @@ def test_refilter_map_subprocess_failure(tmp_path: Path, monkeypatch):
     fake_bin.touch()
     fake_bin.chmod(0o755)
     monkeypatch.setattr(df, "DUFOMAP_BIN", str(fake_bin))
+    monkeypatch.setenv("LINGTU_DUFOMAP_MIN_PATCHES", "1")
 
     # Build a minimal valid map dir
     map_dir = tmp_path / "m"
@@ -152,6 +154,32 @@ def test_refilter_map_subprocess_failure(tmp_path: Path, monkeypatch):
     assert (map_dir / "map.pcd").is_file()
 
 
+def test_refilter_map_skips_when_patch_count_below_minimum(tmp_path: Path, monkeypatch):
+    fake_bin = tmp_path / "fake_dufomap"
+    fake_bin.touch()
+    fake_bin.chmod(0o755)
+    monkeypatch.setattr(df, "DUFOMAP_BIN", str(fake_bin))
+    monkeypatch.setenv("LINGTU_DUFOMAP_MIN_PATCHES", "3")
+
+    map_dir = tmp_path / "m"
+    patches = map_dir / "patches"
+    patches.mkdir(parents=True)
+    pts = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+    df._write_pcd_binary(patches / "0.pcd", pts, (0, 0, 0, 1, 0, 0, 0))
+    (map_dir / "poses.txt").write_text("0.pcd 0 0 0 1 0 0 0\n")
+    df._write_pcd_binary(map_dir / "map.pcd", pts, (0, 0, 0, 1, 0, 0, 0))
+
+    mock_run = MagicMock()
+    monkeypatch.setattr(df.subprocess, "run", mock_run)
+
+    result = df.refilter_map(map_dir)
+
+    assert result["success"] is False
+    assert "insufficient patches" in result["error"]
+    assert result["patch_count"] == 1
+    mock_run.assert_not_called()
+
+
 def test_refilter_map_success_creates_backup(tmp_path: Path, monkeypatch):
     """Happy path: backs up original, overwrites map.pcd with cleaned output."""
     # Fake binary
@@ -159,20 +187,27 @@ def test_refilter_map_success_creates_backup(tmp_path: Path, monkeypatch):
     fake_bin.touch()
     fake_bin.chmod(0o755)
     monkeypatch.setattr(df, "DUFOMAP_BIN", str(fake_bin))
+    monkeypatch.setenv("LINGTU_DUFOMAP_MIN_PATCHES", "1")
 
     # Minimal map dir
     map_dir = tmp_path / "m"
     patches = map_dir / "patches"
     patches.mkdir(parents=True)
     orig_pts = np.random.rand(100, 3).astype(np.float32) * 10
-    df._write_pcd_binary(patches / "0.pcd", orig_pts, (0, 0, 0, 1, 0, 0, 0))
-    (map_dir / "poses.txt").write_text("0.pcd 0 0 0 1 0 0 0\n")
+    df._write_pcd_binary(
+        patches / "scan_000123.pcd",
+        orig_pts,
+        (0, 0, 0, 1, 0, 0, 0),
+    )
+    (map_dir / "poses.txt").write_text("scan_000123.pcd 0 0 0 1 0 0 0\n")
     df._write_pcd_binary(map_dir / "map.pcd", orig_pts, (0, 0, 0, 1, 0, 0, 0))
     orig_md5 = (map_dir / "map.pcd").read_bytes()
 
     def fake_run(cmd, **kwargs):
         # cmd is [bin, tmpdir, config]. Simulate DUFOMap writing output.
         tmpdir = Path(cmd[1])
+        assert (tmpdir / "pcd" / "000000.pcd").is_file()
+        assert not (tmpdir / "pcd" / "scan_000123.pcd").exists()
         clean_pts = orig_pts[:80]  # drop 20 points
         df._write_pcd_binary(tmpdir / "dufomap_output.pcd", clean_pts,
                              (0, 0, 0, 1, 0, 0, 0))
@@ -203,6 +238,7 @@ def test_refilter_map_subprocess_timeout(tmp_path: Path, monkeypatch):
     fake_bin.touch()
     fake_bin.chmod(0o755)
     monkeypatch.setattr(df, "DUFOMAP_BIN", str(fake_bin))
+    monkeypatch.setenv("LINGTU_DUFOMAP_MIN_PATCHES", "1")
 
     map_dir = tmp_path / "m"
     patches = map_dir / "patches"

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("cv2", reason="OpenCV 仅在机器人环境可用")
-from perception.laplacian_filter import (
+from perception.detection.laplacian_filter import (
     compute_laplacian_variance,
     is_blurry,
 )
@@ -65,7 +65,7 @@ class TestProjection(unittest.TestCase):
 
     def test_project_center_pixel(self):
         """中心像素投影到光心应为 (0, 0, depth)。"""
-        from perception.projection import (
+        from perception.tracking.projection import (
             CameraIntrinsics,
             project_to_3d,
         )
@@ -77,7 +77,7 @@ class TestProjection(unittest.TestCase):
 
     def test_transform_identity(self):
         """单位变换应保持坐标不变。"""
-        from perception.projection import transform_point
+        from perception.tracking.projection import transform_point
         point = np.array([1.0, 2.0, 3.0])
         tf = np.eye(4)
         result = transform_point(point, tf)
@@ -85,7 +85,7 @@ class TestProjection(unittest.TestCase):
 
     def test_transform_translation(self):
         """纯平移变换应正确偏移。"""
-        from perception.projection import transform_point
+        from perception.tracking.projection import transform_point
         point = np.array([1.0, 2.0, 3.0])
         tf = np.eye(4)
         tf[:3, 3] = [10.0, 20.0, 30.0]
@@ -98,8 +98,8 @@ class TestInstanceTracker(unittest.TestCase):
 
     def test_new_detection_creates_instance(self):
         """新检测应创建新实例。"""
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
         tracker = InstanceTracker(merge_distance=0.5)
         det = Detection3D(
             position=np.array([1.0, 2.0, 0.0]),
@@ -116,8 +116,8 @@ class TestInstanceTracker(unittest.TestCase):
 
     def test_nearby_same_label_merges(self):
         """近距离同标签检测应合并。"""
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
         tracker = InstanceTracker(merge_distance=1.0)
         det1 = Detection3D(
             position=np.array([1.0, 2.0, 0.0]),
@@ -143,8 +143,8 @@ class TestInstanceTracker(unittest.TestCase):
 
     def test_different_labels_separate(self):
         """不同标签应保持分离。"""
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
         tracker = InstanceTracker(merge_distance=1.0)
         det1 = Detection3D(
             position=np.array([1.0, 2.0, 0.0]),
@@ -170,8 +170,8 @@ class TestInstanceTracker(unittest.TestCase):
         """场景图 JSON 应可正常解析。"""
         import json
 
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
         tracker = InstanceTracker()
         det = Detection3D(
             position=np.array([1.0, 2.0, 3.0]),
@@ -197,8 +197,8 @@ class TestInstanceTracker(unittest.TestCase):
         """记录视角后 scene_graph 应包含 view 节点。"""
         import json
 
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
 
         tracker = InstanceTracker()
         det = Detection3D(
@@ -223,8 +223,8 @@ class TestInstanceTracker(unittest.TestCase):
 
     def test_feature_fusion_across_observations(self):
         """同一实例多次观测时应融合特征并保持归一化。"""
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
 
         tracker = InstanceTracker(merge_distance=1.0)
         det1 = Detection3D(
@@ -252,8 +252,8 @@ class TestInstanceTracker(unittest.TestCase):
 
     def test_text_query(self):
         """文本查询应返回匹配物体。"""
-        from perception.instance_tracker import InstanceTracker
-        from perception.projection import Detection3D
+        from perception.tracking.instance_tracker import InstanceTracker
+        from perception.tracking.projection import Detection3D
         tracker = InstanceTracker()
         for label in ["chair", "fire extinguisher", "desk", "red chair"]:
             tracker.update([Detection3D(

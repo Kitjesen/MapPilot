@@ -6,7 +6,6 @@ from typing import Any, Callable
 
 from nav.services.map.storage import InvalidMapName
 
-
 Handler = Callable[[Any, dict[str, Any]], dict[str, Any]]
 
 
@@ -51,6 +50,13 @@ def _artifact_type(cmd: dict[str, Any]) -> str:
         or cmd.get("capability", "")
         or cmd.get("map_class", "")
     )
+
+
+def _float(cmd: dict[str, Any], key: str, default: float = 0.0) -> float:
+    try:
+        return float(cmd.get(key, default) or default)
+    except (TypeError, ValueError):
+        return default
 
 
 def _with_reason_code(resp: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +109,24 @@ _ROUTES: dict[str, Handler] = {
         _name(cmd),
         _artifact_type(cmd),
     ),
+    "import_pcd": lambda service, cmd: service._import_pcd(
+        _name(cmd),
+        str(cmd.get("source_path", "") or cmd.get("path", "")),
+        voxel_size=_float(cmd, "voxel_size", 0.0),
+        bounds=cmd.get("bounds") if isinstance(cmd.get("bounds"), dict) else None,
+    ),
+    "crop": lambda service, cmd: service._crop_map(
+        _name(cmd),
+        cmd.get("bounds") if isinstance(cmd.get("bounds"), dict) else {},
+        invert=bool(cmd.get("invert", False)),
+        voxel_size=_float(cmd, "voxel_size", 0.0),
+    ),
+    "crop_map": lambda service, cmd: service._crop_map(
+        _name(cmd),
+        cmd.get("bounds") if isinstance(cmd.get("bounds"), dict) else {},
+        invert=bool(cmd.get("invert", False)),
+        voxel_size=_float(cmd, "voxel_size", 0.0),
+    ),
     "get_record": lambda service, cmd: service._get_record(_name(cmd)),
     "get_metadata": lambda service, cmd: service._get_record(_name(cmd)),
     "get_active": lambda service, _cmd: service._get_active_map(),
@@ -117,6 +141,9 @@ _ROUTES: dict[str, Handler] = {
         _name(cmd),
         str(cmd.get("capability", "")),
     ),
+    "edit_voxel": lambda service, cmd: service._map_edit_voxels(_name(cmd), cmd),
+    "edit_voxels": lambda service, cmd: service._map_edit_voxels(_name(cmd), cmd),
+    "voxel_edit": lambda service, cmd: service._map_edit_voxels(_name(cmd), cmd),
     "poi_set": lambda service, cmd: service._poi_set(cmd),
     "poi_delete": lambda service, cmd: service._poi_delete(str(cmd.get("name", ""))),
     "poi_list": lambda service, _cmd: service._poi_list(),

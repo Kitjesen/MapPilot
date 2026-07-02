@@ -13,6 +13,20 @@ if(NOT EXISTS "${OCTOPLANNER3D_SOURCE_DIR}/planner/include/global_planner.h")
 endif()
 
 find_package(PCL QUIET COMPONENTS common io octree)
+find_path(OCTOMAP_SYSTEM_INCLUDE_DIR NAMES octomap/OcTree.h)
+find_library(OCTOMAP_SYSTEM_LIBRARY NAMES octomap)
+find_library(OCTOMATH_SYSTEM_LIBRARY NAMES octomath)
+if(OCTOMAP_SYSTEM_INCLUDE_DIR AND OCTOMAP_SYSTEM_LIBRARY AND OCTOMATH_SYSTEM_LIBRARY)
+  set(OCTOMAP_INCLUDE_DIR "${OCTOMAP_SYSTEM_INCLUDE_DIR}")
+  set(OCTOMAP_LIBRARY "${OCTOMAP_SYSTEM_LIBRARY}")
+  set(OCTOMATH_LIBRARY "${OCTOMATH_SYSTEM_LIBRARY}")
+  message(STATUS "Using system OctoMap: ${OCTOMAP_LIBRARY}")
+else()
+  set(OCTOMAP_INCLUDE_DIR "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include")
+  set(OCTOMAP_LIBRARY "${OCTOPLANNER3D_SOURCE_DIR}/lib/liboctomap.so.1.10")
+  set(OCTOMATH_LIBRARY "${OCTOPLANNER3D_SOURCE_DIR}/lib/liboctomath.so.1.10")
+  message(STATUS "Using bundled OctoMap libraries from ${OCTOPLANNER3D_SOURCE_DIR}/lib")
+endif()
 set(OCTOPLANNER3D_PCD_CONVERTER_HEADER "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include/pcd2octomap_converter.h")
 set(OCTOPLANNER3D_PCD_CONVERTER_SOURCE "${OCTOPLANNER3D_SOURCE_DIR}/octomap/src/pcd2octomap_converter.cpp")
 set(OCTOPLANNER3D_ENABLE_PCD OFF)
@@ -29,14 +43,14 @@ endif()
 
 add_library(octomap_vendor SHARED IMPORTED GLOBAL)
 set_target_properties(octomap_vendor PROPERTIES
-  IMPORTED_LOCATION "${OCTOPLANNER3D_SOURCE_DIR}/lib/liboctomap.so.1.10"
-  INTERFACE_INCLUDE_DIRECTORIES "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
+  IMPORTED_LOCATION "${OCTOMAP_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
 )
 
 add_library(octomath_vendor SHARED IMPORTED GLOBAL)
 set_target_properties(octomath_vendor PROPERTIES
-  IMPORTED_LOCATION "${OCTOPLANNER3D_SOURCE_DIR}/lib/liboctomath.so.1.10"
-  INTERFACE_INCLUDE_DIRECTORIES "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
+  IMPORTED_LOCATION "${OCTOMATH_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${OCTOMAP_INCLUDE_DIR}"
 )
 
 add_library(octoplanner3d_global_planner STATIC
@@ -96,21 +110,33 @@ set_target_properties(octoplanner3d_headless PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 
-option(OCTOPLANNER3D_BUILD_PYTHON_BINDINGS "Build the ROS2-free OctoPlanner3D Python extension" OFF)
-if(OCTOPLANNER3D_BUILD_PYTHON_BINDINGS)
-  find_package(Python COMPONENTS Interpreter Development REQUIRED)
+add_executable(octoplanner3d_edit_octomap edit_octomap.cpp)
+if(UNIX)
+  target_link_options(octoplanner3d_edit_octomap PRIVATE "-Wl,--no-as-needed")
 endif()
-if(OCTOPLANNER3D_BUILD_PYTHON_BINDINGS)
-  add_library(_native MODULE py_octoplanner3d.cpp)
-  target_link_libraries(_native PRIVATE octoplanner3d_runtime Python::Python)
-  set_target_properties(_native PROPERTIES
-    PREFIX ""
+target_link_libraries(octoplanner3d_edit_octomap
+  PRIVATE
+    octomap_vendor
+    octomath_vendor
+)
+set_target_properties(octoplanner3d_edit_octomap PROPERTIES
+  BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
+  INSTALL_RPATH "$ORIGIN"
+)
+
+if(OCTOPLANNER3D_ENABLE_PCD)
+  add_executable(octoplanner3d_pcd_to_octomap pcd_to_octomap.cpp)
+  target_link_libraries(octoplanner3d_pcd_to_octomap
+    PRIVATE
+      octoplanner3d_pcd_converter
+  )
+  set_target_properties(octoplanner3d_pcd_to_octomap PROPERTIES
     BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
     INSTALL_RPATH "$ORIGIN"
   )
-  if(Python_SOABI)
-    set_target_properties(_native PROPERTIES SUFFIX ".${Python_SOABI}.so")
-  endif()
 endif()
 
-install(TARGETS octoplanner3d_headless RUNTIME DESTINATION bin)
+install(TARGETS octoplanner3d_headless octoplanner3d_edit_octomap RUNTIME DESTINATION bin)
+if(OCTOPLANNER3D_ENABLE_PCD)
+  install(TARGETS octoplanner3d_pcd_to_octomap RUNTIME DESTINATION bin)
+endif()

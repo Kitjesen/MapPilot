@@ -117,6 +117,8 @@ docs/media/videos/*.gif
 **/.omx/
 .hermes/
 .qoder/
+.claude/
+CLAUDE.md
 .chat_history
 
 # 鈹€鈹€ Temporary files 鈹€鈹€
@@ -188,4 +190,3 @@ mobileclip_blt.ts
 src/mobileclip_blt.ts
 src/yoloe-11l-seg.pt
 web/node_modules
-.claude/

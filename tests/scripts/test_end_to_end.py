@@ -32,9 +32,9 @@ print()
 # ============================================================================
 print("Test 1: Module imports...")
 try:
-    from perception.yolo_world_detector import YOLOWorldDetector
-    from perception.clip_encoder import CLIPEncoder
-    from perception.instance_tracker import InstanceTracker
+    from perception.detection.yolo_world_detector import YOLOWorldDetector
+    from perception.encoding.clip_encoder import CLIPEncoder
+    from perception.tracking.instance_tracker import InstanceTracker
     from decision.goal_resolution.goal_resolver import GoalResolver
     from decision.goal_resolution.chinese_tokenizer import extract_keywords
     print("[OK] All modules imported successfully")
@@ -73,7 +73,7 @@ try:
     tracker = InstanceTracker()
 
     # Simulate detection results
-    from perception.projection import Detection3D
+    from perception.tracking.projection import Detection3D
 
     det1 = Detection3D(
         label="chair",

@@ -233,8 +233,8 @@ def _build_mock_scg_for_scenario(scenario: dict):
 
     返回已调用过 build_edges 的 SCGBuilder。
     """
-    from perception.polyhedron_expansion import Polyhedron
-    from perception.scg_builder import SCGBuilder, SCGConfig
+    from perception.scene_understanding.polyhedron_expansion import Polyhedron
+    from perception.scene_understanding.scg_builder import SCGBuilder, SCGConfig
 
     start = scenario["start"]
     goal = scenario["goal"]
@@ -319,7 +319,7 @@ class PCTBaselineWrapper:
         self._planner = None
         self._available = False
         try:
-            from perception.baseline_wrappers import PCTAStarPlanner
+            from perception.research.baseline_wrappers import PCTAStarPlanner
             self._planner = PCTAStarPlanner()
             # 使用足够大的栅格覆盖所有测试场景（25m × 20m，分辨率 0.5m）
             self._planner.initialize(
@@ -412,7 +412,7 @@ class HybridPlannerWrapper:
 
         t0 = time.perf_counter()
         try:
-            from perception.hybrid_planner import HybridPlanner
+            from perception.scene_understanding.hybrid_planner import HybridPlanner
 
             tsg = _build_mock_tsg_for_scenario(scenario)
             mock_tomo = MockTomogram()
@@ -487,7 +487,7 @@ class SCGPlannerWrapper:
 
         t0 = time.perf_counter()
         try:
-            from perception.scg_path_planner import SCGPathPlanner
+            from perception.scene_understanding.scg_path_planner import SCGPathPlanner
 
             scg = _build_mock_scg_for_scenario(scenario)
             planner = SCGPathPlanner(scg)

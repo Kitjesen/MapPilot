@@ -44,7 +44,7 @@ def multi_robot_blueprint(
     Args:
         robots:
             Robot preset or driver names. Common values include ``"stub"``,
-            ``"thunder"``, ``"sim_mujoco"``, and ``"sim_ros2"``.
+            ``"thunder"``, ``"sim_mujoco"``, and ``"sim_endpoint"``.
         port_offset:
             Offset added to the base gateway port 5050. Robot ``i`` receives
             gateway port ``5050 + i + port_offset``.

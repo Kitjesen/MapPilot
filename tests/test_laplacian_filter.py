@@ -7,9 +7,9 @@
 
 import pytest
 import numpy as np
-from perception.laplacian_filter import is_blurry
-from perception.projection import project_to_3d, CameraIntrinsics
-from perception.instance_tracker import InstanceTracker
+from perception.detection.laplacian_filter import is_blurry
+from perception.tracking.projection import project_to_3d, CameraIntrinsics
+from perception.tracking.instance_tracker import InstanceTracker
 
 
 class TestLaplacianFilter:

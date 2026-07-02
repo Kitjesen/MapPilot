@@ -5,17 +5,17 @@ pytestmark = [pytest.mark.sim]
 from runtime.blueprints.full_stack import full_stack_blueprint
 
 
-@pytest.mark.parametrize(
-    ("robot", "driver_name", "camera_source"),
-    [
-        # MuJoCo driver has a built-in camera, publishes camera_image directly.
-        ("sim_mujoco", "MujocoDriverModule", "MujocoDriverModule"),
-        # ROS2 sim driver delegates camera to CameraBridgeModule (see
-        # _NATIVE_CAMERA_DRIVERS in blueprints/stacks/perception.py).
-        ("sim_ros2", "ROS2SimDriverModule", "CameraBridgeModule"),
-    ],
-)
-def test_sim_blueprint_wires_real_semantic_pipeline(robot, driver_name, camera_source):
+def test_sim_blueprint_wires_real_semantic_pipeline():
+    # MuJoCo driver has a built-in camera, publishes camera_image directly.
+    # The previous bridged-camera case (a non-native-camera sim driver wired
+    # through CameraBridgeModule) used ROS2SimDriverModule, which was retired
+    # with the ROS2 sim driver preset; the native CameraBridgeModule backend
+    # also does not resolve on a machine without the real camera SDK
+    # installed, so that scenario is not currently representable here.
+    robot = "sim_mujoco"
+    driver_name = "MujocoDriverModule"
+    camera_source = "MujocoDriverModule"
+
     system = full_stack_blueprint(
         robot=robot,
         slam_profile="none",
@@ -34,11 +34,7 @@ def test_sim_blueprint_wires_real_semantic_pipeline(robot, driver_name, camera_s
     connections = set(system.connections)
 
     def has_conn(src_mod: str, dst_mod: str, dst_port: str) -> bool:
-        """Check if any connection exists from src_mod to dst_mod.dst_port.
-
-        Ignores the source port name because sim_mujoco and sim_ros2 drivers
-        use different naming conventions (camera_image vs color_image).
-        """
+        """Check if any connection exists from src_mod to dst_mod.dst_port."""
         return any(
             c[0] == src_mod and c[2] == dst_mod and c[3] == dst_port
             for c in connections

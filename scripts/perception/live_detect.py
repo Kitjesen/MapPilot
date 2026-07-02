@@ -39,7 +39,7 @@ def camera_loop():
     import rclpy
     from rclpy.node import Node
     from sensor_msgs.msg import Image as RosImage
-    from perception.bpu_detector import BPUDetector
+    from perception.detection.bpu_detector import BPUDetector
 
     det = BPUDetector(
         confidence=0.3,

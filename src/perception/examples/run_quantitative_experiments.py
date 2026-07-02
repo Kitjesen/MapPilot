@@ -32,9 +32,9 @@ from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.end_to_end_evaluation import EndToEndEvaluator
-from perception.evaluation_framework import BenchmarkResult
-from perception.visualization_tools import (
+from perception.research.end_to_end_evaluation import EndToEndEvaluator
+from perception.research.evaluation_framework import BenchmarkResult
+from perception.research.visualization_tools import (
     PerformanceVisualizer,
 )
 
@@ -309,7 +309,7 @@ def run_quantitative_experiments(
     evaluator = EndToEndEvaluator()
 
     # 获取场景列表
-    from perception.dataset_loader import HM3DDatasetLoader
+    from perception.research.dataset_loader import HM3DDatasetLoader
     loader = HM3DDatasetLoader(dataset_root)
     available_scenes = loader.list_scenes()[:num_scenes]
 

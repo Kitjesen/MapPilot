@@ -240,7 +240,7 @@ class ViewNode:
 def __getattr__(name: str):
     """Backward-compatible lazy export for symbols moved out of runtime.msgs.scene."""
     if name == "TrackedObject":
-        from perception.tracked_objects import TrackedObject
+        from perception.tracking.tracked_objects import TrackedObject
 
         return TrackedObject
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

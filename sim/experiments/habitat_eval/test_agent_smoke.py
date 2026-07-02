@@ -1,4 +1,4 @@
-﻿"""
+"""
 NaviMind Agent 鍐掔儫娴嬭瘯 鈥?涓嶉渶瑕?Habitat 鐜/鏁版嵁闆嗐€?
 
 楠岃瘉:
@@ -29,8 +29,8 @@ print("=" * 60)
 # Test 1: Import
 print("\n[1/5] 渚濊禆 import...")
 from runtime.utils.sanitize import sanitize_position, safe_json_loads
-from perception.projection import Detection3D
-from perception.instance_tracker import InstanceTracker
+from perception.tracking.projection import Detection3D
+from perception.tracking.instance_tracker import InstanceTracker
 from decision.goal_resolver import GoalResolver, GoalResult
 from decision.llm_client import LLMConfig
 from habitat_navimind_agent import NaviMindAgent, OBJECTNAV_CATEGORIES, _normalize_category

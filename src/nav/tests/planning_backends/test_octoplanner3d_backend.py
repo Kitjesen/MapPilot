@@ -1,8 +1,8 @@
-"""Tests for optional OctoPlanner3D planner backend.
+"""Tests for the OctoPlanner3D planner backend.
 
 These tests do not require PCL, OctoMap, ROS2, or a compiled OctoPlanner3D
-binary. The real native planner is optional; the Python backend must import and
-fail soft when the headless executable is unavailable.
+binary. The Python adapter must import and fail soft when the C++ executable is
+unavailable.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
+from lingtu.plugin_seed import seed_builtin_plugins
 from runtime.msgs.numpy_compat import np
 from runtime.registry import get, get_metadata, list_plugins, restore, snapshot
-from lingtu.plugin_seed import seed_builtin_plugins
 
 MODULE = "nav.services.plan.global_planner.algorithm.octoplanner3d"
 RUNTIME_MODULE = "nav.services.plan.global_planner.algorithm.octoplanner3d_runtime"
@@ -47,7 +47,6 @@ def _registry_isolation():
 
 @pytest.fixture(autouse=True)
 def _runtime_env_isolation(monkeypatch):
-    monkeypatch.setenv("LINGTU_OCTOPLANNER3D_NATIVE_MODULE", "none")
     monkeypatch.delenv("LINGTU_OCTOPLANNER3D_EXECUTABLE", raising=False)
     monkeypatch.delenv("LINGTU_OCTOPLANNER3D_WSL_EXECUTABLE", raising=False)
     monkeypatch.delenv("LINGTU_OCTOPLANNER3D_TIMEOUT_S", raising=False)
@@ -55,7 +54,7 @@ def _runtime_env_isolation(monkeypatch):
 
 def _dummy_map(tmp_path):
     path = tmp_path / "map.bt"
-    path.write_bytes(b"dummy octomap placeholder; native executable is not invoked")
+    path.write_bytes(b"dummy octomap placeholder; C++ executable is not invoked")
     return path
 
 
@@ -95,8 +94,7 @@ def test_seed_builtin_plugins_registers_octoplanner3d_backend(tmp_path):
     description = meta.get("description", "")
     assert "OctoPlanner3D" in description
     assert "OctoMap" in description
-    assert "optional" in description.lower()
-    assert "in-process native" in description
+    assert "C++ headless executable" in description
     assert meta["supported_map_extensions"] == [".bt", ".ot", ".octomap", ".pcd"]
     assert meta["input_schema"]["map_path"]["accepted_extensions"] == [".bt", ".ot", ".octomap", ".pcd"]
     assert meta["input_schema"]["start"]["type"] == "array[3]float"
@@ -158,8 +156,8 @@ def test_missing_executable_marks_backend_unavailable(tmp_path):
     assert backend._last_plan_reached_goal is False
     assert backend._last_plan_diagnostics["planner"] == REGISTRY_KEY
     assert backend._last_plan_diagnostics["available"] is False
-    assert backend._last_plan_diagnostics["runtime_mode"] == "headless_executable"
-    assert backend._last_plan_diagnostics["process_boundary"] == "headless_subprocess"
+    assert backend._last_plan_diagnostics["runtime_mode"] == "cxx_headless"
+    assert backend._last_plan_diagnostics["process_boundary"] == "subprocess"
     assert backend._last_plan_diagnostics["load_error"] == backend._load_error
     assert backend._last_plan_diagnostics["supported_map_extensions"] == [".bt", ".ot", ".octomap", ".pcd"]
     assert backend._last_plan_diagnostics["input_schema"]["map_path"]["required"] is True
@@ -353,9 +351,8 @@ def test_plan_uses_headless_executable_json_protocol(tmp_path, monkeypatch):
     diagnostics = backend._last_plan_diagnostics
     assert diagnostics["planner"] == REGISTRY_KEY
     assert diagnostics["available"] is True
-    assert diagnostics["runtime_mode"] == "headless_executable"
-    assert diagnostics["process_boundary"] == "headless_subprocess"
-    assert diagnostics["build_capabilities"]["in_process_native"] is False
+    assert diagnostics["runtime_mode"] == "cxx_headless"
+    assert diagnostics["process_boundary"] == "subprocess"
     assert diagnostics["build_capabilities"]["ros2_required"] is False
     assert diagnostics["planner_family"] == "octoplanner3d_constrained_global_planner"
     assert diagnostics["search_algorithm"] == "octomap_3d_astar"
@@ -363,73 +360,6 @@ def test_plan_uses_headless_executable_json_protocol(tmp_path, monkeypatch):
     assert diagnostics["source"] == "fake"
     assert diagnostics["path_points"] == 2
     assert diagnostics["supported_map_extensions"] == [".bt", ".ot", ".octomap", ".pcd"]
-
-
-def test_in_process_native_kernel_takes_precedence_over_headless_executable(
-    tmp_path,
-    monkeypatch,
-):
-    module = importlib.import_module(MODULE)
-    runtime_module = _runtime_module()
-
-    class FakeNativeKernel:
-        def __init__(self):
-            self.payloads = []
-
-        def plan(self, payload):
-            self.payloads.append(payload)
-            return {
-                "ok": True,
-                "path": [[0.0, 0.0, 0.0], [2.0, 3.0, 1.0]],
-                "reached_goal": True,
-                "diagnostics": {"source": "fake-native"},
-            }
-
-    fake_kernel = FakeNativeKernel()
-    monkeypatch.setattr(
-        runtime_module.OctoPlanner3DRuntime,
-        "resolve_native_kernel",
-        staticmethod(lambda: (fake_kernel, "fake_octoplanner_native")),
-    )
-    monkeypatch.setattr(runtime_module.OctoPlanner3DRuntime, "local_build_candidates", staticmethod(lambda: []))
-    monkeypatch.setattr(runtime_module.OctoPlanner3DRuntime, "local_wsl_build_candidates", staticmethod(lambda: []))
-    monkeypatch.setattr(runtime_module.shutil, "which", lambda _name: None)
-
-    def fail_subprocess(*_args, **_kwargs):
-        raise AssertionError("in-process native kernel must not spawn the headless executable")
-
-    monkeypatch.setattr(runtime_module.subprocess, "run", fail_subprocess)
-
-    backend = module.OctoPlanner3DBackend(tomogram_path=str(_dummy_map(tmp_path)))
-
-    assert backend.available is True
-    assert backend.runtime_mode == "in_process_native"
-    assert backend.executable_path == ""
-
-    path = backend.plan([0.0, 0.0, 0.0], [2.0, 3.0, 1.0])
-
-    assert len(path) == 2
-    np.testing.assert_allclose(path[-1], [2.0, 3.0, 1.0])
-    assert fake_kernel.payloads
-    assert fake_kernel.payloads[-1]["planner"] == REGISTRY_KEY
-    assert fake_kernel.payloads[-1]["map_format"] == "bt"
-    assert fake_kernel.payloads[-1]["start"] == [0.0, 0.0, 0.0]
-    assert fake_kernel.payloads[-1]["goal"] == [2.0, 3.0, 1.0]
-    assert fake_kernel.payloads[-1]["options"]["planner_family"] == (
-        "octoplanner3d_constrained_global_planner"
-    )
-    assert fake_kernel.payloads[-1]["options"]["search_algorithm"] == "octomap_3d_astar"
-
-    diagnostics = backend._last_plan_diagnostics
-    assert diagnostics["stage"] == "in_process_native_success"
-    assert diagnostics["runtime_mode"] == "in_process_native"
-    assert diagnostics["process_boundary"] == "in_process"
-    assert diagnostics["native_module"] == "fake_octoplanner_native"
-    assert diagnostics["build_capabilities"]["in_process_native"] is True
-    assert diagnostics["build_capabilities"]["headless_executable"] is False
-    assert diagnostics["build_capabilities"]["ros2_required"] is False
-    assert diagnostics["source"] == "fake-native"
-    assert diagnostics["path_points"] == 2
 
 
 def test_octoplanner3d_constraints_are_configurable_in_payload(tmp_path, monkeypatch):
@@ -483,7 +413,7 @@ def test_octoplanner3d_constraints_are_configurable_in_payload(tmp_path, monkeyp
     assert backend._last_plan_diagnostics["constraints"]["robot_radius"] == pytest.approx(0.6)
 
 
-def test_nonzero_headless_json_failure_preserves_native_diagnostics(tmp_path, monkeypatch):
+def test_nonzero_headless_json_failure_preserves_cxx_diagnostics(tmp_path, monkeypatch):
     module = importlib.import_module(MODULE)
     runtime_module = _runtime_module()
     exe = tmp_path / "octoplanner3d_headless"
@@ -495,7 +425,7 @@ def test_nonzero_headless_json_failure_preserves_native_diagnostics(tmp_path, mo
         return subprocess.CompletedProcess(
             cmd,
             2,
-            stdout='native logs\n{"ok":false,"error":"empty path","diagnostics":{"path_points":0}}\n',
+            stdout='C++ logs\n{"ok":false,"error":"empty path","diagnostics":{"path_points":0}}\n',
             stderr="",
         )
 
@@ -509,7 +439,7 @@ def test_nonzero_headless_json_failure_preserves_native_diagnostics(tmp_path, mo
 
     assert path == []
     assert backend._last_plan_error == "empty path"
-    assert backend._last_plan_diagnostics["stage"] == "native_plan_failed"
+    assert backend._last_plan_diagnostics["stage"] == "cxx_plan_failed"
     assert backend._last_plan_diagnostics["returncode"] == 2
     assert backend._last_plan_diagnostics["path_points"] == 0
 
@@ -517,6 +447,11 @@ def test_nonzero_headless_json_failure_preserves_native_diagnostics(tmp_path, mo
 def test_wsl_executable_bridge_converts_map_path_and_command(tmp_path, monkeypatch):
     module = importlib.import_module(MODULE)
     runtime_module = _runtime_module()
+    monkeypatch.setattr(
+        runtime_module.OctoPlanner3DRuntime,
+        "supports_wsl_launcher",
+        staticmethod(lambda: True),
+    )
     monkeypatch.setenv(
         "LINGTU_OCTOPLANNER3D_WSL_EXECUTABLE",
         "/mnt/d/inovxio/brain/lingtu/build/octoplanner3d_headless_wsl/octoplanner3d_headless",
@@ -550,6 +485,11 @@ def test_default_wsl_build_output_is_auto_discovered(tmp_path, monkeypatch):
     runtime_module = _runtime_module()
     monkeypatch.delenv("LINGTU_OCTOPLANNER3D_EXECUTABLE", raising=False)
     monkeypatch.delenv("LINGTU_OCTOPLANNER3D_WSL_EXECUTABLE", raising=False)
+    monkeypatch.setattr(
+        runtime_module.OctoPlanner3DRuntime,
+        "supports_wsl_launcher",
+        staticmethod(lambda: True),
+    )
     monkeypatch.setattr(runtime_module.shutil, "which", lambda name: "/usr/bin/wsl.exe" if name == "wsl.exe" else None)
 
     exe = tmp_path / "build" / "octoplanner3d_headless_wsl" / "octoplanner3d_headless"
@@ -579,6 +519,35 @@ def test_default_wsl_build_output_is_auto_discovered(tmp_path, monkeypatch):
     ]
 
 
+def test_linux_home_executable_path_stays_native(tmp_path, monkeypatch):
+    module = importlib.import_module(MODULE)
+    runtime_module = _runtime_module()
+    monkeypatch.delenv("LINGTU_OCTOPLANNER3D_WSL_EXECUTABLE", raising=False)
+    monkeypatch.setattr(
+        runtime_module.OctoPlanner3DRuntime,
+        "supports_wsl_launcher",
+        staticmethod(lambda: False),
+    )
+    monkeypatch.setattr(runtime_module.shutil, "which", lambda name: None)
+
+    exe = tmp_path / "home" / "sunrise" / "octoplanner3d_headless"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("# fake native linux executable\n", encoding="utf-8")
+    map_path = tmp_path / "home" / "sunrise" / "map.bt"
+    map_path.write_bytes(b"dummy")
+
+    backend = module.OctoPlanner3DBackend(
+        tomogram_path=str(map_path),
+        executable_path=str(exe),
+    )
+
+    assert backend.available is True
+    assert backend.executable_path == str(exe)
+    assert backend._runtime.wsl_executable_path == ""
+    assert backend._runtime_map_path() == str(map_path)
+    assert backend._runtime.command() == [str(exe)]
+
+
 def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
     source = (OCTO_NATIVE_DIR / "octoplanner3d_headless.cpp").read_text(encoding="utf-8")
     core = (OCTO_NATIVE_DIR / "octoplanner3d_core.cpp").read_text(encoding="utf-8")
@@ -589,6 +558,10 @@ def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
     assert "octoplanner3d::runtime::runPlan(request)" in source
     assert '#include "global_planner.h"' in core
     assert '#include "pcd2octomap_converter.h"' in core
+    assert "converter.setInputPcdFile" in core
+    assert "converter.setOutputBtFile" in core
+    assert "converter.setFreeEnvelopeLayers" in source + "\n" + core
+    assert "converter.setFreeEnvelopeDilationCells" in source + "\n" + core
     assert "OCTOPLANNER3D_ENABLE_PCD" in core
     assert "PCD input requires a headless build with PCL support" in core
     assert "global_planner::GlobalPlanner planner" in core
@@ -624,11 +597,14 @@ def test_headless_cmake_builds_dedicated_executable_against_upstream_core():
     assert "add_library(octoplanner3d_runtime STATIC" in cmake
     assert "octoplanner3d_core.cpp" in cmake
     assert "add_executable(octoplanner3d_headless octoplanner3d_headless.cpp)" in cmake
+    assert "add_executable(octoplanner3d_pcd_to_octomap pcd_to_octomap.cpp)" in cmake
     assert "target_link_libraries(octoplanner3d_headless" in cmake
     assert "octoplanner3d_runtime" in cmake
     assert "planner/src/global_planner.cpp" in cmake
     assert "octomap/src/pcd2octomap_converter.cpp" in cmake
     assert "find_package(PCL QUIET COMPONENTS common io octree)" in cmake
+    assert "find_library(OCTOMAP_SYSTEM_LIBRARY NAMES octomap)" in cmake
+    assert "Using system OctoMap" in cmake
     assert "set(OCTOPLANNER3D_ENABLE_PCD OFF)" in cmake
     assert "if(OCTOPLANNER3D_ENABLE_PCD)" in cmake
     assert "PCL not found: building octoplanner3d_headless with .bt OctoMap input support only" in cmake
@@ -638,23 +614,37 @@ def test_headless_cmake_builds_dedicated_executable_against_upstream_core():
     assert "colcon" not in cmake
 
 
-def test_octoplanner3d_cmake_can_build_in_process_python_binding():
+def test_pcd_converter_cli_exports_planner_free_envelope_options():
+    source = (OCTO_NATIVE_DIR / "pcd_to_octomap.cpp").read_text(encoding="utf-8")
+    converter = (
+        REPO_ROOT
+        / "src"
+        / "nav"
+        / "services"
+        / "plan"
+        / "global_planner"
+        / "algorithm"
+        / "OctoPlanner3D"
+        / "octomap"
+        / "src"
+        / "pcd2octomap_converter.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "--free-layers-above" in source
+    assert "--free-dilation-cells" in source
+    assert "setFreeEnvelopeLayers" in source
+    assert "setFreeEnvelopeDilationCells" in source
+    assert "carveFreeEnvelope" in converter
+    assert "Free envelope cells" in converter
+
+
+def test_octoplanner3d_cmake_does_not_build_python_binding():
     cmake = (OCTO_NATIVE_DIR / "CMakeLists.txt").read_text(encoding="utf-8")
-    binding = (OCTO_NATIVE_DIR / "py_octoplanner3d.cpp").read_text(encoding="utf-8")
 
-    assert "OCTOPLANNER3D_BUILD_PYTHON_BINDINGS" in cmake
-    assert "find_package(Python COMPONENTS Interpreter Development REQUIRED)" in cmake
-    assert "add_library(_native MODULE py_octoplanner3d.cpp)" in cmake
-    assert "target_link_libraries(_native PRIVATE octoplanner3d_runtime Python::Python)" in cmake
-    assert 'PREFIX ""' in cmake
-
-    assert "PyMODINIT_FUNC PyInit__native()" in binding
-    assert '"plan", pyPlan' in binding
-    assert "octo::runPlan(request)" in binding
-    assert "PyEval_SaveThread()" in binding
-    assert "PyEval_RestoreThread(state)" in binding
-    assert "octoplanner3d_cpython" in binding
-    assert "rclcpp" not in binding
+    assert "OCTOPLANNER3D_BUILD_PYTHON_BINDINGS" not in cmake
+    assert "find_package(Python" not in cmake
+    assert "py_octoplanner3d.cpp" not in cmake
+    assert not (OCTO_NATIVE_DIR / "py_octoplanner3d.cpp").exists()
 
 
 def test_headless_cmake_does_not_require_pcd_converter_for_octomap_inputs():
@@ -671,19 +661,20 @@ def test_headless_cmake_does_not_require_pcd_converter_for_octomap_inputs():
     assert "building octoplanner3d_headless with .bt OctoMap input support only" in cmake
 
 
-def test_build_script_points_at_headless_native_wrapper_not_ros2_launch():
+def test_build_script_points_at_headless_cxx_wrapper_not_ros2_launch():
     script = (REPO_ROOT / "scripts" / "build" / "build_octoplanner3d.sh").read_text(
         encoding="utf-8"
     )
 
     assert "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime" in script
     assert "octoplanner3d_headless" in script
-    assert "--python|--bindings" in script
-    assert "OCTOPLANNER3D_BUILD_PYTHON_BINDINGS" in script
-    assert "_native*.so" in script
-    assert "LINGTU_OCTOPLANNER3D_NATIVE_MODULE" in script
+    assert "--python|--bindings" not in script
+    assert "OCTOPLANNER3D_BUILD_PYTHON_BINDINGS" not in script
+    assert "_native*.so" not in script
     assert "LINGTU_OCTOPLANNER3D_SOURCE_DIR" in script
     assert "LINGTU_OCTOPLANNER3D_EXECUTABLE" in script
+    assert "LINGTU_MAP_ARTIFACT_CONVERTER" in script
+    assert "octoplanner3d_pcd_to_octomap" in script
     assert "colcon" not in script
     assert "ros2 launch" not in script.lower()
     assert "ament" not in script.lower()

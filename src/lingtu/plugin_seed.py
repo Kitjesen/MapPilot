@@ -66,6 +66,9 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "nav.services.map_layers.traversability_cost_module",
         "nav.services.maps",
     ),
+    "map_save_adapter": (
+        "runtime.adapters.native.map_save",
+    ),
     "safety": (
         "nav.services.safety.safety_ring",
         "nav.services.safety.velocity_mux",
@@ -101,6 +104,7 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "localization.gnss_module",
         "localization.gnss_bridge",
         "localization.ntrip_client_module",
+        "runtime.adapters.native.localization_adapter",
     ),
     "slam_lcm": (
         "runtime.adapters.lcm.localization_adapter",
@@ -114,8 +118,8 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
     ),
     "perception": (
         "perception.perception_module",
-        "perception.detector_module",
-        "perception.encoder_module",
+        "perception.detection.detector_module",
+        "perception.encoding.encoder_module",
         "perception.api.factory",
     ),
     "reconstruction": (
@@ -163,10 +167,20 @@ def _optional_ros2_plugin_modules() -> Mapping[str, tuple[str, ...]]:
     return ROS2_PLUGIN_MODULES
 
 
-BUILTIN_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
-    **BASE_PLUGIN_MODULES,
-    **_optional_ros2_plugin_modules(),
-}
+def _merge_plugin_modules(
+    base: Mapping[str, tuple[str, ...]],
+    optional: Mapping[str, tuple[str, ...]],
+) -> Mapping[str, tuple[str, ...]]:
+    merged: dict[str, tuple[str, ...]] = {key: tuple(value) for key, value in base.items()}
+    for key, modules in optional.items():
+        merged[key] = tuple(dict.fromkeys((*merged.get(key, ()), *modules)))
+    return merged
+
+
+BUILTIN_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = _merge_plugin_modules(
+    BASE_PLUGIN_MODULES,
+    _optional_ros2_plugin_modules(),
+)
 
 
 DEFAULT_BUILTIN_PLUGIN_GROUPS: tuple[str, ...] = (

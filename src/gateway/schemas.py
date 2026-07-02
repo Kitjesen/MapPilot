@@ -1069,6 +1069,24 @@ class PathResponse(GatewayResponseModel):
     source: str = "gateway_cache"
 
 
+class DdsTwistSnapshot(GatewayResponseModel):
+    frame_id: str = "base_link"
+    linear: dict[str, float] = Field(default_factory=dict)
+    angular: dict[str, float] = Field(default_factory=dict)
+    active_source: str = "none"
+    ts: float | None = None
+
+
+class NavigationDdsSnapshotResponse(GatewayResponseModel):
+    schema_version: str = "lingtu.navigation.dds_snapshot.v1"
+    global_path: PathResponse
+    local_path: PathResponse
+    cmd_vel: DdsTwistSnapshot | None = None
+    navigation: dict[str, Any] = Field(default_factory=dict)
+    ts: float
+    source: str = "gateway_navigation_cache"
+
+
 class PlanPreviewResponse(GatewayResponseModel):
     schema_version: int = 1
     ok: bool = True
@@ -1250,6 +1268,30 @@ class LocalizationStatusResponse(GatewayResponseModel):
     ieskf_iter_num: int | None = None
     ieskf_converged: bool | None = None
     map_cloud_fresh: bool | None = None
+    status_target_hz: float | None = None
+    imu_input_hz: float | None = None
+    lidar_input_hz: float | None = None
+    slam_tick_hz: float | None = None
+    processed_scan_hz: float | None = None
+    registered_points: int | None = None
+    map_points: int | None = None
+    imu_buffer: int | None = None
+    lidar_buffer: int | None = None
+    imu_batch: int | None = None
+    dropped_lidar_frames: int | None = None
+    dropped_imu_frames: int | None = None
+    scan_start_s: float | None = None
+    scan_end_s: float | None = None
+    last_imu_s: float | None = None
+    sync_wait_count: int | None = None
+    imu_rollback_count: int | None = None
+    lidar_rollback_count: int | None = None
+    map_loaded: bool | None = None
+    map_frame_jump: bool | None = None
+    scene_mode: str | None = None
+    gnss_fusion_health: dict[str, Any] = Field(default_factory=dict)
+    map_odom_tf: dict[str, Any] | None = None
+    has_map_odom_tf: bool = False
     map_state: str | None = None
     map_save_supported: bool | None = None
     map_save_source: str | None = None
@@ -1475,6 +1517,10 @@ class MapInfo(GatewayResponseModel):
     name: str
     has_pcd: bool = False
     has_tomogram: bool = False
+    has_occupancy: bool = False
+    has_octomap: bool = False
+    navigation_ready: bool = False
+    state: str | None = None
     is_active: bool = False
     size_mb: float | None = None
     patch_count: int = 0

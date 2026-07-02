@@ -43,7 +43,6 @@ CANONICAL_ROBOT_RUNTIME_DEFAULTS: dict[str, dict[str, Any]] = {
     "stub": dict(_STUB_RUNTIME_DEFAULTS),
     "sim": dict(_SIM_RUNTIME_DEFAULTS),
     "sim_endpoint": dict(_SIM_GAZEBO_RUNTIME_DEFAULTS),
-    "ros2": dict(_SIM_RUNTIME_DEFAULTS),
     "sim_gazebo": dict(_SIM_GAZEBO_RUNTIME_DEFAULTS),
     **_THUNDER_CANONICAL_RUNTIME_DEFAULTS,
 }

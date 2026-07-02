@@ -544,7 +544,7 @@ class TestLocalPlannerBackends:
         from nav.services.plan.local_planner.service import LocalPlanner
 
         require_nav_kernel(
-            ("LocalPlannerParams", "nav.local_planner"),
+            ("LocalPlannerParams", "LocalPlanner"),
             "nav.local_planner",
         )
 

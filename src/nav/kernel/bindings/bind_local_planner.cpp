@@ -1,6 +1,7 @@
 #include "bindings.hpp"
 
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
 #include "local_planner.hpp"

@@ -17,17 +17,17 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from perception.geometry_extractor import GeometryExtractor
-from perception.hybrid_planner import HybridPlanner
-from perception.leiden_segmentation import (
+from perception.scene_understanding.geometry_extractor import GeometryExtractor
+from perception.scene_understanding.hybrid_planner import HybridPlanner
+from perception.scene_understanding.leiden_segmentation import (
     LeidenConfig,
     LeidenSegmenter,
 )
-from perception.polyhedron_expansion import (
+from perception.scene_understanding.polyhedron_expansion import (
     PolyhedronExpander,
     PolyhedronExpansionConfig,
 )
-from perception.scg_builder import SCGBuilder, SCGConfig
+from perception.scene_understanding.scg_builder import SCGBuilder, SCGConfig
 
 
 def create_mock_environment():

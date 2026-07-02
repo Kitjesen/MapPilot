@@ -148,8 +148,8 @@ def test_dds_topic_registry_covers_navigation_boundary() -> None:
     assert dds_type_for_topic(TOPICS.local_path).__name__ == "Path"
     assert dds_type_for_topic(TOPICS.nav_way_point).__name__ == "PoseStamped"
     assert dds_type_for_topic(TOPICS.goal_pose).__name__ == "PoseStamped"
-    assert dds_type_for_topic(TOPICS.cancel).__name__ == "String"
-    assert dds_type_for_topic(TOPICS.semantic_instruction).__name__ == "String"
+    assert dds_type_for_topic(TOPICS.cancel).__name__ == "Text"
+    assert dds_type_for_topic(TOPICS.semantic_instruction).__name__ == "Text"
     assert dds_type_for_topic(TOPICS.cmd_vel).__name__ == "TwistStamped"
 
 
@@ -232,6 +232,30 @@ def test_dds_nav_in_publishes_module_messages(monkeypatch) -> None:
         TOPICS.cancel: 1,
         TOPICS.semantic_instruction: 1,
     }
+
+
+def test_dds_nav_adapters_disable_when_python_dds_is_unavailable(monkeypatch) -> None:
+    nav_in = DDSNavInModule()
+    nav_out = DDSNavOutModule()
+    monkeypatch.setattr(
+        nav_in,
+        "_create_default_transport",
+        lambda: (_ for _ in ()).throw(ImportError("missing cyclonedds")),
+    )
+    monkeypatch.setattr(
+        nav_out,
+        "_create_default_transport",
+        lambda: (_ for _ in ()).throw(ImportError("missing cyclonedds")),
+    )
+
+    nav_in.setup()
+    nav_out.setup()
+
+    assert nav_in.health()["transport"] == "disabled"
+    assert nav_in.health()["subscribed_topics"] == []
+    assert "missing cyclonedds" in nav_in.health()["disabled_reason"]
+    assert nav_out.health()["transport"] == "disabled"
+    assert "missing cyclonedds" in nav_out.health()["disabled_reason"]
 
 
 def test_navigation_stack_selects_dds_nav_adapters() -> None:

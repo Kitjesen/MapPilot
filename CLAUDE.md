@@ -151,7 +151,6 @@ bp.wire("SLAM", "cloud", "Terrain", "cloud", transport="shm")                   
 | `global_planning/` | pct_planner (C++ ele_planner.so) + _AStarBackend / _PCTBackend (via Registry) |
 | `exploration/` | TARE exploration (ExplorationSupervisorModule, TareExplorerModule, compatibility shim) |
 | `webrtc/` | WebRTC video streaming (WebRTCStreamModule) |
-| `legacy/` | Retired code from pre-v1.7 refactor: old gateway, thunder driver, pct_planner, semantic, scripts |
 
 Note: `calibration/` and `sim/` live at repo root (not under `src/`). See [Sensor Calibration](#sensor-calibration-calibration) section. For `sim/`, see the `sim/engine/` documentation below.
 
@@ -256,7 +255,7 @@ optional; relaxed floating-point math is not enabled globally.
 - `src/runtime/stream.py` —In[T]/Out[T] ports (data flow backbone)
 - `src/runtime/registry.py` —Plugin registry (all backends depend on it)
 - `src/runtime/utils/` —Cross-layer utilities (18+ files import from here)
-- `src/semantic/perception/.../instance_tracker.py` —Scene graph builder
+- `src/perception/.../instance_tracker.py` —Scene graph builder
 - `src/semantic/planner/.../goal_resolver.py` �?-level resolution chain
 - `config/robot_config.yaml` —Robot physical parameters
 

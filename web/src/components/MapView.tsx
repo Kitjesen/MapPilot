@@ -10,8 +10,8 @@ interface MapViewProps {
   showToast: (msg: string, kind?: ToastKind) => void
 }
 // ── Map type classification ────────────────────────────────────
-// 语义地图  — has PCD + Tomogram (PCT planner ready)
-// 三维点云  — has PCD, no tomogram (raw LiDAR map)
+// 可导航地图 — has PCD + OctoMap artifact (OctoPlanner3D ready)
+// 三维点云  — has PCD, no OctoMap artifact (raw LiDAR map)
 // 空地图    — no PCD
 
 interface Group { label: string; hint: string; maps: MapInfo[] }
@@ -19,14 +19,14 @@ interface Group { label: string; hint: string; maps: MapInfo[] }
 function groupMaps(maps: MapInfo[]): Group[] {
   return [
     {
-      label: '语义地图',
-      hint: '含 Tomogram，可直接用于导航规划',
-      maps: maps.filter(m => m.has_pcd && m.has_tomogram),
+      label: '可导航地图',
+      hint: '含 OctoMap，可用于 OctoPlanner3D 规划',
+      maps: maps.filter(m => m.has_pcd && (m.navigation_ready === true || m.has_octomap === true)),
     },
     {
       label: '三维点云',
-      hint: '原始 LiDAR 点云，需建 Tomogram 后才能导航',
-      maps: maps.filter(m => m.has_pcd && !m.has_tomogram),
+      hint: '原始 LiDAR 点云，需构建 OctoMap 后才能导航',
+      maps: maps.filter(m => m.has_pcd && !(m.navigation_ready === true || m.has_octomap === true)),
     },
     {
       label: '空地图',
@@ -74,8 +74,8 @@ function MapCard({ m, selected, onPreview, onActivate, onRename, onDelete }: Car
         </span>
         <span className={styles.meta}>
           {m.has_pcd      && <span className={styles.tagPcd}>PCD</span>}
-          {m.has_tomogram && <span className={styles.tagTomo}>Tomogram</span>}
-          {!m.has_pcd && !m.has_tomogram && <span className={styles.tagEmpty}>空</span>}
+          {m.has_octomap && <span className={styles.tagTomo}>OctoMap</span>}
+          {!m.has_pcd && !m.has_octomap && <span className={styles.tagEmpty}>空</span>}
           {!!m.patch_count && <span className={styles.tagEmpty}>{m.patch_count} patches</span>}
           {!!m.size_mb    && <span className={styles.tagEmpty}>{m.size_mb.toFixed(1)} MB</span>}
         </span>
@@ -339,7 +339,7 @@ export function MapView({ showToast }: MapViewProps) {
       <PromptModal
         open={saveOpen}
         title="保存当前地图"
-        message="保存当前 SLAM 建图结果。系统会自动生成导航所需的 tomogram 和 occupancy 数据。"
+        message="保存当前 SLAM 建图结果。系统会自动生成导航所需的 OctoMap 和 occupancy 数据。"
         placeholder="例如 building_2f"
         confirmLabel="保存"
         icon={<Save size={18} />}

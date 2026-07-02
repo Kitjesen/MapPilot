@@ -132,7 +132,7 @@ def test_thunder_v3_mjcf_runtime_keeps_lingtu_sensor_and_control_contracts():
 
 @pytest.mark.skipif(not _ROS2_AVAILABLE, reason="Needs ROS2 runtime")
 def test_semantic_namespace_wrappers_expose_runtime_import_paths():
-    assert importlib.util.find_spec("perception.instance_tracker") is not None
+    assert importlib.util.find_spec("perception.tracking.instance_tracker") is not None
     assert importlib.util.find_spec("decision.llm_client") is not None
 
     # Canonical imports from runtime.utils
@@ -140,8 +140,8 @@ def test_semantic_namespace_wrappers_expose_runtime_import_paths():
     from runtime.utils.robustness import retry
     from runtime.utils.sanitize import sanitize_position
     from runtime.utils.validation import validate_bgr
-    from perception.instance_tracker import InstanceTracker
-    from perception.tracked_objects import TrackedObject
+    from perception.tracking.instance_tracker import InstanceTracker
+    from perception.tracking.tracked_objects import TrackedObject
 
     assert callable(sanitize_position)
     assert InstanceTracker is not None
@@ -3532,7 +3532,7 @@ def test_frontier_exploration_goal_reaches_navigation_planner():
 
 
 def test_sim_scene_observer_emits_building_scene_stairs():
-    from perception.sim_scene_observer import SimSceneObserver
+    from perception.detection.sim_scene_observer import SimSceneObserver
 
     class _Intrinsics:
         fx = 415.7
@@ -3557,7 +3557,7 @@ def test_sim_scene_observer_emits_building_scene_stairs():
 
 
 def test_sim_scene_observer_respects_live_forward_axis_convention():
-    from perception.sim_scene_observer import SimSceneObserver
+    from perception.detection.sim_scene_observer import SimSceneObserver
 
     class _Intrinsics:
         fx = 415.7

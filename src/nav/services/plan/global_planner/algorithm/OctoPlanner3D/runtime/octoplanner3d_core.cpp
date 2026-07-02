@@ -50,7 +50,7 @@ Point fromPlannerPoint(const global_planner::PointPose & point)
 std::filesystem::path pcdOutputPath(const std::filesystem::path & pcd_path)
 {
   auto out = pcd_path;
-  out += ".octoplanner3d.bt";
+  out += ".octoplanner3d.ot";
   return out;
 }
 
@@ -67,6 +67,8 @@ std::shared_ptr<octomap::OcTree> loadOctomap(const std::string & map_path)
     pcd2octomap::Pcd2OctomapConverter converter;
     converter.setInputPcdFile(path.string());
     converter.setOutputBtFile(pcdOutputPath(path).string());
+    converter.setFreeEnvelopeLayers(3);
+    converter.setFreeEnvelopeDilationCells(1);
     if (!converter.convert()) {
       throw std::runtime_error("failed to convert PCD to OctoMap: " + map_path);
     }
@@ -92,6 +94,10 @@ std::shared_ptr<octomap::OcTree> loadOctomap(const std::string & map_path)
 
   std::unique_ptr<octomap::AbstractOcTree> abstract_tree(octomap::AbstractOcTree::read(path.string()));
   if (!abstract_tree) {
+    auto tree = std::make_shared<octomap::OcTree>(0.2);
+    if (tree->readBinary(path.string())) {
+      return tree;
+    }
     throw std::runtime_error("failed to read OctoMap file: " + map_path);
   }
   auto * raw_tree = dynamic_cast<octomap::OcTree *>(abstract_tree.release());

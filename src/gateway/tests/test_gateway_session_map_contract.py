@@ -545,6 +545,8 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         demo.mkdir(parents=True)
         _write_binary_xyz_pcd(demo / "map.pcd")
         (demo / "tomogram.pickle").write_bytes(b"tomogram")
+        (demo / "octomap.ot").write_bytes(b"octomap")
+        (demo / "metadata.json").write_text('{"state":"READY"}', encoding="utf-8")
         monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
 
         gateway = GatewayModule()
@@ -573,6 +575,9 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         assert maps.ts > 0
         assert maps.maps[0].has_pcd is True
         assert maps.maps[0].has_tomogram is True
+        assert maps.maps[0].has_octomap is True
+        assert maps.maps[0].navigation_ready is True
+        assert maps.maps[0].state == "READY"
         assert live_points.schema_version == 1
         assert live_points.count == 0
         assert live_points.layout == "xyz_rows"
@@ -677,25 +682,50 @@ def test_map_lifecycle_error_responses_use_stable_envelope(monkeypatch, tmp_path
     assert model.message
 
 
-def test_map_save_falls_back_to_super_lio_live_cloud_snapshot(monkeypatch, tmp_path):
-    import gateway.routes.maps as map_routes
-    from runtime.map_save import MapSaveError
+def test_map_activate_route_uses_map_service_gate():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import MapNameRequest
+
+    class FakeNav:
+        def __init__(self):
+            self.reloads = []
+
+        def reload_planner_map(self, map_path: str = ""):
+            self.reloads.append(map_path)
+            return {"ok": True, "map_path": map_path}
+
+    gateway = GatewayModule()
+    gateway.setup()
+    manager = _FakeMapManager()
+    nav = FakeNav()
+    gateway._map_mgr = manager
+    gateway._all_modules = {"nav.mission": nav}
+
+    payload = _payload(asyncio.run(
+        _endpoint(gateway, "/api/v1/map/activate")(MapNameRequest(name="demo"))
+    ))
+
+    assert payload["ok"] is True
+    assert manager.map_command.delivered == [{"action": "set_active", "name": "demo"}]
+    assert nav.reloads == [""]
+    assert payload["planner_reload"]["ok"] is True
+
+
+def test_map_save_requires_map_service_and_does_not_fallback_to_gateway_snapshot(
+    monkeypatch,
+    tmp_path,
+):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapLifecycleResponse
 
     class FakeMapSaveAdapter:
         def save_nav_map(self, *args, **kwargs):
-            raise MapSaveError("service unavailable")
+            raise AssertionError("Gateway map/save must not call adapter directly")
 
         def save_pgo_map(self, *args, **kwargs):
-            return {"success": True}
+            raise AssertionError("Gateway map/save must not call adapter directly")
 
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        map_routes,
-        "apply_dynamic_filter_step1half",
-        lambda _save_dir: {"success": False, "skipped": True},
-    )
 
     gateway = GatewayModule(map_save_adapter=FakeMapSaveAdapter())
     gateway.setup()
@@ -703,33 +733,20 @@ def test_map_save_falls_back_to_super_lio_live_cloud_snapshot(monkeypatch, tmp_p
     with gateway._map_cloud_lock:
         gateway._map_points = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-    payload = asyncio.run(
+    response = asyncio.run(
         _endpoint(gateway, "/api/v1/map/save")({"name": "super_lio_demo"})
     )
+    payload = _payload(response)
     model = MapLifecycleResponse.model_validate(payload)
-    pcd_path = tmp_path / "super_lio_demo" / "map.pcd"
-    active_link = tmp_path / "active"
 
+    assert response.status_code == 503
     assert model.schema_version == 1
-    assert model.ok is True
-    assert model.success is True
+    assert model.ok is False
+    assert model.success is False
     assert model.ts > 0
-    assert payload["slam_profile"] == "super_lio"
-    assert payload["source"] == "live_map_cloud_snapshot"
-    assert payload["relocalization_supported"] is False
-    assert payload["saved_map_relocalization_supported"] is False
-    assert payload["restart_recovery_supported"] is True
-    assert payload["recovery_method"] == "restart_super_lio"
-    assert model.warnings is not None
-    assert any("Super-LIO: saved live map_cloud snapshot" in item for item in model.warnings)
-    assert pcd_path.is_file()
-    data = pcd_path.read_bytes()
-    assert b"FIELDS x y z" in data
-    assert b"DATA binary\n" in data
-    body = data.split(b"DATA binary\n", 1)[1]
-    assert len(body) == 2 * 3 * 4
-    assert struct.unpack("<ffffff", body) == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
-    assert not active_link.exists()
+    assert model.name == "super_lio_demo"
+    assert model.message == "MapService not running"
+    assert not (tmp_path / "super_lio_demo").exists()
 
 
 def test_binary_xyz_pcd_writer_keeps_numpy_fast_path(monkeypatch, tmp_path):
@@ -803,17 +820,11 @@ def test_map_save_rejects_super_lio_relocation_profile(monkeypatch, tmp_path):
     payload = _payload(response)
     model = MapLifecycleResponse.model_validate(payload)
 
-    assert response.status_code == 409
+    assert response.status_code == 503
     assert model.ok is False
     assert model.success is False
     assert model.name == "relocation_demo"
-    assert model.slam_profile == "super_lio_relocation"
-    assert model.source == "active_map"
-    assert model.map_save_source == "active_map"
-    assert model.relocalization_supported is False
-    assert model.saved_map_relocalization_supported is False
-    assert model.restart_recovery_supported is True
-    assert model.recovery_method == "restart_super_lio_relocation"
+    assert model.message == "MapService not running"
     assert calls == []
     assert not (tmp_path / "relocation_demo").exists()
 
@@ -849,6 +860,106 @@ def test_maps_route_accepts_legacy_and_canonical_actions():
         {"action": "build_tomogram", "name": "demo"},
         {"action": "build_occupancy", "name": "demo"},
     ]
+
+
+def test_map_workbench_routes_forward_to_map_service():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    manager = _FakeMapManager()
+    gateway._map_mgr = manager
+
+    import_payload = _payload(asyncio.run(
+        _endpoint(gateway, "/api/v1/maps/import_pcd")(
+            {"name": "demo", "source_path": "/tmp/demo.pcd", "voxel_size": 0.2}
+        )
+    ))
+    crop_payload = _payload(asyncio.run(
+        _endpoint(gateway, "/api/v1/maps/{name}/crop")(
+            "demo",
+            {"bounds": {"min": [0, 0, 0], "max": [1, 1, 1]}},
+        )
+    ))
+    mark_payload = _payload(asyncio.run(
+        _endpoint(gateway, "/api/v1/maps/{name}/mark_zone")(
+            "demo",
+            {"state": "preblocked", "center": [0, 0, 0], "radius": 0.5},
+        )
+    ))
+    build_payload = _payload(asyncio.run(
+        _endpoint(gateway, "/api/v1/maps/{name}/build_octomap")("demo")
+    ))
+
+    assert import_payload["ok"] is True
+    assert crop_payload["ok"] is True
+    assert mark_payload["ok"] is True
+    assert build_payload["ok"] is True
+    assert manager.map_command.delivered == [
+        {
+            "action": "import_pcd",
+            "name": "demo",
+            "source_path": "/tmp/demo.pcd",
+            "voxel_size": 0.2,
+            "bounds": None,
+        },
+        {
+            "action": "crop",
+            "name": "demo",
+            "bounds": {"min": [0, 0, 0], "max": [1, 1, 1]},
+            "invert": False,
+            "voxel_size": 0.0,
+        },
+        {
+            "action": "edit_voxels",
+            "state": "preblocked",
+            "center": [0, 0, 0],
+            "radius": 0.5,
+            "name": "demo",
+        },
+        {"action": "build_octomap", "name": "demo"},
+    ]
+
+
+def test_map_workbench_import_route_writes_real_map_package(monkeypatch, tmp_path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import MapLifecycleResponse, MapListResponse
+    from nav.services.maps import MapService
+
+    source = tmp_path / "source.pcd"
+    _write_binary_xyz_pcd(source)
+    map_dir = tmp_path / "maps"
+    monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
+
+    gateway = GatewayModule()
+    gateway.setup()
+    manager = MapService(map_dir=str(map_dir), data_dir=str(tmp_path / "data"))
+    manager.setup()
+    gateway._map_mgr = manager
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/maps/import_pcd")(
+            {"name": "demo", "source_path": str(source), "voxel_size": 0.0}
+        )
+    )
+    payload = _payload(response)
+    model = MapLifecycleResponse.model_validate(payload)
+
+    assert response.status_code == 200
+    assert model.ok is True
+    assert model.success is True
+    assert model.navigation_ready is False
+    assert (map_dir / "demo" / "map.pcd").is_file()
+    assert (map_dir / "demo" / "metadata.json").is_file()
+    assert not (map_dir / "demo" / "octomap.ot").exists()
+
+    maps_payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/maps")())
+    maps = MapListResponse.model_validate(maps_payload)
+    entry = next(item for item in maps.maps if item.name == "demo")
+    assert entry.has_pcd is True
+    assert entry.has_octomap is False
+    assert entry.navigation_ready is False
+    assert entry.state == "STALE"
 
 
 def test_maps_route_error_response_matches_openapi_contract():

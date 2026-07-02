@@ -11,7 +11,7 @@ from typing import Any
 
 from runtime.backend_status import BackendStatus
 from runtime.module import Module
-from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
+from runtime.msgs.geometry import Pose, Quaternion, Transform, Twist, Vector3
 from runtime.msgs.gnss import GnssOdom
 from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
@@ -19,7 +19,7 @@ from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
 from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
 from runtime.stream import In, Out
-from runtime.tf import FrameTree
+from runtime.tf import FrameTree, TF_STATIC_TOPIC, TF_TOPIC, iter_tf_transforms
 from runtime.transport.abc import TopicConfig
 
 logger = logging.getLogger(__name__)
@@ -80,8 +80,11 @@ class DDSLocalizationAdapterModule(Module, layer=1):
     def setup(self) -> None:
         self.visual_odom.subscribe(lambda msg: setattr(self, "_last_visual_odom", msg))
         self.gnss_odom.subscribe(lambda msg: setattr(self, "_last_gnss_odom", msg))
-        self._transport = self._transport or self._create_default_transport()
+        if self._transport is None:
+            self._transport = self._create_default_transport()
         for topic, callback in (
+            (TF_TOPIC, self._on_tf),
+            (TF_STATIC_TOPIC, self._on_static_tf),
             (TOPICS.lidar_scan, self._on_lidar_scan),
             (TOPICS.imu, self._on_imu),
             (TOPICS.odometry, self._on_odometry),
@@ -131,6 +134,8 @@ class DDSLocalizationAdapterModule(Module, layer=1):
 
     def _topic_callbacks(self) -> tuple[tuple[str, Callable[[Any], None]], ...]:
         return (
+            (TF_TOPIC, self._on_tf),
+            (TF_STATIC_TOPIC, self._on_static_tf),
             (TOPICS.lidar_scan, self._on_lidar_scan),
             (TOPICS.imu, self._on_imu),
             (TOPICS.odometry, self._on_odometry),
@@ -230,6 +235,26 @@ class DDSLocalizationAdapterModule(Module, layer=1):
             return
         self._record_message(TOPICS.localization_health)
 
+    def _on_tf(self, msg: Any) -> None:
+        try:
+            for transform in iter_tf_transforms(msg):
+                self._frame_tree.set_transform(transform, authority="dds_tf")
+                self._publish_map_odom_if_match(transform)
+        except Exception:
+            self._record_decode_error(TF_TOPIC)
+            return
+        self._record_message(TF_TOPIC)
+
+    def _on_static_tf(self, msg: Any) -> None:
+        try:
+            for transform in iter_tf_transforms(msg):
+                self._frame_tree.set_static_transform(transform, authority="dds_tf_static")
+                self._publish_map_odom_if_match(transform)
+        except Exception:
+            self._record_decode_error(TF_STATIC_TOPIC)
+            return
+        self._record_message(TF_STATIC_TOPIC)
+
     def _publish_tracking_status(self, source_topic: str, ts: float) -> None:
         status = {
             "state": "TRACKING",
@@ -272,11 +297,54 @@ class DDSLocalizationAdapterModule(Module, layer=1):
         if isinstance(status.get("gnss_fusion_health"), dict):
             self.gnss_fusion_health.publish(dict(status["gnss_fusion_health"]))
         if isinstance(status.get("map_odom_tf"), dict):
-            self.map_odom_tf.publish(dict(status["map_odom_tf"]))
+            tf = dict(status["map_odom_tf"])
+            self._update_map_odom_tf(tf)
+            self.map_odom_tf.publish(tf)
         if isinstance(status.get("map_frame_jump_event"), dict):
             self.map_frame_jump_event.publish(dict(status["map_frame_jump_event"]))
         if status.get("scene_mode") is not None:
             self.scene_mode.publish(str(status["scene_mode"]))
+
+    def _update_map_odom_tf(self, tf: Mapping[str, Any]) -> None:
+        if not tf or not tf.get("valid", False):
+            return
+        self._frame_tree.set_transform(
+            Transform(
+                translation=Vector3(float(tf["tx"]), float(tf["ty"]), float(tf["tz"])),
+                rotation=Quaternion(
+                    float(tf["qx"]),
+                    float(tf["qy"]),
+                    float(tf["qz"]),
+                    float(tf["qw"]),
+                ),
+                frame_id=topic_default_frame_id(TOPICS.map_cloud),
+                child_frame_id=topic_default_frame_id(TOPICS.odometry),
+                ts=float(tf.get("ts") or time.time()),
+            ),
+            authority="dds_localization_health",
+        )
+
+    def _publish_map_odom_if_match(self, transform: Transform) -> None:
+        if (
+            transform.frame_id != topic_default_frame_id(TOPICS.map_cloud)
+            or transform.child_frame_id != topic_default_frame_id(TOPICS.odometry)
+        ):
+            return
+        self.map_odom_tf.publish(
+            {
+                "valid": True,
+                "frame_id": transform.frame_id,
+                "child_frame_id": transform.child_frame_id,
+                "tx": transform.translation.x,
+                "ty": transform.translation.y,
+                "tz": transform.translation.z,
+                "qx": transform.rotation.x,
+                "qy": transform.rotation.y,
+                "qz": transform.rotation.z,
+                "qw": transform.rotation.w,
+                "ts": transform.ts,
+            }
+        )
 
 
 def _stamp_seconds(header: Any) -> float:

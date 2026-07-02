@@ -15,7 +15,7 @@ import math
 import numpy as np
 import pytest
 
-from perception.hybrid_planner import (
+from perception.scene_understanding.hybrid_planner import (
     HybridPlanner,
     _astar_on_grid,
     _downsample_cells,
