@@ -165,6 +165,18 @@ def _has_relocalization_capability(module: Any) -> bool:
     )
 
 
+def _native_relocalization_service() -> RelocalizationService | None:
+    try:
+        from runtime.adapters.native.relocalization import (
+            NativeSlamRelocalizationService,
+        )
+
+        service = NativeSlamRelocalizationService()
+        return service if service.available() else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -181,6 +193,14 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 # Convenience aliases -canonical implementations in gateway.services.map_safety
@@ -351,8 +371,9 @@ class GatewayModule(Module, layer=6):
         self._backend_reconfigure_modules: dict[str, Any] = {}
         self._relocalization_service: RelocalizationService | None = None
         self._map_save_adapter: MapSaveAdapter | None = kw.get("map_save_adapter")
-        self._manage_session_services: bool = bool(
-            kw.get("manage_session_services", True)
+        self._manage_session_services: bool = _coerce_bool(
+            kw.get("manage_session_services"),
+            _env_bool("LINGTU_MANAGE_SESSION_SERVICES", True),
         )
 
         # rosbag recording state
@@ -791,6 +812,8 @@ class GatewayModule(Module, layer=6):
             "slam",
             "slam_pgo",
             "localizer",
+            "genz_icp",
+            "hba",
             "super_lio",
             "super_lio_relocation",
         )
@@ -831,6 +854,8 @@ class GatewayModule(Module, layer=6):
                 "slam",
                 "slam_pgo",
                 "localizer",
+                "genz_icp",
+                "hba",
                 "super_lio",
                 "super_lio_relocation",
             )
@@ -865,13 +890,17 @@ class GatewayModule(Module, layer=6):
                 restart_services = ["lidar", "super_lio_relocation"]
             elif running_before.get("super_lio"):
                 restart_services = ["lidar", "super_lio"]
+            elif running_before.get("genz_icp"):
+                restart_services = ["lidar", "genz_icp"]
             elif mode in ("mapping", "exploring"):
-                restart_services = ["slam", "slam_pgo"]
+                restart_services = ["slam"]
             elif mode == "navigating":
-                restart_services = ["slam", "localizer"]
+                restart_services = ["slam"]
             else:
                 restart_services = [
-                    name for name in service_names if running_before.get(name)
+                    name
+                    for name in service_names
+                    if running_before.get(name) and name != "localizer"
                 ]
                 if (
                     "localizer" in restart_services or "slam_pgo" in restart_services
@@ -1053,6 +1082,8 @@ class GatewayModule(Module, layer=6):
             ),
             None,
         )
+        if self._relocalization_service is None:
+            self._relocalization_service = _native_relocalization_service()
         # WebRTCStreamModule handles its own ICE/SDP dance; we just forward
         # POST /api/v1/webrtc/offer to it.  See the route below.
         self._webrtc = modules.get("WebRTCStreamModule")
@@ -1587,12 +1618,14 @@ class GatewayModule(Module, layer=6):
                 "slam",
                 "slam_pgo",
                 "localizer",
+                "genz_icp",
                 "super_lio",
                 "super_lio_relocation",
             )
             slam_active = status.get("slam") in ("running", "active")
             pgo_active = status.get("slam_pgo") in ("running", "active")
             loc_active = status.get("localizer") in ("running", "active")
+            genz_active = status.get("genz_icp") in ("running", "active")
             super_lio_active = status.get("super_lio") in ("running", "active")
             super_lio_relocation_active = status.get(
                 "super_lio_relocation"
@@ -1600,6 +1633,16 @@ class GatewayModule(Module, layer=6):
             if super_lio_relocation_active:
                 return "navigating", self._session_active_map_name()
             if super_lio_active:
+                if self._exploring:
+                    return "exploring", None
+                if self._session_mode in ("mapping", "navigating"):
+                    return self._session_mode, (
+                        self._session_active_map_name()
+                        if self._session_mode == "navigating"
+                        else None
+                    )
+                return "mapping", None
+            if genz_active:
                 if self._exploring:
                     return "exploring", None
                 if self._session_mode in ("mapping", "navigating"):
@@ -1617,6 +1660,18 @@ class GatewayModule(Module, layer=6):
                 if self._exploring:
                     return "exploring", None
                 return "mapping", None
+            if slam_active and self._session_mode in {
+                "mapping",
+                "exploring",
+                "navigating",
+            }:
+                if self._exploring:
+                    return "exploring", None
+                return self._session_mode, (
+                    self._session_active_map_name()
+                    if self._session_mode == "navigating"
+                    else None
+                )
             if self._exploring and self._session_uses_external_slam_none():
                 return "exploring", None
             return "idle", None
@@ -1643,11 +1698,13 @@ class GatewayModule(Module, layer=6):
         """Full session state for GET /session + SSE."""
         active_map = self._session_active_map_name()
         has_tomogram = False
+        has_octomap = False
         has_pcd = False
         if active_map:
             base = map_dir_for(active_map)
             has_pcd = (base / "map.pcd").is_file()
             has_tomogram = (base / "tomogram.pickle").is_file()
+            has_octomap = (base / "octomap.ot").is_file() or (base / "octomap.bt").is_file()
         icp = self._icp_quality
         localization_status = self._localization_status or {}
         session_profile = str(self._session_slam_profile or "").strip().lower()
@@ -1661,6 +1718,8 @@ class GatewayModule(Module, layer=6):
             or self._session_slam_profile
             or "stopped"
         ).lower()
+        if str(localization_status.get("health_source") or "").lower() == "slam_runtime":
+            backend = "native_dds"
         pose_fresh, pose_freshness = classify_pose_freshness(localization_status)
         algorithm_healthy = localizer_algorithm_healthy(localization_status, icp)
         confidence_ok = pose_fresh is not False
@@ -1689,12 +1748,10 @@ class GatewayModule(Module, layer=6):
             recovery_method = capability_defaults["recovery_method"]
         map_save_supported = localization_status.get("map_save_supported")
         if map_save_supported is None:
-            map_save_supported = backend in {"super_lio", "fastlio2", "slam"}
+            map_save_supported = capability_defaults["map_save_supported"]
         map_save_source = localization_status.get("map_save_source")
-        if map_save_source is None and backend == "super_lio":
-            map_save_source = "live_map_cloud_snapshot"
-        if map_save_source is None and backend == "super_lio_relocation":
-            map_save_source = "active_map"
+        if map_save_source is None:
+            map_save_source = capability_defaults["map_save_source"]
         # Gate which transitions are allowed from current state.
         idle = self._session_mode == "idle" and not self._session_pending
         can_start_mapping = idle
@@ -1702,7 +1759,7 @@ class GatewayModule(Module, layer=6):
             idle
             and active_map is not None
             and has_pcd
-            and has_tomogram
+            and has_octomap
         )
         explorer_backend = self._explorer_backend()
         explorer_available = explorer_backend != "none"
@@ -1753,6 +1810,7 @@ class GatewayModule(Module, layer=6):
             "active_map": active_map,
             "map_has_pcd": has_pcd,
             "map_has_tomogram": has_tomogram,
+            "map_has_octomap": has_octomap,
             "since": self._session_since,
             "pending": self._session_pending,
             "error": self._session_error,
@@ -1922,6 +1980,8 @@ class GatewayModule(Module, layer=6):
             return ""
         profile = str(status.get("backend") or "").strip().lower()
         profile = {
+            "genz-icp": "genz",
+            "genz_icp": "genz",
             "super-lio": "super_lio",
             "superlio": "super_lio",
             "super_lio_reloc": "super_lio_relocation",
@@ -1947,6 +2007,16 @@ class GatewayModule(Module, layer=6):
             "ERROR",
         }:
             return ""
+        if str(status.get("health_source") or "").strip().lower() == "slam_runtime":
+            return "native_dds"
+        if profile in {
+            "cpp_dds_slam",
+            "lingtu_slam_dds",
+            "lingtu-slam-dds",
+            "native_slam",
+            "native_dds",
+        }:
+            return "native_dds"
         return profile
 
     def _get_slam_profile(self) -> str:
@@ -1974,6 +2044,7 @@ class GatewayModule(Module, layer=6):
             services = svc.status(
                 "super_lio_relocation",
                 "super_lio",
+                "genz_icp",
                 "slam_pgo",
                 "localizer",
                 "slam",
@@ -1982,12 +2053,14 @@ class GatewayModule(Module, layer=6):
                 profile = "super_lio_relocation"
             elif services.get("super_lio") in ("running", "active"):
                 profile = "super_lio"
+            elif services.get("genz_icp") in ("running", "active"):
+                profile = "genz"
             elif services.get("slam_pgo") in ("running", "active"):
                 profile = "fastlio2"
             elif services.get("localizer") in ("running", "active"):
                 profile = "localizer"
             elif services.get("slam") in ("running", "active"):
-                profile = "slam"
+                profile = "native_dds"
             elif self._session_uses_external_slam_none():
                 profile = "none"
             else:
@@ -2097,25 +2170,21 @@ class GatewayModule(Module, layer=6):
         if profile and profile != "unknown" and not d.get("backend"):
             d["backend"] = profile
         capability_defaults = backend_capability_defaults(profile)
-        if profile in {"super_lio", "super_lio_relocation"}:
+        if profile in {"genz", "super_lio", "super_lio_relocation"}:
             d.setdefault("health_source", "odom_map_cloud")
             d["relocalization_supported"] = False
             d["saved_map_relocalization_supported"] = False
             d.setdefault("relocalization_state", "unsupported")
             d["map_save_supported"] = profile == "super_lio"
-            d.setdefault(
-                "map_save_source",
-                (
-                    "live_map_cloud_snapshot"
-                    if profile == "super_lio"
-                    else "active_map"
-                ),
-            )
+            if profile == "super_lio":
+                d.setdefault("map_save_source", "live_map_cloud_snapshot")
+            elif profile == "super_lio_relocation":
+                d.setdefault("map_save_source", "active_map")
             if "map_state" not in d:
                 d["map_state"] = (
                     (
                         "live_map_cloud"
-                        if profile == "super_lio"
+                        if profile in {"genz", "super_lio"}
                         else "relocation_map_cloud"
                     )
                     if d.get("map_cloud_fresh")

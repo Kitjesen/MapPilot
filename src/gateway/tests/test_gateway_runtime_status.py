@@ -539,7 +539,8 @@ def test_localization_status_covers_product_states():
     assert payload["state"] == "ready"
     assert payload["ready"] is True
     assert payload["algorithm_healthy"] is True
-    assert payload["backend"] == "fastlio2"
+    assert payload["backend"] == "native_dds"
+    assert payload["algorithm_profile"] == "fastlio2"
     assert payload["health_source"] == "slam_runtime"
     assert payload["has_map_odom_tf"] is True
 
@@ -553,6 +554,7 @@ def test_localization_status_covers_product_states():
 
     with gateway._state_lock:
         gateway._localization_status = {
+            "backend": "localizer",
             "state": "DEGRADED",
             "confidence": 0.4,
             "degeneracy": "MILD",
@@ -601,7 +603,11 @@ def test_localization_status_covers_product_states():
     assert payload["reasons"] == ["reported_state:tracking", "stale_odometry"]
 
     with gateway._state_lock:
-        gateway._localization_status = {"state": "LOST", "confidence": 0.0}
+        gateway._localization_status = {
+            "backend": "localizer",
+            "state": "LOST",
+            "confidence": 0.0,
+        }
     payload = build_localization_status(gateway)
     assert payload["state"] == "lost"
     assert payload["can_relocalize"] is True
@@ -972,6 +978,43 @@ def test_localization_status_accepts_super_lio_relocation_contract():
     assert model.can_relocalize is False
 
 
+def test_localization_status_accepts_genz_icp_restart_only_contract():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import LocalizationStatusResponse
+    from gateway.services.runtime_status import build_localization_status
+
+    gateway = GatewayModule()
+    gateway._session_mode = "navigating"
+    with gateway._state_lock:
+        gateway._odom = {"x": 0.0}
+        gateway._localization_status = {
+            "backend": "genz",
+            "state": "TRACKING",
+            "confidence": 0.86,
+            "health_source": "odom_map_cloud",
+            "localizer_health": "LIO_TRACKING",
+            "pose_fresh": True,
+            "map_cloud_fresh": True,
+            "odom_age_ms": 110.0,
+            "cloud_age_ms": 90.0,
+        }
+
+    payload = build_localization_status(gateway)
+    model = LocalizationStatusResponse.model_validate(payload)
+
+    assert model.state == "ready"
+    assert model.ready is True
+    assert model.backend == "genz"
+    assert model.health_source == "odom_map_cloud"
+    assert model.map_save_supported is False
+    assert model.map_save_source is None
+    assert model.relocalization_supported is False
+    assert model.saved_map_relocalization_supported is False
+    assert model.restart_recovery_supported is True
+    assert model.recovery_method == "restart_genz_icp"
+    assert model.can_relocalize is False
+
+
 def test_super_lio_relocation_alias_keeps_conservative_capabilities():
     from gateway.services.runtime_status import backend_capability_defaults
 
@@ -1056,7 +1099,7 @@ def test_session_snapshot_exposes_super_lio_backend_capabilities():
     assert model.recovery_action == "restart_super_lio"
 
 
-def test_slam_profile_prefers_live_cpp_fastlio_status_over_stopped_session():
+def test_slam_profile_prefers_live_native_dds_status_over_stopped_session():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionResponse
 
@@ -1073,14 +1116,49 @@ def test_slam_profile_prefers_live_cpp_fastlio_status_over_stopped_session():
         "health_source": "slam_runtime",
     }
 
-    assert gateway._get_slam_profile() == "fastlio2"
+    assert gateway._get_slam_profile() == "native_dds"
 
     session = gateway._session_snapshot()
     model = SessionResponse.model_validate(session)
 
-    assert model.slam_profile == "fastlio2"
-    assert model.localization_backend == "fastlio2"
+    assert model.slam_profile == "native_dds"
+    assert model.localization_backend == "native_dds"
     assert model.map_save_supported is True
+
+
+def test_slam_profile_keeps_native_dds_runtime_profile():
+    from gateway.gateway_module import GatewayModule
+
+    assert (
+        GatewayModule._slam_profile_from_status(
+            {
+                "backend": "cpp_dds_slam",
+                "mode": "mapping",
+                "state": "MAPPING",
+            }
+        )
+        == "native_dds"
+    )
+    assert (
+        GatewayModule._slam_profile_from_status(
+            {
+                "backend": "cpp_dds_slam",
+                "mode": "localization",
+                "state": "TRACKING",
+            }
+        )
+        == "native_dds"
+    )
+    assert (
+        GatewayModule._slam_profile_from_status(
+            {
+                "backend": "cpp_dds_slam",
+                "mode": "localization",
+                "state": "FAILED",
+            }
+        )
+        == ""
+    )
 
 
 def test_session_snapshot_exposes_super_lio_relocation_capabilities():
@@ -1903,6 +1981,94 @@ def test_navigation_status_blocks_goal_when_session_is_not_navigating():
     assert payload["feedback"]["next_action"] == "resolve_blockers"
 
 
+def test_navigation_status_can_disable_real_runtime_evidence_gate_for_commissioning(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_navigation_status
+
+    class FakeMux:
+        def health(self):
+            return {"active_source": "none", "sources": {}}
+
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
+    monkeypatch.setenv("LINGTU_REQUIRE_REAL_RUNTIME_EVIDENCE", "0")
+
+    gateway = GatewayModule()
+    gateway._session_mode = "navigating"
+    gateway._icp_quality = 0.9
+    with gateway._state_lock:
+        gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "odom"}
+        gateway._mode = "autonomous"
+        gateway._mission = {
+            "state": "IDLE",
+            "planning_frame_id": "map",
+            "odom_frame_id": "odom",
+        }
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "algorithm_healthy": True,
+            "map_odom_tf": {"valid": True, "frame_id": "map", "child_frame_id": "odom"},
+        }
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
+
+    payload = build_navigation_status(gateway)
+
+    assert "real_runtime_evidence_missing_or_stale" not in payload["reason_codes"]
+    assert "real_runtime_evidence_missing_or_stale" not in payload["readiness"]["blockers"]
+    assert payload["readiness"]["real_runtime_evidence_ok"] is None
+    assert (
+        payload["diagnostics"]["real_runtime_evidence"]["reason"]
+        == "disabled_for_commissioning"
+    )
+
+
+def test_navigation_status_uses_real_runtime_preflight_before_first_motion(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_navigation_status
+
+    class FakeMux:
+        def health(self):
+            return {"active_source": "none", "sources": {}}
+
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
+    monkeypatch.setenv("LINGTU_REQUIRE_REAL_RUNTIME_EVIDENCE", "1")
+    monkeypatch.setattr(
+        "gateway.routes.diagnostics.build_real_runtime_evidence_latest_summary",
+        lambda: {
+            "ok": False,
+            "preflight_ok": True,
+            "blockers": ["real-runtime-evidence real_robot_motion is not true"],
+            "preflight_blockers": [],
+        },
+    )
+
+    gateway = GatewayModule()
+    gateway._session_mode = "navigating"
+    gateway._icp_quality = 0.9
+    with gateway._state_lock:
+        gateway._odom = {"x": 1.0, "y": 2.0, "frame_id": "odom"}
+        gateway._mode = "autonomous"
+        gateway._mission = {
+            "state": "IDLE",
+            "planning_frame_id": "map",
+            "odom_frame_id": "odom",
+        }
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "algorithm_healthy": True,
+            "map_odom_tf": {"valid": True, "frame_id": "map", "child_frame_id": "odom"},
+        }
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
+
+    payload = build_navigation_status(gateway)
+
+    assert payload["can_accept_goal"] is True
+    assert "real_runtime_evidence_missing_or_stale" not in payload["reason_codes"]
+    assert payload["readiness"]["real_runtime_evidence_ok"] is True
+    assert payload["readiness"]["real_runtime_evidence_full_ok"] is False
+
+
 def test_navigation_status_allows_exploring_session_for_external_tare():
     from gateway.gateway_module import GatewayModule
     from gateway.services.runtime_status import build_navigation_status
@@ -2539,7 +2705,9 @@ def test_navigation_status_routes_pass_fastapi_response_validation():
         ]
 
 
-def test_drift_watchdog_restores_idle_running_localization_services(monkeypatch):
+def test_drift_watchdog_restores_idle_running_native_slam_without_legacy_localizer(
+    monkeypatch,
+):
     import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     from gateway.gateway_module import GatewayModule
@@ -2579,10 +2747,18 @@ def test_drift_watchdog_restores_idle_running_localization_services(monkeypatch)
 
     assert (
         "stop",
-        ("slam", "slam_pgo", "localizer", "super_lio", "super_lio_relocation"),
+        (
+            "slam",
+            "slam_pgo",
+            "localizer",
+            "genz_icp",
+            "hba",
+            "super_lio",
+            "super_lio_relocation",
+        ),
     ) in fake.calls
-    assert ("ensure", ("slam", "localizer")) in fake.calls
-    assert ("wait_ready", ("slam", "localizer")) in fake.calls
+    assert ("ensure", ("slam",)) in fake.calls
+    assert ("wait_ready", ("slam",)) in fake.calls
     assert gateway._odom == {}
     assert gateway._odom_timestamps == []
 
@@ -2645,10 +2821,69 @@ def test_drift_watchdog_restores_idle_running_super_lio_services(monkeypatch):
 
     assert (
         "stop",
-        ("slam", "slam_pgo", "localizer", "super_lio", "super_lio_relocation"),
+        (
+            "slam",
+            "slam_pgo",
+            "localizer",
+            "genz_icp",
+            "hba",
+            "super_lio",
+            "super_lio_relocation",
+        ),
     ) in fake.calls
     assert ("ensure", ("lidar", "super_lio")) in fake.calls
     assert ("wait_ready", ("lidar", "super_lio")) in fake.calls
+
+
+def test_drift_watchdog_restores_idle_running_genz_icp_services(monkeypatch):
+    import runtime.service_manager as service_manager
+    import gateway.gateway_module as gateway_module
+    from gateway.gateway_module import GatewayModule
+
+    class FakeServiceManager:
+        def __init__(self):
+            self.running = {"genz_icp"}
+            self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+        def is_running(self, service: str) -> bool:
+            return service in self.running
+
+        def stop(self, *services: str) -> None:
+            self.calls.append(("stop", services))
+            self.running.difference_update(services)
+
+        def ensure(self, *services: str) -> None:
+            self.calls.append(("ensure", services))
+            self.running.update(services)
+
+        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
+            self.calls.append(("wait_ready", services))
+            return True
+
+    fake = FakeServiceManager()
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake)
+    monkeypatch.setattr(gateway_module.time, "sleep", lambda _: None)
+
+    gateway = GatewayModule()
+    gateway._drift_restart_delay_s = 0.0
+    gateway._session_mode = "idle"
+
+    gateway._drift_restart_do_restart(xy=999.0, y_abs=0.0, v=0.0)
+
+    assert (
+        "stop",
+        (
+            "slam",
+            "slam_pgo",
+            "localizer",
+            "genz_icp",
+            "hba",
+            "super_lio",
+            "super_lio_relocation",
+        ),
+    ) in fake.calls
+    assert ("ensure", ("lidar", "genz_icp")) in fake.calls
+    assert ("wait_ready", ("lidar", "genz_icp")) in fake.calls
 
 
 def test_drift_watchdog_restores_idle_running_super_lio_relocation_services(
@@ -2690,7 +2925,15 @@ def test_drift_watchdog_restores_idle_running_super_lio_relocation_services(
 
     assert (
         "stop",
-        ("slam", "slam_pgo", "localizer", "super_lio", "super_lio_relocation"),
+        (
+            "slam",
+            "slam_pgo",
+            "localizer",
+            "genz_icp",
+            "hba",
+            "super_lio",
+            "super_lio_relocation",
+        ),
     ) in fake.calls
     assert ("ensure", ("lidar", "super_lio_relocation")) in fake.calls
     assert ("wait_ready", ("lidar", "super_lio_relocation")) in fake.calls

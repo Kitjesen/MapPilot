@@ -173,6 +173,24 @@ def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
         runtime["localization"] = {
             "state": localization.get("state"),
             "ready": localization.get("ready"),
+            "backend": localization.get("backend"),
+            "algorithm_profile": localization.get("algorithm_profile"),
+            "health_source": localization.get("health_source"),
+            "native_mode": localization.get("native_mode"),
+            "active_map": localization.get("active_map"),
+            "map_state": localization.get("map_state"),
+            "map_loaded": localization.get("map_loaded"),
+            "map_save_source": localization.get("map_save_source"),
+            "relocalization_state": localization.get("relocalization_state"),
+            "relocalization_supported": localization.get("relocalization_supported"),
+            "saved_map_relocalization_supported": localization.get(
+                "saved_map_relocalization_supported"
+            ),
+            "restart_recovery_supported": localization.get(
+                "restart_recovery_supported"
+            ),
+            "recovery_method": localization.get("recovery_method"),
+            "recovery_action": localization.get("recovery_action"),
             "pose_fresh": localization.get("pose_fresh"),
             "pose_freshness": localization.get("pose_freshness"),
             "algorithm_healthy": localization.get("algorithm_healthy"),

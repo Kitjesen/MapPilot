@@ -439,12 +439,17 @@ def build_localization_status_from_parts(
         diagnostics,
     )
     ready = state == "ready"
-    backend = (
+    raw_backend = (
         diagnostics.get("backend")
         or diagnostics.get("slam_profile")
         or session.get("slam_profile")
     )
-    backend_name = str(backend or "").strip().lower()
+    backend_name = str(raw_backend or "").strip().lower()
+    health_source = str(diagnostics.get("health_source") or "").strip().lower()
+    algorithm_profile = backend_name or None
+    if health_source == "slam_runtime":
+        backend_name = "native_dds"
+    backend = backend_name or raw_backend
     capability_defaults = backend_capability_defaults(backend_name)
     relocalization_supported = _as_optional_bool(
         diagnostics.get("relocalization_supported")
@@ -496,6 +501,8 @@ def build_localization_status_from_parts(
         "confidence": diagnostics.get("confidence"),
         "algorithm_healthy": algorithm_healthy,
         "backend": backend,
+        "algorithm_profile": algorithm_profile,
+        "native_mode": diagnostics.get("mode"),
         "health_source": diagnostics.get("health_source"),
         "pose_fresh": pose_fresh,
         "pose_freshness": pose_freshness,
@@ -974,7 +981,7 @@ def _navigation_reason_codes(
         codes.append("map_artifact_gate_failed")
     if (
         real_runtime_evidence.get("required") is True
-        and real_runtime_evidence.get("ok") is not True
+        and not _real_runtime_evidence_ready(real_runtime_evidence)
     ):
         codes.append("real_runtime_evidence_missing_or_stale")
 
@@ -1018,6 +1025,10 @@ def _map_artifact_gate_status(nav_runtime: Mapping[str, Any]) -> dict[str, Any]:
 def _real_runtime_evidence_status(session: Mapping[str, Any]) -> dict[str, Any]:
     from runtime.runtime_interface import canonical_data_source_name
 
+    evidence_required = os.environ.get(
+        "LINGTU_REQUIRE_REAL_RUNTIME_EVIDENCE",
+        "1",
+    ).strip().lower() not in {"0", "false", "no", "off"}
     runtime_contract = (
         os.environ.get("LINGTU_RUNTIME_CONTRACT")
         or os.environ.get("LINGTU_DATA_SOURCE")
@@ -1027,6 +1038,14 @@ def _real_runtime_evidence_status(session: Mapping[str, Any]) -> dict[str, Any]:
         runtime_contract == REAL_RUNTIME_CONTRACT
         and _session_mode(session) in {"navigating", "exploring"}
     )
+    if required and not evidence_required:
+        return {
+            "required": False,
+            "ok": None,
+            "runtime_contract": runtime_contract,
+            "reason": "disabled_for_commissioning",
+            "blockers": [],
+        }
     if not required:
         return {
             "required": False,
@@ -1051,6 +1070,12 @@ def _real_runtime_evidence_status(session: Mapping[str, Any]) -> dict[str, Any]:
             "reason": "real_runtime_evidence_status_error",
             "blockers": [f"real-runtime-evidence status error: {exc}"],
         }
+
+
+def _real_runtime_evidence_ready(evidence: Mapping[str, Any]) -> bool:
+    if "preflight_ok" in evidence:
+        return evidence.get("preflight_ok") is True
+    return evidence.get("ok") is True
 
 
 def _frame_id(value: Any) -> str | None:
@@ -1415,6 +1440,11 @@ def _readiness_summary(
             map_artifact_gate.get("ok") is True if map_required else True
         ),
         "real_runtime_evidence_ok": (
+            _real_runtime_evidence_ready(real_runtime_evidence)
+            if real_required
+            else None
+        ),
+        "real_runtime_evidence_full_ok": (
             real_runtime_evidence.get("ok") is True if real_required else None
         ),
         "planning_frame_id": frames.get("planning_frame_id"),

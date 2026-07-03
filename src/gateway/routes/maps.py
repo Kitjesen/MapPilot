@@ -113,6 +113,90 @@ def _evaluate_preview_live_safety(
         }
 
 
+def _preview_reaches_requested_goal(preview: dict[str, Any]) -> bool:
+    if preview.get("feasible") is not True:
+        return False
+    if preview.get("reached_goal") is True:
+        return True
+    if preview.get("reached_goal") is False:
+        return False
+    global_plan = preview.get("global_plan")
+    if isinstance(global_plan, dict) and global_plan.get("reached_goal") is True:
+        return True
+    if isinstance(global_plan, dict) and global_plan.get("reached_goal") is False:
+        return False
+    if preview.get("adjusted_goal") is not None:
+        return False
+    return True
+
+
+def _mark_preview_target_unreached(preview: dict[str, Any]) -> None:
+    reasons = [str(reason) for reason in (preview.get("reasons") or [])]
+    if preview.get("adjusted_goal") is not None:
+        reason = "goal_adjusted"
+    else:
+        reason = "goal_not_reached"
+    if reason not in reasons:
+        reasons.append(reason)
+    preview["feasible"] = False
+    preview["reasons"] = reasons
+    preview["fallback_reason"] = (
+        preview.get("fallback_reason")
+        or "planner did not reach the requested target"
+    )
+
+
+def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
+    rejected = preview.get("rejected_plans") or []
+    first_rejected = rejected[0] if rejected and isinstance(rejected[0], dict) else {}
+    diagnostics = first_rejected.get("planner_diagnostics") or {}
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+
+    text = "\n".join(
+        str(value or "")
+        for value in (
+            first_rejected.get("reason"),
+            preview.get("fallback_reason"),
+            preview.get("error"),
+            diagnostics.get("error_message"),
+            diagnostics.get("stdout"),
+            diagnostics.get("stderr"),
+        )
+    )
+    lowered = text.lower()
+    reason = ""
+    message = ""
+    if "start is occupied/out of map" in lowered:
+        reason = "start_occupied_or_out_of_map"
+        message = "start is occupied/out of map and no nearby free cell"
+    elif "goal is occupied/out of map" in lowered:
+        reason = "goal_occupied_or_out_of_map"
+        message = "goal is occupied/out of map and no nearby free cell"
+    elif "a* planning failed" in lowered:
+        reason = "astar_failed"
+        message = "octoplanner3d a_star planning failed"
+    elif preview.get("fallback_reason") or preview.get("error"):
+        reason = "planner_failed"
+        message = str(preview.get("fallback_reason") or preview.get("error") or "")
+    else:
+        return None
+
+    return {
+        "reason": reason,
+        "message": message,
+        "planner": preview.get("selected_planner") or preview.get("planner"),
+        "runtime_mode": diagnostics.get("runtime_mode"),
+        "process_boundary": diagnostics.get("process_boundary"),
+        "executable_path": diagnostics.get("executable_path"),
+        "runtime_map_path": diagnostics.get("runtime_map_path")
+        or diagnostics.get("map_path"),
+        "returncode": diagnostics.get("returncode"),
+        "start": preview.get("start"),
+        "goal": preview.get("goal"),
+    }
+
+
 def map_lifecycle_payload(success: bool, **fields: Any) -> dict[str, Any]:
     payload = {
         "schema_version": 1,
@@ -477,6 +561,15 @@ def register_map_routes(app, gw) -> None:
                 False,
                 message="saved map artifact gate failed",
                 artifact_gate=gate,
+                no_motion_gate={
+                    "name": "saved_map_validate_plan",
+                    "map_only": True,
+                    "motion_published": False,
+                    "blocked": True,
+                    "blockers": list(gate.get("blockers") or []),
+                    "required_artifacts": ["map_pcd", "octomap"],
+                },
+                motion_published=False,
                 status_code=409,
             )
         if active != name:
@@ -484,17 +577,34 @@ def register_map_routes(app, gw) -> None:
                 False,
                 message=f"map must be active before validate_plan: {name}",
                 active=active,
+                no_motion_gate={
+                    "name": "saved_map_validate_plan",
+                    "map_only": True,
+                    "motion_published": False,
+                    "blocked": True,
+                    "blockers": ["active_map_mismatch"],
+                    "required_artifacts": ["map_pcd", "octomap"],
+                },
+                motion_published=False,
                 status_code=409,
             )
+        ignored_blockers = {
+            "navigation_session_inactive",
+            "real_runtime_evidence_missing_or_stale",
+            "safety_stop",
+        }
         preview = command_service.preview_navigation_plan(
             body,
-            ignore_blockers={"navigation_session_inactive", "safety_stop"},
+            ignore_blockers=ignored_blockers,
             map_only=True,
         )
         executable_preview = dict(preview)
         executable_preview["source"] = "map_only_path_with_live_safety_overlay"
         executable_path_safety = None
+        target_reached = _preview_reaches_requested_goal(preview)
         if bool(preview.get("feasible", False)):
+            if not target_reached:
+                _mark_preview_target_unreached(executable_preview)
             executable_path_safety = _evaluate_preview_live_safety(gw, preview)
             executable_preview["path_safety"] = executable_path_safety
             if (
@@ -506,17 +616,42 @@ def register_map_routes(app, gw) -> None:
                 executable_preview["fallback_reason"] = "live path_safety failed"
         else:
             executable_preview["path_safety"] = None
+        executable_ok = bool(executable_preview.get("feasible", False))
+        map_plan_ok = bool(preview.get("feasible", False)) and target_reached
+        no_motion_blockers = list(executable_preview.get("reasons") or [])
+        planner_failure = _planner_failure_summary(executable_preview)
+        if planner_failure:
+            failure_reason = str(planner_failure.get("reason") or "")
+            if failure_reason and failure_reason not in no_motion_blockers:
+                no_motion_blockers.append(failure_reason)
         return {
             "schema_version": 1,
-            "ok": bool(preview.get("feasible", False)),
-            "success": bool(preview.get("feasible", False)),
+            "ok": map_plan_ok,
+            "success": map_plan_ok,
             "map_id": name,
             "active": active,
             "artifact_gate": gate,
             "preview": preview,
             "executable_preview": executable_preview,
-            "executable_feasible": bool(executable_preview.get("feasible", False)),
+            "map_plan_ok": map_plan_ok,
+            "executable_feasible": executable_ok,
             "live_path_safety": executable_path_safety,
+            "no_motion_gate": {
+                "name": "saved_map_validate_plan",
+                "map_only": True,
+                "motion_published": False,
+                "blocked": not map_plan_ok,
+                "blockers": no_motion_blockers,
+                "ignored_readiness_blockers": sorted(ignored_blockers),
+                "required_artifacts": ["map_pcd", "octomap"],
+                "selected_planner": preview.get("selected_planner"),
+                "fallback_reason": executable_preview.get("fallback_reason", ""),
+                "planner_failure": planner_failure,
+                "preview_feasible": bool(preview.get("feasible", False)),
+                "target_reached": target_reached,
+                "live_safety_blocked": map_plan_ok and not executable_ok,
+                "executable_feasible": executable_ok,
+            },
             "motion_published": False,
             "ts": time.time(),
         }

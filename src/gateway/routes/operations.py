@@ -45,11 +45,19 @@ _ACTIVE_SERVICE_STATES = {"running", "active"}
 _SLAM_STATUS_SERVICES = (
     "lidar",
     "slam",
+    "nav_dds",
     "slam_pgo",
     "localizer",
+    "genz_icp",
+    "hba",
     "super_lio",
     "super_lio_relocation",
 )
+_SLAM_SERVICE_GROUPS = {
+    "native_dds": ["lidar", "slam", "nav_dds"],
+    "experimental": ["genz_icp", "hba", "super_lio", "super_lio_relocation"],
+    "legacy_ros2_compat": ["slam_pgo", "localizer"],
+}
 _EXPLORER_UNAVAILABLE_DETAIL = {
     "reason": "explorer_backend_not_running",
     "required_profile": "explore_or_tare_explore",
@@ -163,7 +171,7 @@ def _unsupported_saved_map_relocalization_response(gw) -> Any | None:
         status.get("saved_map_relocalization_supported"),
     )
     if (
-        backend_name not in {"super_lio", "super_lio_relocation"}
+        backend_name not in {"genz", "super_lio", "super_lio_relocation"}
         or saved_map_supported is not False
     ):
         return None
@@ -487,25 +495,66 @@ def register_operation_routes(app, gw) -> None:
         response_model=SlamStatusResponse,
     )
     async def slam_status():
+        service_details: dict[str, Any] = {}
         try:
             from runtime.service_manager import get_service_manager
 
             svc = get_service_manager()
             services = svc.status(*_SLAM_STATUS_SERVICES)
+            if hasattr(svc, "status_details"):
+                service_details = svc.status_details(*_SLAM_STATUS_SERVICES)
         except Exception:
             services = {
                 "lidar": "unknown",
                 "slam": "unknown",
+                "nav_dds": "unknown",
                 "slam_pgo": "unknown",
                 "localizer": "unknown",
+                "genz_icp": "unknown",
+                "hba": "unknown",
                 "super_lio": "unknown",
                 "super_lio_relocation": "unknown",
             }
 
-        if services.get("super_lio_relocation") in _ACTIVE_SERVICE_STATES:
+        live_mode = ""
+        native_mode = None
+        try:
+            status_snapshot = getattr(gw, "_localization_status", None) or {}
+            live_mode = str(
+                gw._slam_profile_from_status(status_snapshot)
+                or ""
+            ).strip().lower()
+            if live_mode == "native_dds":
+                native_mode = str(status_snapshot.get("mode") or "").strip() or None
+        except Exception:
+            live_mode = ""
+
+        slam_detail = service_details.get("slam") if isinstance(service_details, dict) else {}
+        slam_active_units = (
+            slam_detail.get("active_units", [])
+            if isinstance(slam_detail, dict)
+            else []
+        )
+        native_slam_active = "lingtu-slam-dds.service" in slam_active_units
+
+        if live_mode in {
+            "native_dds",
+            "fastlio2",
+            "genz",
+            "localizer",
+            "super_lio",
+            "super_lio_relocation",
+            "none",
+        }:
+            mode = live_mode
+        elif services.get("super_lio_relocation") in _ACTIVE_SERVICE_STATES:
             mode = "super_lio_relocation"
         elif services.get("super_lio") in _ACTIVE_SERVICE_STATES:
             mode = "super_lio"
+        elif services.get("genz_icp") in _ACTIVE_SERVICE_STATES:
+            mode = "genz"
+        elif native_slam_active:
+            mode = "native_dds"
         elif services.get("slam_pgo") in _ACTIVE_SERVICE_STATES:
             mode = "fastlio2"
         elif services.get("localizer") in _ACTIVE_SERVICE_STATES:
@@ -514,7 +563,17 @@ def register_operation_routes(app, gw) -> None:
             mode = "fastlio2"
         else:
             mode = "stopped"
-        return {"mode": mode, "services": services}
+        return {
+            "mode": mode,
+            "native_mode": native_mode,
+            "services": services,
+            "service_details": service_details,
+            "service_groups": _SLAM_SERVICE_GROUPS,
+            "product_runtime": "native_dds",
+            "ros2_required": False,
+            "manual_systemctl_required": False,
+            "control_entrypoint": "lingtu svc restart slam",
+        }
 
     @app.post(
         "/api/v1/slam/switch",
@@ -588,7 +647,11 @@ def register_operation_routes(app, gw) -> None:
                     message=result.message,
                     status_code=504,
                 )
-            return slam_operation_payload(result.success, message=result.message)
+            return slam_operation_payload(
+                result.success,
+                message=result.message,
+                quality=result.quality,
+            )
         except Exception as e:
             return _slam_operation_response(False, message=str(e), status_code=500)
 

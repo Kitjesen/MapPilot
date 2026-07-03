@@ -146,7 +146,7 @@ def register_session_routes(app, gw) -> None:
                 status_code=400,
                 message=(
                     f"Unknown slam_profile: {slam_profile!r}. "
-                    "Use 'none' | 'fastlio2' | 'localizer' | "
+                    "Use 'none' | 'fastlio2' | 'genz' | 'localizer' | "
                     "'super_lio' | 'super_lio_relocation'."
                 ),
             )
@@ -222,18 +222,9 @@ def register_session_routes(app, gw) -> None:
                     status_code=400,
                     message=f"Map '{map_name}' has no map.pcd",
                 )
-            if not (base / "tomogram.pickle").is_file():
-                return _transition_response(
-                    False,
-                    status_code=400,
-                    message=(
-                        f"Map '{map_name}' has no tomogram - build it "
-                        f"first (REPL: map build {map_name})"
-                    ),
-                )
             artifact_gate = validate_saved_map_artifact_dir(
                 base,
-                require_tomogram=True,
+                require_octomap=True,
                 expected_frame_id=topic_default_frame_id(TOPICS.saved_map_cloud),
             )
             artifact_gate["required"] = True
@@ -265,33 +256,47 @@ def register_session_routes(app, gw) -> None:
         gw._session_pending = True
         gw._session_error = ""
         try:
-            from runtime.service_manager import get_service_manager
-
-            svc = get_service_manager()
-            backend = slam_profile or default_slam_profile_for_mode(mode)
-            plan = session_transition_plan(mode, backend)
-            svc.stop(*plan.stop)
-            if plan.ensure:
-                svc.ensure(*plan.ensure)
-            ok = (
-                svc.wait_ready(*plan.wait_ready, timeout=10.0)
-                if plan.wait_ready
-                else True
+            manages_services = bool(getattr(gw, "_manage_session_services", True))
+            backend = slam_profile or (
+                default_slam_profile_for_mode(mode)
+                if manages_services
+                else str(gw._get_slam_profile() or "").strip().lower()
             )
-            if plan.clear_live_map:
+            if not backend:
+                backend = default_slam_profile_for_mode(mode)
+
+            if manages_services:
+                from runtime.service_manager import get_service_manager
+
+                svc = get_service_manager()
+                plan = session_transition_plan(mode, backend)
+                svc.stop(*plan.stop)
+                if plan.ensure:
+                    svc.ensure(*plan.ensure)
+                ok = (
+                    svc.wait_ready(*plan.wait_ready, timeout=10.0)
+                    if plan.wait_ready
+                    else True
+                )
+                if plan.clear_live_map:
+                    with gw._map_cloud_lock:
+                        gw._map_points = None
+                        gw._voxel_hits.clear()
+                if not ok:
+                    gw._session_error = "Services not ready after 10s"
+                    return _transition_response(
+                        False,
+                        status_code=500,
+                        message=gw._session_error,
+                    )
+            elif mode in {"mapping", "exploring"}:
                 with gw._map_cloud_lock:
                     gw._map_points = None
                     gw._voxel_hits.clear()
-            if not ok:
-                gw._session_error = "Services not ready after 10s"
-                return _transition_response(
-                    False,
-                    status_code=500,
-                    message=gw._session_error,
-                )
 
             if (
-                mode == "navigating"
+                manages_services
+                and mode == "navigating"
                 and map_name
                 and backend not in {"super_lio", "super_lio_relocation"}
             ):
@@ -354,10 +359,11 @@ def register_session_routes(app, gw) -> None:
                     logger.warning("session/end: end_exploration failed: %s", e)
                 gw._exploring = False
                 gw.push_event({"type": "exploring", "active": False})
-            from runtime.service_manager import get_service_manager
+            if bool(getattr(gw, "_manage_session_services", True)):
+                from runtime.service_manager import get_service_manager
 
-            svc = get_service_manager()
-            svc.stop(*slam_switch_plan("stop").stop)
+                svc = get_service_manager()
+                svc.stop(*slam_switch_plan("stop").stop)
             gw._session_mode = "idle"
             gw._session_map = None
             gw._session_slam_profile = "stopped"

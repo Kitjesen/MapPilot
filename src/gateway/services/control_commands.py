@@ -139,8 +139,15 @@ class ControlCommandService:
             )
 
         try:
+            constraints = getattr(body, "planner_constraints", {}) or {}
             try:
-                return nav.preview_plan(body.x, body.y, body.z, map_only=map_only)
+                return nav.preview_plan(
+                    body.x,
+                    body.y,
+                    body.z,
+                    map_only=map_only,
+                    planner_constraints=constraints,
+                )
             except TypeError:
                 return nav.preview_plan(body.x, body.y, body.z)
         except Exception as exc:

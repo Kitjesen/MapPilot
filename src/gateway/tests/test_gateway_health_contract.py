@@ -131,6 +131,30 @@ def test_health_prefers_cpp_processed_scan_rate_over_gateway_odom_rate(monkeypat
     assert health["sensors"]["slam"]["odom_hz"] == 4.9
 
 
+def test_health_reports_stale_cpp_slam_status(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "state": "STALE",
+        "processed_scan_hz": 0.0,
+        "reason": "slam_runtime_status_stale",
+        "status_snapshot_stale": True,
+        "status_snapshot_age_s": 1.8,
+    }
+    gateway._all_modules = {}
+    monkeypatch.setattr(gateway, "_get_slam_hz_cached", lambda: 0.0)
+
+    health = asyncio.run(_endpoint(gateway, "/api/v1/health")())
+
+    assert health["slam_hz"] == 0.0
+    assert health["sensors"]["slam"]["status"] == "stale"
+    assert health["sensors"]["slam"]["source"] == "localization_status"
+    assert health["sensors"]["slam"]["reason"] == "slam_runtime_status_stale"
+    assert health["sensors"]["slam"]["status_snapshot_stale"] is True
+
+
 def test_health_falls_back_to_cached_slam_rate_when_module_rate_missing(monkeypatch):
     from gateway.gateway_module import GatewayModule
 

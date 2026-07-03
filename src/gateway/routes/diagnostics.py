@@ -775,6 +775,68 @@ def _all_required_section_entries_ok(section: Any) -> bool:
     return True
 
 
+def _preflight_live_topic_freshness_ok(section: Any) -> bool:
+    from runtime.runtime_interface import TOPICS
+
+    if not isinstance(section, dict) or not section:
+        return False
+    deferred_until_goal = {TOPICS.local_path, TOPICS.cmd_vel}
+    for topic, entry in section.items():
+        if topic in deferred_until_goal:
+            continue
+        if isinstance(entry, dict):
+            if entry.get("required") is False:
+                continue
+            if entry.get("ok") is not True:
+                return False
+        elif entry is not True:
+            return False
+    return True
+
+
+def _real_runtime_preflight_blockers(
+    *,
+    validation: dict[str, Any],
+    report: dict[str, Any],
+    contract_name: str | None,
+    age_s: float,
+    max_age_s: float,
+    freshness: Any,
+    data_flow: Any,
+    frame_links: Any,
+    hardware: dict[str, Any],
+) -> list[str]:
+    from runtime.runtime_interface import REAL_RUNTIME_CONTRACT
+
+    blockers: list[str] = []
+    if not validation:
+        blockers.append("real-runtime-evidence validation payload missing")
+    if contract_name != REAL_RUNTIME_CONTRACT:
+        blockers.append(
+            f"real-runtime-evidence contract is not {REAL_RUNTIME_CONTRACT}"
+        )
+    if report.get("simulation_only") is not False:
+        blockers.append("real-runtime-evidence simulation_only is not false")
+    if age_s > max_age_s:
+        blockers.append("real-runtime-evidence is stale")
+    if not _preflight_live_topic_freshness_ok(freshness):
+        blockers.append("real-runtime-evidence live topic freshness missing or failed")
+    if not _all_required_section_entries_ok(frame_links):
+        blockers.append("real-runtime-evidence frame-link section missing or failed")
+    flow = data_flow if isinstance(data_flow, dict) else {}
+    for stage in ("endpoint_adapter", "slam_or_relayed_localization_map"):
+        if not isinstance(flow.get(stage), dict) or flow[stage].get("ok") is not True:
+            blockers.append(f"real-runtime-evidence {stage} section missing or failed")
+    route_observed = (
+        hardware.get("ok") is True
+        or hardware.get("hardware_command_route_observed") is True
+        or report.get("cmd_vel_sent_to_hardware") is True
+    )
+    if not route_observed:
+        blockers.append("real-runtime-evidence hardware command route missing")
+    return list(dict.fromkeys(blockers))
+
+
 def _real_runtime_evidence_summary_from_report(
     report_path: pathlib.Path,
     *,
@@ -849,9 +911,22 @@ def _real_runtime_evidence_summary_from_report(
     if not _all_required_section_entries_ok(frame_links):
         blockers.append("real-runtime-evidence frame-link section missing or failed")
 
+    preflight_blockers = _real_runtime_preflight_blockers(
+        validation=validation,
+        report=report,
+        contract_name=contract_name,
+        age_s=age_s,
+        max_age_s=max_age_s,
+        freshness=freshness,
+        data_flow=data_flow,
+        frame_links=frame_links,
+        hardware=hardware,
+    )
+
     return {
         "schema_version": 1,
         "ok": not blockers,
+        "preflight_ok": not preflight_blockers,
         "artifacts_root": str(report_path.parent.parent),
         "artifact_dir": str(report_path.parent),
         "report_path": str(report_path),
@@ -869,6 +944,7 @@ def _real_runtime_evidence_summary_from_report(
         "checked_live_topic_freshness": freshness if isinstance(freshness, dict) else {},
         "checked_runtime_data_flow_evidence": data_flow if isinstance(data_flow, dict) else {},
         "checked_frame_link_evidence": frame_links if isinstance(frame_links, dict) else {},
+        "preflight_blockers": preflight_blockers,
         "blockers": list(dict.fromkeys(blockers)),
         "reason": blockers[0] if blockers else None,
         "ts": now,
