@@ -902,6 +902,101 @@ def test_runtime_switch_plan_endpoint_reports_invalid_current_boundary(monkeypat
     assert gateway.instruction.msg_count == 0
 
 
+def test_runtime_switch_endpoint_defaults_to_plan_only_for_app_clients():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
+
+    result = asyncio.run(
+        post_runtime_switch(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="inspection",
+                map_name="field_map",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.schema_version == "lingtu.runtime_switch.v1"
+    assert model.ok is True
+    assert model.accepted is False
+    assert model.read_only is True
+    assert model.dry_run is True
+    assert model.motion is False
+    assert model.status == "planned"
+    assert model.lifecycle == "cold_restart"
+    assert model.target_profile == "inspection"
+    assert model.command[:3] == ["bash", model.command[1], "mode"]
+    assert model.command[3:5] == ["switch", "inspection"]
+    assert "--map" in model.command
+    assert "/api/v1/mode" not in " ".join(model.command)
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+    assert gateway.instruction.msg_count == 0
+
+
+def test_runtime_switch_endpoint_can_launch_robot_side_mode_switch(
+    monkeypatch,
+    tmp_path,
+):
+    import gateway.services.runtime_switch_execute as switch_execute
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    calls = []
+
+    class FakePopen:
+        pid = 4321
+
+        def __init__(self, command, **kwargs):
+            calls.append((command, kwargs))
+
+    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(switch_execute.subprocess, "Popen", FakePopen)
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
+
+    result = asyncio.run(
+        post_runtime_switch(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="nav",
+                map_name="field_map",
+                allow_restart=True,
+                request_id="switch-test",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.accepted is True
+    assert model.read_only is False
+    assert model.dry_run is False
+    assert model.status == "accepted"
+    assert model.pid == 4321
+    assert model.command_id == "switch-test"
+    assert calls
+    command = calls[0][0]
+    assert command[0] == "bash"
+    assert command[2:5] == ["mode", "switch", "nav"]
+    assert "--map" in command
+    assert "field_map" in command
+    assert "--relocalize" in command
+    assert calls[0][1]["stdin"] is switch_execute.subprocess.DEVNULL
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+    assert gateway.instruction.msg_count == 0
+
+
 def test_navigation_goal_requests_are_map_frame_only():
     from gateway.schemas import (
         ClickNavRequest,

@@ -52,6 +52,7 @@ Important current links include:
 | `cloud_ws`, `camera_ws` | point cloud and camera WebSocket streams |
 | `runtime_dataflow`, `runtime_dataflow_topic`, `runtime_dataflow_subscribe` | Module-first dataflow summary, one-stream inspection, and read-only Gateway SSE subscription plan |
 | `runtime_switch_plan` | Read-only dry-run sim/replay/real runtime endpoint switch preflight |
+| `runtime_switch` | Product mode switch request; defaults to plan-only and requires explicit restart permission |
 | `field_check` | Backend product verdict for field/simulation/non-motion readiness |
 | `inspection_acceptance` | Read-only patrol acceptance summary over saved locations and plan previews |
 | `session`, `session_start`, `session_end` | mapping, navigation, exploration lifecycle |
@@ -63,7 +64,7 @@ Important current links include:
 | `real_runtime_evidence_latest` | latest real S100P runtime evidence for explicit field-mode status |
 | `algorithm_benchmark_latest` | latest read-only DimOS/algorithm benchmark artifact gate |
 
-The Dataflow tab uses `runtime_dataflow` for the read-only product stream table, runtime stage evidence, `runtime_dataflow_topic` for one-stream evidence, `runtime_dataflow_subscribe` to discover the filtered Gateway SSE URL for a whitelisted stream, `runtime_switch_plan` for dry-run sim-to-real endpoint preflight, and the backend `field_check` algorithm verdict derived from `algorithm_benchmark_latest`. Its Product Check strip reads the backend `field_check` verdict in simulation mode by default, so PASS/FAIL stays aligned with Gateway acceptance rather than being recomputed in the browser. Field mode remains explicit when real S100P evidence is being reviewed. It must remain an observation surface: no arbitrary ModulePort publish, no arbitrary ROS topic publish, and no motion command bypass.
+The Dataflow tab uses `runtime_dataflow` for the read-only product stream table, runtime stage evidence, `runtime_dataflow_topic` for one-stream evidence, `runtime_dataflow_subscribe` to discover the filtered Gateway SSE URL for a whitelisted stream, `runtime_switch_plan` for dry-run sim-to-real endpoint preflight, and the backend `field_check` algorithm verdict derived from `algorithm_benchmark_latest`. Product mode execution uses `runtime_switch`; it stays plan-only unless the caller explicitly allows a cold restart. Its Product Check strip reads the backend `field_check` verdict in simulation mode by default, so PASS/FAIL stays aligned with Gateway acceptance rather than being recomputed in the browser. Field mode remains explicit when real S100P evidence is being reviewed. It must remain an observation surface: no arbitrary ModulePort publish, no arbitrary ROS topic publish, and no motion command bypass.
 
 The Inspection tab uses `inspection_acceptance` for the backend verdict. It displays the Gateway-built summary, blockers, and per-point preview status; the UI must not recompute PASS/FAIL locally or publish any movement command.
 

@@ -45,6 +45,7 @@ const requiredLinks = [
   'runtime_dataflow_topic',
   'runtime_dataflow_subscribe',
   'runtime_switch_plan',
+  'runtime_switch',
   'field_check',
   'inspection_acceptance',
 ]
@@ -353,6 +354,27 @@ try {
   ])
   ensure(switchStages.has('dynamic_obstacle_gate'), failures, 'runtime_switch_plan missing dynamic_obstacle_gate')
   ensure(switchStages.has('command_boundary'), failures, 'runtime_switch_plan missing command_boundary')
+
+  const runtimeSwitchPath = links.runtime_switch || '/api/v1/runtime/switch'
+  const runtimeSwitch = await request(runtimeSwitchPath, {
+    method: 'POST',
+    body: {
+      current_profile: 'nav',
+      target_profile: 'nav',
+      map_name: 'smoke',
+      allow_restart: false,
+    },
+  })
+  ensure(runtimeSwitch.status === 200, failures, `POST ${runtimeSwitchPath} expected 200, got ${runtimeSwitch.status}`)
+  ensure(
+    runtimeSwitch.body?.schema_version === 'lingtu.runtime_switch.v1',
+    failures,
+    'runtime_switch missing canonical schema version',
+  )
+  ensure(runtimeSwitch.body?.accepted === false, failures, 'runtime_switch smoke must not execute a restart')
+  ensure(runtimeSwitch.body?.read_only === true, failures, 'runtime_switch smoke should be read-only')
+  ensure(runtimeSwitch.body?.dry_run === true, failures, 'runtime_switch smoke should be dry-run')
+  ensure(runtimeSwitch.body?.motion === false, failures, 'runtime_switch must not imply motion')
 
   const fieldCheckPath = links.field_check || '/api/v1/diagnostics/field-check'
   const fieldCheck = await request(fieldCheckPath, {

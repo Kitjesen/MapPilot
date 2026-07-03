@@ -13,6 +13,7 @@ from runtime.profiles.product_mode_contracts import (
     PRODUCT_MODE_CONTRACTS,
     product_mode_switch_plan,
 )
+from runtime.profiles.resolver import canonical_profile_name
 from runtime.runtime_switch import compare_runtime_switch, validate_runtime_switch
 
 
@@ -69,6 +70,8 @@ def _resolve_profile_inputs(raw: Mapping[str, Any]) -> dict[str, Any]:
     if not current_profile:
         current_profile = "sim_mujoco_live"
         current_profile_source = "default"
+    current_profile = canonical_profile_name(current_profile)
+    target_profile = canonical_profile_name(target_profile)
 
     current_endpoint_source = "query" if current_endpoint else "profile_default"
     if not current_endpoint:

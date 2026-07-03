@@ -93,6 +93,7 @@ def test_app_bootstrap_service_returns_client_contract():
         == "/api/v1/runtime/dataflow/subscribe"
     )
     assert payload["links"]["runtime_switch_plan"] == "/api/v1/runtime/switch-plan"
+    assert payload["links"]["runtime_switch"] == "/api/v1/runtime/switch"
     assert payload["links"]["navigation_goal_candidate"] == "/api/v1/navigation/goal_candidate"
     assert payload["links"]["navigation_plan"] == "/api/v1/navigation/plan"
     assert payload["links"]["field_check"] == "/api/v1/diagnostics/field-check"
@@ -121,6 +122,7 @@ def test_app_bootstrap_service_returns_client_contract():
     assert capabilities["features"]["localization"] is True
     assert capabilities["features"]["runtime_dataflow"] is True
     assert capabilities["features"]["runtime_switch_plan"] is True
+    assert capabilities["features"]["runtime_switch"] is True
     assert capabilities["features"]["algorithm_benchmark"] is True
     assert capabilities["features"]["webrtc"] is True
     assert capabilities["endpoints"]["app"]["bootstrap"]["path"] == "/api/v1/app/bootstrap"
@@ -207,8 +209,13 @@ def test_app_bootstrap_service_returns_client_contract():
         capabilities["endpoints"]["ops"]["runtime_switch_plan"]["path"]
         == "/api/v1/runtime/switch-plan"
     )
+    assert (
+        capabilities["endpoints"]["ops"]["runtime_switch"]["path"]
+        == "/api/v1/runtime/switch"
+    )
     assert capabilities["endpoints"]["ops"]["field_check"]["method"] == "POST"
     assert capabilities["endpoints"]["ops"]["runtime_switch_plan"]["method"] == "POST"
+    assert capabilities["endpoints"]["ops"]["runtime_switch"]["method"] == "POST"
     assert capabilities["endpoints"]["ops"]["inspection_acceptance"]["method"] == "POST"
     assert capabilities["realtime"]["events"]["transport"] == "sse"
     assert capabilities["realtime"]["events"]["event_schema"] == "SSEEventEnvelope"
@@ -530,6 +537,7 @@ def test_app_capabilities_enriches_specs_from_openapi():
     memory_semantic = capabilities["endpoints"]["ops"]["memory_temporal_semantic"]
     field_check = capabilities["endpoints"]["ops"]["field_check"]
     runtime_switch_plan = capabilities["endpoints"]["ops"]["runtime_switch_plan"]
+    runtime_switch = capabilities["endpoints"]["ops"]["runtime_switch"]
     algorithm_benchmark = capabilities["endpoints"]["ops"]["algorithm_benchmark_latest"]
     inspection_acceptance = capabilities["endpoints"]["ops"]["inspection_acceptance"]
     webrtc_offer = capabilities["endpoints"]["media"]["webrtc_offer"]
@@ -596,6 +604,8 @@ def test_app_capabilities_enriches_specs_from_openapi():
     assert field_check["response_schema"] == "ProductFieldCheckResponse"
     assert runtime_switch_plan["request_schema"] == "RuntimeSwitchPlanRequest"
     assert runtime_switch_plan["response_schema"] == "RuntimeSwitchPlanResponse"
+    assert runtime_switch["request_schema"] == "RuntimeSwitchRequest"
+    assert runtime_switch["response_schema"] == "RuntimeSwitchResponse"
     assert algorithm_benchmark["response_schema"] == "AlgorithmBenchmarkLatestResponse"
     assert inspection_acceptance["request_schema"] == "InspectionAcceptanceRequest"
     assert inspection_acceptance["response_schema"] == "InspectionAcceptanceResponse"

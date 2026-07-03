@@ -14,8 +14,8 @@ itself, started by `lingtu.service`.
 
 ```bash
 # ~/.bashrc / ~/.zshrc
-alias lingtu='ssh sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu"'
-alias lingwatch='ssh -t sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
+alias lingtu='ssh sunrise@192.168.66.13 "bash ~/data/SLAM/navigation/scripts/lingtu"'
+alias lingwatch='ssh -t sunrise@192.168.66.13 "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
 ```
 
 After `source ~/.bashrc`:
@@ -69,7 +69,7 @@ during mapping / navigation runs.
 ### `map` —mapping session
 
 ```bash
-lingtu map start              # enter mapping (starts robot-fastlio2 + slam_pgo)
+lingtu map start              # enter mapping (sets native SLAM DDS to mapping mode)
 lingtu map save lab_0423      # PGO save + DUFOMap clean + tomogram + occupancy rebuild
 lingtu map end                # back to idle (stops SLAM)
 lingtu map list               # list saved maps
@@ -110,14 +110,21 @@ curl -X POST -H 'Content-Type: application/json' \
 ### `nav` —navigation session
 
 ```bash
-lingtu nav start corrected_20260406_224020    # navigating + load map (starts robot-fastlio2 + robot-localizer)
-lingtu nav goal 3.5 2.1 0.0                   # send map-frame goal (x, y, yaw)
-lingtu nav stop                               # same as map end
+lingtu nav start corrected_20260406_224020 --initial-pose 0 0 0
+lingtu nav goal 3.5 2.1 0.0
+lingtu nav stop
 ```
 
-The optional `yaw` is in radians. It is forwarded to Gateway `/api/v1/goal` and
-published as the map-frame pose orientation; when omitted, the heading defaults
-to `0.0`.
+`nav start` switches the native C++ SLAM DDS service to localization mode,
+loads `<map>/map.pcd`, waits for the old map to be loaded, starts the Gateway
+navigation session, then runs saved-map relocalization when `--initial-pose` or
+`--relocalize` is provided. Loading an old map is not the same as being
+localized: before sending a real goal, `relocalization_state` must be
+`completed` and `map_odom_tf.valid` must be true.
+
+The optional goal `yaw` is in radians. It is forwarded to Gateway
+`/api/v1/goal` and published as the map-frame pose orientation; when omitted,
+the heading defaults to `0.0`.
 
 ### `plan-preview` - offline tomogram planner gate
 
@@ -153,28 +160,38 @@ when selected explicitly.
 ### `svc` —systemd service control
 
 ```bash
-lingtu svc status               # 6 core services: enabled / active
+lingtu svc status               # native product services: enabled / active
+lingtu svc status-legacy        # include ROS2/experimental fallback services
 lingtu doctor                   # read-only service/Gateway/dataflow diagnostics
 lingtu doctor --ros2            # optional legacy ROS topic/node diagnostics
-lingtu svc restart slam         # restart Fast-LIO2 (i.e. robot-fastlio2.service)
-lingtu svc restart localization # restart Fast-LIO2 + localizer, then wait for /ready
-lingtu svc restart lidar        # restart Livox driver (i.e. robot-lidar.service)
-lingtu svc restart localizer    # restart ICP localizer
+lingtu svc restart slam         # restart native SLAM DDS (lingtu-slam-dds.service)
+lingtu svc restart localization # restart native SLAM DDS, then wait for /ready
+lingtu svc restart lidar        # restart native Livox DDS (lingtu-livox-dds.service)
+lingtu svc restart nav_dds      # restart native navigation DDS endpoint
+lingtu svc restart localizer    # restart native SLAM DDS in its current mode
 lingtu svc restart super_lio    # restart experimental Super-LIO backend
 lingtu svc restart super_lio_relocation
 lingtu svc restart lingtu       # restart algorithm layer (clears odom cache)
-lingtu svc restart all          # restart LiDAR + SLAM + localizer + lingtu
+lingtu svc restart all          # restart LiDAR + native SLAM DDS + lingtu
 lingtu svc stop slam            # stop a single service
 ```
 
-The aliases `lidar` / `slam` / `localization` / `localizer` / `lingtu` / `camera` / `brainstem` map
-to the corresponding production systemd unit. There is no `localization.service` anymore;
-`slam` aliases to `robot-fastlio2.service`. `svc status` warns if legacy
-`lidar.service`, `localization.service`, or `localizer.service` is still active because those
-services can duplicate ROS nodes and starve `/nav/lidar_scan` / `/nav/imu`.
-Use `svc restart localization` when systemd still shows Fast-LIO2 active but
-`/nav/odometry` has no publisher; it restarts only Fast-LIO2 and the ICP
-localizer, preserving the LiDAR driver and LingTu process.
+The aliases `lidar` / `slam` / `localization` / `localizer` / `nav_dds` /
+`lingtu` / `camera` / `brainstem` map to the corresponding production systemd
+unit. The production LiDAR and SLAM aliases are `lingtu-livox-dds.service` and
+`lingtu-slam-dds.service`; `robot-lidar.service`, `robot-fastlio2.service`, and
+`robot-localizer.service` are legacy fallback units and can still be targeted
+explicitly with `legacy_lidar` / `legacy_fastlio2` / `legacy_localizer`.
+`svc status` shows the native product path by default; use `svc status-legacy`
+when debugging ROS2/experimental fallback units. `svc status` still warns if
+legacy LiDAR/SLAM/localizer services are active because
+they can duplicate ROS nodes and starve the native DDS sensor/SLAM path.
+Use `svc restart localization` when the native SLAM status JSON is stale or the
+Gateway no longer reports localization readiness; it restarts only
+`lingtu-slam-dds.service`, preserving the LiDAR driver and LingTu process. If the
+native service is not installed, install it with
+`scripts/deploy/thunder/install_services.sh field-cpp`; the legacy
+Fast-LIO2/localizer sequence is available only through explicit legacy aliases.
 The LingTu localization watchdog now performs the same ordered restart
 automatically for the `localizer` backend when fresh `LOCKED`/`RECOVERED`
 localizer health contradicts a sustained `/nav/odometry` publisher loss. Tune it
@@ -184,7 +201,7 @@ with `LINGTU_LOCALIZER_ODOM_LOSS_RECOVERY`,
 
 The Super-LIO aliases are experimental. They map to `robot-super-lio.service`
 and `robot-super-lio-relocation.service` when those field-evaluation units are
-installed. They must not replace the default `nav`/`localizer` path until the
+installed. They must not replace the default native DDS navigation path until the
 route-level gate in `super_lio_backend.md` passes.
 
 ### `slamcheck` - Super-LIO non-motion smoke
@@ -300,7 +317,30 @@ against a survey-grade map.
 In `--strict` mode, stale localization, non-idle command sources, readiness
 failures, or excessive stationary drift return a non-zero exit code.
 
-### `log` —journalctl filters
+### `system-acceptance` - That-nav parity gate
+
+```bash
+lingtu system-acceptance --map lab_0423_test --goal 1.0 0.0 0.0
+lingtu system-acceptance --map lab_0423_test --goal 1.0 0.0 0.0 --with-relocalization --initial-pose 0 0 0
+lingtu system-acceptance --map lab_0423_test --goal 0.5 0.0 0.0 --allow-motion --initial-pose 0 0 0
+```
+
+This is the top-level post-refactor field gate. It validates the native/Gateway
+path rather than the legacy ROS2 graph:
+
+- static runtime contract and no-ROS product boundary
+- Gateway/ModulePort readiness through `doctor --non-motion --strict`
+- sensor-to-SLAM stability through `soak --strict`
+- saved-map artifacts through `field-check --require-tomogram --require-occupancy`
+- requested global plan through `/api/v1/navigation/plan`
+
+It does not send motion commands by default. `--with-relocalization` switches
+the native SLAM DDS runtime to localization mode, loads the saved PCD, runs the
+seeded saved-map relocalization gate, and captures Gateway/localization/status
+evidence. `--allow-motion` runs the controlled path follower smoke after the
+same saved-map relocalization step.
+
+### `log` - journalctl filters
 
 ```bash
 lingtu log drift      # drift_watchdog firings

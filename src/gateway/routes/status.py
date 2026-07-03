@@ -29,6 +29,8 @@ from gateway.schemas import (
     RuntimeDataflowTopicDetailResponse,
     RuntimeSwitchPlanRequest,
     RuntimeSwitchPlanResponse,
+    RuntimeSwitchRequest,
+    RuntimeSwitchResponse,
     SSEEventEnvelope,
     SceneGraphResponse,
     StateResponse,
@@ -41,6 +43,7 @@ from gateway.services.runtime_dataflow import (
     build_runtime_dataflow_topic_detail,
 )
 from gateway.services.runtime_switch_plan import build_runtime_switch_plan
+from gateway.services.runtime_switch_execute import build_runtime_switch_response
 from gateway.services.runtime_status import (
     build_localization_status,
     build_navigation_status,
@@ -710,6 +713,16 @@ def register_status_routes(app, gw) -> None:
     ):
         return build_runtime_switch_plan(request)
 
+    @app.post(
+        "/api/v1/runtime/switch",
+        summary="Validate and optionally execute a product mode switch",
+        response_model=RuntimeSwitchResponse,
+    )
+    async def post_runtime_switch(
+        request: RuntimeSwitchRequest,
+    ):
+        return build_runtime_switch_response(request)
+
     @app.get(
         "/api/v1/navigation",
         response_model=NavigationStatusResponse,
@@ -822,17 +835,43 @@ def register_status_routes(app, gw) -> None:
         if odom_hz <= 0.0:
             odom_hz = _positive_float(gw._get_slam_hz_cached())
         slam_hz = processed_scan_hz or odom_hz
-        if processed_scan_hz > 0.0:
+        has_odom = gw._odom is not None
+        if localization_status or has_odom or odom_hz > 0.0:
             slam_sensor = sensors.setdefault("slam", {})
+            state = str(
+                localization_status.get("state")
+                or slam_sensor.get("status")
+                or ("active" if odom_hz > 0.0 else "inactive")
+            ).lower()
             slam_sensor.update(
                 {
-                    "status": str(localization_status.get("state") or "active").lower(),
-                    "hz": round(processed_scan_hz, 1),
+                    "status": state,
+                    "hz": round(slam_hz, 1),
                     "processed_scan_hz": round(processed_scan_hz, 1),
                     "odom_hz": round(odom_hz, 1),
-                    "source": "processed_scan_hz",
+                    "source": (
+                        "processed_scan_hz"
+                        if processed_scan_hz > 0.0
+                        else (
+                            "localization_status"
+                            if localization_status
+                            else "gateway_odom_window"
+                        )
+                    ),
                 }
             )
+            if not localization_status:
+                slam_sensor.setdefault("reason", "localization_status_missing")
+            for key in (
+                "reason",
+                "status_snapshot_stale",
+                "status_snapshot_age_s",
+                "lidar_input_hz",
+                "imu_input_hz",
+                "slam_tick_hz",
+            ):
+                if key in localization_status:
+                    slam_sensor[key] = localization_status[key]
 
         brainstem_info = await _brainstem_health(gw, force_live=details)
 
@@ -855,7 +894,7 @@ def register_status_routes(app, gw) -> None:
             "sensors": sensors,
             "slam_hz": round(slam_hz, 1),
             "map_points": map_pts,
-            "has_odom": gw._odom is not None,
+            "has_odom": has_odom,
             "modules": module_summary,
             "brainstem": brainstem_info,
         }

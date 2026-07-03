@@ -853,6 +853,7 @@ def test_gateway_module_builds_split_routes_once():
     assert counts["/api/v1/navigation/status"] == 1
     assert counts["/api/v1/runtime/dataflow"] == 1
     assert counts["/api/v1/runtime/switch-plan"] == 1
+    assert counts["/api/v1/runtime/switch"] == 1
     assert counts["/api/v1/navigation"] == 1
     assert counts["/api/v1/health"] == 1
     assert counts["/health"] == 1
@@ -899,6 +900,7 @@ def test_gateway_module_keeps_client_route_inventory():
         "/api/v1/navigation/status",
         "/api/v1/runtime/dataflow",
         "/api/v1/runtime/switch-plan",
+        "/api/v1/runtime/switch",
         "/api/v1/devices",
         "/api/v1/health",
         "/health",
@@ -1895,6 +1897,8 @@ def test_openapi_exposes_client_response_models():
     assert "RuntimeDataflowResponse" in schemas
     assert "RuntimeSwitchPlanRequest" in schemas
     assert "RuntimeSwitchPlanResponse" in schemas
+    assert "RuntimeSwitchRequest" in schemas
+    assert "RuntimeSwitchResponse" in schemas
     assert "RuntimeDataflowTopicSummary" in schemas
     assert "RuntimeDataflowObservability" in schemas
     assert "RuntimeDataflowCommunication" in schemas
@@ -2041,6 +2045,12 @@ def test_openapi_exposes_client_response_models():
     assert _request_schema_ref_for(
         openapi, "/api/v1/runtime/switch-plan"
     ).endswith("/RuntimeSwitchPlanRequest")
+    assert _schema_ref_for(
+        openapi, "/api/v1/runtime/switch", method="post"
+    ).endswith("/RuntimeSwitchResponse")
+    assert _request_schema_ref_for(
+        openapi, "/api/v1/runtime/switch"
+    ).endswith("/RuntimeSwitchRequest")
     assert schemas["RuntimeContractResponse"]["properties"]["manifest"][
         "$ref"
     ].endswith("/RuntimeContractManifest")

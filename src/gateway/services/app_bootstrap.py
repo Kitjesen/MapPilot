@@ -51,6 +51,7 @@ CLIENT_LINKS: dict[str, str] = {
     "runtime_dataflow_topic": "/api/v1/runtime/dataflow/topic",
     "runtime_dataflow_subscribe": "/api/v1/runtime/dataflow/subscribe",
     "runtime_switch_plan": "/api/v1/runtime/switch-plan",
+    "runtime_switch": "/api/v1/runtime/switch",
     "devices": "/api/v1/devices",
     "health": "/api/v1/health",
     "readiness": "/api/v1/readiness",
@@ -233,6 +234,7 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "method": "POST",
             "path": CLIENT_LINKS["runtime_switch_plan"],
         },
+        "runtime_switch": {"method": "POST", "path": CLIENT_LINKS["runtime_switch"]},
         "inspection_acceptance": {
             "method": "POST",
             "path": CLIENT_LINKS["inspection_acceptance"],
@@ -443,6 +445,7 @@ def _feature_flags(gw: Any) -> dict[str, bool]:
         "navigation": True,
         "runtime_dataflow": True,
         "runtime_switch_plan": True,
+        "runtime_switch": True,
         "algorithm_benchmark": True,
         "exploration": explorer_available,
         "teleop": True,

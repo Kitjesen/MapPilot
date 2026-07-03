@@ -18,7 +18,7 @@
 #   lingtu nav stop            # 结束 (同 map end)
 #   lingtu nav goal X Y [YAW]  # 发导航目标 (map frame)
 #   lingtu svc status          # SLAM 相关服务状态
-#   lingtu svc restart slam    # 重启 Fast-LIO2
+#   lingtu svc restart slam    # restart native SLAM DDS
 #   lingtu svc restart all     # 重启 lingtu + 清飞值
 #   lingtu log drift           # 看 drift watchdog 日志
 #   lingtu log dufomap         # 看 DUFOMap 保存日志
@@ -27,18 +27,18 @@
 #   lingtu health              # REST /api/v1/health 详情
 #
 # 本机使用 (Windows/Mac SSH 到 Thunder):
-#   ssh sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu status"
+#   ssh sunrise@192.168.66.13 "bash ~/data/SLAM/navigation/scripts/lingtu status"
 #
 # 建议设 alias 到本机 ~/.bashrc:
-#   alias lingtu='ssh sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu"'
-#   alias lingwatch='ssh -t sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
+#   alias lingtu='ssh sunrise@192.168.66.13 "bash ~/data/SLAM/navigation/scripts/lingtu"'
+#   alias lingwatch='ssh -t sunrise@192.168.66.13 "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
 #
 # Current production service aliases:
 #   lingtu svc status          # robot-* service state + legacy conflict warning
-#   lingtu svc restart slam    # restart robot-fastlio2.service
-#   lingtu svc restart localization # restart Fast-LIO2 + localizer in order
+#   lingtu svc restart slam    # restart native lingtu-slam-dds.service
+#   lingtu svc restart localization # restart native SLAM DDS; legacy requires explicit alias
 #   lingtu svc restart super_lio # restart robot-super-lio.service
-#   lingtu svc restart all     # restart robot-lidar + SLAM + localizer + lingtu
+#   lingtu svc restart all     # restart native Livox + SLAM + Nav DDS + lingtu
 #   lingtu doctor              # read-only service/topic/Gateway diagnostics
 #   lingtu doctor --non-motion --json --strict
 #   lingtu soak --duration 120 --json --strict # non-motion readiness soak
@@ -55,6 +55,7 @@
 #   lingtu plan-preview --internal-only --strict # offline tomogram planner preview, no motion
 #   lingtu routecheck --map <name> --goal X Y YAW # route A/B preflight, no motion
 #   lingtu routecompare --map <name> --goal X Y YAW --allow-motion # route A/B motion run
+#   lingtu system-acceptance --map <name> --goal X Y YAW # That-nav parity gate, no motion by default
 #   lingtu evidence --duration 20 --json-out report.json # read-only runtime data-flow/frame evidence
 set -u
 GW="${GW:-http://localhost:5050}"
@@ -159,7 +160,7 @@ navigation_active_cmd_source() {
 }
 
 routecheck_require_no_active_command_source() {
-    local phase="${1:-route preflight}" navj nav_ok source source_l
+    local phase="${1:-route preflight}" navj nav_ok source source_l cmd_norm
     navj=$(curl -s --max-time 4 "$GW/api/v1/navigation/status" 2>/dev/null || echo '{}')
     nav_ok=$(pjson "$navj" 'print(str(isinstance(d, dict) and (d.get("state") is not None or bool(d.get("readiness")) or bool(d.get("control")))).lower())')
     if [ "$nav_ok" != "true" ]; then
@@ -168,9 +169,28 @@ routecheck_require_no_active_command_source() {
     fi
     source=$(navigation_active_cmd_source "$navj")
     source_l=$(printf "%s" "$source" | tr '[:upper:]' '[:lower:]')
+    cmd_norm=$(pjson "$navj" 'import math
+c=d.get("control") or {}
+m=c.get("cmd_vel_mux") if isinstance(c.get("cmd_vel_mux"),dict) else {}
+cmd=m.get("last_driver_cmd_vel") if isinstance(m.get("last_driver_cmd_vel"),dict) else {}
+lin=cmd.get("linear") if isinstance(cmd.get("linear"),dict) else {}
+ang=cmd.get("angular") if isinstance(cmd.get("angular"),dict) else {}
+vals=[]
+for key in ("x","y","z"):
+    try: vals.append(float(lin.get(key,0.0)))
+    except Exception: vals.append(0.0)
+for key in ("x","y","z"):
+    try: vals.append(float(ang.get(key,0.0)))
+    except Exception: vals.append(0.0)
+print(math.sqrt(sum(v*v for v in vals)))')
     case "$source_l" in
         ""|none|null|-)
             return 0 ;;
+        path_follower|recovery)
+            if awk "BEGIN{exit !($cmd_norm <= 0.001)}" 2>/dev/null; then
+                return 0
+            fi
+            ;;
         *)
             printf "${R}FAIL${N}: %s refused while active_cmd_source=%s\n" "$phase" "$source"
             return 1 ;;
@@ -211,15 +231,17 @@ PY
 }
 
 format_nav_session_payload() {
-    python3 - "$1" "$2" <<'PY'
+    python3 - "$1" "${2:-}" <<'PY'
 import json
 import sys
 
 payload = {
     "mode": "navigating",
     "map_name": sys.argv[1],
-    "slam_profile": sys.argv[2],
 }
+profile = sys.argv[2].strip() if len(sys.argv) > 2 else ""
+if profile:
+    payload["slam_profile"] = profile
 print(json.dumps(payload, separators=(",", ":")))
 PY
 }
@@ -238,7 +260,10 @@ nav_goal_precheck() {
         return 1
     fi
 
-    PLANJ=$(curl -s --max-time 8 -X POST -H "Content-Type: application/json" \
+    # S100P OctoPlanner3D previews on saved 3D maps are commonly ~6-7s.
+    # Keep this above normal planner latency so field gates fail on planner
+    # results, not on a tight CLI transport timeout.
+    PLANJ=$(curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
         -d "$payload" "$GW/api/v1/navigation/plan" 2>/dev/null || echo '{}')
     FEASIBLE=$(pjson "$PLANJ" 'print(str(bool(d.get("feasible"))).lower())')
     COUNT=$(pjson "$PLANJ" 'print(d.get("count","-"))')
@@ -255,6 +280,38 @@ nav_goal_precheck() {
     fi
     printf "${D}plan preview feasible: points=%s planner=%s policy=%s safety=%s fallback=%s rejected=%s${N}\n" \
         "$COUNT" "$PLANNER" "$POLICY" "$SAFETY_OK" "$FALLBACK" "$REJECTED"
+    return 0
+}
+
+saved_map_plan_precheck() {
+    local map_name="$1" payload="$2" json_out="${3:-}"
+    local PLANJ MAP_OK EXEC_OK COUNT PLANNER REASONS POLICY SAFETY_OK FALLBACK REJECTED
+    PLANJ=$(curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
+        -d "$payload" "$GW/api/v1/maps/$map_name/validate_plan" 2>/dev/null || echo '{}')
+    if [ -n "$json_out" ]; then
+        printf '%s\n' "$PLANJ" > "$json_out"
+        printf '%s\n' "$PLANJ" | python3 -m json.tool > "${json_out%.json}.pretty.json" 2>/dev/null || true
+    fi
+    MAP_OK=$(pjson "$PLANJ" 'print(str(bool(d.get("map_plan_ok", d.get("success", d.get("ok", False))))).lower())')
+    EXEC_OK=$(pjson "$PLANJ" 'print(str(bool(d.get("executable_feasible", False))).lower())')
+    COUNT=$(pjson "$PLANJ" 'p=d.get("preview") if isinstance(d.get("preview"),dict) else {}; print(p.get("count", d.get("count","-")))')
+    PLANNER=$(pjson "$PLANJ" 'p=d.get("preview") if isinstance(d.get("preview"),dict) else {}; print(p.get("selected_planner") or p.get("planner") or "-")')
+    POLICY=$(pjson "$PLANJ" 'e=d.get("executable_preview") if isinstance(d.get("executable_preview"),dict) else {}; print(e.get("plan_safety_policy") or "-")')
+    SAFETY_OK=$(pjson "$PLANJ" 's=d.get("live_path_safety") if isinstance(d.get("live_path_safety"),dict) else {}; v=s.get("ok","-"); print(str(v).lower() if isinstance(v,bool) else v)')
+    FALLBACK=$(pjson "$PLANJ" 'e=d.get("executable_preview") if isinstance(d.get("executable_preview"),dict) else {}; p=d.get("preview") if isinstance(d.get("preview"),dict) else {}; print(e.get("fallback_reason") or p.get("fallback_reason") or "-")')
+    REJECTED=$(pjson "$PLANJ" 'p=d.get("preview") if isinstance(d.get("preview"),dict) else {}; r=p.get("rejected_plans") or []; print(len(r) if isinstance(r,list) else 0)')
+    REASONS=$(pjson "$PLANJ" 'g=d.get("no_motion_gate") if isinstance(d.get("no_motion_gate"),dict) else {}; r=g.get("blockers") or []; print(",".join(map(str,r)) if isinstance(r,list) else str(r or ""))')
+    if [ "$MAP_OK" != "true" ]; then
+        printf "${R}FAIL${N}: saved-map plan validation failed (map_plan_ok=%s executable_feasible=%s points=%s planner=%s policy=%s safety=%s fallback=%s rejected=%s reasons=%s)\n" \
+            "$MAP_OK" "$EXEC_OK" "$COUNT" "$PLANNER" "$POLICY" "$SAFETY_OK" "$FALLBACK" "$REJECTED" "${REASONS:-unknown}"
+        return 1
+    fi
+    printf "${D}saved-map plan valid: map_plan_ok=%s executable_feasible=%s points=%s planner=%s policy=%s safety=%s fallback=%s rejected=%s${N}\n" \
+        "$MAP_OK" "$EXEC_OK" "$COUNT" "$PLANNER" "$POLICY" "$SAFETY_OK" "$FALLBACK" "$REJECTED"
+    if [ "$EXEC_OK" != "true" ]; then
+        printf "${Y}WARN${N}: map plan is valid but live safety/costmap says not executable yet (reasons=%s)\n" \
+            "${REASONS:-unknown}"
+    fi
     return 0
 }
 
@@ -424,11 +481,454 @@ except Exception: print('- - -')
 # ── Subcommand: watch (persistent refresh) ──
 cmd_watch() { exec watch -c -n "${1:-1}" bash "${BASH_SOURCE[0]}" status; }
 
+slam_dds_service_available() {
+    systemctl list-unit-files lingtu-slam-dds.service --no-legend 2>/dev/null \
+        | awk '{print $1}' | grep -qx 'lingtu-slam-dds.service'
+}
+
+slam_dds_set_mode() {
+    local mode="$1" map_path="${2:-}" override_dir="/etc/systemd/system/lingtu-slam-dds.service.d"
+    case "$mode" in
+        mapping|localization) ;;
+        *) echo "invalid SLAM DDS mode: $mode" >&2; return 1 ;;
+    esac
+    slam_dds_service_available || return 0
+    sudo mkdir -p "$override_dir" || return 1
+    {
+        echo "[Service]"
+        echo "Environment=LINGTU_SLAM_MODE=$mode"
+        echo "Environment=LINGTU_SLAM_MAP=$map_path"
+    } | sudo tee "$override_dir/runtime-mode.conf" >/dev/null || return 1
+    sudo systemctl daemon-reload || return 1
+        sudo rm -f /tmp/lingtu_slam_status.json /tmp/lingtu_slam_status.json.tmp || true
+    sudo rm -rf /dev/shm/lingtu_slam || true
+    sudo systemctl restart lingtu-slam-dds.service || return 1
+}
+
+slam_dds_map_pcd_for_name() {
+    local name="$1" maps_root resolved
+    maps_root="$(lingtu_maps_root)"
+    resolved=$(resolve_relocation_map_name "$maps_root" "$name") || return 1
+    [ -f "$maps_root/$resolved/map.pcd" ] || return 1
+    printf "%s/%s/map.pcd\n" "$maps_root" "$resolved"
+}
+
+slam_dds_wait_status() {
+    local expected_mode="${1:-}" require_map="${2:-0}" timeout="${3:-30}"
+    python3 - "$expected_mode" "$require_map" "$timeout" <<'PY'
+import json
+import pathlib
+import sys
+import time
+
+expected_mode = sys.argv[1]
+require_map = sys.argv[2] == "1"
+timeout_s = float(sys.argv[3])
+status_path = pathlib.Path("/tmp/lingtu_slam_status.json")
+deadline = time.monotonic() + timeout_s
+last = {}
+while time.monotonic() < deadline:
+    try:
+        last = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        last = {}
+    mode_ok = not expected_mode or last.get("mode") == expected_mode
+    map_ok = (not require_map) or bool(last.get("map_loaded"))
+    state_ok = str(last.get("state") or "").upper() in {"TRACKING", "MAPPING", "OK"}
+    if mode_ok and map_ok and state_ok:
+        sys.exit(0)
+    time.sleep(0.25)
+print(
+    "SLAM DDS did not become ready: "
+    f"expected_mode={expected_mode or '-'} require_map={require_map} "
+    f"last_mode={last.get('mode')} state={last.get('state')} "
+    f"map_loaded={last.get('map_loaded')}",
+    file=sys.stderr,
+)
+sys.exit(1)
+PY
+}
+
+nav_relocalize_saved_map() {
+    local map="$1" x="${2:-0}" y="${3:-0}" yaw="${4:-0}" payload raw ok msg attempt max_attempts sleep_s retry
+    payload=$(format_nav_relocalize_payload "$map" "$x" "$y" "$yaw") || {
+        echo "initial pose must be numeric X Y YAW"
+        return 1
+    }
+    max_attempts="${LINGTU_RELOCALIZE_ATTEMPTS:-12}"
+    sleep_s="${LINGTU_RELOCALIZE_RETRY_INTERVAL:-1}"
+    attempt=1
+    raw='{}'
+    while [ "$attempt" -le "$max_attempts" ]; do
+        raw=$(curl -s --max-time 35 -X POST -H "Content-Type: application/json" \
+            -d "$payload" "$GW/api/v1/slam/relocalize" 2>/dev/null || echo '{}')
+        ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+        msg=$(pjson "$raw" 'print(d.get("message") or "")')
+        if [ "$ok" = "true" ]; then
+            printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+            return 0
+        fi
+
+        retry=0
+        case "$msg" in
+            *registered_cloud_unavailable*|*waiting_for_scan*|*scan_too_small*|*cloud_unavailable*|*scan_unavailable*)
+                retry=1 ;;
+        esac
+        [ "$retry" = "1" ] || break
+        [ "$attempt" -lt "$max_attempts" ] || break
+        echo "Waiting for relocalization scan readiness (${attempt}/${max_attempts})${msg:+: $msg}" >&2
+        sleep "$sleep_s"
+        attempt=$((attempt + 1))
+    done
+    printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+    echo -e "${R}FAIL${N}: saved-map relocalization failed${msg:+: $msg}" >&2
+    return 1
+}
+
+nav_global_relocalize_saved_map() {
+    local map="${1:-}" raw ok msg attempt max_attempts sleep_s retry
+    max_attempts="${LINGTU_GLOBAL_RELOCALIZE_ATTEMPTS:-12}"
+    sleep_s="${LINGTU_RELOCALIZE_RETRY_INTERVAL:-1}"
+    attempt=1
+    raw='{}'
+    while [ "$attempt" -le "$max_attempts" ]; do
+        raw=$(curl -s --max-time 35 -X POST "$GW/api/v1/slam/auto_relocalize" 2>/dev/null || echo '{}')
+        ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+        msg=$(pjson "$raw" 'print(d.get("message") or "")')
+        if [ "$ok" = "true" ]; then
+            printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+            return 0
+        fi
+
+        retry=0
+        case "$msg" in
+            *registered_cloud_unavailable*|*waiting_for_scan*|*scan_too_small*|*cloud_unavailable*|*scan_unavailable*|*timeout*)
+                retry=1 ;;
+        esac
+        [ "$retry" = "1" ] || break
+        [ "$attempt" -lt "$max_attempts" ] || break
+        echo "Waiting for global relocalization scan readiness (${attempt}/${max_attempts})${msg:+: $msg}" >&2
+        sleep "$sleep_s"
+        attempt=$((attempt + 1))
+    done
+    printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+    echo -e "${R}FAIL${N}: global saved-map relocalization failed${map:+ for $map}${msg:+: $msg}" >&2
+    return 1
+}
+
+nav_relocalization_ready_without_request() {
+    local map="$1" raw
+    raw=$(curl -s --max-time 5 "$GW/api/v1/localization/status" 2>/dev/null || echo '{}')
+    python3 - "$raw" "$map" <<'PY'
+import json
+import sys
+
+try:
+    status = json.loads(sys.argv[1])
+except Exception:
+    status = {}
+
+map_name = sys.argv[2]
+state = str(status.get("state") or "").upper()
+tf = status.get("map_odom_tf") if isinstance(status.get("map_odom_tf"), dict) else {}
+reported_map = str(status.get("active_map") or "")
+map_matches = not reported_map or reported_map == map_name
+map_loaded = status.get("map_loaded")
+map_loaded_ok = map_loaded is not False
+pose_fresh_ok = status.get("pose_fresh") is not False
+tf_valid = tf.get("valid") is True
+frame_ok = str(tf.get("frame_id") or "map") == "map" and str(tf.get("child_frame_id") or "odom") == "odom"
+ready = bool(status.get("ready")) or state in {"TRACKING", "READY"}
+ok = ready and map_matches and map_loaded_ok and pose_fresh_ok and tf_valid and frame_ok
+payload = {
+    "schema_version": 1,
+    "success": ok,
+    "ok": ok,
+    "message": "reused_tracking_localization" if ok else "tracking_localization_not_ready",
+    "map": map_name,
+    "active_map": reported_map or None,
+    "state": status.get("state"),
+    "ready": status.get("ready"),
+    "map_matches": map_matches,
+    "map_loaded": map_loaded,
+    "pose_fresh": status.get("pose_fresh"),
+    "map_odom_tf": tf,
+    "source": "/api/v1/localization/status",
+}
+print(json.dumps(payload, indent=2, sort_keys=True))
+sys.exit(0 if ok else 1)
+PY
+}
+
+# -- Subcommand: mode --
+mode_switch_usage() {
+    echo "Usage: lingtu mode switch <teleop|teleop_avoid|map|tracking|nav|inspection> [--map NAME] [--current PROFILE] [--endpoint thunder_field] [--relocalize|--no-relocalize] [--initial-pose X Y YAW]"
+    echo "Cold-restart the product runtime after preflight, motion stop, session end, profile update, SLAM mode setup, and readiness checks."
+}
+
+mode_is_product_profile() {
+    case "$1" in
+        teleop|teleop_avoid|map|tracking|nav|inspection) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+mode_current_profile() {
+    if [ -n "${LINGTU_PROFILE:-}" ]; then
+        printf "%s\n" "$LINGTU_PROFILE"
+        return 0
+    fi
+    local env profile
+    env=$(systemctl show lingtu.service -p Environment --value 2>/dev/null || true)
+    if [ -n "$env" ]; then
+        profile=$(printf "%s\n" "$env" | tr ' ' '\n' | awk -F= '$1=="LINGTU_PROFILE" {print $2; exit}')
+        if [ -n "$profile" ]; then
+            printf "%s\n" "$profile"
+            return 0
+        fi
+    fi
+    printf "nav\n"
+}
+
+mode_profile_dropin() {
+    local profile="$1" endpoint="$2" override_dir="/etc/systemd/system/lingtu.service.d"
+    sudo mkdir -p "$override_dir" || return 1
+    {
+        echo "[Service]"
+        echo "Environment=LINGTU_PROFILE=$profile"
+        echo "Environment=LINGTU_ENDPOINT=$endpoint"
+        echo "Environment=LINGTU_ENDPOINT_TRANSPORT=dds"
+        echo "Environment=LINGTU_ENDPOINT_CONTRACT=thunder_field_dds_v1"
+    } | sudo tee "$override_dir/product-mode.conf" >/dev/null || return 1
+    sudo systemctl daemon-reload || return 1
+}
+
+mode_stop_motion_and_session() {
+    curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
+        -d '{"reason":"product_mode_switch"}' "$GW/api/v1/stop" >/dev/null 2>&1 || true
+    curl -s --max-time 10 -X POST "$GW/api/v1/session/end" >/dev/null 2>&1 || true
+}
+
+mode_unit_available() {
+    systemctl list-unit-files "$1" --no-legend 2>/dev/null \
+        | awk '{print $1}' | grep -qx "$1"
+}
+
+mode_start_unit_if_available() {
+    local unit="$1" timeout_s="${2:-20}"
+    mode_unit_available "$unit" || return 0
+    svc_start_unit "$unit" || return 1
+    svc_wait_unit_active "$unit" "$timeout_s" || {
+        journalctl -u "$unit" -n 40 --no-pager >&2 || true
+        return 1
+    }
+}
+
+mode_restart_product_stack() {
+    local target="$1"
+    echo "Stopping product runtime before mode switch..."
+    svc_force_stop_unit lingtu.service
+    svc_force_stop_unit robot-super-lio-relocation.service
+    svc_force_stop_unit robot-super-lio.service
+    svc_force_stop_unit robot-hba.service
+    svc_force_stop_unit robot-genz-icp.service
+    svc_force_stop_unit lingtu-nav-dds.service
+    svc_force_stop_unit lingtu-slam-dds.service
+    svc_force_stop_unit lingtu-livox-dds.service
+    svc_force_stop_unit robot-localizer.service
+    svc_force_stop_unit robot-fastlio2.service
+    svc_force_stop_unit robot-lidar.service
+
+    case "$target" in
+        teleop)
+            echo "Starting command endpoint for teleop..."
+            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1 ;;
+        *)
+            echo "Starting native Livox DDS..."
+            svc_restart_lidar_chain || return 1
+            echo "Starting native SLAM DDS..."
+            mode_start_unit_if_available lingtu-slam-dds.service 35 || return 1
+            echo "Starting native navigation DDS endpoint..."
+            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1 ;;
+    esac
+
+    echo "Starting LingTu runtime profile: $target"
+    svc_start_unit lingtu.service || return 1
+    if svc_wait_gateway_ready 45; then
+        echo "LingTu runtime is ready for product mode: $target"
+        return 0
+    fi
+    echo "LingTu started but /ready did not become true in time" >&2
+    journalctl -u lingtu.service -n 60 --no-pager >&2 || true
+    return 1
+}
+
+mode_switch_preflight() {
+    local current="$1" target="$2" endpoint="$3" repo py plan_json plan_err ok lifecycle
+    repo="$(lingtu_repo_root)"
+    py="$(lingtu_python)"
+    plan_err="$(mktemp)"
+    plan_json=$("$py" "$repo/lingtu.py" switch-plan "$current" "$target" \
+        --current-endpoint "$endpoint" --endpoint "$endpoint" --json 2>"$plan_err") || {
+        cat "$plan_err" >&2 || true
+        rm -f "$plan_err"
+        return 1
+    }
+    rm -f "$plan_err"
+    ok=$(pjson "$plan_json" 'print(str(bool(d.get("ok", False))).lower())')
+    lifecycle=$(pjson "$plan_json" 'p=d.get("product_mode_switch") or {}; print(p.get("required_lifecycle") or "")')
+    if [ "$ok" != "true" ]; then
+        printf '%s\n' "$plan_json" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$plan_json"
+        return 1
+    fi
+    if [ "$lifecycle" != "cold_restart" ]; then
+        echo "Unsupported product mode lifecycle: ${lifecycle:-unknown}" >&2
+        return 1
+    fi
+    printf '%s\n' "$plan_json" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$plan_json"
+}
+
+mode_start_session_for_target() {
+    local target="$1" map_name="$2" relocalize="$3" initial_explicit="$4" initial_x="$5" initial_y="$6" initial_yaw="$7"
+    local raw ok msg active_session active_map session_mode
+    case "$target" in
+        teleop)
+            return 0 ;;
+        map)
+            curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
+                -d '{"mode":"mapping"}' "$GW/api/v1/session/start" | python3 -m json.tool
+            return ${PIPESTATUS[0]} ;;
+        teleop_avoid|tracking|nav|inspection)
+            raw=$(curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
+                -d "{\"mode\":\"navigating\",\"map_name\":\"$map_name\"}" \
+                "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
+            printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+            ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+            msg=$(pjson "$raw" 'print(d.get("message") or "")')
+            if [ "$ok" != "true" ]; then
+                active_session=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
+                session_mode=$(pjson "$active_session" 'print(d.get("mode") or "")')
+                active_map=$(pjson "$active_session" 'print(d.get("active_map") or d.get("map_name") or "")')
+                if [ "$msg" = "Already in navigating. Call /session/end first." ] && [ "$session_mode" = "navigating" ] && [ "$active_map" = "$map_name" ]; then
+                    echo "Already navigating on $map_name; reusing active session."
+                else
+                    echo -e "${R}FAIL${N}: product mode session did not start${msg:+: $msg}" >&2
+                    return 1
+                fi
+            fi
+            if [ "$relocalize" = "1" ]; then
+                if [ "$initial_explicit" = "1" ]; then
+                    nav_relocalize_saved_map "$map_name" "$initial_x" "$initial_y" "$initial_yaw" || return 1
+                else
+                    nav_global_relocalize_saved_map "$map_name" || return 1
+                fi
+            elif nav_relocalization_ready_without_request "$map_name"; then
+                echo "Reusing current TRACKING localization for $map_name."
+            else
+                echo "Current localization is not reusable; trying global saved-map relocalization..."
+                nav_global_relocalize_saved_map "$map_name" || return 1
+            fi ;;
+    esac
+}
+
+cmd_mode() {
+    local action="${1:-}"
+    case "$action" in
+        switch)
+            shift
+            local target="${1:-}" current="" endpoint="${LINGTU_ENDPOINT:-thunder_field}" map_name=""
+            local relocalize=1 initial_explicit=0 initial_x=0 initial_y=0 initial_yaw=0
+            [ -n "$target" ] || { mode_switch_usage; return 1; }
+            mode_is_product_profile "$target" || { mode_switch_usage; return 1; }
+            shift
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --current)
+                        current="${2:-}"; [ -n "$current" ] || { mode_switch_usage; return 1; }; shift 2 ;;
+                    --current=*)
+                        current="${1#*=}"; shift ;;
+                    --endpoint|--target-endpoint)
+                        endpoint="${2:-}"; [ -n "$endpoint" ] || { mode_switch_usage; return 1; }; shift 2 ;;
+                    --endpoint=*|--target-endpoint=*)
+                        endpoint="${1#*=}"; shift ;;
+                    --map)
+                        map_name="${2:-}"; [ -n "$map_name" ] || { mode_switch_usage; return 1; }; shift 2 ;;
+                    --map=*)
+                        map_name="${1#*=}"; shift ;;
+                    --relocalize)
+                        relocalize=1; shift ;;
+                    --no-relocalize)
+                        relocalize=0; shift ;;
+                    --initial-pose|--init-pose)
+                        [ "$#" -ge 4 ] || { mode_switch_usage; return 1; }
+                        initial_x="$2"; initial_y="$3"; initial_yaw="$4"; initial_explicit=1; relocalize=1
+                        shift 4 ;;
+                    -h|--help)
+                        mode_switch_usage; return 0 ;;
+                    *)
+                        mode_switch_usage; return 1 ;;
+                esac
+            done
+            [ -n "$current" ] || current="$(mode_current_profile)"
+            case "$target" in
+                teleop_avoid|tracking|nav|inspection)
+                    [ -n "$map_name" ] || { echo "Mode $target requires --map NAME"; return 1; } ;;
+            esac
+
+            local map_pcd="" maps_root raw_map_name
+            if [ -n "$map_name" ]; then
+                maps_root="$(lingtu_maps_root)"
+                raw_map_name="$map_name"
+                map_name=$(resolve_relocation_map_name "$maps_root" "$raw_map_name") || {
+                    echo -e "${R}FAIL${N}: unsafe map name: $raw_map_name"
+                    return 1
+                }
+                [ -f "$maps_root/$map_name/map.pcd" ] || {
+                    echo -e "${R}FAIL${N}: map.pcd not found: $maps_root/$map_name/map.pcd"
+                    return 1
+                }
+                map_pcd="$maps_root/$map_name/map.pcd"
+            fi
+
+            echo -e "${B}=== Product mode switch: $current -> $target ===${N}"
+            echo "Endpoint: $endpoint"
+            [ -n "$map_name" ] && echo "Map: $map_name"
+            mode_switch_preflight "$current" "$target" "$endpoint" || return 1
+            mode_stop_motion_and_session
+            mode_profile_dropin "$target" "$endpoint" || return 1
+
+            case "$target" in
+                map)
+                    slam_dds_set_mode mapping "" || return 1 ;;
+                teleop)
+                    ;;
+                teleop_avoid|tracking|nav|inspection)
+                    slam_dds_set_mode localization "$map_pcd" || return 1 ;;
+            esac
+
+            mode_restart_product_stack "$target" || return 1
+            case "$target" in
+                map)
+                    slam_dds_wait_status mapping 0 35 || return 1 ;;
+                teleop_avoid|tracking|nav|inspection)
+                    slam_dds_wait_status localization 1 35 || return 1 ;;
+            esac
+            mode_start_session_for_target "$target" "$map_name" "$relocalize" "$initial_explicit" "$initial_x" "$initial_y" "$initial_yaw" || return 1
+            echo -e "${G}PASS${N}: product mode is active: $target" ;;
+        -h|--help|"")
+            mode_switch_usage ;;
+        *)
+            mode_switch_usage
+            return 1 ;;
+    esac
+}
+
 # ── Subcommand: map ──
 cmd_map() {
     local action="${1:-}"
     case "$action" in
         start)
+            slam_dds_set_mode mapping "" || exit 1
             curl -s -X POST -H "Content-Type: application/json" -d '{"mode":"mapping"}' \
                 "$GW/api/v1/session/start" | python3 -m json.tool ;;
         save)
@@ -471,10 +971,63 @@ cmd_nav() {
     case "$action" in
         start)
             local map="${2:-}"
-            [ -z "$map" ] && { echo "Usage: lingtu nav start <map>"; exit 1; }
-            curl -s -X POST -H "Content-Type: application/json" \
+            [ -z "$map" ] && { echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize]"; exit 1; }
+            shift 2
+            local relocalize=0 initial_pose_explicit=0 initial_x=0 initial_y=0 initial_yaw=0
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --initial-pose|--init-pose)
+                        [ "$#" -ge 4 ] || { echo "Usage: lingtu nav start <map> --initial-pose X Y YAW"; exit 1; }
+                        initial_x="$2"; initial_y="$3"; initial_yaw="$4"; relocalize=1; initial_pose_explicit=1
+                        shift 4 ;;
+                    --relocalize)
+                        relocalize=1
+                        shift ;;
+                    -h|--help)
+                        echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize]"
+                        return 0 ;;
+                    *)
+                        echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize]"
+                        exit 1 ;;
+                esac
+            done
+            local map_pcd
+            map_pcd=$(slam_dds_map_pcd_for_name "$map") || {
+                echo "map.pcd not found or unsafe map name: $map"
+                exit 1
+            }
+            slam_dds_set_mode localization "$map_pcd" || exit 1
+            slam_dds_wait_status localization 1 35 || exit 1
+            local raw ok msg active_session active_map session_mode
+            raw=$(curl -s -X POST -H "Content-Type: application/json" \
                 -d "{\"mode\":\"navigating\",\"map_name\":\"$map\"}" \
-                "$GW/api/v1/session/start" | python3 -m json.tool ;;
+                "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
+            printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+            ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+            msg=$(pjson "$raw" 'print(d.get("message") or "")')
+            if [ "$ok" != "true" ]; then
+                active_session=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
+                session_mode=$(pjson "$active_session" 'print(d.get("mode") or "")')
+                active_map=$(pjson "$active_session" 'print(d.get("active_map") or d.get("map_name") or "")')
+                if [ "$msg" = "Already in navigating. Call /session/end first." ] && [ "$session_mode" = "navigating" ] && [ "$active_map" = "$map" ]; then
+                    echo "Already navigating on $map; reusing active session."
+                else
+                    echo -e "${R}FAIL${N}: navigation session did not start${msg:+: $msg}"
+                    exit 1
+                fi
+            fi
+            if [ "$relocalize" = "1" ]; then
+                if [ "$initial_pose_explicit" = "1" ]; then
+                    nav_relocalize_saved_map "$map" "$initial_x" "$initial_y" "$initial_yaw" || exit 1
+                else
+                    nav_global_relocalize_saved_map "$map" || exit 1
+                fi
+            elif nav_relocalization_ready_without_request "$map"; then
+                echo "Reusing current TRACKING localization for $map."
+            else
+                echo "Current localization is not reusable; trying global saved-map relocalization..."
+                nav_global_relocalize_saved_map "$map" || exit 1
+            fi ;;
         stop|end)
             curl -s -X POST "$GW/api/v1/session/end" | python3 -m json.tool ;;
         relocalize|init-pose|initial-pose)
@@ -485,6 +1038,9 @@ cmd_nav() {
             curl -s -X POST -H "Content-Type: application/json" \
                 -d "$payload" \
                 "$GW/api/v1/slam/relocalize" | python3 -m json.tool ;;
+        global-relocalize|global_relocalize|auto-relocalize|auto_relocalize)
+            local map="${2:-}"
+            nav_global_relocalize_saved_map "$map" ;;
         goal)
             local x="${2:-}"; local y="${3:-}"; local yaw="${4:-0}"
             local payload
@@ -494,19 +1050,25 @@ cmd_nav() {
             curl -s -X POST -H "Content-Type: application/json" \
                 -d "$payload" \
                 "$GW/api/v1/goal" | python3 -m json.tool ;;
-        *) echo "Usage: lingtu nav [start <map>|stop|relocalize <map> [X Y YAW]|goal X Y [YAW]]"; exit 1 ;;
+        *) echo "Usage: lingtu nav [start <map> [--initial-pose X Y YAW|--relocalize]|stop|relocalize <map> [X Y YAW]|global-relocalize [map]|goal X Y [YAW]]"; exit 1 ;;
     esac
 }
 
 # ── Subcommand: svc ──
 svc_unit() {
     case "${1:-}" in
-        lidar)      echo "robot-lidar.service" ;;
+        lidar|livox|livox_dds|native_lidar|lingtu-livox-dds|lingtu-livox-dds.service)
+                    echo "lingtu-livox-dds.service" ;;
+        nav_dds|nav-dds|native_nav|lingtu-nav-dds|lingtu-nav-dds.service)
+                    echo "lingtu-nav-dds.service" ;;
         camera)     echo "robot-camera.service" ;;
         brainstem)  echo "robot-brainstem.service" ;;
-        slam|fastlio2)
-                    echo "robot-fastlio2.service" ;;
-        localizer)  echo "robot-localizer.service" ;;
+        slam|fastlio2|localization|localizer|slam_dds|native_slam|lingtu-slam-dds|lingtu-slam-dds.service)
+                    echo "lingtu-slam-dds.service" ;;
+        genz|genz_icp|genz-icp|robot-genz-icp|robot-genz-icp.service)
+                    echo "robot-genz-icp.service" ;;
+        hba|robot-hba|robot-hba.service)
+                    echo "robot-hba.service" ;;
         super_lio|super-lio|superlio)
                     echo "robot-super-lio.service" ;;
         super_lio_relocation|super_lio_reloc|super-lio-relocation|super-lio-reloc|superlio-relocation|superlio-reloc|relocation)
@@ -514,14 +1076,20 @@ svc_unit() {
         lingtu|app) echo "lingtu.service" ;;
         robot-lidar|robot-lidar.service)
                     echo "robot-lidar.service" ;;
+        legacy_lidar|legacy-lidar)
+                    echo "robot-lidar.service" ;;
         robot-camera|robot-camera.service)
                     echo "robot-camera.service" ;;
         robot-brainstem|robot-brainstem.service)
                     echo "robot-brainstem.service" ;;
-        robot-fastlio2|robot-fastlio2.service)
+        legacy_fastlio2|legacy-fastlio2|robot-fastlio2|robot-fastlio2.service)
                     echo "robot-fastlio2.service" ;;
-        robot-localizer|robot-localizer.service)
+        legacy_localizer|legacy-localizer|robot-localizer|robot-localizer.service)
                     echo "robot-localizer.service" ;;
+        legacy_genz|legacy-genz|legacy_genz_icp|legacy-genz-icp)
+                    echo "genz_icp.service" ;;
+        legacy_hba|legacy-hba)
+                    echo "hba.service" ;;
         robot-super-lio|robot-super-lio.service)
                     echo "robot-super-lio.service" ;;
         robot-super-lio-relocation|robot-super-lio-relocation.service)
@@ -548,13 +1116,13 @@ print_service_row() {
 
 warn_legacy_services() {
     local legacy active=()
-    for legacy in lidar.service camera.service orbbec-camera.service slam.service localizer.service slam_pgo.service super_lio.service super-lio.service super_lio_relocation.service super_lio_reloc.service super-lio-relocation.service super-lio-reloc.service; do
+    for legacy in robot-lidar.service robot-fastlio2.service robot-localizer.service lidar.service camera.service orbbec-camera.service slam.service localizer.service slam_pgo.service genz_icp.service genz-icp.service hba.service super_lio.service super-lio.service super_lio_relocation.service super_lio_reloc.service super-lio-relocation.service super-lio-reloc.service; do
         if [ "$(systemctl is-active "$legacy" 2>/dev/null || true)" = "active" ]; then
             active+=("$legacy")
         fi
     done
     if [ "${#active[@]}" -gt 0 ]; then
-        printf "${Y}WARN${N}: legacy services are active and can conflict with robot-* stack: %s\n" "${active[*]}"
+        printf "${Y}WARN${N}: legacy/experimental services are active and can conflict with the native DDS stack; run 'lingtu svc status-legacy' for details\n"
     fi
 }
 
@@ -610,50 +1178,76 @@ svc_wait_gateway_ready() {
     return 1
 }
 
+svc_wait_unit_active() {
+    local unit="$1" timeout_s="${2:-20}" i
+    for i in $(seq 1 "$timeout_s"); do
+        if systemctl is-active --quiet "$unit"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 svc_restart_lidar_chain() {
     svc_force_stop_unit robot-lidar.service
-    svc_start_unit robot-lidar.service
-    if svc_wait_topic_publishers /lidar/raw_frame 1 20 && svc_wait_topic_publishers /imu/raw 1 10; then
-        echo "robot-lidar.service restarted; LiDAR and IMU publishers are present"
+    svc_force_stop_unit lidar.service
+    svc_force_stop_unit lingtu-livox-dds.service
+    svc_start_unit lingtu-livox-dds.service
+    if svc_wait_unit_active lingtu-livox-dds.service 20; then
+        echo "lingtu-livox-dds.service restarted"
         return 0
     fi
-    echo "robot-lidar.service started but LiDAR/IMU publishers did not become ready" >&2
-    journalctl -u robot-lidar.service -n 30 --no-pager >&2 || true
+    echo "lingtu-livox-dds.service did not become active in time" >&2
+    journalctl -u lingtu-livox-dds.service -n 40 --no-pager >&2 || true
     return 1
 }
 
 svc_restart_localization_chain() {
-    echo "Restarting localization algorithms top-down..."
-    svc_force_stop_unit robot-localizer.service
-    svc_force_stop_unit robot-fastlio2.service
+    if slam_dds_service_available; then
+        echo "Restarting native SLAM DDS runtime..."
+        svc_force_stop_unit robot-hba.service
+        svc_force_stop_unit robot-genz-icp.service
+        svc_force_stop_unit robot-localizer.service
+        svc_force_stop_unit robot-fastlio2.service
+        svc_force_stop_unit lingtu-slam-dds.service
 
-    echo "Starting Fast-LIO2..."
-    svc_start_unit robot-fastlio2.service
-    if ! svc_wait_topic_publishers /slam/odometry 1 30; then
-        echo "robot-fastlio2.service did not publish /slam/odometry in time" >&2
-        journalctl -u robot-fastlio2.service -n 40 --no-pager >&2 || true
-        return 1
-    fi
-
-    echo "Starting localizer..."
-    svc_start_unit robot-localizer.service
-    if ! svc_wait_topic_publishers /slam/localization_health 1 30; then
-        echo "robot-localizer.service did not publish /slam/localization_health in time" >&2
-        journalctl -u robot-localizer.service -n 40 --no-pager >&2 || true
-        return 1
-    fi
-
-    if systemctl is-active --quiet lingtu.service; then
-        if svc_wait_gateway_ready 35; then
-            echo "localization stack restarted; /ready is true"
-            return 0
+        if ! systemctl is-active --quiet lingtu-livox-dds.service; then
+            echo "Starting native Livox DDS..."
+            svc_start_unit lingtu-livox-dds.service
+            if ! svc_wait_unit_active lingtu-livox-dds.service 20; then
+                echo "lingtu-livox-dds.service did not become active in time" >&2
+                journalctl -u lingtu-livox-dds.service -n 40 --no-pager >&2 || true
+                return 1
+            fi
         fi
-        echo "localization stack restarted but /ready did not become true in time" >&2
-        journalctl -u lingtu.service -n 60 --no-pager >&2 || true
-        return 1
+
+        echo "Starting native SLAM DDS..."
+        svc_start_unit lingtu-slam-dds.service
+        if ! slam_dds_wait_status "" 0 35; then
+            echo "lingtu-slam-dds.service did not become ready in time" >&2
+            journalctl -u lingtu-slam-dds.service -n 60 --no-pager >&2 || true
+            return 1
+        fi
+
+        if systemctl is-active --quiet lingtu.service; then
+            if svc_wait_gateway_ready 35; then
+                echo "native SLAM DDS restarted; /ready is true"
+                return 0
+            fi
+            echo "native SLAM DDS restarted but /ready did not become true in time" >&2
+            journalctl -u lingtu.service -n 60 --no-pager >&2 || true
+            return 1
+        fi
+
+        echo "native SLAM DDS restarted; lingtu.service is not active"
+        return 0
     fi
 
-    echo "localization stack restarted; lingtu.service is not active"
+    echo "native SLAM DDS service is not installed: lingtu-slam-dds.service" >&2
+    echo "Install native services with: bash scripts/deploy/thunder/install_services.sh field-cpp" >&2
+    echo "Use legacy_fastlio2 / legacy_localizer explicitly only for ROS2 compatibility fallback." >&2
+    return 1
 }
 
 svc_restart_robot_stack() {
@@ -661,32 +1255,45 @@ svc_restart_robot_stack() {
     svc_force_stop_unit lingtu.service
     svc_force_stop_unit robot-super-lio-relocation.service
     svc_force_stop_unit robot-super-lio.service
+    svc_force_stop_unit robot-hba.service
+    svc_force_stop_unit robot-genz-icp.service
+    svc_force_stop_unit lingtu-nav-dds.service
+    svc_force_stop_unit lingtu-slam-dds.service
+    svc_force_stop_unit lingtu-livox-dds.service
     svc_force_stop_unit robot-localizer.service
     svc_force_stop_unit robot-fastlio2.service
+    svc_force_stop_unit robot-lidar.service
 
-    echo "Starting LiDAR..."
+    echo "Starting native Livox DDS..."
     svc_restart_lidar_chain || return 1
 
-    echo "Starting Fast-LIO2..."
-    svc_start_unit robot-fastlio2.service
-    if ! svc_wait_topic_publishers /slam/odometry 1 30; then
-        echo "robot-fastlio2.service did not publish /slam/odometry in time" >&2
-        journalctl -u robot-fastlio2.service -n 40 --no-pager >&2 || true
-        return 1
-    fi
+    if slam_dds_service_available; then
+        echo "Starting native SLAM DDS..."
+        svc_start_unit lingtu-slam-dds.service
+        if ! slam_dds_wait_status "" 0 35; then
+            echo "lingtu-slam-dds.service did not become ready in time" >&2
+            journalctl -u lingtu-slam-dds.service -n 60 --no-pager >&2 || true
+            return 1
+        fi
 
-    echo "Starting localizer..."
-    svc_start_unit robot-localizer.service
-    if ! svc_wait_topic_publishers /slam/localization_health 1 30; then
-        echo "robot-localizer.service did not publish /slam/localization_health in time" >&2
-        journalctl -u robot-localizer.service -n 40 --no-pager >&2 || true
+        echo "Starting native navigation DDS endpoint..."
+        svc_start_unit lingtu-nav-dds.service
+        if ! svc_wait_unit_active lingtu-nav-dds.service 20; then
+            echo "lingtu-nav-dds.service did not become active in time" >&2
+            journalctl -u lingtu-nav-dds.service -n 40 --no-pager >&2 || true
+            return 1
+        fi
+    else
+        echo "native SLAM DDS service is not installed: lingtu-slam-dds.service" >&2
+        echo "Install native services with: bash scripts/deploy/thunder/install_services.sh field-cpp" >&2
+        echo "Use legacy_fastlio2 / legacy_localizer explicitly only for ROS2 compatibility fallback." >&2
         return 1
     fi
 
     echo "Starting LingTu Gateway/runtime..."
     svc_start_unit lingtu.service
     if svc_wait_gateway_ready 45; then
-        echo "robot LiDAR + SLAM + localizer + lingtu restarted; /ready is true"
+        echo "native Livox + SLAM + Nav DDS + lingtu restarted; /ready is true"
         return 0
     fi
     echo "LingTu started but /ready did not become true in time" >&2
@@ -698,11 +1305,24 @@ cmd_svc() {
     local action="${1:-status}"
     case "$action" in
         status)
-            print_service_row robot-lidar.service lidar
+            print_service_row lingtu-livox-dds.service lidar
+            print_service_row lingtu-slam-dds.service slam
+            print_service_row lingtu-nav-dds.service nav_dds
             print_service_row robot-camera.service camera
             print_service_row robot-brainstem.service brainstem
-            print_service_row robot-fastlio2.service slam
-            print_service_row robot-localizer.service localizer
+            print_service_row lingtu.service lingtu
+            warn_legacy_services ;;
+        status-legacy|legacy-status|status_all|status-all|--legacy)
+            print_service_row lingtu-livox-dds.service lidar
+            print_service_row lingtu-slam-dds.service slam
+            print_service_row lingtu-nav-dds.service nav_dds
+            print_service_row robot-camera.service camera
+            print_service_row robot-brainstem.service brainstem
+            print_service_row robot-lidar.service legacy_lidar
+            print_service_row robot-fastlio2.service legacy_fastlio2
+            print_service_row robot-localizer.service legacy_localizer
+            print_service_row robot-genz-icp.service genz_icp
+            print_service_row robot-hba.service hba
             print_service_row robot-super-lio.service super_lio
             print_service_row robot-super-lio-relocation.service super_lio_relocation
             print_service_row lingtu.service lingtu
@@ -716,21 +1336,21 @@ cmd_svc() {
                         svc_restart_localization_chain ;;
                 *)
                         local unit
-                        unit=$(svc_unit "$target") || { echo "Usage: lingtu svc restart [lidar|localization|slam|localizer|super_lio|super_lio_relocation|lingtu|camera|brainstem|all]"; exit 1; }
+                        unit=$(svc_unit "$target") || { echo "Usage: lingtu svc restart [lidar|slam|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
                         sudo systemctl restart "$unit"
                         echo "$unit restarted" ;;
             esac ;;
         stop)
             local target="${2:-all}"
             case "$target" in
-                all) sudo systemctl stop lingtu.service robot-super-lio-relocation.service robot-super-lio.service robot-localizer.service robot-fastlio2.service robot-lidar.service
-                     echo "robot LiDAR + SLAM + localizer + Super-LIO + relocation + lingtu stopped" ;;
+                all) sudo systemctl stop lingtu.service lingtu-nav-dds.service lingtu-slam-dds.service lingtu-livox-dds.service robot-super-lio-relocation.service robot-super-lio.service robot-hba.service robot-genz-icp.service robot-localizer.service robot-fastlio2.service robot-lidar.service
+                     echo "native Livox + SLAM + Nav DDS, legacy SLAM/LiDAR, experimental backends, and lingtu stopped" ;;
                 *)
                     local unit
-                    unit=$(svc_unit "$target") || { echo "Usage: lingtu svc stop [lidar|slam|localizer|super_lio|super_lio_relocation|lingtu|camera|brainstem|all]"; exit 1; }
+                    unit=$(svc_unit "$target") || { echo "Usage: lingtu svc stop [lidar|slam|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
                     sudo systemctl stop "$unit"; echo "$unit stopped" ;;
             esac ;;
-        *) echo "Usage: lingtu svc [status|restart <target>|stop <target>]"; exit 1 ;;
+        *) echo "Usage: lingtu svc [status|status-legacy|restart <target>|stop <target>]"; exit 1 ;;
     esac
 }
 
@@ -1106,7 +1726,7 @@ def camera_device_status_once():
 
 
 def latest_livox_sdk_event():
-    rc, out, err = run(["journalctl", "-u", "robot-lidar.service", "-b", "-n", "200", "--no-pager"], timeout=5)
+    rc, out, err = run(["journalctl", "-u", "lingtu-livox-dds.service", "-b", "-n", "200", "--no-pager"], timeout=5)
     if rc == 127:
         return "unknown", {"error": "journalctl not found"}
     if rc != 0 and not out:
@@ -1158,9 +1778,9 @@ def add(check_id, status, level, message, evidence=None):
 
 
 canonical_services = [
-    "robot-lidar.service",
-    "robot-fastlio2.service",
-    "robot-localizer.service",
+    "lingtu-livox-dds.service",
+    "lingtu-slam-dds.service",
+    "lingtu-nav-dds.service",
     "lingtu.service",
     "robot-camera.service",
 ]
@@ -1175,6 +1795,9 @@ for svc in canonical_services:
         add(f"service.{svc}", "fail", "p0", f"{svc} is not active", {"active": active, "stderr": err})
 
 legacy_services = [
+    "robot-lidar.service",
+    "robot-fastlio2.service",
+    "robot-localizer.service",
     "lidar.service",
     "slam.service",
     "localizer.service",
@@ -1912,11 +2535,15 @@ cmd_doctor() {
     [ "$require_camera" = "1" ] && echo "Mode: camera required for full App/Web visual readiness"
     [ "$ros2" = "1" ] && echo "Mode: ROS2 compatibility graph inspection enabled"
     echo -e "${B}[1] Services${N}"
-    cmd_svc status
+    if [ "$ros2" = "1" ]; then
+        cmd_svc status-legacy
+    else
+        cmd_svc status
+    fi
 
     echo -e "${B}[2] Livox SDK init${N}"
     local livox_last
-    livox_last=$(journalctl -u robot-lidar.service -b -n 200 --no-pager 2>/dev/null \
+    livox_last=$(journalctl -u lingtu-livox-dds.service -b -n 200 --no-pager 2>/dev/null \
         | grep -E 'Init lds lidar success|Init lds lidar fail|Failed to init livox lidar sdk|bind failed' \
         | tail -1 || true)
     if echo "$livox_last" | grep -q 'Init lds lidar success'; then
@@ -2996,32 +3623,31 @@ routecheck_capture_phase() {
     routecheck_capture_json "$dir/navigation.json" "/api/v1/navigation/status"
     routecheck_capture_json "$dir/health.json" "/api/v1/health"
     systemctl show -p Id -p ActiveState -p SubState -p NRestarts \
-        robot-fastlio2.service robot-localizer.service \
+        lingtu-livox-dds.service lingtu-slam-dds.service lingtu-nav-dds.service \
+        robot-fastlio2.service robot-localizer.service robot-genz-icp.service robot-hba.service \
         robot-super-lio.service robot-super-lio-relocation.service lingtu.service \
         > "$dir/services.txt" 2>&1 || true
     ps -o pid,comm,%cpu,%mem,rss,vsz,args \
-        -C super_lio_node -C relocation_node -C localizer_node -C python3 \
+        -C lingtu_livox_dds_runtime -C lingtu_slam_cyclone_runtime \
+        -C lingtu_nav_dds_runtime -C super_lio_node -C relocation_node \
+        -C localizer_node -C odometry_node -C hba_node -C python3 \
         > "$dir/resources.txt" 2>&1 || true
     journalctl -u robot-super-lio.service -u robot-super-lio-relocation.service \
-        -u robot-localizer.service -u robot-fastlio2.service -u lingtu.service \
+        -u lingtu-livox-dds.service -u lingtu-slam-dds.service -u lingtu-nav-dds.service \
+        -u robot-localizer.service -u robot-fastlio2.service -u robot-genz-icp.service -u robot-hba.service -u lingtu.service \
         --since '30 min ago' --no-pager > "$dir/journal.txt" 2>&1 || true
     echo "Captured $phase evidence: $dir"
 }
 
 routecheck_plan_preview() {
     local phase="$1" payload="$2" dir="$3"
-    local NAVJ PLANJ CAN BLOCKERS ADVISORIES STATE FEASIBLE COUNT PLANNER POLICY SAFETY_OK FALLBACK REJECTED REASONS SOURCE SOURCE_L
+    local NAVJ PLANJ CAN BLOCKERS ADVISORIES STATE FEASIBLE COUNT PLANNER POLICY SAFETY_OK FALLBACK REJECTED REASONS SOURCE SOURCE_L PLAN_TIMEOUT
     mkdir -p "$dir"
+    PLAN_TIMEOUT="${LINGTU_PLAN_PREVIEW_TIMEOUT:-30}"
     NAVJ=$(curl -s --max-time 4 "$GW/api/v1/navigation/status" 2>/dev/null || echo '{}')
     printf '%s\n' "$NAVJ" > "$dir/navigation.pre_plan.json"
     SOURCE=$(navigation_active_cmd_source "$NAVJ")
-    SOURCE_L=$(printf "%s" "$SOURCE" | tr '[:upper:]' '[:lower:]')
-    case "$SOURCE_L" in
-        ""|none|null|-) ;;
-        *)
-            printf "${R}FAIL${N}: %s route preflight refused while active_cmd_source=%s\n" "$phase" "$SOURCE"
-            return 1 ;;
-    esac
+    routecheck_require_no_active_command_source "$phase route preflight" || return 1
     CAN=$(pjson "$NAVJ" 'r=d.get("readiness") or {}; print(str(r.get("can_accept_goal", d.get("can_accept_goal", False))).lower())')
     BLOCKERS=$(pjson "$NAVJ" 'r=d.get("readiness") or {}; b=r.get("blockers") or []; print(",".join(map(str,b)) if isinstance(b,list) else str(b or ""))')
     ADVISORIES=$(pjson "$NAVJ" 'r=d.get("readiness") or {}; a=r.get("advisories") or []; print(",".join(map(str,a)) if isinstance(a,list) else str(a or ""))')
@@ -3032,7 +3658,7 @@ routecheck_plan_preview() {
         return 1
     fi
 
-    PLANJ=$(curl -s --max-time 8 -X POST -H "Content-Type: application/json" \
+    PLANJ=$(curl -s --max-time "$PLAN_TIMEOUT" -X POST -H "Content-Type: application/json" \
         -d "$payload" "$GW/api/v1/navigation/plan" 2>/dev/null || echo '{}')
     printf '%s\n' "$PLANJ" > "$dir/plan.json"
     printf '%s\n' "$PLANJ" | python3 -m json.tool > "$dir/plan.pretty.json" 2>/dev/null || true
@@ -4121,6 +4747,572 @@ cmd_evidence() {
     "${cmd[@]}"
 }
 
+# -- Subcommand: motion-smoke --
+cmd_motion_smoke_usage() {
+    echo "Usage: lingtu motion-smoke --map NAME --goal X Y [YAW] --allow-motion [--initial-pose X Y YAW] [--reuse-tracking] [--slam-profile PROFILE] [--artifact-dir DIR] [--timeout SEC] [--poll SEC] [--evidence-duration SEC] [--min-motion-m M] [--expected-command-subscriber NAME]"
+    echo "Run one low-speed native navigation loop: native localization, saved-map relocalize or reuse active TRACKING, session/start, plan preview, /api/v1/goal, real-runtime evidence, stop, session/end."
+    echo "This sends motion commands only when --allow-motion is present."
+}
+
+LINGTU_MOTION_SMOKE_SESSION_ACTIVE=0
+LINGTU_MOTION_SMOKE_GOAL_SENT=0
+LINGTU_MOTION_SMOKE_ARTIFACT_DIR=""
+LINGTU_MOTION_SMOKE_EVIDENCE_PID=""
+
+motion_smoke_cleanup() {
+    local status=$?
+    trap - EXIT
+    if [ "${LINGTU_MOTION_SMOKE_SESSION_ACTIVE:-0}" = "1" ]; then
+        echo "Stop active motion-smoke navigation session"
+        if [ -n "${LINGTU_MOTION_SMOKE_ARTIFACT_DIR:-}" ]; then
+            mkdir -p "$LINGTU_MOTION_SMOKE_ARTIFACT_DIR/cleanup"
+            if [ "${LINGTU_MOTION_SMOKE_GOAL_SENT:-0}" = "1" ]; then
+                curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
+                    -d '{"vx":0,"vy":0,"wz":0,"client_id":"motion_smoke_cleanup"}' \
+                    "$GW/api/v1/cmd_vel" \
+                    > "$LINGTU_MOTION_SMOKE_ARTIFACT_DIR/cleanup/cmd_vel_zero.json" 2>/dev/null || true
+            fi
+            curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
+                -d '{"reason":"motion_smoke_cleanup"}' "$GW/api/v1/navigation/cancel" \
+                > "$LINGTU_MOTION_SMOKE_ARTIFACT_DIR/cleanup/cancel.json" 2>/dev/null || true
+            routecheck_capture_phase "motion_smoke_cleanup" "$LINGTU_MOTION_SMOKE_ARTIFACT_DIR/cleanup" || true
+        else
+            if [ "${LINGTU_MOTION_SMOKE_GOAL_SENT:-0}" = "1" ]; then
+                curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
+                    -d '{"vx":0,"vy":0,"wz":0,"client_id":"motion_smoke_cleanup"}' \
+                    "$GW/api/v1/cmd_vel" >/dev/null 2>&1 || true
+            fi
+            curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
+                -d '{"reason":"motion_smoke_cleanup"}' "$GW/api/v1/navigation/cancel" >/dev/null 2>&1 || true
+        fi
+        LINGTU_MOTION_SMOKE_SESSION_ACTIVE=0
+    fi
+    if [ -n "${LINGTU_MOTION_SMOKE_EVIDENCE_PID:-}" ]; then
+        wait "$LINGTU_MOTION_SMOKE_EVIDENCE_PID" >/dev/null 2>&1 || true
+        LINGTU_MOTION_SMOKE_EVIDENCE_PID=""
+    fi
+    return "$status"
+}
+
+motion_smoke_write_summary() {
+    local artifact_dir="$1" outcome="$2" map_name="$3" goal_x="$4" goal_y="$5" goal_yaw="$6" slam_profile="$7"
+    [ -n "$artifact_dir" ] || return 0
+    python3 - "$artifact_dir" "$outcome" "$map_name" "$goal_x" "$goal_y" "$goal_yaw" "$slam_profile" <<'PY' || true
+import json
+import pathlib
+import sys
+from datetime import datetime, timezone
+
+root = pathlib.Path(sys.argv[1])
+
+def load_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+summary = {
+    "schema_version": 1,
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "mode": "motion_smoke",
+    "outcome": sys.argv[2],
+    "map": sys.argv[3],
+    "goal": {"x": float(sys.argv[4]), "y": float(sys.argv[5]), "yaw": float(sys.argv[6])},
+    "slam_profile": sys.argv[7] or None,
+    "artifacts": {
+        "before": str(root / "before"),
+        "session": str(root / "session"),
+        "plan": str(root / "plan"),
+        "goal": str(root / "goal.json"),
+        "navigation_samples": str(root / "navigation.samples.jsonl"),
+        "evidence": str(root / "evidence.json"),
+        "after_stop": str(root / "after_stop"),
+    },
+    "terminal_state": load_json(root / "navigation.latest.json").get("state"),
+    "failure_reason": load_json(root / "navigation.latest.json").get("failure_reason"),
+    "real_runtime_evidence": {
+        "ok": load_json(root / "evidence.json").get("ok"),
+        "real_robot_motion": load_json(root / "evidence.json").get("real_robot_motion"),
+        "cmd_vel_sent_to_hardware": load_json(root / "evidence.json").get("cmd_vel_sent_to_hardware"),
+        "motion": load_json(root / "evidence.json").get("motion"),
+        "outputs": load_json(root / "evidence.json").get("outputs"),
+        "blockers": load_json(root / "evidence.json").get("blockers"),
+    },
+}
+(root / "motion_smoke_summary.json").write_text(
+    json.dumps(summary, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+cmd_motion_smoke() {
+    local map_name="" goal_x="" goal_y="" goal_yaw="0" slam_profile=""
+    local artifact_dir="" timeout=90 poll=1 evidence_duration=20 min_motion_m="0.05"
+    local allow_motion=0 initial_x=0 initial_y=0 initial_yaw=0 reuse_tracking=0
+    local -a expected_subscribers=()
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --map)
+                map_name="${2:-}"
+                [ -n "$map_name" ] || { cmd_motion_smoke_usage; return 1; }
+                shift 2 ;;
+            --map=*)
+                map_name="${1#*=}"
+                shift ;;
+            --goal)
+                [ "$#" -ge 3 ] || { cmd_motion_smoke_usage; return 1; }
+                goal_x="$2"
+                goal_y="$3"
+                if [ "$#" -ge 4 ] && [[ "${4:-}" != --* ]]; then
+                    goal_yaw="$4"
+                    shift 4
+                else
+                    goal_yaw="0"
+                    shift 3
+                fi ;;
+            --slam-profile)
+                slam_profile="${2:-}"
+                shift 2 ;;
+            --slam-profile=*)
+                slam_profile="${1#*=}"
+                shift ;;
+            --initial-pose|--init-pose)
+                [ "$#" -ge 4 ] || { cmd_motion_smoke_usage; return 1; }
+                initial_x="$2"; initial_y="$3"; initial_yaw="$4"
+                shift 4 ;;
+            --reuse-tracking)
+                reuse_tracking=1
+                shift ;;
+            --artifact-dir)
+                artifact_dir="${2:-}"
+                [ -n "$artifact_dir" ] || { cmd_motion_smoke_usage; return 1; }
+                shift 2 ;;
+            --artifact-dir=*)
+                artifact_dir="${1#*=}"
+                shift ;;
+            --timeout)
+                timeout="${2:-}"
+                shift 2 ;;
+            --timeout=*)
+                timeout="${1#*=}"
+                shift ;;
+            --poll)
+                poll="${2:-}"
+                shift 2 ;;
+            --poll=*)
+                poll="${1#*=}"
+                shift ;;
+            --evidence-duration|--evidence-duration-sec)
+                evidence_duration="${2:-}"
+                shift 2 ;;
+            --evidence-duration=*|--evidence-duration-sec=*)
+                evidence_duration="${1#*=}"
+                shift ;;
+            --min-motion-m)
+                min_motion_m="${2:-}"
+                shift 2 ;;
+            --min-motion-m=*)
+                min_motion_m="${1#*=}"
+                shift ;;
+            --expected-command-subscriber)
+                [ -n "${2:-}" ] || { cmd_motion_smoke_usage; return 1; }
+                expected_subscribers+=("$2")
+                shift 2 ;;
+            --expected-command-subscriber=*)
+                expected_subscribers+=("${1#*=}")
+                shift ;;
+            --allow-motion)
+                allow_motion=1
+                shift ;;
+            -h|--help)
+                cmd_motion_smoke_usage
+                return 0 ;;
+            *)
+                cmd_motion_smoke_usage
+                return 1 ;;
+        esac
+    done
+
+    [ "$allow_motion" = "1" ] || {
+        echo -e "${R}FAIL${N}: motion-smoke requires --allow-motion before starting a navigation session or sending /api/v1/goal"
+        return 1
+    }
+    [ -n "$map_name" ] || { echo -e "${R}FAIL${N}: --map NAME is required"; return 1; }
+    [ -n "$goal_x" ] && [ -n "$goal_y" ] || { echo -e "${R}FAIL${N}: --goal X Y [YAW] is required"; return 1; }
+    for pair in \
+        "timeout:$timeout" \
+        "poll:$poll" \
+        "evidence-duration:$evidence_duration"; do
+        local name="${pair%%:*}" value="${pair#*:}"
+        case "$value" in
+            ''|*[!0-9.]*)
+                echo "$name must be a numeric number of seconds"
+                return 1 ;;
+        esac
+    done
+
+    local payload maps_root raw_map_name session_payload raw ok accepted
+    payload=$(format_nav_goal_payload "$goal_x" "$goal_y" "$goal_yaw") || {
+        echo "goal must be numeric X Y [YAW]"
+        return 1
+    }
+
+    maps_root="$(lingtu_maps_root)"
+    raw_map_name="$map_name"
+    map_name=$(resolve_relocation_map_name "$maps_root" "$raw_map_name") || {
+        echo -e "${R}FAIL${N}: unsafe map name or active map target: $raw_map_name"
+        return 1
+    }
+    [ -f "$maps_root/$map_name/map.pcd" ] || {
+        echo -e "${R}FAIL${N}: map.pcd not found: $maps_root/$map_name/map.pcd"
+        return 1
+    }
+    if [ -z "$artifact_dir" ]; then
+        artifact_dir="$HOME/data/SLAM/navigation/artifacts/motion_smoke_$(date +%Y%m%d_%H%M%S)"
+    fi
+    mkdir -p "$artifact_dir"/{before,session,plan,after_stop}
+
+    echo -e "${B}=== Lingtu motion smoke @ $(date '+%H:%M:%S') ===${N}"
+    echo "Gateway: $GW"
+    echo "Map: $map_name"
+    echo "Goal: x=$goal_x y=$goal_y yaw=$goal_yaw"
+    echo "Initial pose seed: x=$initial_x y=$initial_y yaw=$initial_yaw"
+    [ "$reuse_tracking" = "1" ] && echo "Relocalization: reuse current TRACKING state when valid" || echo "Relocalization: saved-map seeded ICP"
+    [ -n "$slam_profile" ] && echo "SLAM profile override: $slam_profile" || echo "SLAM profile: current live profile"
+    echo "Artifact dir: $artifact_dir"
+    echo -e "${Y}MOTION ENABLED${N}: this starts a navigation session and sends /api/v1/goal."
+
+    LINGTU_MOTION_SMOKE_SESSION_ACTIVE=0
+    LINGTU_MOTION_SMOKE_GOAL_SENT=0
+    LINGTU_MOTION_SMOKE_ARTIFACT_DIR="$artifact_dir"
+    LINGTU_MOTION_SMOKE_EVIDENCE_PID=""
+    trap motion_smoke_cleanup EXIT
+
+    routecheck_capture_phase "motion_smoke_before" "$artifact_dir/before"
+    routecheck_require_no_active_command_source "motion-smoke before session" || return 1
+    if slam_dds_service_available; then
+        slam_dds_set_mode localization "$maps_root/$map_name/map.pcd" || return 1
+        slam_dds_wait_status localization 1 35 || return 1
+    fi
+
+    session_payload=$(format_nav_session_payload "$map_name" "$slam_profile")
+    raw=$(routecompare_post_json "/api/v1/session/start" "$session_payload" "$artifact_dir/session_start.json" 30)
+    ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+    if [ "$ok" != "true" ]; then
+        local msg active_session active_map session_mode
+        msg=$(pjson "$raw" 'print(d.get("message") or "")')
+        active_session=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
+        session_mode=$(pjson "$active_session" 'print(d.get("mode") or "")')
+        active_map=$(pjson "$active_session" 'print(d.get("active_map") or d.get("map_name") or "")')
+        if [ "$msg" = "Already in navigating. Call /session/end first." ] && [ "$session_mode" = "navigating" ] && [ "$active_map" = "$map_name" ]; then
+            echo "Already navigating on $map_name; reusing active session."
+        else
+            echo -e "${R}FAIL${N}: motion-smoke navigation session did not start"
+            return 1
+        fi
+    fi
+    LINGTU_MOTION_SMOKE_SESSION_ACTIVE=1
+    if [ "$reuse_tracking" = "1" ] && \
+        nav_relocalization_ready_without_request "$map_name" > "$artifact_dir/relocalize.json"; then
+        echo "Reusing current TRACKING localization; saved-map relocalize was not requested."
+    else
+        nav_relocalize_saved_map "$map_name" "$initial_x" "$initial_y" "$initial_yaw" \
+            > "$artifact_dir/relocalize.json" || return 1
+    fi
+    routecheck_capture_phase "motion_smoke_session_started" "$artifact_dir/session"
+
+    local latest_evidence_report
+    latest_evidence_report="$(lingtu_repo_root)/artifacts/thunder_field_runtime/report.json"
+    bash "${BASH_SOURCE[0]}" evidence --duration 8 --json \
+        > "$artifact_dir/evidence_preflight.stdout" \
+        2> "$artifact_dir/evidence_preflight.stderr" || true
+    [ -f "$latest_evidence_report" ] && cp "$latest_evidence_report" "$artifact_dir/evidence_preflight.json" || true
+
+    routecheck_plan_preview "motion_smoke" "$payload" "$artifact_dir/plan" || return 1
+
+    raw=$(routecompare_post_json "/api/v1/goal" "$payload" "$artifact_dir/goal.json" "${LINGTU_GOAL_POST_TIMEOUT:-35}")
+    accepted=$(pjson "$raw" 'cmd=d.get("command") or {}; print(str(bool(d.get("accepted") or d.get("ok") or cmd.get("accepted") or d.get("status") == "ok")).lower())')
+    if [ "$accepted" != "true" ]; then
+        echo -e "${R}FAIL${N}: motion-smoke goal was rejected"
+        return 1
+    fi
+    LINGTU_MOTION_SMOKE_GOAL_SENT=1
+
+    local -a evidence_cmd=(
+        bash "${BASH_SOURCE[0]}" evidence
+        --duration "$evidence_duration"
+        --min-motion-m "$min_motion_m"
+        --json
+    )
+    local subscriber
+    for subscriber in "${expected_subscribers[@]}"; do
+        evidence_cmd+=(--expected-command-subscriber "$subscriber")
+    done
+    "${evidence_cmd[@]}" > "$artifact_dir/evidence.stdout" 2> "$artifact_dir/evidence.stderr" &
+    LINGTU_MOTION_SMOKE_EVIDENCE_PID=$!
+
+    local route_status=0 evidence_status=0
+    routecompare_wait_terminal "motion_smoke" "$artifact_dir" "$timeout" "$poll" || route_status=$?
+
+    curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
+        -d '{"vx":0,"vy":0,"wz":0,"client_id":"motion_smoke"}' \
+        "$GW/api/v1/cmd_vel" > "$artifact_dir/cmd_vel_zero.json" 2>/dev/null || true
+    curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
+        -d '{"reason":"motion_smoke_done"}' "$GW/api/v1/navigation/cancel" \
+        > "$artifact_dir/cancel.json" 2>/dev/null || true
+    LINGTU_MOTION_SMOKE_SESSION_ACTIVE=0
+    LINGTU_MOTION_SMOKE_GOAL_SENT=0
+    routecheck_capture_phase "motion_smoke_after_stop" "$artifact_dir/after_stop"
+
+    wait "$LINGTU_MOTION_SMOKE_EVIDENCE_PID" || evidence_status=$?
+    LINGTU_MOTION_SMOKE_EVIDENCE_PID=""
+    [ -f "$latest_evidence_report" ] && cp "$latest_evidence_report" "$artifact_dir/evidence.json" || true
+
+    if [ "$route_status" -ne 0 ]; then
+        motion_smoke_write_summary "$artifact_dir" "failed" "$map_name" "$goal_x" "$goal_y" "$goal_yaw" "$slam_profile"
+        return "$route_status"
+    fi
+    if [ "$evidence_status" -ne 0 ]; then
+        echo -e "${R}FAIL${N}: real-runtime evidence did not pass; see $artifact_dir/evidence.json"
+        motion_smoke_write_summary "$artifact_dir" "failed" "$map_name" "$goal_x" "$goal_y" "$goal_yaw" "$slam_profile"
+        return "$evidence_status"
+    fi
+
+    motion_smoke_write_summary "$artifact_dir" "pass" "$map_name" "$goal_x" "$goal_y" "$goal_yaw" "$slam_profile"
+    trap - EXIT
+    echo -e "${G}PASS${N}: motion smoke completed"
+    echo "Artifact dir: $artifact_dir"
+    echo "Summary: $artifact_dir/motion_smoke_summary.json"
+}
+
+# -- Subcommand: system-acceptance --
+cmd_system_acceptance_usage() {
+    echo "Usage: lingtu system-acceptance --map NAME --goal X Y [YAW] [--initial-pose X Y YAW] [--artifact-dir DIR] [--soak-duration SEC] [--with-relocalization] [--allow-motion]"
+    echo "Run the That-nav parity acceptance gate: native runtime audit, Gateway readiness, SLAM/map soak, map artifact gate, planner preview, optional relocalization and motion smoke."
+    echo "No ROS2 graph inspection and no motion commands are used unless --allow-motion is set."
+}
+
+cmd_system_acceptance() {
+    local map_name="" goal_x="" goal_y="" goal_yaw="0" artifact_dir=""
+    local soak_duration=20 soak_interval=2 route_timeout=90 with_relocalization=0 allow_motion=0
+    local initial_pose_explicit=0 initial_x=0 initial_y=0 initial_yaw=0
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --map)
+                map_name="${2:-}"
+                [ -n "$map_name" ] || { cmd_system_acceptance_usage; return 1; }
+                shift 2 ;;
+            --map=*)
+                map_name="${1#*=}"
+                shift ;;
+            --goal)
+                [ "$#" -ge 3 ] || { cmd_system_acceptance_usage; return 1; }
+                goal_x="$2"
+                goal_y="$3"
+                if [ "$#" -ge 4 ] && [[ "${4:-}" != --* ]]; then
+                    goal_yaw="$4"
+                    shift 4
+                else
+                    goal_yaw="0"
+                    shift 3
+                fi ;;
+            --artifact-dir)
+                artifact_dir="${2:-}"
+                [ -n "$artifact_dir" ] || { cmd_system_acceptance_usage; return 1; }
+                shift 2 ;;
+            --artifact-dir=*)
+                artifact_dir="${1#*=}"
+                shift ;;
+            --initial-pose|--init-pose)
+                [ "$#" -ge 4 ] || { cmd_system_acceptance_usage; return 1; }
+                initial_x="$2"; initial_y="$3"; initial_yaw="$4"
+                initial_pose_explicit=1
+                shift 4 ;;
+            --soak-duration)
+                soak_duration="${2:-}"
+                shift 2 ;;
+            --soak-duration=*)
+                soak_duration="${1#*=}"
+                shift ;;
+            --soak-interval)
+                soak_interval="${2:-}"
+                shift 2 ;;
+            --soak-interval=*)
+                soak_interval="${1#*=}"
+                shift ;;
+            --route-timeout)
+                route_timeout="${2:-}"
+                shift 2 ;;
+            --route-timeout=*)
+                route_timeout="${1#*=}"
+                shift ;;
+            --with-relocalization)
+                with_relocalization=1
+                shift ;;
+            --allow-motion)
+                allow_motion=1
+                shift ;;
+            -h|--help)
+                cmd_system_acceptance_usage
+                return 0 ;;
+            *)
+                cmd_system_acceptance_usage
+                return 1 ;;
+        esac
+    done
+
+    [ -n "$map_name" ] || { echo -e "${R}FAIL${N}: --map NAME is required"; return 1; }
+    [ -n "$goal_x" ] && [ -n "$goal_y" ] || { echo -e "${R}FAIL${N}: --goal X Y [YAW] is required"; return 1; }
+    for pair in \
+        "soak-duration:$soak_duration" \
+        "soak-interval:$soak_interval" \
+        "route-timeout:$route_timeout"; do
+        local name="${pair%%:*}" value="${pair#*:}"
+        case "$value" in
+            ''|*[!0-9]*) echo "$name must be an integer number of seconds"; return 1 ;;
+        esac
+    done
+
+    local payload
+    payload=$(format_nav_goal_payload "$goal_x" "$goal_y" "$goal_yaw") || {
+        echo "goal must be numeric X Y [YAW]"
+        return 1
+    }
+
+    local maps_root raw_map_name
+    maps_root="$(lingtu_maps_root)"
+    raw_map_name="$map_name"
+    map_name=$(resolve_relocation_map_name "$maps_root" "$raw_map_name") || {
+        echo -e "${R}FAIL${N}: unsafe map name or active map target: $raw_map_name"
+        return 1
+    }
+    [ -f "$maps_root/$map_name/map.pcd" ] || {
+        echo -e "${R}FAIL${N}: map.pcd not found: $maps_root/$map_name/map.pcd"
+        return 1
+    }
+
+    if [ -z "$artifact_dir" ]; then
+        artifact_dir="$HOME/data/SLAM/navigation/artifacts/system_acceptance_$(date +%Y%m%d_%H%M%S)"
+    fi
+    mkdir -p "$artifact_dir"
+
+    echo -e "${B}=== Lingtu system acceptance @ $(date '+%H:%M:%S') ===${N}"
+    echo "Gateway: $GW"
+    echo "Map: $map_name"
+    echo "Goal: x=$goal_x y=$goal_y yaw=$goal_yaw"
+    echo "Initial pose seed: x=$initial_x y=$initial_y yaw=$initial_yaw"
+    echo "Artifact dir: $artifact_dir"
+    echo "ROS2 graph inspection is skipped; this validates the native/Gateway path."
+    [ "$allow_motion" = "1" ] && echo -e "${Y}MOTION ENABLED${N}: routecompare will send a goal." || echo "No motion commands are sent."
+
+    echo "[1/6] Static runtime contract"
+    cmd_runtime_audit --json > "$artifact_dir/runtime_audit.json" || return 1
+
+    echo "[2/6] Gateway/ModulePort readiness"
+    cmd_doctor --non-motion --strict --json > "$artifact_dir/doctor.json" || return 1
+
+    echo "[3/6] Sensor -> SLAM soak"
+    cmd_soak --duration "$soak_duration" --interval "$soak_interval" --strict --json > "$artifact_dir/soak.json" || return 1
+
+    echo "[4/6] Saved-map artifacts"
+    cmd_saved_map_artifact_gate "$maps_root/$map_name" \
+        --require-occupancy \
+        --expected-data-source thunder_field \
+        --expected-frame-id map \
+        --json > "$artifact_dir/saved_map_artifact_gate.json" || return 1
+
+    echo "[5/6] Relocalization and requested global plan preview"
+    if [ "$with_relocalization" = "1" ]; then
+        mkdir -p "$artifact_dir/relocalization"
+        if slam_dds_service_available; then
+            slam_dds_set_mode localization "$maps_root/$map_name/map.pcd" || return 1
+            slam_dds_wait_status localization 1 35 || return 1
+        fi
+        if [ "$initial_pose_explicit" = "1" ]; then
+            nav_relocalize_saved_map "$map_name" "$initial_x" "$initial_y" "$initial_yaw" \
+                > "$artifact_dir/relocalization/result.json" || return 1
+        else
+            nav_global_relocalize_saved_map "$map_name" \
+                > "$artifact_dir/relocalization/result.json" || return 1
+        fi
+        routecheck_capture_phase "system_acceptance_relocalization" "$artifact_dir/relocalization"
+    else
+        echo "  skipped native relocalization gate; add --with-relocalization when validating saved-map restart/relocalization."
+    fi
+    routecheck_require_no_active_command_source "system acceptance plan preview" || return 1
+
+    local session_payload session_raw session_ok session_msg active_session session_mode active_map session_started=0
+    session_payload=$(format_nav_session_payload "$map_name")
+    session_raw=$(curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
+        -d "$session_payload" "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
+    printf '%s\n' "$session_raw" > "$artifact_dir/session_start.json"
+    session_ok=$(pjson "$session_raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+    session_msg=$(pjson "$session_raw" 'print(d.get("message") or "")')
+    if [ "$session_ok" != "true" ]; then
+        active_session=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
+        session_mode=$(pjson "$active_session" 'print(d.get("mode") or "")')
+        active_map=$(pjson "$active_session" 'print(d.get("active_map") or d.get("map_name") or "")')
+        if [ "$session_msg" = "Already in navigating. Call /session/end first." ] && [ "$session_mode" = "navigating" ] && [ "$active_map" = "$map_name" ]; then
+            echo "Already navigating on $map_name; reusing active session for plan preview."
+        else
+            echo -e "${R}FAIL${N}: system acceptance navigation session did not start${session_msg:+: $session_msg}"
+            return 1
+        fi
+    else
+        session_started=1
+    fi
+    routecheck_capture_phase "system_acceptance_session_started" "$artifact_dir/session"
+    if ! saved_map_plan_precheck "$map_name" "$payload" "$artifact_dir/requested_map_validate_plan.json" \
+        > "$artifact_dir/requested_plan_preview.txt"; then
+        [ "$session_started" = "1" ] && curl -s --max-time 20 -X POST "$GW/api/v1/session/end" \
+            > "$artifact_dir/session_end_after_failed_plan.json" 2>/dev/null || true
+        return 1
+    fi
+    [ "$session_started" = "1" ] && curl -s --max-time 20 -X POST "$GW/api/v1/session/end" \
+        > "$artifact_dir/session_end_after_plan.json" 2>/dev/null || true
+
+    echo "[6/6] Motion gate"
+    if [ "$allow_motion" = "1" ]; then
+        cmd_motion_smoke --map "$map_name" --goal "$goal_x" "$goal_y" "$goal_yaw" \
+            --initial-pose "$initial_x" "$initial_y" "$initial_yaw" \
+            --allow-motion --timeout "$route_timeout" --artifact-dir "$artifact_dir/motion_smoke" || return 1
+    else
+        echo "  skipped motion smoke; add --allow-motion only in a controlled field test."
+    fi
+
+    python3 - "$artifact_dir" "$map_name" "$goal_x" "$goal_y" "$goal_yaw" "$with_relocalization" "$allow_motion" <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+summary = {
+    "schema_version": 1,
+    "mode": "system_acceptance",
+    "ok": True,
+    "map": sys.argv[2],
+    "goal": {"x": float(sys.argv[3]), "y": float(sys.argv[4]), "yaw": float(sys.argv[5])},
+    "checks": {
+        "runtime_audit": str(root / "runtime_audit.json"),
+        "doctor": str(root / "doctor.json"),
+        "soak": str(root / "soak.json"),
+        "saved_map_artifact_gate": str(root / "saved_map_artifact_gate.json"),
+        "requested_plan_preview": str(root / "requested_plan_preview.txt"),
+        "requested_map_validate_plan": str(root / "requested_map_validate_plan.json"),
+        "saved_map_relocalization": str(root / "relocalization") if sys.argv[6] == "1" else None,
+        "motion_smoke": str(root / "motion_smoke") if sys.argv[7] == "1" else None,
+    },
+}
+(root / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+
+    echo -e "${G}PASS${N}: system acceptance gate completed"
+    echo "Summary: $artifact_dir/summary.json"
+}
+
 # -- Subcommand: health --
 cmd_health() {
     curl -s "$GW/api/v1/health" 2>/dev/null | python3 -m json.tool
@@ -4130,6 +5322,7 @@ cmd_health() {
 case "${1:-status}" in
     status|s)       cmd_status ;;
     watch|w)        shift; cmd_watch "$@" ;;
+    mode)           shift; cmd_mode  "$@" ;;
     map|m)          shift; cmd_map   "$@" ;;
     nav|n)          shift; cmd_nav   "$@" ;;
     svc|service)    shift; cmd_svc   "$@" ;;
@@ -4140,6 +5333,7 @@ case "${1:-status}" in
     plan-preview|planpreview|preview-plan) shift; cmd_plan_preview "$@" ;;
     routecheck|route-check|route-preflight|super-lio-routecheck|super_lio_routecheck) shift; cmd_routecheck "$@" ;;
     routecompare|route-compare|super-lio-routecompare|super_lio_routecompare) shift; cmd_routecompare "$@" ;;
+    motion-smoke|motioncheck|path-follower-check) shift; cmd_motion_smoke "$@" ;;
     super-lio-smoke|super_lio_smoke|superlio-smoke) shift; cmd_slamcheck super_lio "$@" ;;
     super-lio-relocation-smoke|super_lio_relocation_smoke|super-lio-reloc-smoke|super_lio_reloc_smoke) shift; cmd_slamcheck super_lio_relocation "$@" ;;
     log|l)          shift; cmd_log   "$@" ;;
@@ -4151,6 +5345,7 @@ case "${1:-status}" in
     field-check|field-acceptance|accept) shift; cmd_field_check "$@" ;;
     inspection-check|inspection-acceptance|inspect-accept) shift; cmd_inspection_check "$@" ;;
     saved-map-artifact-gate|map-gate) shift; cmd_saved_map_artifact_gate "$@" ;;
+    system-acceptance|that-nav-acceptance|acceptance-gate) shift; cmd_system_acceptance "$@" ;;
     evidence|runtime-evidence|real-runtime-evidence) shift; cmd_evidence "$@" ;;
     health|h)       cmd_health ;;
     help|-h|--help)

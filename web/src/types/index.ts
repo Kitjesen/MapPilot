@@ -305,6 +305,7 @@ export interface PlanPreviewRequest {
   z?: number
   frame_id?: 'map'
   client_id?: string
+  planner_constraints?: Record<string, unknown>
 }
 
 export interface PlanPreviewResponse {
@@ -321,6 +322,9 @@ export interface PlanPreviewResponse {
   plan_ms?: number | null
   planner?: string | null
   selected_planner?: string | null
+  reached_goal?: boolean
+  global_plan?: Record<string, unknown> | null
+  planner_diagnostics?: Record<string, unknown> | null
   plan_safety_policy?: string | null
   path_safety?: Record<string, unknown> | null
   fallback_reason?: string
@@ -669,6 +673,7 @@ export interface ClientLinks {
   runtime_dataflow_topic?: string
   runtime_dataflow_subscribe?: string
   runtime_switch_plan?: string
+  runtime_switch?: string
   algorithm_benchmark_latest?: string
   devices?: string
   readiness?: string
@@ -1075,6 +1080,52 @@ export interface RuntimeSwitchPlanResponse {
   changed: string[]
   current_validation: RuntimeSwitchValidationSummary
   target_validation: RuntimeSwitchValidationSummary
+  blockers: string[]
+  links: ClientLinks
+  error?: string | null
+}
+
+export type ProductModeProfile =
+  | 'teleop'
+  | 'teleop_avoid'
+  | 'map'
+  | 'tracking'
+  | 'nav'
+  | 'inspection'
+
+export interface RuntimeSwitchRequest {
+  current_profile?: string | null
+  target_profile: ProductModeProfile
+  current_endpoint?: string | null
+  target_endpoint?: string | null
+  endpoint?: string | null
+  map_name?: string | null
+  relocalize?: boolean
+  initial_pose?: [number, number, number] | null
+  allow_restart?: boolean
+  client_id?: string
+  request_id?: string | null
+}
+
+export interface RuntimeSwitchResponse {
+  schema_version: 'lingtu.runtime_switch.v1'
+  ok: boolean
+  ts: number
+  accepted: boolean
+  status: string
+  read_only: boolean
+  dry_run: boolean
+  motion: boolean
+  lifecycle: string
+  current_profile?: string | null
+  target_profile: string
+  map_name?: string | null
+  relocalize: boolean
+  plan: Record<string, unknown>
+  command: string[]
+  command_id?: string | null
+  pid?: number | null
+  log_path?: string | null
   blockers: string[]
   links: ClientLinks
   error?: string | null
@@ -1595,7 +1646,7 @@ export interface Toast {
   kind: ToastKind
 }
 
-export type Tab = 'console' | 'scene' | 'map' | 'slam'
+export type Tab = 'console' | 'scene' | 'map' | 'slam' | 'planner'
 
 export type SlamProfile = 'fastlio2' | 'localizer' | 'super_lio' | 'super_lio_relocation' | 'stop'
 

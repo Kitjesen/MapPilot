@@ -18,7 +18,7 @@ function has(source, needle) {
 }
 
 function functionBody(source, name) {
-  const start = source.indexOf(`export async function ${name}`)
+  const start = source.indexOf(`export async function ${name}(`)
   if (start < 0) return ''
   const next = source.indexOf('\nexport ', start + 1)
   return source.slice(start, next < 0 ? source.length : next)
@@ -60,6 +60,7 @@ ensure(has(types, "runtime_dataflow?: string"), failures, 'ClientLinks must type
 ensure(has(types, "runtime_dataflow_topic?: string"), failures, 'ClientLinks must type runtime_dataflow_topic')
 ensure(has(types, "runtime_dataflow_subscribe?: string"), failures, 'ClientLinks must type runtime_dataflow_subscribe')
 ensure(has(types, "runtime_switch_plan?: string"), failures, 'ClientLinks must type runtime_switch_plan')
+ensure(has(types, "runtime_switch?: string"), failures, 'ClientLinks must type runtime_switch')
 ensure(has(types, "algorithm_benchmark_latest?: string"), failures, 'ClientLinks must type algorithm_benchmark_latest')
 ensure(has(types, "field_check?: string"), failures, 'ClientLinks must type field_check')
 ensure(has(types, "real_runtime_evidence_latest?: string"), failures, 'ClientLinks must type real_runtime_evidence_latest')
@@ -72,6 +73,8 @@ ensure(has(types, 'export interface RuntimeDataflowSubscribeResponse'), failures
 ensure(has(types, 'export interface RuntimeDataflowStageEvidence'), failures, 'RuntimeDataflowStageEvidence type missing')
 ensure(has(types, 'export interface RuntimeSwitchPlanRequest'), failures, 'RuntimeSwitchPlanRequest type missing')
 ensure(has(types, 'export interface RuntimeSwitchPlanResponse'), failures, 'RuntimeSwitchPlanResponse type missing')
+ensure(has(types, 'export interface RuntimeSwitchRequest'), failures, 'RuntimeSwitchRequest type missing')
+ensure(has(types, 'export interface RuntimeSwitchResponse'), failures, 'RuntimeSwitchResponse type missing')
 ensure(has(types, 'export interface AlgorithmBenchmarkLatestResponse'), failures, 'AlgorithmBenchmarkLatestResponse type missing')
 ensure(has(types, 'export interface RealRuntimeEvidenceLatestResponse'), failures, 'RealRuntimeEvidenceLatestResponse type missing')
 ensure(has(types, 'export interface ProductFieldCheckResponse'), failures, 'ProductFieldCheckResponse type missing')
@@ -99,6 +102,7 @@ const evidenceApi = functionBody(api, 'fetchRealRuntimeEvidenceLatest')
 const algorithmApi = functionBody(api, 'fetchAlgorithmBenchmarkLatest')
 const fieldCheckApi = functionBody(api, 'runProductFieldCheck')
 const switchPlanApi = functionBody(api, 'runRuntimeSwitchPlan')
+const switchApi = functionBody(api, 'runRuntimeSwitch')
 const inspectionApi = functionBody(api, 'runInspectionAcceptance')
 ensure(has(summaryApi, "apiPath('runtime_dataflow'"), failures, 'fetchRuntimeDataflow must use bootstrap runtime_dataflow link')
 ensure(has(detailApi, "apiPath('runtime_dataflow_topic'"), failures, 'fetchRuntimeDataflowTopic must use bootstrap runtime_dataflow_topic link')
@@ -108,6 +112,9 @@ ensure(has(evidenceApi, "apiPath('real_runtime_evidence_latest'"), failures, 'fe
 ensure(has(algorithmApi, "apiPath('algorithm_benchmark_latest'"), failures, 'fetchAlgorithmBenchmarkLatest must use bootstrap algorithm_benchmark_latest link')
 ensure(has(fieldCheckApi, "apiPath('field_check'"), failures, 'runProductFieldCheck must use bootstrap field_check link')
 ensure(has(switchPlanApi, "apiPath('runtime_switch_plan'"), failures, 'runRuntimeSwitchPlan must use bootstrap runtime_switch_plan link')
+ensure(has(switchApi, "apiPath('runtime_switch'"), failures, 'runRuntimeSwitch must use bootstrap runtime_switch link')
+ensure(has(switchApi, 'allow_restart: false'), failures, 'runRuntimeSwitch must default to plan-only execution')
+ensure(has(switchApi, 'client_id: WEB_CLIENT_ID'), failures, 'runRuntimeSwitch must identify the web client')
 ensure(has(inspectionApi, "apiPath('inspection_acceptance'"), failures, 'runInspectionAcceptance must use bootstrap inspection_acceptance link')
 ensure(has(inspectionApi, "client_id: WEB_CLIENT_ID"), failures, 'runInspectionAcceptance must identify the web client')
 ensure(has(detailApi, 'new URLSearchParams({ topic })'), failures, 'fetchRuntimeDataflowTopic must URL encode topic selector')

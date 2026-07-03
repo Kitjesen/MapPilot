@@ -39,17 +39,17 @@ def test_legacy_s100p_deploy_script_is_only_a_wrapper() -> None:
     assert "lingtu.py nav" not in text
 
 
-def test_thunder_service_installer_defaults_to_dds_endpoint() -> None:
+def test_thunder_service_installer_defaults_to_native_field_cpp_stack() -> None:
     text = _read("scripts/deploy/thunder/install_services.sh")
 
-    assert 'MODE="${1:-dds-endpoint}"' in text
+    assert 'MODE="${1:-field-cpp}"' in text
     assert "install_dds_endpoint_service.sh" in text
     assert "install_slam_dds_service.sh" in text
     assert "slam-dds|cpp-slam" in text
-    assert "field-cpp|dds-cpp" in text
+    assert "field|thunder-nav|field-cpp|dds-cpp" in text
     assert "install_lcm_endpoint_service.sh" in text
     assert "install_lite_service.sh" in text
-    assert "Usage: $0 [dds-endpoint|slam-dds|nav-dds|field-cpp|lcm-endpoint|lite|ros-compat]" in text
+    assert "Usage: $0 [field-cpp|dds-endpoint|slam-dds|nav-dds|lingtu|lcm-endpoint|lite|ros-compat]" in text
     assert "../s100p/install_services.sh" in text
     assert "ros2-env.sh" in text
     assert 'exec "${LEGACY_INSTALLER}" "${SCRIPT_DIR}/../s100p"' in text
@@ -91,6 +91,23 @@ def test_thunder_lite_service_is_standalone_product_entrypoint() -> None:
     assert "--daemon" not in text
     assert "ros2-env.sh" not in text
     assert "/opt/ros" not in text
+
+
+def test_thunder_main_lingtu_service_uses_field_dds_endpoint() -> None:
+    text = _read("scripts/deploy/thunder/lingtu.service")
+
+    assert "Description=LingTu Thunder navigation runtime" in text
+    assert "LINGTU_PROFILE=thunder-nav" in text
+    assert "LINGTU_MODULE_TRANSPORT=local" in text
+    assert "LINGTU_ENDPOINT=thunder_field" in text
+    assert "LINGTU_ENDPOINT_TRANSPORT=dds" in text
+    assert "LINGTU_ENDPOINT_CONTRACT=thunder_field_dds_v1" in text
+    assert "LINGTU_ENABLE_ROBOT_DRIVER=0" in text
+    assert "LINGTU_COMMAND_OUTPUT_MODE=endpoint_only" in text
+    assert "LINGTU_HARDWARE_CONTROL_BOUNDARY=dds_endpoint_source" in text
+    assert "LINGTU_MANAGE_SESSION_SERVICES=0" in text
+    assert 'lingtu.py "${LINGTU_PROFILE}" --no-repl' in text
+    assert "ros2-env.sh" not in text
 
 
 def test_thunder_lite_service_installer_does_not_delegate_to_legacy_ros_services() -> None:
@@ -149,6 +166,7 @@ def test_thunder_dds_endpoint_service_installer_is_no_ros() -> None:
 
 def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     text = _read("scripts/deploy/thunder/lingtu-slam-dds.service")
+    runner = _read("scripts/deploy/thunder/run_slam_dds.sh")
 
     assert "Description=LingTu C++ CycloneDDS SLAM runtime" in text
     assert "lingtu-livox-dds.service" in text
@@ -156,10 +174,16 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "LINGTU_SLAM_BIN=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime" in text
     assert "LINGTU_SLAM_BACKEND=fastlio2" in text
     assert "LINGTU_SLAM_MODE=mapping" in text
+    assert "LINGTU_SLAM_MAP=" in text
     assert "LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml" in text
     assert "LINGTU_DDS_DOMAIN_ID=0" in text
     assert "LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json" in text
-    assert "--domain-id" in text
+    assert "run_slam_dds.sh" in text
+    assert "native SLAM DDS runtime is missing or not executable" in runner
+    assert "build_slam_core.sh" in runner
+    assert "--domain-id" in runner
+    assert "--mode" in runner
+    assert '--map "$LINGTU_SLAM_MAP"' in runner
     assert "source /opt/lingtu/config/thunder-runtime-env.sh" not in text
     assert "source /opt/lingtu/config/ros2-env.sh" not in text
     assert "python" not in text.lower()
@@ -173,6 +197,8 @@ def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
     assert "Description=LingTu native Livox SDK2 DDS publisher" in text
     assert "LINGTU_LIVOX_BIN=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream" in text
     assert "Livox-SDK2/samples/livox_lidar_quick_start/mid360_config.json" in text
+    assert "native Livox DDS publisher is missing or not executable" in text
+    assert "build_livox_sdk2_stream.sh" in text
     assert "--dds" in text
     assert "--domain-id" in text
     assert "--lidar-frame" in text
@@ -180,6 +206,16 @@ def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
     assert "source /opt/lingtu/config/thunder-runtime-env.sh" in text
     assert "ros2-env.sh" not in text
     assert "livox_ros_driver2" not in text
+
+
+def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
+    text = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
+
+    assert "Description=LingTu native navigation DDS endpoint" in text
+    assert "LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_cyclone_endpoint" in text
+    assert "native navigation DDS endpoint is missing or not executable" in text
+    assert "build_nav_endpoint.sh" in text
+    assert "ros2-env.sh" not in text
 
 
 def test_thunder_slam_dds_installer_is_explicit_cpp_slam_boundary() -> None:
@@ -199,6 +235,8 @@ def test_legacy_service_templates_have_thunder_descriptions() -> None:
         "scripts/deploy/s100p/slam.service",
         "scripts/deploy/s100p/slam_pgo.service",
         "scripts/deploy/s100p/localizer.service",
+        "scripts/deploy/s100p/genz_icp.service",
+        "scripts/deploy/s100p/hba.service",
         "scripts/deploy/s100p/super_lio.service",
         "scripts/deploy/s100p/super_lio_relocation.service",
     ):
@@ -214,6 +252,8 @@ def test_legacy_service_templates_source_deploy_compat_env() -> None:
         "scripts/deploy/s100p/slam.service",
         "scripts/deploy/s100p/slam_pgo.service",
         "scripts/deploy/s100p/localizer.service",
+        "scripts/deploy/s100p/genz_icp.service",
+        "scripts/deploy/s100p/hba.service",
         "scripts/deploy/s100p/super_lio.service",
         "scripts/deploy/s100p/super_lio_relocation.service",
     ):
@@ -237,7 +277,9 @@ def test_release_script_does_not_gate_on_legacy_ros2_local_autonomy() -> None:
     assert "ensure_nav_kernel_artifact" in text
     assert 'bash "$DEV_DIR/scripts/build/build_nav_kernel.sh" --clean' in text
     assert "bash scripts/build/build_octoplanner3d.sh" in text
+    assert "bash scripts/build/build_octoplanner3d.sh --require-pcl" in text
     assert "LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D:-1" in text
+    assert "LINGTU_RELEASE_REQUIRE_OCTOMAP_CONVERTER:-$REQUIRE_OCTOPLANNER3D" in text
     assert "LINGTU_RELEASE_REQUIRE_ROS2_COMPAT:-0" in text
     assert "ROS 2 compatibility package gate skipped" in text
     assert "Build first: cd $DEV_DIR && colcon build" not in text
@@ -262,7 +304,27 @@ def test_release_script_does_not_gate_on_legacy_ros2_local_autonomy() -> None:
 
     assert "nav_kernel" not in compat_line
     assert "lingtu-thunder-dds-endpoint.service" in text
+    assert "lingtu-livox-dds.service" in text
+    assert "lingtu-slam-dds.service" in text
+    assert "lingtu-nav-dds.service" in text
     assert "robot-fastlio2.service robot-localizer.service" in text
+
+
+def test_native_dds_build_scripts_check_service_binaries() -> None:
+    slam = _read("scripts/build/build_slam_core.sh")
+    livox = _read("scripts/build/build_livox_sdk2_stream.sh")
+    nav = _read("scripts/build/build_nav_endpoint.sh")
+
+    assert "LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME:-ON" in slam
+    assert "lingtu_slam_cyclone_runtime" in slam
+    assert "native SLAM DDS runtime is missing" in slam
+    assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME:-OFF" in slam
+
+    assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON" in livox
+    assert "livox_sdk2_stream" in livox
+
+    assert "lingtu_nav_cyclone_endpoint" in nav
+    assert "native navigation DDS endpoint is missing" in nav
 
 
 def test_ota_and_build_docs_do_not_recommend_legacy_ros2_planning_or_local_autonomy() -> None:
@@ -374,6 +436,69 @@ def test_robot_ops_doctor_defaults_to_gateway_first_ros2_explicit() -> None:
     assert "$GW/api/v1/runtime/dataflow" in text
     assert "$GW/api/v1/camera/snapshot" in text
     assert '[ "$ros2" = "1" ] && command -v ros2' in text
+
+
+def test_robot_ops_has_product_mode_switch_entrypoint() -> None:
+    text = _read("scripts/lingtu")
+
+    assert "cmd_mode()" in text
+    assert "mode switch <teleop|teleop_avoid|map|tracking|nav|inspection>" in text
+    assert "mode_switch_preflight" in text
+    assert 'switch-plan "$current" "$target"' in text
+    assert 'mode_profile_dropin "$target" "$endpoint"' in text
+    assert "/etc/systemd/system/lingtu.service.d" in text
+    assert "LINGTU_PROFILE=$profile" in text
+    assert "LINGTU_ENDPOINT=$endpoint" in text
+    assert 'mode_stop_motion_and_session' in text
+    assert '$GW/api/v1/stop' in text
+    assert '$GW/api/v1/session/end' in text
+    assert 'slam_dds_set_mode mapping ""' in text
+    assert 'slam_dds_set_mode localization "$map_pcd"' in text
+    assert 'mode_restart_product_stack "$target"' in text
+    assert 'mode)           shift; cmd_mode' in text
+    assert "Mode $target requires --map NAME" in text
+    assert "$GW/api/v1/mode" not in text
+
+
+def test_robot_ops_system_acceptance_gate_matches_that_nav_parity_plan() -> None:
+    text = _read("scripts/lingtu")
+    body = text.split("cmd_system_acceptance() {", 1)[1].split(
+        "\n}\n\n# -- Subcommand: health --", 1
+    )[0]
+    cli_doc = _read("docs/04-deployment/lingtu_cli.md")
+
+    assert "system-acceptance|that-nav-acceptance|acceptance-gate" in text
+    assert "slam_dds_set_mode localization" in text
+    assert "slam_dds_set_mode mapping" in text
+    assert "No ROS2 graph inspection and no motion commands" in text
+    assert "--ros2" not in body
+    assert "cmd_runtime_audit --json" in body
+    assert "cmd_doctor --non-motion --strict --json" in body
+    assert "cmd_soak --duration" in body
+    assert "--strict --json" in body
+    assert "cmd_saved_map_artifact_gate" in body
+    assert "--require-occupancy" in body
+    assert "--expected-data-source thunder_field" in body
+    assert "routecheck_require_no_active_command_source" in body
+    assert "saved_map_plan_precheck" in body
+    assert "/api/v1/maps/$map_name/validate_plan" in text
+    assert "requested_map_validate_plan.json" in body
+    assert "nav_relocalize_saved_map" in body
+    assert "saved_map_relocalization" in body
+    assert "cmd_routecheck --map" not in body
+    assert "--with-relocalization" in text
+    assert "--initial-pose" in text
+    assert "motion-smoke|motioncheck|path-follower-check" in text
+    assert "cmd_motion_smoke --map" in body
+    assert "--initial-pose \"$initial_x\" \"$initial_y\" \"$initial_yaw\"" in body
+    assert "cmd_routecompare --map" not in body
+    assert "--allow-motion" in body
+    assert "motion-smoke requires --allow-motion" in text
+    assert "real-runtime evidence" in text
+
+    assert "That-nav parity gate" in cli_doc
+    assert "validates the native/Gateway" in cli_doc
+    assert "does not send motion commands by default" in cli_doc
 
 
 def test_monitor_bots_are_gateway_backed_without_ros2_or_embedded_credentials() -> None:

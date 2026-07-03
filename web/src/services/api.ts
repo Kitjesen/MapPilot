@@ -45,6 +45,8 @@ import type {
   RuntimeDataflowSubscribeRequest,
   RuntimeDataflowSubscribeResponse,
   RuntimeDataflowTopicDetailResponse,
+  RuntimeSwitchRequest,
+  RuntimeSwitchResponse,
   RuntimeSwitchPlanRequest,
   RuntimeSwitchPlanResponse,
   SceneGraphResponse,
@@ -357,6 +359,20 @@ export async function runRuntimeSwitchPlan(
   )
 }
 
+export async function runRuntimeSwitch(
+  request: RuntimeSwitchRequest,
+): Promise<RuntimeSwitchResponse> {
+  return postJson<RuntimeSwitchResponse>(
+    apiPath('runtime_switch', '/api/v1/runtime/switch'),
+    {
+      relocalize: true,
+      allow_restart: false,
+      client_id: WEB_CLIENT_ID,
+      ...request,
+    },
+  )
+}
+
 export async function runProductFieldCheck(
   request: ProductFieldCheckRequest = {},
 ): Promise<ProductFieldCheckResponse> {
@@ -659,10 +675,11 @@ export async function validateMapPlan(
   x: number,
   y: number,
   z = 0,
+  plannerConstraints: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   return postJson<Record<string, unknown>>(
     mapNamedPath('map_validate_plan', '/api/v1/maps/{name}/validate_plan', name),
-    { x, y, z, client_id: WEB_CLIENT_ID },
+    { x, y, z, client_id: WEB_CLIENT_ID, planner_constraints: plannerConstraints },
   )
 }
 

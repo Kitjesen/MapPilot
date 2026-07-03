@@ -7,10 +7,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from runtime.runtime_interface import map_frame_id
+from runtime.runtime_interface import body_frame_id, map_frame_id
 
 
 GATEWAY_MAP_FRAME_ID = map_frame_id()
+GATEWAY_BODY_FRAME_ID = body_frame_id()
 MapFrameId = Literal["map"]
 
 
@@ -219,6 +220,7 @@ class PlanPreviewRequest(BaseModel):
     z: float = 0.0
     frame_id: MapFrameId = GATEWAY_MAP_FRAME_ID
     client_id: str = Field(default="unknown", max_length=128)
+    planner_constraints: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("x", "y", "z")
     @classmethod
@@ -749,6 +751,65 @@ class RuntimeSwitchPlanResponse(GatewayResponseModel):
     error: str | None = None
 
 
+ProductModeProfile = Literal[
+    "teleop",
+    "teleop_avoid",
+    "map",
+    "tracking",
+    "nav",
+    "inspection",
+]
+
+
+class RuntimeSwitchRequest(GatewayResponseModel):
+    current_profile: str | None = None
+    target_profile: ProductModeProfile
+    current_endpoint: str | None = None
+    target_endpoint: str | None = None
+    endpoint: str | None = "thunder_field"
+    map_name: str | None = None
+    relocalize: bool = True
+    initial_pose: list[float] | None = None
+    allow_restart: bool = False
+    client_id: str = "app"
+    request_id: str | None = None
+
+    @field_validator("initial_pose")
+    @classmethod
+    def _validate_initial_pose(cls, value: list[float] | None) -> list[float] | None:
+        if value is None:
+            return None
+        if len(value) != 3:
+            raise ValueError("initial_pose must be [x, y, yaw]")
+        return [float(item) for item in value]
+
+
+class RuntimeSwitchResponse(GatewayResponseModel):
+    schema_version: Literal["lingtu.runtime_switch.v1"] = (
+        "lingtu.runtime_switch.v1"
+    )
+    ok: bool
+    ts: float
+    accepted: bool = False
+    status: str = "planned"
+    read_only: bool = True
+    dry_run: bool = True
+    motion: bool = False
+    lifecycle: str = "cold_restart"
+    current_profile: str | None = None
+    target_profile: str
+    map_name: str | None = None
+    relocalize: bool = True
+    plan: dict[str, Any] = Field(default_factory=dict)
+    command: list[str] = Field(default_factory=list)
+    command_id: str | None = None
+    pid: int | None = None
+    log_path: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    links: dict[str, str] = Field(default_factory=dict)
+    error: str | None = None
+
+
 class ReadinessLocalizationFrameSummary(GatewayResponseModel):
     runtime_contract: str | None = None
     odometry_frame_id: str | None = "unknown"
@@ -1070,7 +1131,7 @@ class PathResponse(GatewayResponseModel):
 
 
 class DdsTwistSnapshot(GatewayResponseModel):
-    frame_id: str = "base_link"
+    frame_id: str = GATEWAY_BODY_FRAME_ID
     linear: dict[str, float] = Field(default_factory=dict)
     angular: dict[str, float] = Field(default_factory=dict)
     active_source: str = "none"
@@ -1472,6 +1533,7 @@ class SessionResponse(GatewayResponseModel):
     active_map: str | None = None
     map_has_pcd: bool = False
     map_has_tomogram: bool = False
+    map_has_octomap: bool = False
     since: float | None = None
     pending: bool = False
     error: str = ""
@@ -1614,7 +1676,14 @@ class ExplorationStatusResponse(GatewayResponseModel):
 
 class SlamStatusResponse(GatewayResponseModel):
     mode: str
+    native_mode: str | None = None
     services: dict[str, str] = Field(default_factory=dict)
+    service_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    service_groups: dict[str, list[str]] = Field(default_factory=dict)
+    product_runtime: str = "native_dds"
+    ros2_required: bool = False
+    manual_systemctl_required: bool = False
+    control_entrypoint: str = "lingtu svc restart slam"
 
 
 class SlamOperationResponse(GatewayResponseModel):
