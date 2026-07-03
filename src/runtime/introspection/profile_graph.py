@@ -440,6 +440,9 @@ def graph_for_profile(
                 scene_xml=str(config.get("scene_xml", "")),
                 enable_semantic=bool(config.get("enable_semantic", True)),
                 safety_stop_wiring=bool(config.get("safety_stop_wiring", True)),
+                cmd_vel_mux_collision_monitor=bool(
+                    config.get("cmd_vel_mux_collision_monitor", False)
+                ),
                 nav_plan_transport=(
                     config.get("nav_plan_transport")
                     if "nav_plan_transport" in config

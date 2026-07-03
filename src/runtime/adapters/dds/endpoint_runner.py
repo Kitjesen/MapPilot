@@ -189,6 +189,9 @@ def _load_source(spec: str) -> Any:
         "thunder_brainstem": "runtime.adapters.lcm.sources.brainstem:create",
         "brainstem": "runtime.adapters.lcm.sources.brainstem:create",
         "builtin:thunder_brainstem": "runtime.adapters.lcm.sources.brainstem:create",
+        "brainstem_sim": "runtime.adapters.lcm.sources.brainstem_sim:create",
+        "builtin:brainstem_sim": "runtime.adapters.lcm.sources.brainstem_sim:create",
+        "mujoco_brainstem_sim": "runtime.adapters.lcm.sources.brainstem_sim:create",
     }
     target = builtins.get(spec, spec)
     module_name, sep, factory_name = target.partition(":")

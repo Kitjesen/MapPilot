@@ -13,6 +13,14 @@ from typing import Any
 
 
 SLAM_PROFILE_ALIASES: dict[str, str] = {
+    "slam": "native_dds",
+    "native": "native_dds",
+    "native_slam": "native_dds",
+    "cpp_dds_slam": "native_dds",
+    "lingtu_slam_dds": "native_dds",
+    "lingtu-slam-dds": "native_dds",
+    "genz-icp": "genz",
+    "genz_icp": "genz",
     "super-lio": "super_lio",
     "superlio": "super_lio",
     "super_lio_reloc": "super_lio_relocation",
@@ -26,7 +34,9 @@ SLAM_PROFILE_ALIASES: dict[str, str] = {
 
 SUPPORTED_SLAM_PROFILES = {
     "none",
+    "native_dds",
     "fastlio2",
+    "genz",
     "localizer",
     "super_lio",
     "super_lio_relocation",
@@ -60,7 +70,7 @@ def is_supported_slam_profile(profile: Any, *, allow_stop: bool = False) -> bool
 
 
 def default_slam_profile_for_mode(mode: str) -> str:
-    return "localizer" if str(mode).strip().lower() == "navigating" else "fastlio2"
+    return "native_dds"
 
 
 def backend_capability_defaults(backend_name: Any) -> dict[str, Any]:
@@ -98,6 +108,15 @@ def backend_capability_defaults(backend_name: Any) -> dict[str, Any]:
             "restart_recovery_supported": True,
             "recovery_method": "restart_super_lio_relocation",
         }
+    if backend == "native_dds":
+        return {
+            "map_save_supported": True,
+            "map_save_source": "native_dds_slam_runtime",
+            "relocalization_supported": True,
+            "saved_map_relocalization_supported": True,
+            "restart_recovery_supported": True,
+            "recovery_method": "restart_native_dds_slam",
+        }
     if backend == "localizer":
         return {
             "map_save_supported": False,
@@ -106,6 +125,15 @@ def backend_capability_defaults(backend_name: Any) -> dict[str, Any]:
             "saved_map_relocalization_supported": True,
             "restart_recovery_supported": True,
             "recovery_method": "relocalize_service",
+        }
+    if backend == "genz":
+        return {
+            "map_save_supported": False,
+            "map_save_source": None,
+            "relocalization_supported": False,
+            "saved_map_relocalization_supported": False,
+            "restart_recovery_supported": True,
+            "recovery_method": "restart_genz_icp",
         }
     if backend in {"fastlio2", "slam"}:
         return {
@@ -119,10 +147,10 @@ def backend_capability_defaults(backend_name: Any) -> dict[str, Any]:
     return {
         "map_save_supported": False,
         "map_save_source": None,
-        "relocalization_supported": True,
-        "saved_map_relocalization_supported": True,
+        "relocalization_supported": False,
+        "saved_map_relocalization_supported": False,
         "restart_recovery_supported": False,
-        "recovery_method": "relocalize_service",
+        "recovery_method": "unknown_backend",
     }
 
 
@@ -151,12 +179,26 @@ def slam_backend_contract(profile: Any) -> dict[str, Any]:
             **backend_capability_defaults("super_lio_relocation"),
             "recovery_action": "restart_super_lio_relocation",
         }
+    if backend == "native_dds":
+        return {
+            "backend": "native_dds",
+            "health_source": "slam_runtime",
+            **backend_capability_defaults("native_dds"),
+            "recovery_action": "restart_native_dds_slam",
+        }
     if backend == "localizer":
         return {
             "backend": "localizer",
             "health_source": "localizer_health_topic",
             **backend_capability_defaults("localizer"),
             "recovery_action": "relocalize_service",
+        }
+    if backend == "genz":
+        return {
+            "backend": "genz",
+            "health_source": "odom_map_cloud",
+            **backend_capability_defaults("genz"),
+            "recovery_action": "restart_genz_icp",
         }
     if backend in {"fastlio2", "slam"}:
         return {
@@ -185,40 +227,78 @@ def slam_switch_plan(profile: Any) -> ServiceTransitionPlan:
             stop=(
                 "super_lio_relocation",
                 "super_lio",
+                "hba",
+                "genz_icp",
                 "slam_pgo",
                 "localizer",
                 "slam",
             ),
         )
-    if profile == "fastlio2":
+    if profile in {"native_dds", "fastlio2"}:
         return ServiceTransitionPlan(
-            stop=("localizer", "super_lio", "super_lio_relocation"),
-            ensure=("slam", "slam_pgo"),
-            wait_ready=("slam", "slam_pgo"),
+            stop=(
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "genz_icp",
+                "super_lio",
+                "super_lio_relocation",
+            ),
+            ensure=("slam",),
+            wait_ready=("slam",),
         )
     if profile == "localizer":
         return ServiceTransitionPlan(
-            stop=("slam_pgo", "super_lio", "super_lio_relocation"),
-            ensure=("slam", "localizer"),
-            wait_ready=("slam", "localizer"),
+            stop=(
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "genz_icp",
+                "super_lio",
+                "super_lio_relocation",
+            ),
+            ensure=("slam",),
+            wait_ready=("slam",),
+        )
+    if profile == "genz":
+        return ServiceTransitionPlan(
+            stop=(
+                "slam",
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "super_lio",
+                "super_lio_relocation",
+            ),
+            ensure=("legacy_lidar", "genz_icp"),
+            wait_ready=("legacy_lidar", "genz_icp"),
         )
     if profile == "super_lio":
         return ServiceTransitionPlan(
-            stop=("slam", "slam_pgo", "localizer", "super_lio_relocation"),
-            ensure=("lidar", "super_lio"),
-            wait_ready=("lidar", "super_lio"),
+            stop=(
+                "slam",
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "genz_icp",
+                "super_lio_relocation",
+            ),
+            ensure=("legacy_lidar", "super_lio"),
+            wait_ready=("legacy_lidar", "super_lio"),
         )
     if profile == "super_lio_relocation":
         return ServiceTransitionPlan(
-            stop=("slam", "slam_pgo", "localizer", "super_lio"),
-            ensure=("lidar", "super_lio_relocation"),
-            wait_ready=("lidar", "super_lio_relocation"),
+            stop=("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio"),
+            ensure=("legacy_lidar", "super_lio_relocation"),
+            wait_ready=("legacy_lidar", "super_lio_relocation"),
         )
     if profile == "stop":
         return ServiceTransitionPlan(
             stop=(
                 "super_lio_relocation",
                 "super_lio",
+                "hba",
+                "genz_icp",
                 "slam_pgo",
                 "localizer",
                 "slam",
@@ -239,26 +319,61 @@ def session_transition_plan(mode: str, backend: Any) -> ServiceTransitionPlan:
         )
     if backend == "super_lio":
         return ServiceTransitionPlan(
-            stop=("slam", "slam_pgo", "localizer", "super_lio_relocation"),
-            ensure=("lidar", "super_lio"),
-            wait_ready=("lidar", "super_lio"),
+            stop=(
+                "slam",
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "genz_icp",
+                "super_lio_relocation",
+            ),
+            ensure=("legacy_lidar", "super_lio"),
+            wait_ready=("legacy_lidar", "super_lio"),
             clear_live_map=mode in {"mapping", "exploring"},
         )
     if backend == "super_lio_relocation":
         return ServiceTransitionPlan(
-            stop=("slam", "slam_pgo", "localizer", "super_lio"),
-            ensure=("lidar", "super_lio_relocation"),
-            wait_ready=("lidar", "super_lio_relocation"),
+            stop=("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio"),
+            ensure=("legacy_lidar", "super_lio_relocation"),
+            wait_ready=("legacy_lidar", "super_lio_relocation"),
+        )
+    if backend == "genz":
+        return ServiceTransitionPlan(
+            stop=(
+                "slam",
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "super_lio",
+                "super_lio_relocation",
+            ),
+            ensure=("legacy_lidar", "genz_icp"),
+            wait_ready=("legacy_lidar", "genz_icp"),
+            clear_live_map=mode in {"mapping", "exploring"},
         )
     if mode in {"mapping", "exploring"}:
         return ServiceTransitionPlan(
-            stop=("localizer", "super_lio", "super_lio_relocation"),
-            ensure=("slam", "slam_pgo"),
-            wait_ready=("slam", "slam_pgo"),
+            stop=(
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "genz_icp",
+                "super_lio",
+                "super_lio_relocation",
+            ),
+            ensure=("slam",),
+            wait_ready=("slam",),
             clear_live_map=True,
         )
     return ServiceTransitionPlan(
-        stop=("slam_pgo", "super_lio", "super_lio_relocation"),
-        ensure=("slam", "localizer"),
-        wait_ready=("slam", "localizer"),
+        stop=(
+            "slam_pgo",
+            "localizer",
+            "hba",
+            "genz_icp",
+            "super_lio",
+            "super_lio_relocation",
+        ),
+        ensure=("slam",),
+        wait_ready=("slam",),
     )

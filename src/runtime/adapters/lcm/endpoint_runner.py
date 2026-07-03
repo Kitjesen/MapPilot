@@ -239,6 +239,10 @@ def _load_source(spec: str) -> Any:
         from .sources.brainstem import create
 
         return create()
+    if spec in {"brainstem_sim", "builtin:brainstem_sim", "mujoco_brainstem_sim"}:
+        from .sources.brainstem_sim import create
+
+        return create()
     module_name, sep, factory_name = spec.partition(":")
     if not sep or not module_name or not factory_name:
         raise ValueError(

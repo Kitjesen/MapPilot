@@ -673,26 +673,35 @@ def _record_gateway_sample(
         if data.get("data") is not None:
             entry["data"] = str(data["data"])
         if data.get("state") is not None and topic == TOPICS.localization_health:
-            quality = _numeric_payload(
-                data,
-                "fitness",
-                "quality",
-                "value",
-                "icp_quality",
-                "icp_fitness",
-            )
-            suffix = f"|fitness={quality}" if quality is not None else ""
+            if data.get("fitness") is not None:
+                quality = _numeric_payload(data, "fitness")
+                suffix_key = "fitness"
+            else:
+                quality = _numeric_payload(
+                    data,
+                    "quality",
+                    "confidence",
+                    "value",
+                    "icp_quality",
+                    "icp_fitness",
+                )
+                suffix_key = "quality"
+            suffix = f"|{suffix_key}={quality}" if quality is not None else ""
             entry["data"] = f"{data['state']}{suffix}"
+            entry["quality_kind"] = suffix_key
         value = _numeric_payload(
             data,
             "value",
             "quality",
+            "confidence",
             "fitness",
             "icp_quality",
             "icp_fitness",
         )
         if value is not None:
             entry["value"] = value
+        if data.get("quality_kind"):
+            entry["quality_kind"] = str(data["quality_kind"])
         points = _count_payload(data, "points", "count")
         if points is not None:
             entry["points"] = max(int(entry.get("points", 0)), points)
@@ -873,6 +882,35 @@ def _record_gateway_rest_payloads(
 
     localization = _mapping_payload(payloads.get("localization"))
     if localization:
+        lidar_hz = _numeric_payload(localization, "lidar_input_hz")
+        if lidar_hz is not None and lidar_hz > 0.0:
+            _record_gateway_sample(
+                topic_evidence,
+                odom_positions,
+                TOPICS.lidar_scan,
+                sample_time_sec=sample_time_sec,
+                min_cmd_vel_norm=min_cmd_vel_norm,
+                frame_id="lidar_link",
+                payload={"value": lidar_hz, "count": 1},
+                inferred_nonempty=True,
+                source="gateway_localization_status",
+            )
+            topic_evidence[TOPICS.lidar_scan]["rate_hz"] = lidar_hz
+
+        imu_hz = _numeric_payload(localization, "imu_input_hz")
+        if imu_hz is not None and imu_hz > 0.0:
+            _record_gateway_sample(
+                topic_evidence,
+                odom_positions,
+                TOPICS.imu,
+                sample_time_sec=sample_time_sec,
+                min_cmd_vel_norm=min_cmd_vel_norm,
+                frame_id="lidar_link",
+                payload={"value": imu_hz},
+                source="gateway_localization_status",
+            )
+            topic_evidence[TOPICS.imu]["rate_hz"] = imu_hz
+
         state_value = (
             localization.get("reported_state")
             or localization.get("state")
@@ -881,15 +919,27 @@ def _record_gateway_rest_payloads(
         )
         if str(state_value).strip().lower() == "ready":
             state_value = "LOCKED"
-        quality = _numeric_payload(
+        fitness = _numeric_payload(
             localization,
             "localizer_health_fitness",
             "icp_fitness",
+        )
+        confidence = _numeric_payload(
+            localization,
+            "confidence",
+            "localization_quality",
             "icp_quality",
         )
         health_payload = {"state": str(state_value).upper()}
-        if quality is not None:
-            health_payload["fitness"] = quality
+        if fitness is not None:
+            health_payload["fitness"] = fitness
+            quality_payload = {"value": fitness, "quality_kind": "fitness"}
+        elif confidence is not None:
+            health_payload["quality"] = confidence
+            health_payload["quality_kind"] = "confidence"
+            quality_payload = {"value": confidence, "quality_kind": "confidence"}
+        else:
+            quality_payload = None
         _record_gateway_sample(
             topic_evidence,
             odom_positions,
@@ -900,7 +950,7 @@ def _record_gateway_rest_payloads(
             payload=health_payload,
             source="gateway_localization_status",
         )
-        if quality is not None:
+        if quality_payload is not None:
             _record_gateway_sample(
                 topic_evidence,
                 odom_positions,
@@ -908,7 +958,7 @@ def _record_gateway_rest_payloads(
                 sample_time_sec=sample_time_sec,
                 min_cmd_vel_norm=min_cmd_vel_norm,
                 frame_id="body",
-                payload={"value": quality},
+                payload=quality_payload,
                 source="gateway_localization_status",
             )
 
@@ -930,18 +980,64 @@ def _gateway_command_active(navigation_status: Mapping[str, Any]) -> bool:
     return False
 
 
+def _fresh_gateway_port(stats: Mapping[str, Any]) -> bool:
+    msg_count = _safe_float(stats.get("msg_count")) or 0.0
+    rate_hz = _safe_float(stats.get("rate_hz")) or 0.0
+    stale_ms = _safe_float(stats.get("stale_ms"))
+    if msg_count <= 0.0 and rate_hz <= 0.0:
+        return False
+    return stale_ms is None or stale_ms <= 2000.0
+
+
+def _gateway_topic_summaries(dataflow: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    return {
+        str(item.get("topic")): item
+        for item in dataflow.get("topics") or ()
+        if isinstance(item, Mapping) and item.get("topic")
+    }
+
+
 def _gateway_command_subscribers(dataflow: Mapping[str, Any]) -> list[str]:
-    runtime_boundary = _mapping_payload(dataflow.get("runtime_boundary"))
-    control_boundary = _mapping_payload(dataflow.get("control_boundary"))
-    candidates = [
-        runtime_boundary.get("command_sink"),
-        runtime_boundary.get("expected_command_sink"),
-    ]
-    for interface in control_boundary.get("command_interfaces") or ():
-        item = _mapping_payload(interface)
-        if TOPICS.cmd_vel in tuple(item.get("publishes") or ()):
-            candidates.append(item.get("name"))
-    return [str(item) for item in candidates if item]
+    """Return live hardware consumers of ``/nav/cmd_vel``.
+
+    Gateway's runtime boundary and REST control interfaces are declarations:
+    they prove what the graph intends to support, not that a field command sink
+    is running.  The real-runtime gate must only accept dynamic module-port
+    evidence for an actual hardware-looking consumer.
+    """
+
+    candidates: list[str] = []
+    cmd_summary = _mapping_payload(_gateway_topic_summaries(dataflow).get(TOPICS.cmd_vel))
+    observability = _mapping_payload(cmd_summary.get("observability"))
+    inspection = _mapping_payload(cmd_summary.get("inspection"))
+    port_candidates = list(observability.get("module_port_candidates") or ())
+    port_candidates.extend(inspection.get("module_stats") or ())
+
+    module_ports = _mapping_payload(dataflow.get("module_ports"))
+    for module_name, module_payload in module_ports.items():
+        ports_in = _mapping_payload(_mapping_payload(module_payload).get("ports_in"))
+        cmd_port = _mapping_payload(ports_in.get("cmd_vel"))
+        if cmd_port:
+            port_candidates.append({
+                **cmd_port,
+                "module": module_name,
+                "port": "cmd_vel",
+                "direction": "in",
+            })
+
+    for candidate in port_candidates:
+        stats = _mapping_payload(candidate)
+        module = str(stats.get("module") or "").strip()
+        port = str(stats.get("port") or "").strip()
+        direction = str(stats.get("direction") or "").strip().lower()
+        if not module or direction != "in":
+            continue
+        if not _fresh_gateway_port(stats):
+            continue
+        endpoint = f"{module}.{port}" if port else module
+        if _looks_like_hardware_sink(endpoint):
+            candidates.append(endpoint)
+    return sorted(dict.fromkeys(candidates))
 
 
 def _gateway_frame_samples(dataflow: Mapping[str, Any]) -> tuple[dict[str, int], dict[str, str]]:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .context import WiringContext
+from .context import TOPIC_SLAM_ODOMETRY, WiringContext
 from .types import WireSpec
 
 
@@ -27,6 +27,29 @@ def safety_status_specs() -> tuple[WireSpec, ...]:
         WireSpec("nav.safety", "safety_state", "MCPServerModule", "safety_state"),
         WireSpec("nav.safety", "execution_eval", "GatewayModule", "execution_eval"),
         WireSpec("nav.safety", "dialogue_state", "GatewayModule", "dialogue_state"),
+    )
+
+
+def cmd_vel_collision_monitor_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
+    topic = (
+        TOPIC_SLAM_ODOMETRY
+        if ctx.slam_module and ctx.nav_odom_src == ctx.slam_module
+        else None
+    )
+    return (
+        WireSpec(
+            ctx.nav_odom_src,
+            "odometry",
+            "nav.velocity_mux",
+            "collision_odometry",
+            topic=topic,
+        ),
+        WireSpec(
+            "TraversabilityCostModule",
+            "fused_cost",
+            "nav.velocity_mux",
+            "collision_costmap",
+        ),
     )
 
 

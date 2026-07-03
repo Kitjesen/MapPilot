@@ -401,32 +401,32 @@ def _real_report() -> dict:
             "samples": 20,
             "frame_id": "lidar_link",
         },
-        "/nav/odometry": {"ok": True, "samples": 6, "frame_id": "odom"},
-        "/nav/registered_cloud": {
+        TOPICS.odometry: {"ok": True, "samples": 6, "frame_id": "odom"},
+        TOPICS.registered_cloud: {
             "ok": True,
             "samples": 5,
             "points": 9000,
             "frame_id": "body",
         },
-        "/nav/map_cloud": {
+        TOPICS.map_cloud: {
             "ok": True,
             "samples": 5,
             "points": 45000,
             "frame_id": "map",
         },
-        "/nav/global_path": {
+        TOPICS.global_path: {
             "ok": True,
             "samples": 2,
             "max_poses": 12,
             "frame_id": "map",
         },
-        "/nav/local_path": {
+        TOPICS.local_path: {
             "ok": True,
             "samples": 3,
             "max_poses": 9,
             "frame_id": "body",
         },
-        "/nav/cmd_vel": {
+        TOPICS.cmd_vel: {
             "ok": True,
             "samples": 5,
             "nonzero_samples": 5,
@@ -706,7 +706,7 @@ def test_topic_frame_id_mismatch_fails_when_evidence_reports_frame():
     assert result.ok is False
     assert any(
         blocker.startswith(
-            "topic frame_id mismatch for /nav/registered_cloud: map not in"
+            "topic frame_id mismatch for /slam/registered_cloud: map not in"
         )
         for blocker in result.blockers
     )
@@ -1004,7 +1004,7 @@ def test_real_runtime_rejects_required_topic_frame_contract_drift():
 
     assert result.ok is False
     assert (
-        "required topic allowed frames mismatch for /nav/map_cloud"
+        f"required topic allowed frames mismatch for {TOPICS.map_cloud}"
         in result.blockers
     )
 
@@ -1061,7 +1061,7 @@ def test_real_runtime_rejects_missing_required_topic_sample_window():
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
 
     assert result.ok is False
-    assert "topic sample window missing for /nav/map_cloud" in result.blockers
+    assert f"topic sample window missing for {TOPICS.map_cloud}" in result.blockers
 
 
 def test_real_runtime_rejects_required_topic_sample_outside_collection_window():
@@ -1106,7 +1106,7 @@ def test_real_runtime_rejects_stale_live_lidar_sample_at_collection_end():
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
 
     assert result.ok is False
-    assert "live topic stale for /nav/lidar_scan" in result.blockers
+    assert f"live topic stale for {TOPICS.lidar_scan}" in result.blockers
 
 
 def test_real_runtime_rejects_missing_localization_health_topic():
@@ -1154,6 +1154,22 @@ def test_real_runtime_rejects_unhealthy_localization_quality():
 
     assert result.ok is False
     assert "localization quality outside healthy range: 0.75" in result.blockers
+
+
+def test_real_runtime_accepts_confidence_localization_quality():
+    report = _real_report()
+    report["runtime_contract"]["topic_evidence"][TOPICS.localization_health].update({
+        "data": "TRACKING|quality=1.0",
+        "quality_kind": "confidence",
+    })
+    report["runtime_contract"]["topic_evidence"][TOPICS.localization_quality].update({
+        "value": 1.0,
+        "quality_kind": "confidence",
+    })
+
+    result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
+
+    assert "localization quality outside healthy range: 1.0" not in result.blockers
 
 
 def test_real_runtime_rejects_missing_hardware_command_boundary():
@@ -1275,8 +1291,8 @@ def test_real_runtime_rejects_endpoint_graph_without_sensor_samples():
         "endpoint_adapter"
     ]
     assert result.ok is False
-    assert "endpoint input sample window missing for /nav/lidar_scan" in result.blockers
-    assert "endpoint input sample window missing for /nav/imu" in result.blockers
+    assert f"endpoint input sample window missing for {TOPICS.lidar_scan}" in result.blockers
+    assert f"endpoint input sample window missing for {TOPICS.imu}" in result.blockers
     assert "data-flow observed topics missing for endpoint_adapter" in result.blockers
     assert endpoint_stage["ok"] is False
     assert "lidar_scan_sampled" in endpoint_stage["missing_signals"]
@@ -1294,7 +1310,7 @@ def test_real_runtime_rejects_wrong_endpoint_input_frame_id():
     assert result.ok is False
     assert any(
         blocker.startswith(
-            "topic frame_id mismatch for /nav/lidar_scan: camera_link not in"
+            f"topic frame_id mismatch for {TOPICS.lidar_scan}: camera_link not in"
         )
         for blocker in result.blockers
     )
@@ -1307,7 +1323,7 @@ def test_real_runtime_rejects_missing_key_topic_frame_id():
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
 
     assert result.ok is False
-    assert "topic frame_id missing for /nav/registered_cloud" in result.blockers
+    assert f"topic frame_id missing for {TOPICS.registered_cloud}" in result.blockers
 
 
 def test_real_runtime_rejects_missing_key_topic_frame_evidence():
@@ -1317,7 +1333,7 @@ def test_real_runtime_rejects_missing_key_topic_frame_evidence():
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
 
     assert result.ok is False
-    assert "topic frame evidence missing for /nav/map_cloud" in result.blockers
+    assert f"topic frame evidence missing for {TOPICS.map_cloud}" in result.blockers
 
 
 def test_real_runtime_accepts_map_framed_odometry():
@@ -1340,7 +1356,7 @@ def test_real_runtime_rejects_non_contract_odometry_frame():
     assert result.ok is False
     assert any(
         blocker.startswith(
-            "topic frame_id mismatch for /nav/odometry: camera_link not in"
+            f"topic frame_id mismatch for {TOPICS.odometry}: camera_link not in"
         )
         for blocker in result.blockers
     )
@@ -1353,7 +1369,7 @@ def test_real_runtime_rejects_odom_framed_map_cloud():
     result = validate_real_runtime_evidence(report, REAL_RUNTIME_CONTRACT)
 
     assert result.ok is False
-    assert "topic frame_id mismatch for /nav/map_cloud: odom not in map" in result.blockers
+    assert f"topic frame_id mismatch for {TOPICS.map_cloud}: odom not in map" in result.blockers
 
 
 def test_real_runtime_rejects_missing_global_path_frame_id():
@@ -1699,21 +1715,21 @@ def test_real_runtime_evidence_gate_script_rejects_non_real_expected_contract(
 def test_real_runtime_collector_builds_valid_report_from_read_only_observations():
     collector = _load_real_runtime_collect_module()
     topic_evidence = {
-        "/nav/lidar_scan": {
+        TOPICS.lidar_scan: {
             "ok": True,
             "samples": 4,
             "points": 12000,
             "frame_id": "lidar_link",
         },
-        "/nav/imu": {"ok": True, "samples": 20, "frame_id": "lidar_link"},
-        "/nav/odometry": {"ok": True, "samples": 6, "frame_id": "odom"},
-        "/nav/registered_cloud": {
+        TOPICS.imu: {"ok": True, "samples": 20, "frame_id": "lidar_link"},
+        TOPICS.odometry: {"ok": True, "samples": 6, "frame_id": "odom"},
+        TOPICS.registered_cloud: {
             "ok": True,
             "samples": 5,
             "points": 9000,
             "frame_id": "body",
         },
-        "/nav/map_cloud": {
+        TOPICS.map_cloud: {
             "ok": True,
             "samples": 5,
             "points": 45000,
@@ -1829,11 +1845,11 @@ def test_real_runtime_collector_reports_data_flow_stage_diagnostics():
     collector = _load_real_runtime_collect_module()
     report = collector.build_real_runtime_report(
         topic_evidence={
-            "/nav/lidar_scan": {"ok": True, "samples": 1},
-            "/nav/imu": {"ok": True, "samples": 1},
-            "/nav/odometry": {"ok": True, "samples": 1},
-            "/nav/registered_cloud": {"ok": True, "samples": 1, "points": 1},
-            "/nav/map_cloud": {"ok": True, "samples": 1, "points": 1},
+            TOPICS.lidar_scan: {"ok": True, "samples": 1},
+            TOPICS.imu: {"ok": True, "samples": 1},
+            TOPICS.odometry: {"ok": True, "samples": 1},
+            TOPICS.registered_cloud: {"ok": True, "samples": 1, "points": 1},
+            TOPICS.map_cloud: {"ok": True, "samples": 1, "points": 1},
             "/nav/global_path": {
                 "ok": True,
                 "samples": 1,
@@ -1987,6 +2003,19 @@ def test_real_runtime_gateway_collector_builds_valid_report(monkeypatch):
                     {"name": "driver_cmd_vel", "publishes": [TOPICS.cmd_vel]}
                 ],
             },
+            "module_ports": {
+                "ThunderDriver": {
+                    "ports_in": {
+                        "cmd_vel": {
+                            "direction": "in",
+                            "type": "Twist",
+                            "msg_count": 3,
+                            "rate_hz": 10.0,
+                            "stale_ms": 0.0,
+                        }
+                    }
+                }
+            },
             "topics": [
                 {
                     "topic": topic,
@@ -2078,6 +2107,102 @@ def test_real_runtime_gateway_collector_builds_valid_report(monkeypatch):
     ] >= 9
 
 
+def test_real_runtime_gateway_collector_does_not_treat_static_control_as_hardware_sink():
+    collector = _load_real_runtime_collect_module()
+
+    subscribers = collector._gateway_command_subscribers({
+        "runtime_boundary": {
+            "command_sink": REAL_HARDWARE_COMMAND_SINK,
+            "expected_command_sink": REAL_HARDWARE_COMMAND_SINK,
+        },
+        "control_boundary": {
+            "command_interfaces": [
+                {"name": "direct_cmd_vel", "publishes": [TOPICS.cmd_vel]},
+                {"name": "stop", "publishes": ["/nav/stop", TOPICS.cmd_vel]},
+            ],
+        },
+        "topics": [
+            {
+                "topic": TOPICS.cmd_vel,
+                "observability": {
+                    "observable": True,
+                    "module_port_candidates": [
+                        {
+                            "module": "nav.out",
+                            "port": "cmd_vel",
+                            "direction": "in",
+                            "msg_count": 3,
+                            "rate_hz": 10.0,
+                            "stale_ms": 0.0,
+                        }
+                    ],
+                },
+            }
+        ],
+    })
+
+    assert subscribers == []
+
+
+def test_real_runtime_gateway_collector_accepts_live_hardware_cmd_consumer():
+    collector = _load_real_runtime_collect_module()
+
+    subscribers = collector._gateway_command_subscribers({
+        "topics": [
+            {
+                "topic": TOPICS.cmd_vel,
+                "observability": {
+                    "module_port_candidates": [
+                        {
+                            "module": "ThunderDriver",
+                            "port": "cmd_vel",
+                            "direction": "in",
+                            "msg_count": 3,
+                            "rate_hz": 10.0,
+                            "stale_ms": 0.0,
+                        }
+                    ],
+                },
+            }
+        ],
+    })
+
+    assert subscribers == ["ThunderDriver.cmd_vel"]
+
+
+def test_real_runtime_gateway_collector_infers_raw_inputs_from_localization():
+    collector = _load_real_runtime_collect_module()
+    topic_evidence = {
+        topic: {"ok": False, "samples": 0, "graph_exists": False}
+        for topic in collector.OBSERVED_TOPICS
+    }
+    odom_positions: list[tuple[float, float, float]] = []
+
+    collector._record_gateway_rest_payloads(
+        topic_evidence,
+        odom_positions,
+        {
+            "localization": {
+                "reported_state": "TRACKING",
+                "lidar_input_hz": 10.0,
+                "imu_input_hz": 200.0,
+                "confidence": 1.0,
+            }
+        },
+        sample_time_sec=1.0,
+        min_cmd_vel_norm=0.01,
+    )
+
+    assert topic_evidence[TOPICS.lidar_scan]["ok"] is True
+    assert topic_evidence[TOPICS.lidar_scan]["rate_hz"] == 10.0
+    assert topic_evidence[TOPICS.imu]["ok"] is True
+    assert topic_evidence[TOPICS.imu]["rate_hz"] == 200.0
+    assert (
+        topic_evidence[TOPICS.localization_quality]["quality_kind"]
+        == "confidence"
+    )
+
+
 def test_real_runtime_ros2_collector_mode_keeps_legacy_dispatch(monkeypatch):
     collector = _load_real_runtime_collect_module()
     called = {}
@@ -2131,28 +2256,36 @@ def test_real_runtime_collector_script_rejects_non_real_expected_contract():
 def test_real_runtime_collector_does_not_infer_hardware_route_without_observed_sink():
     collector = _load_real_runtime_collect_module()
     topic_evidence = {
-        "/nav/lidar_scan": {"ok": True, "samples": 1},
-        "/nav/imu": {"ok": True, "samples": 1},
-        "/nav/odometry": {"ok": True, "samples": 1},
-        "/nav/registered_cloud": {"ok": True, "samples": 1, "points": 1},
-        "/nav/map_cloud": {"ok": True, "samples": 1, "points": 1},
-        "/nav/global_path": {
+        TOPICS.lidar_scan: {"ok": True, "samples": 1, "frame_id": "lidar_link"},
+        TOPICS.imu: {"ok": True, "samples": 1, "frame_id": "lidar_link"},
+        TOPICS.odometry: {"ok": True, "samples": 1, "frame_id": "odom"},
+        TOPICS.registered_cloud: {
+            "ok": True,
+            "samples": 1,
+            "points": 1,
+            "frame_id": "body",
+        },
+        TOPICS.map_cloud: {"ok": True, "samples": 1, "points": 1, "frame_id": "map"},
+        TOPICS.global_path: {
             "ok": True,
             "samples": 1,
             "nonempty_samples": 1,
             "max_poses": 2,
+            "frame_id": "map",
         },
-        "/nav/local_path": {
+        TOPICS.local_path: {
             "ok": True,
             "samples": 1,
             "nonempty_samples": 1,
             "max_poses": 2,
+            "frame_id": "body",
         },
-        "/nav/cmd_vel": {
+        TOPICS.cmd_vel: {
             "ok": True,
             "samples": 1,
             "nonzero_samples": 1,
             "max_norm": 0.1,
+            "frame_id": "body",
         },
     }
     _add_topic_sample_windows(topic_evidence, REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS)
@@ -2195,14 +2328,14 @@ def test_robot_ops_cli_exposes_read_only_real_runtime_evidence_command():
     source = script.read_text(encoding="utf-8", errors="ignore")
     usage_start = source.index("cmd_evidence_usage()")
     start = source.index("cmd_evidence()")
-    end = source.index("cmd_health()", start)
+    end = source.index("\n}\n\n# -- Subcommand:", start) + 2
     evidence_section = source[usage_start:end]
     evidence_block = source[start:end]
 
     assert "lingtu evidence --duration 20 --json-out report.json" in source
     assert "evidence|runtime-evidence|real-runtime-evidence)" in source
-    assert "/nav/localization_health" in evidence_section
-    assert "/nav/localization_quality" in evidence_section
+    assert TOPICS.localization_health in evidence_section
+    assert TOPICS.localization_quality in evidence_section
     assert '"$python_bin" "$repo_root/lingtu.py" real-runtime-evidence' in evidence_block
     assert "--duration-sec" in evidence_block
     assert "--min-motion-m" in evidence_block
@@ -3427,7 +3560,7 @@ def test_runtime_contract_integrity_rejects_endpoint_input_without_frame_evidenc
     assert result["ok"] is False
     assert any(
         "real_runtime_required_endpoint_input_topics missing required frame "
-        "evidence: /nav/lidar_scan"
+        f"evidence: {TOPICS.lidar_scan}"
         == blocker
         for blocker in result["blockers"]
     )
@@ -3457,7 +3590,7 @@ def test_runtime_contract_integrity_rejects_unknown_allowed_frame():
 
     assert result["ok"] is False
     assert any(
-        "topic_allowed_frame_ids topic /nav/map_cloud allows unknown frame world"
+        f"topic_allowed_frame_ids topic {TOPICS.map_cloud} allows unknown frame world"
         == blocker
         for blocker in result["blockers"]
     )
@@ -3519,7 +3652,7 @@ def test_runtime_contract_integrity_rejects_real_frame_not_in_general_contract()
 
     assert result["ok"] is False
     assert any(
-        "real_runtime_topic_allowed_frame_ids topic /nav/map_cloud "
+        f"real_runtime_topic_allowed_frame_ids topic {TOPICS.map_cloud} "
         "allows frames outside topic_allowed_frame_ids: lidar_link"
         == blocker
         for blocker in result["blockers"]

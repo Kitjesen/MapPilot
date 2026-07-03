@@ -124,6 +124,9 @@ def full_stack_blueprint(
         scene_xml=scene_xml,
         enable_semantic=enable_semantic,
         safety_stop_wiring=bool(config.get("safety_stop_wiring", True)),
+        cmd_vel_mux_collision_monitor=bool(
+            config.get("cmd_vel_mux_collision_monitor", False)
+        ),
         nav_plan_transport=(
             config.get("nav_plan_transport")
             if "nav_plan_transport" in config

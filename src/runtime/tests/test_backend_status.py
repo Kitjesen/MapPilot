@@ -41,44 +41,31 @@ def test_backend_status_can_mark_same_backend_degraded():
     }
 
 
-def test_path_follower_nav_kernel_fallback_reports_backend_status():
+def test_path_follower_nav_kernel_missing_fails_fast():
     from nav.local import path_follower as mod
     from nav.local import path_follower_runtime as runtime
     from nav.local.path_follower_backend import (
         NavKernelPathFollowerAdapter,
-        PidFallbackParams,
     )
 
     follower = mod.PathFollower(backend="nav_kernel")
-    with (
-        mock.patch.object(
-            runtime,
-            "create_nav_kernel_path_follower_adapter_from_tuning",
-            return_value=NavKernelPathFollowerAdapter(
-                runtime=None,
-                degraded_reason="compatible LingTu native navigation kernel missing",
-                build_hint="build nav core",
-            ),
-        ),
-        mock.patch.object(
-            runtime,
-            "read_pid_fallback_params",
-            return_value=PidFallbackParams(
-                k_v=0.5,
-                l_min=0.5,
-                l_max=2.0,
-                a_max=1.0,
-                v_max=0.4,
-            ),
+    with mock.patch.object(
+        runtime,
+        "create_nav_kernel_path_follower_adapter_from_tuning",
+        return_value=NavKernelPathFollowerAdapter(
+            runtime=None,
+            degraded_reason="compatible LingTu native navigation kernel missing",
+            build_hint="build nav core",
         ),
     ):
-        follower.setup()
+        with pytest.raises(RuntimeError, match="compatible LingTu native navigation kernel missing"):
+            follower.setup()
 
     info = follower.health()["path_follower"]
     assert info["configured_backend"] == "nav_kernel"
-    assert info["backend"] == "pid"
-    assert info["degraded"] is True
-    assert "LingTu native navigation kernel" in info["degraded_reason"]
+    assert info["backend"] == "nav_kernel"
+    assert info["degraded"] is False
+    assert info["degraded_reason"] == ""
 
 
 def test_terrain_simple_backend_reports_not_degraded():
@@ -243,7 +230,12 @@ def test_cli_backend_overrides_enter_resolved_blueprint_config():
         ),
     ],
 )
-def test_cli_backend_overrides_fail_fast_for_unknown_backend(field, backend, match):
+def test_cli_backend_overrides_fail_fast_for_unknown_backend(
+    capsys,
+    field,
+    backend,
+    match,
+):
     from cli.main import _resolve_config
 
     args = Namespace(
@@ -273,5 +265,7 @@ def test_cli_backend_overrides_fail_fast_for_unknown_backend(field, backend, mat
     )
     setattr(args, field, backend)
 
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(SystemExit) as exc:
         _resolve_config("nav", args, allow_wizard=False)
+    assert exc.value.code == 2
+    assert match in capsys.readouterr().out

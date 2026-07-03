@@ -327,7 +327,7 @@ def test_nanobind_local_planner_uses_adjacent_range_not_path_range_step():
 
 
 def test_local_planner_params_binding_exposes_cmu_parity_fields():
-    binding = _REPO_ROOT / "src" / "nav" / "kernel" / "bindings" / "bindings.cpp"
+    binding = _REPO_ROOT / "src" / "nav" / "kernel" / "bindings" / "bind_local_planner.cpp"
     text = binding.read_text(encoding="utf-8")
 
     for field in (

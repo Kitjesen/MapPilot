@@ -23,6 +23,7 @@ _NAVIGATION_CONFIG_KEYS = (
     "mission_timeout",
     "planning_frame_id",
     "expected_saved_map_frame_id",
+    "map_artifact_gate_required",
     "planning_timeout",
     "preview_timeout",
     "safe_goal_tolerance",
@@ -35,6 +36,7 @@ _NAVIGATION_CONFIG_KEYS = (
     "empty_path_retry_timeout_s",
     "replan_on_costmap_update",
     "allow_path_start_insert",
+    "octoplanner3d_timeout_s",
     "octoplanner3d_robot_radius",
     "octoplanner3d_max_iterations",
     "octoplanner3d_snap_search_radius_cells",
@@ -46,6 +48,14 @@ _NAVIGATION_CONFIG_KEYS = (
     "octoplanner3d_preblocked_costmap_radius_cells",
     "octoplanner3d_preblocked_costmap_weight",
     "octoplanner3d_lowest_traversable_only",
+    "octoplanner3d_floor_change_penalty",
+    "octoplanner3d_max_step_height",
+    "octoplanner3d_max_slope",
+    "octoplanner3d_same_floor_preference",
+    "octoplanner3d_same_floor_z_tolerance",
+    "octoplanner3d_max_same_floor_z_excursion",
+    "octoplanner3d_obstacle_clearance_radius_cells",
+    "octoplanner3d_obstacle_clearance_weight",
 )
 
 

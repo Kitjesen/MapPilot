@@ -62,8 +62,11 @@ git add \
   src/runtime/blueprints/stacks/composition.py \
   src/runtime/blueprints/stacks/navigation_core.py \
   src/runtime/blueprints/stacks/safety.py \
+  src/runtime/blueprints/wires/context.py \
+  src/runtime/blueprints/wires/mapping.py \
   src/runtime/blueprints/wires/safety.py \
   src/runtime/blueprints/wires/slam.py \
+  src/runtime/introspection/profile_graph.py \
   src/runtime/profiles/catalog/endpoints.py \
   src/runtime/profiles/endpoint_config.py \
   src/runtime/runtime_evidence.py \

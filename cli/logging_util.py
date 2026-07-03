@@ -45,9 +45,7 @@ _QUIET_PREFIXES = (
 _MUTE_PREFIXES = (
     "decision.llm.llm_client",  # "API key not found"
     "nav.local.terrain",           # native kernel unavailable, falling back
-    "nav.services.plan.local_planner",  # native kernel unavailable, falling back
     "nav.local.local_planner",     # compatibility shim
-    "nav.local.path_follower",     # native kernel unavailable, falling back
 )
 
 

@@ -7,10 +7,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE="${1:-dds-endpoint}"
+MODE="${1:-field-cpp}"
 
 case "${MODE}" in
-    dds|dds-endpoint|field|thunder-nav)
+    dds|dds-endpoint|endpoint-only)
         exec "${SCRIPT_DIR}/install_dds_endpoint_service.sh"
         ;;
     slam-dds|cpp-slam)
@@ -19,9 +19,14 @@ case "${MODE}" in
     nav-dds|cpp-nav)
         exec "${SCRIPT_DIR}/install_nav_dds_service.sh"
         ;;
-    field-cpp|dds-cpp)
+    lingtu|app|runtime)
+        exec "${SCRIPT_DIR}/install_lingtu_service.sh"
+        ;;
+    field|thunder-nav|field-cpp|dds-cpp)
         "${SCRIPT_DIR}/install_dds_endpoint_service.sh"
-        exec "${SCRIPT_DIR}/install_slam_dds_service.sh"
+        "${SCRIPT_DIR}/install_slam_dds_service.sh"
+        "${SCRIPT_DIR}/install_nav_dds_service.sh"
+        exec "${SCRIPT_DIR}/install_lingtu_service.sh"
         ;;
     lcm|lcm-endpoint)
         exec "${SCRIPT_DIR}/install_lcm_endpoint_service.sh"
@@ -43,7 +48,7 @@ case "${MODE}" in
         exec "${LEGACY_INSTALLER}" "$@"
         ;;
     *)
-        echo "Usage: $0 [dds-endpoint|slam-dds|nav-dds|field-cpp|lcm-endpoint|lite|ros-compat]" >&2
+        echo "Usage: $0 [field-cpp|dds-endpoint|slam-dds|nav-dds|lingtu|lcm-endpoint|lite|ros-compat]" >&2
         exit 2
         ;;
 esac

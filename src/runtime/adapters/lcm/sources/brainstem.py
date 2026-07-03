@@ -10,6 +10,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Mapping
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
 from runtime.msgs.geometry import Twist
@@ -108,7 +109,7 @@ class ThunderBrainstemSource:
             future = asyncio.run_coroutine_threadsafe(self._safe_stop(), loop)
             try:
                 future.result(timeout=2.0)
-            except (RuntimeError, TimeoutError, OSError, ValueError):
+            except (RuntimeError, TimeoutError, FutureTimeoutError, OSError, ValueError):
                 logger.debug("Brainstem safe stop did not complete", exc_info=True)
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=2.0)

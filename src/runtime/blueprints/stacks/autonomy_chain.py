@@ -23,6 +23,7 @@ def autonomy_stack_config(enable_native: bool = True, **config) -> dict:
             ("path_follower_max_yaw_rate", "max_yaw_rate"),
             ("path_follower_turn_speed_yaw_rate_start", "turn_speed_yaw_rate_start"),
             ("path_follower_turn_speed_min_scale", "turn_speed_min_scale"),
+            ("path_follower_native_max_accel", "native_max_accel"),
             ("path_follower_yaw_rate_gain", "yaw_rate_gain"),
             ("path_follower_stop_yaw_rate_gain", "stop_yaw_rate_gain"),
             ("path_follower_dir_diff_thre", "dir_diff_thre"),

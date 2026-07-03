@@ -7,9 +7,10 @@ commands come from: real robot, MuJoCo, Gazebo, replay, or CMU Unity.
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from runtime.profiles.catalog.endpoint_adapter_configs import (
     CMU_UNITY_CONFIG,
@@ -165,6 +166,7 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "localization_adapter": "cpp_slam_status",
             "nav_in_adapter": "dds_nav_input",
             "nav_out_adapter": "dds_nav_output",
+            "manage_session_services": False,
             "enable_nav_in": True,
             "enable_nav_out": True,
             "enable_camera": True,
@@ -364,8 +366,8 @@ __all__ = [
     "COMPAT_RUNTIME_ENDPOINT_ALIASES",
     "PRODUCT_PROFILE_ENDPOINTS",
     "PRODUCT_RUNTIME_ENDPOINT_ALIASES",
-    "RUNTIME_ENDPOINT_ALIASES",
     "RUNTIME_ENDPOINTS",
+    "RUNTIME_ENDPOINT_ALIASES",
     "RuntimeEndpointError",
     "RuntimeEndpointSpec",
     "RuntimeRunSpec",

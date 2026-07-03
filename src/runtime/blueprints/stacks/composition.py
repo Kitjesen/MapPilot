@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from runtime.blueprint import Blueprint, autoconnect
@@ -84,6 +85,13 @@ def compose_full_stack_modules(
     enable_goals = bool(services_config.pop("enable_goals", True))
     enable_patrol_routes = bool(services_config.pop("enable_patrol_routes", True))
     enable_scheduler = bool(services_config.pop("enable_scheduler", False))
+    manage_session_services = _optional_bool(config.get("manage_session_services"))
+    if manage_session_services is None:
+        manage_session_services = _optional_bool(
+            os.environ.get("LINGTU_MANAGE_SESSION_SERVICES")
+        )
+    if manage_session_services is None:
+        manage_session_services = True
 
     return autoconnect(
         external_services(
@@ -131,7 +139,30 @@ def compose_full_stack_modules(
         if enable_navigation
         else Blueprint(),
         exploration(**exploration_config),
-        safety(cmd_vel_mux_source_timeout=config.get("cmd_vel_mux_source_timeout")),
+        safety(
+            cmd_vel_mux_source_timeout=config.get("cmd_vel_mux_source_timeout"),
+            enable_collision_monitor=bool(
+                config.get("cmd_vel_mux_collision_monitor", False)
+            ),
+            collision_monitor_timeout_s=config.get(
+                "cmd_vel_mux_collision_monitor_timeout_s"
+            ),
+            collision_monitor_horizon_s=config.get(
+                "cmd_vel_mux_collision_monitor_horizon_s"
+            ),
+            collision_monitor_step_s=config.get(
+                "cmd_vel_mux_collision_monitor_step_s"
+            ),
+            collision_monitor_stop_cost=config.get(
+                "cmd_vel_mux_collision_monitor_stop_cost"
+            ),
+            collision_monitor_slow_cost=config.get(
+                "cmd_vel_mux_collision_monitor_slow_cost"
+            ),
+            collision_monitor_slowdown_scale=config.get(
+                "cmd_vel_mux_collision_monitor_slowdown_scale"
+            ),
+        ),
         gateway(
             gateway_port,
             mcp_port=config.get("mcp_port", 8090),
@@ -141,7 +172,7 @@ def compose_full_stack_modules(
             enable_ros2_rerun_bridge=bool(
                 config.get("enable_ros2_rerun_bridge", False)
             ),
-            manage_session_services=bool(config.get("manage_session_services", True)),
+            manage_session_services=manage_session_services,
         )
         if enable_gateway
         else Blueprint(),

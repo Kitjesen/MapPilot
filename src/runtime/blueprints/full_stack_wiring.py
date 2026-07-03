@@ -8,7 +8,7 @@ tests.
 from __future__ import annotations
 
 from runtime.blueprint import Blueprint
-from runtime.blueprints.module_graph import ModuleGraph
+from runtime.introspection.module_graph import ModuleGraph
 
 from .wires.context import build_wiring_context
 from .wires.gateway import gateway_command_specs, gateway_status_specs, teleop_media_specs
@@ -22,6 +22,7 @@ from .wires.navigation import (
     navigation_service_specs,
 )
 from .wires.safety import (
+    cmd_vel_collision_monitor_specs,
     cmd_vel_mux_specs,
     required_safety_stop_specs,
     safety_status_specs,
@@ -103,6 +104,7 @@ def full_stack_wire_specs(
     scene_xml: str = "",
     enable_semantic: bool = True,
     safety_stop_wiring: bool = True,
+    cmd_vel_mux_collision_monitor: bool = False,
     nav_plan_transport: object | None = None,
 ) -> tuple[WireSpec, ...]:
     """Return module-name-filtered full-stack wire specs.
@@ -150,6 +152,8 @@ def full_stack_wire_specs(
     specs.extend(navigation_execution_specs(local_planner_transport=nav_plan_transport))
     specs.extend(visual_servo_specs())
     specs.extend(teleop_media_specs(ctx))
+    if cmd_vel_mux_collision_monitor:
+        specs.extend(cmd_vel_collision_monitor_specs(ctx))
     specs.extend(cmd_vel_mux_specs(ctx))
     specs.extend(navigation_output_specs())
 
@@ -169,6 +173,7 @@ def apply_full_stack_wires(
     scene_xml: str = "",
     enable_semantic: bool = True,
     safety_stop_wiring: bool = True,
+    cmd_vel_mux_collision_monitor: bool = False,
     nav_plan_transport: object | None = None,
 ) -> Blueprint:
     """Apply explicit cross-stack wires to a composed full-stack Blueprint."""
@@ -198,6 +203,7 @@ def apply_full_stack_wires(
         scene_xml=scene_xml,
         enable_semantic=enable_semantic,
         safety_stop_wiring=safety_stop_wiring,
+        cmd_vel_mux_collision_monitor=cmd_vel_mux_collision_monitor,
         nav_plan_transport=nav_plan_transport,
     ):
         key = wire_key(spec)

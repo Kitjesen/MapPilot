@@ -11,7 +11,7 @@ from typing import Any, Mapping
 import yaml
 
 from cli.profiles_data import PROFILES
-from runtime.blueprints.profile_graph import resolve_profile_config
+from runtime.introspection.profile_graph import resolve_profile_config
 from runtime.profiles.endpoints import (
     PRODUCT_PROFILE_ENDPOINTS,
     RUNTIME_ENDPOINTS,
@@ -90,7 +90,7 @@ SOURCE_FRAME_CONTRACT_ROOTS = (
     "src/decision/modules/visual_servo_module.py",
     "src/decision/tasking/action_executor.py",
     "src/perception/perception_module.py",
-    "src/perception/instance_tracker.py",
+    "src/perception/impl/instance_tracker.py",
     "cli/profiles_data.py",
     "sim/scripts/mujoco_live_gate.py",
     "sim/scripts/saved_map_relocalize_runtime_gate.py",
@@ -171,6 +171,7 @@ def _as_tuple_stage(stage: Mapping[str, Any]) -> dict[str, Any]:
         **stage,
         "inputs": tuple(stage.get("inputs") or ()),
         "outputs": tuple(stage.get("outputs") or ()),
+        "consumers": tuple(stage.get("consumers") or ()),
     }
 
 

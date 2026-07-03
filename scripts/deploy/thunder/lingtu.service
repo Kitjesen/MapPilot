@@ -1,0 +1,32 @@
+[Unit]
+Description=LingTu Thunder navigation runtime
+After=network-online.target lingtu-slam-dds.service lingtu-nav-dds.service
+Wants=network-online.target lingtu-slam-dds.service lingtu-nav-dds.service
+
+[Service]
+Type=simple
+User=sunrise
+Group=sunrise
+WorkingDirectory=/opt/lingtu/current
+Environment=HOME=/home/sunrise
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_PROFILE=thunder-nav
+Environment=LINGTU_PYTHON=python3
+Environment=LINGTU_MODULE_TRANSPORT=local
+Environment=LINGTU_ENDPOINT=thunder_field
+Environment=LINGTU_ENDPOINT_TRANSPORT=dds
+Environment=LINGTU_ENDPOINT_CONTRACT=thunder_field_dds_v1
+Environment=LINGTU_ENABLE_ROBOT_DRIVER=0
+Environment=LINGTU_COMMAND_OUTPUT_MODE=endpoint_only
+Environment=LINGTU_HARDWARE_CONTROL_BOUNDARY=dds_endpoint_source
+Environment=LINGTU_MANAGE_SESSION_SERVICES=0
+Environment=LINGTU_OCTOPLANNER3D_EXECUTABLE=/opt/lingtu/current/build/octoplanner3d_headless/octoplanner3d_headless
+Environment=LINGTU_OCTOPLANNER3D_MAP=/home/sunrise/data/nova/maps/active/octomap.ot
+ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh && exec "${LINGTU_PYTHON}" lingtu.py "${LINGTU_PROFILE}" --no-repl'
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

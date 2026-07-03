@@ -150,6 +150,8 @@ def localization_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             ),
             WireSpec(adapter, "map_odom_tf", "GatewayModule", "map_odom_tf"),
             WireSpec(adapter, "map_odom_tf", "nav.mission", "map_odom_tf"),
+            WireSpec(adapter, "map_odom_tf", "nav.local_planner", "map_odom_tf"),
+            WireSpec(adapter, "map_odom_tf", "nav.path_follower", "map_odom_tf"),
         )
     )
     specs.extend(

@@ -38,6 +38,8 @@ REAL_RUNTIME_CONTROL_TOPICS_PUBLISHED: tuple[str, ...] = ()
 REAL_RUNTIME_LOCALIZATION_HEALTHY_STATES = ("LOCKED", "RECOVERED", "TRACKING")
 REAL_RUNTIME_LOCALIZATION_QUALITY_MIN_EXCLUSIVE = 0.0
 REAL_RUNTIME_LOCALIZATION_QUALITY_MAX_EXCLUSIVE = 0.5
+REAL_RUNTIME_LOCALIZATION_CONFIDENCE_MIN_INCLUSIVE = 0.5
+REAL_RUNTIME_LOCALIZATION_CONFIDENCE_MAX_INCLUSIVE = 1.0
 REAL_RUNTIME_LIVE_TOPIC_MAX_AGE_SEC = 2.0
 OPTIONAL_RUNTIME_DATA_FLOW_STAGES = frozenset({"dynamic_obstacle_gate"})
 REAL_RUNTIME_LIVE_TOPIC_FRESHNESS_TOPICS = (
@@ -942,8 +944,10 @@ def _localization_health_evidence_payload(report: Mapping[str, Any]) -> dict[str
     quality_entry = _mapping(topic_evidence.get(TOPICS.localization_quality))
     health_state, health_quality = _parse_localization_health_entry(health_entry)
     quality = _localization_quality_value(quality_entry)
+    quality_source = quality_entry
     if quality is None:
         quality = health_quality
+        quality_source = health_entry
     health_window_ok = _entry_sample_window_ok(health_entry, duration_sec)
     quality_window_ok = _entry_sample_window_ok(quality_entry, duration_sec)
     healthy_states = list(REAL_RUNTIME_LOCALIZATION_HEALTHY_STATES)
@@ -959,7 +963,7 @@ def _localization_health_evidence_payload(report: Mapping[str, Any]) -> dict[str
         "quality_window_ok": quality_window_ok,
         "ok": (
             health_state in REAL_RUNTIME_LOCALIZATION_HEALTHY_STATES
-            and _localization_quality_healthy(quality)
+            and _localization_quality_healthy(quality, quality_source)
             and health_window_ok
             and quality_window_ok
         ),
@@ -1003,7 +1007,7 @@ def _check_localization_health_evidence(
         quality = _localization_quality_value(quality_entry)
         if quality is None:
             blockers.append("localization quality value missing or invalid")
-        elif not _localization_quality_healthy(quality):
+        elif not _localization_quality_healthy(quality, quality_entry):
             blockers.append(f"localization quality outside healthy range: {quality}")
         if not _entry_sample_window_ok(quality_entry, duration_sec):
             blockers.append(
@@ -1075,10 +1079,32 @@ def _localization_quality_value(entry: Mapping[str, Any] | None) -> float | None
     return None
 
 
-def _localization_quality_healthy(value: float | None) -> bool:
+def _localization_quality_kind(entry: Mapping[str, Any] | None) -> str:
+    if entry is None:
+        return "fitness"
+    explicit = str(entry.get("quality_kind") or "").strip().lower()
+    if explicit in {"confidence", "fitness"}:
+        return explicit
+    data = str(entry.get("data") or "").lower()
+    if "quality=" in data or "confidence=" in data:
+        return "confidence"
+    return "fitness"
+
+
+def _localization_quality_healthy(
+    value: float | None,
+    entry: Mapping[str, Any] | None = None,
+) -> bool:
+    if value is None:
+        return False
+    if _localization_quality_kind(entry) == "confidence":
+        return (
+            REAL_RUNTIME_LOCALIZATION_CONFIDENCE_MIN_INCLUSIVE
+            <= value
+            <= REAL_RUNTIME_LOCALIZATION_CONFIDENCE_MAX_INCLUSIVE
+        )
     return (
-        value is not None
-        and REAL_RUNTIME_LOCALIZATION_QUALITY_MIN_EXCLUSIVE
+        REAL_RUNTIME_LOCALIZATION_QUALITY_MIN_EXCLUSIVE
         < value
         < REAL_RUNTIME_LOCALIZATION_QUALITY_MAX_EXCLUSIVE
     )
@@ -1215,7 +1241,10 @@ def runtime_data_flow_stage_signals(
             )
             signals["localization_quality_sampled"] = localization_quality is not None
             signals["localization_quality_healthy_range"] = (
-                _localization_quality_healthy(localization_quality)
+                _localization_quality_healthy(
+                    localization_quality,
+                    _mapping(topic_evidence.get(TOPICS.localization_quality)),
+                )
             )
         return signals
 

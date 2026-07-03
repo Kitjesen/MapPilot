@@ -89,4 +89,5 @@ def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     assert "--publish-freq" in main
     assert "--dds" in main
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in build_script
+    assert 'LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON' in build_script
     assert "LINGTU_CYCLONEDDS_PREFIX" in build_script

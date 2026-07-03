@@ -6,7 +6,17 @@ from runtime.blueprint import Blueprint
 from runtime.blueprints.stacks._registry import optional_stack_module, stack_module
 
 
-def safety(*, cmd_vel_mux_source_timeout: float | None = None) -> Blueprint:
+def safety(
+    *,
+    cmd_vel_mux_source_timeout: float | None = None,
+    enable_collision_monitor: bool = False,
+    collision_monitor_timeout_s: float | None = None,
+    collision_monitor_horizon_s: float | None = None,
+    collision_monitor_step_s: float | None = None,
+    collision_monitor_stop_cost: float | None = None,
+    collision_monitor_slow_cost: float | None = None,
+    collision_monitor_slowdown_scale: float | None = None,
+) -> Blueprint:
     """Safety reflex + geofence boundary enforcement + cmd_vel arbitration."""
     bp = Blueprint()
 
@@ -27,6 +37,17 @@ def safety(*, cmd_vel_mux_source_timeout: float | None = None) -> Blueprint:
     mux_kwargs = {}
     if cmd_vel_mux_source_timeout is not None:
         mux_kwargs["source_timeout"] = float(cmd_vel_mux_source_timeout)
+    mux_kwargs["enable_collision_monitor"] = bool(enable_collision_monitor)
+    for key, value in {
+        "collision_monitor_timeout_s": collision_monitor_timeout_s,
+        "collision_monitor_horizon_s": collision_monitor_horizon_s,
+        "collision_monitor_step_s": collision_monitor_step_s,
+        "collision_monitor_stop_cost": collision_monitor_stop_cost,
+        "collision_monitor_slow_cost": collision_monitor_slow_cost,
+        "collision_monitor_slowdown_scale": collision_monitor_slowdown_scale,
+    }.items():
+        if value is not None:
+            mux_kwargs[key] = float(value)
     bp.add(VelocityMux, alias="nav.velocity_mux", **mux_kwargs)
 
     GeofenceManagerModule = optional_stack_module(

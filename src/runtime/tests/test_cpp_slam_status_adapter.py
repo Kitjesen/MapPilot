@@ -154,6 +154,37 @@ def test_thunder_field_product_blueprints_use_cpp_slam_status_adapter() -> None:
         assert slam_entry.module_cls is CppSlamStatusAdapterModule
 
 
+def test_cpp_slam_status_adapter_adds_map_frame_jump_delta() -> None:
+    adapter = CppSlamStatusAdapterModule()
+    events = []
+    adapter.map_frame_jump_event.subscribe(events.append)
+
+    baseline = _status_payload()
+    adapter._publish_status_snapshot(baseline)
+
+    same_pose_jump = json.loads(json.dumps(baseline))
+    same_pose_jump["map_frame_jump"] = True
+    same_pose_jump["reason"] = "relocalized"
+    adapter._publish_status_snapshot(same_pose_jump)
+
+    assert events[-1]["dt_m"] == 0.0
+    assert events[-1]["dyaw_deg"] == 0.0
+    assert events[-1]["old_xyz"] == [0.1, 0.2, 0.0]
+    assert events[-1]["new_xyz"] == [0.1, 0.2, 0.0]
+
+    moved_jump = json.loads(json.dumps(baseline))
+    moved_jump["stamp_s"] = 124.0
+    moved_jump["map_frame_jump"] = True
+    moved_jump["reason"] = "relocalized"
+    moved_jump["map_odom_tf"]["tx"] = 1.3
+    adapter._publish_status_snapshot(moved_jump)
+
+    assert events[-1]["dt_m"] == 1.2
+    assert events[-1]["dyaw_deg"] == 0.0
+    assert events[-1]["old_xyz"] == [0.1, 0.2, 0.0]
+    assert events[-1]["new_xyz"] == [1.3, 0.2, 0.0]
+
+
 def _status_payload() -> dict:
     return {
         "schema_version": STATUS_SNAPSHOT_SCHEMA,

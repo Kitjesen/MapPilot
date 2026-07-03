@@ -5,7 +5,7 @@
 #   bash ~/data/inovxio/lingtu/scripts/deploy/deploy_thunder.sh
 #
 # Usage from a workstation:
-#   ssh sunrise@192.168.66.190 'bash -s' < scripts/deploy/deploy_thunder.sh
+#   ssh sunrise@192.168.66.13 'bash -s' < scripts/deploy/deploy_thunder.sh
 
 set -euo pipefail
 

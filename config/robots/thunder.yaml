@@ -10,7 +10,7 @@ canonical_presets:
     auto_standup: false
   thunder_remote:
     robot: thunder
-    dog_host: "192.168.66.190"
+    dog_host: "192.168.66.13"
     dog_port: 13145
     auto_enable: false
     auto_standup: false
@@ -30,7 +30,7 @@ driver_profiles:
   thunder_remote:
     protocol: grpc_brainstem
     params:
-      dog_host: "192.168.66.190"
+      dog_host: "192.168.66.13"
       dog_port: 13145
       auto_enable: false
       auto_standup: false

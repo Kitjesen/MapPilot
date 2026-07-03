@@ -25,12 +25,43 @@ def _subprocess_text(value: bytes | str | None) -> str:
 
 
 SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
-    "lidar": ("robot-lidar.service", "lidar.service", "lidar"),
+    "lidar": (
+        "lingtu-livox-dds.service",
+        "robot-lidar.service",
+        "lidar.service",
+        "lidar",
+    ),
     "camera": ("robot-camera.service", "camera.service", "camera"),
     "brainstem": ("robot-brainstem.service", "brainstem.service", "brainstem"),
-    "slam": ("robot-fastlio2.service", "localization.service", "slam"),
+    "nav_dds": ("lingtu-nav-dds.service", "nav-dds.service", "nav_dds"),
+    "slam": (
+        "lingtu-slam-dds.service",
+        "robot-fastlio2.service",
+        "localization.service",
+        "slam.service",
+        "slam",
+    ),
     "slam_pgo": ("robot-pgo.service", "slam_pgo.service", "slam_pgo"),
     "localizer": ("robot-localizer.service", "localizer.service", "localizer"),
+    "legacy_lidar": ("robot-lidar.service", "lidar.service", "lidar"),
+    "legacy_slam": (
+        "robot-fastlio2.service",
+        "localization.service",
+        "slam.service",
+        "slam",
+    ),
+    "legacy_localizer": (
+        "robot-localizer.service",
+        "localizer.service",
+        "localizer",
+    ),
+    "genz_icp": (
+        "robot-genz-icp.service",
+        "genz_icp.service",
+        "genz-icp.service",
+        "genz_icp",
+    ),
+    "hba": ("robot-hba.service", "hba.service", "hba"),
     "super_lio": (
         "robot-super-lio.service",
         "super_lio.service",
@@ -48,6 +79,13 @@ SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+SERVICE_START_ALIASES: dict[str, tuple[str, ...]] = {
+    "lidar": ("lingtu-livox-dds.service",),
+    "nav_dds": ("lingtu-nav-dds.service",),
+    "slam": ("lingtu-slam-dds.service",),
+    "localizer": ("lingtu-slam-dds.service",),
+}
+
 
 class ServiceManager:
     """Manage systemd services using stable logical robot service names."""
@@ -57,6 +95,9 @@ class ServiceManager:
 
     def _candidate_units(self, service: str) -> tuple[str, ...]:
         return SERVICE_ALIASES.get(service, (service,))
+
+    def _start_candidate_units(self, service: str) -> tuple[str, ...]:
+        return SERVICE_START_ALIASES.get(service, self._candidate_units(service))
 
     def _is_active_unit(self, unit: str) -> bool:
         try:
@@ -107,7 +148,7 @@ class ServiceManager:
         return bool(load_state) and load_state not in {"not-found", "masked"}
 
     def _resolve_start_unit(self, service: str) -> str:
-        candidates = self._candidate_units(service)
+        candidates = self._start_candidate_units(service)
         for unit in candidates:
             if self._unit_exists(unit):
                 return unit
@@ -195,6 +236,28 @@ class ServiceManager:
             for svc in services
         }
 
+    def status_details(self, *services: str) -> dict[str, dict[str, object]]:
+        """Return logical service status plus concrete systemd unit evidence."""
+        details: dict[str, dict[str, object]] = {}
+        for service in services:
+            candidates = self._candidate_units(service)
+            canonical = candidates[0] if candidates else service
+            installed = [unit for unit in candidates if self._unit_exists(unit)]
+            active = [unit for unit in candidates if self._is_active_unit(unit)]
+            if canonical in installed:
+                running = canonical in active
+            else:
+                running = bool(active)
+            details[service] = {
+                "status": "running" if running else "stopped",
+                "canonical_unit": canonical,
+                "selected_unit": active[0] if active else (installed[0] if installed else canonical),
+                "installed_units": installed,
+                "active_units": active,
+                "candidate_units": list(candidates),
+            }
+        return details
+
     def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
         """Wait until all services are active."""
         deadline = time.time() + timeout
@@ -220,8 +283,8 @@ def get_service_manager() -> ServiceManager:
 # Service groups: what each mode needs.
 SERVICES_LIDAR = ["lidar"]
 SERVICES_SLAM = ["slam"]
-SERVICES_SLAM_MAPPING = ["slam", "slam_pgo"]
-SERVICES_SLAM_NAV = ["slam", "localizer"]
+SERVICES_SLAM_MAPPING = ["slam"]
+SERVICES_SLAM_NAV = ["slam"]
 SERVICES_SUPER_LIO = ["lidar", "super_lio"]
 SERVICES_SUPER_LIO_RELOCATION = ["lidar", "super_lio_relocation"]
 SERVICES_CAMERA = ["camera"]

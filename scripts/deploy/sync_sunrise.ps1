@@ -1,11 +1,11 @@
-# sync_sunrise.ps1 — 把本地 main 同步到 sunrise@192.168.66.190
+# sync_sunrise.ps1 — 把本地 main 同步到 sunrise@192.168.66.13
 # 用法: 在 brain/lingtu 根目录执行 .\scripts\deploy\sync_sunrise.ps1
 #
 # 原理: SSH 反向隧道把 Windows VPN 代理转发到 sunrise，直接 git pull
 # 不需要管理员权限，不需要 bundle 传输
 
 param(
-    [string]$SunriseHost = "sunrise@192.168.66.190",
+    [string]$SunriseHost = "sunrise@192.168.66.13",
     [string]$RemotePath = "/home/sunrise/data/inovxio/lingtu",
     [string]$ProxyPort = "7890"
 )
@@ -35,4 +35,4 @@ Write-Host "  sunrise HEAD: $result"
 
 Write-Host ""
 Write-Host "=== 同步完成 ===" -ForegroundColor Green
-    
+

@@ -71,8 +71,21 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert nav["tomogram"] == _resolve_octoplanner3d_map()
     assert nav["plan_safety_policy"] == "reject"
     assert nav["fallback_planner_name"] == ""
-    assert nav["octoplanner3d_robot_radius"] == pytest.approx(0.60)
+    assert nav["preview_timeout"] == pytest.approx(30.0)
+    assert nav["octoplanner3d_timeout_s"] == pytest.approx(30.0)
+    assert nav["waypoint_threshold"] == pytest.approx(0.20)
+    assert nav["final_waypoint_threshold"] == pytest.approx(0.10)
+    assert nav["local_planner_allow_direct_track_fallback"] is True
+    assert nav["local_planner_direct_track_fallback_min_distance_m"] == pytest.approx(0.05)
+    assert nav["local_planner_min_trackable_local_path_m"] == pytest.approx(0.05)
+    assert nav["path_follower_goal_tolerance"] == pytest.approx(0.05)
+    assert nav["path_follower_lookahead"] == pytest.approx(0.35)
+    assert nav["path_follower_max_speed"] == pytest.approx(0.20)
+    assert nav["path_follower_min_speed"] == pytest.approx(0.08)
+    assert nav["path_follower_native_max_accel"] == pytest.approx(10.0)
+    assert nav["octoplanner3d_robot_radius"] == pytest.approx(0.40)
     assert nav["octoplanner3d_require_ground_support"] is True
+    assert nav["octoplanner3d_ground_support_depth_cells"] == 6
     assert nav["enable_semantic"] is True
     assert "lidar_transport" not in nav
     assert "lidar_endpoint_host" not in nav
@@ -84,7 +97,7 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert mapping["tomogram"] == _resolve_octoplanner3d_map()
     assert mapping["plan_safety_policy"] == "reject"
     assert mapping["fallback_planner_name"] == ""
-    assert mapping["octoplanner3d_robot_radius"] == pytest.approx(0.60)
+    assert mapping["octoplanner3d_robot_radius"] == pytest.approx(0.40)
     assert mapping["enable_semantic"] is False
     assert "lidar_transport" not in mapping
 
@@ -94,7 +107,7 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert explore["tomogram"] == _resolve_octoplanner3d_map()
     assert explore["plan_safety_policy"] == "reject"
     assert explore["fallback_planner_name"] == ""
-    assert explore["octoplanner3d_robot_radius"] == pytest.approx(0.60)
+    assert explore["octoplanner3d_robot_radius"] == pytest.approx(0.40)
     assert explore["octoplanner3d_require_ground_support"] is True
     assert explore["enable_frontier"] is True
     assert explore["enable_traversable_frontier"] is True

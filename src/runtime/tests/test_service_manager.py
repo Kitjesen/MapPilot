@@ -57,6 +57,8 @@ def test_logical_status_detects_robot_service_aliases(monkeypatch):
             "robot-lidar.service",
             "robot-fastlio2.service",
             "robot-localizer.service",
+            "robot-genz-icp.service",
+            "robot-hba.service",
             "robot-super-lio.service",
             "robot-super-lio-relocation.service",
         }
@@ -70,6 +72,8 @@ def test_logical_status_detects_robot_service_aliases(monkeypatch):
         "slam",
         "slam_pgo",
         "localizer",
+        "genz_icp",
+        "hba",
         "super_lio",
         "super_lio_relocation",
     ) == {
@@ -77,6 +81,8 @@ def test_logical_status_detects_robot_service_aliases(monkeypatch):
         "slam": "running",
         "slam_pgo": "stopped",
         "localizer": "running",
+        "genz_icp": "running",
+        "hba": "running",
         "super_lio": "running",
         "super_lio_relocation": "running",
     }
@@ -114,7 +120,29 @@ def test_canonical_robot_unit_wins_over_active_legacy_alias(monkeypatch):
     assert ["sudo", "systemctl", "start", "camera.service"] not in fake.commands
 
 
-def test_start_prefers_robot_unit_when_installed(monkeypatch):
+def test_status_details_reports_concrete_units_and_native_precedence(monkeypatch):
+    from runtime.service_manager import ServiceManager
+
+    fake = _FakeSystemctl(
+        active={"robot-fastlio2.service"},
+        loaded={"lingtu-slam-dds.service", "robot-fastlio2.service"},
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    svc = ServiceManager()
+    details = svc.status_details("slam")["slam"]
+
+    assert details["status"] == "stopped"
+    assert details["canonical_unit"] == "lingtu-slam-dds.service"
+    assert details["selected_unit"] == "robot-fastlio2.service"
+    assert details["installed_units"] == [
+        "lingtu-slam-dds.service",
+        "robot-fastlio2.service",
+    ]
+    assert details["active_units"] == ["robot-fastlio2.service"]
+
+
+def test_start_slam_does_not_fallback_to_legacy_unit(monkeypatch):
     from runtime.service_manager import ServiceManager
 
     fake = _FakeSystemctl(loaded={"robot-fastlio2.service", "localization.service"})
@@ -122,13 +150,69 @@ def test_start_prefers_robot_unit_when_installed(monkeypatch):
 
     svc = ServiceManager()
 
-    assert svc.start("slam") == ["slam"]
+    assert svc.start("slam") == []
+    assert "robot-fastlio2.service" not in fake.active
+    assert ["sudo", "systemctl", "start", "lingtu-slam-dds.service"] in fake.commands
+    assert svc._started == []
+
+
+def test_start_legacy_slam_uses_explicit_compat_alias(monkeypatch):
+    from runtime.service_manager import ServiceManager
+
+    fake = _FakeSystemctl(loaded={"robot-fastlio2.service", "localization.service"})
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    svc = ServiceManager()
+
+    assert svc.start("legacy_slam") == ["legacy_slam"]
     assert "robot-fastlio2.service" in fake.active
     assert ["sudo", "systemctl", "start", "robot-fastlio2.service"] in fake.commands
     assert svc._started == ["robot-fastlio2.service"]
 
 
-def test_start_lidar_prefers_robot_unit_when_installed(monkeypatch):
+def test_start_slam_prefers_native_dds_when_installed(monkeypatch):
+    from runtime.service_manager import ServiceManager
+
+    fake = _FakeSystemctl(
+        loaded={
+            "lingtu-slam-dds.service",
+            "robot-fastlio2.service",
+            "localization.service",
+        }
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    svc = ServiceManager()
+
+    assert svc.start("slam") == ["slam"]
+    assert "lingtu-slam-dds.service" in fake.active
+    assert ["sudo", "systemctl", "start", "lingtu-slam-dds.service"] in fake.commands
+    assert ["sudo", "systemctl", "start", "robot-fastlio2.service"] not in fake.commands
+    assert svc._started == ["lingtu-slam-dds.service"]
+
+
+def test_start_lidar_prefers_native_dds_when_installed(monkeypatch):
+    from runtime.service_manager import ServiceManager
+
+    fake = _FakeSystemctl(
+        loaded={
+            "lingtu-livox-dds.service",
+            "robot-lidar.service",
+            "lidar.service",
+        }
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    svc = ServiceManager()
+
+    assert svc.start("lidar") == ["lidar"]
+    assert "lingtu-livox-dds.service" in fake.active
+    assert ["sudo", "systemctl", "start", "lingtu-livox-dds.service"] in fake.commands
+    assert ["sudo", "systemctl", "start", "robot-lidar.service"] not in fake.commands
+    assert svc._started == ["lingtu-livox-dds.service"]
+
+
+def test_start_legacy_lidar_uses_explicit_compat_alias(monkeypatch):
     from runtime.service_manager import ServiceManager
 
     fake = _FakeSystemctl(
@@ -141,7 +225,7 @@ def test_start_lidar_prefers_robot_unit_when_installed(monkeypatch):
 
     svc = ServiceManager()
 
-    assert svc.start("lidar") == ["lidar"]
+    assert svc.start("legacy_lidar") == ["legacy_lidar"]
     assert "robot-lidar.service" in fake.active
     assert ["sudo", "systemctl", "start", "robot-lidar.service"] in fake.commands
     assert ["sudo", "systemctl", "start", "lidar.service"] not in fake.commands
@@ -156,7 +240,7 @@ def test_untracked_start_does_not_release_external_service(monkeypatch):
 
     svc = ServiceManager()
 
-    assert svc.start("slam", track_started=False) == ["slam"]
+    assert svc.start("legacy_slam", track_started=False) == ["legacy_slam"]
     assert "robot-fastlio2.service" in fake.active
     assert svc._started == []
 
@@ -183,6 +267,31 @@ def test_start_super_lio_prefers_robot_unit_when_installed(monkeypatch):
     assert "robot-super-lio.service" in fake.active
     assert ["sudo", "systemctl", "start", "robot-super-lio.service"] in fake.commands
     assert svc._started == ["robot-super-lio.service"]
+
+
+def test_start_genz_icp_and_hba_prefer_robot_units_when_installed(monkeypatch):
+    from runtime.service_manager import ServiceManager
+
+    fake = _FakeSystemctl(
+        loaded={
+            "robot-genz-icp.service",
+            "genz_icp.service",
+            "robot-hba.service",
+            "hba.service",
+        }
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    svc = ServiceManager()
+
+    assert svc.start("genz_icp", "hba") == ["genz_icp", "hba"]
+    assert "robot-genz-icp.service" in fake.active
+    assert "robot-hba.service" in fake.active
+    assert ["sudo", "systemctl", "start", "robot-genz-icp.service"] in fake.commands
+    assert ["sudo", "systemctl", "start", "robot-hba.service"] in fake.commands
+    assert ["sudo", "systemctl", "start", "genz_icp.service"] not in fake.commands
+    assert ["sudo", "systemctl", "start", "hba.service"] not in fake.commands
+    assert svc._started == ["robot-genz-icp.service", "robot-hba.service"]
 
 
 def test_start_super_lio_relocation_prefers_robot_unit_when_installed(monkeypatch):
@@ -214,10 +323,16 @@ def test_stop_clears_new_and_legacy_aliases(monkeypatch):
 
     fake = _FakeSystemctl(
         active={
+            "lingtu-slam-dds.service",
             "robot-fastlio2.service",
             "localization.service",
             "robot-localizer.service",
             "localizer.service",
+            "robot-genz-icp.service",
+            "genz_icp.service",
+            "genz-icp.service",
+            "robot-hba.service",
+            "hba.service",
             "robot-super-lio.service",
             "super_lio.service",
             "robot-super-lio-relocation.service",
@@ -229,22 +344,43 @@ def test_stop_clears_new_and_legacy_aliases(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake)
 
     svc = ServiceManager()
-    svc._started = ["robot-fastlio2.service", "localization.service"]
+    svc._started = [
+        "lingtu-slam-dds.service",
+        "robot-fastlio2.service",
+        "localization.service",
+    ]
 
-    svc.stop("slam", "localizer", "super_lio", "super_lio_relocation")
+    svc.stop(
+        "slam",
+        "localizer",
+        "genz_icp",
+        "hba",
+        "super_lio",
+        "super_lio_relocation",
+    )
 
+    assert "lingtu-slam-dds.service" not in fake.active
     assert "robot-fastlio2.service" not in fake.active
     assert "localization.service" not in fake.active
     assert "robot-localizer.service" not in fake.active
     assert "localizer.service" not in fake.active
+    assert "robot-genz-icp.service" not in fake.active
+    assert "genz_icp.service" not in fake.active
+    assert "genz-icp.service" not in fake.active
+    assert "robot-hba.service" not in fake.active
+    assert "hba.service" not in fake.active
     assert "robot-super-lio.service" not in fake.active
     assert "super_lio.service" not in fake.active
     assert "robot-super-lio-relocation.service" not in fake.active
     assert "robot-super-lio-reloc.service" not in fake.active
     assert "super_lio_relocation.service" not in fake.active
     assert "super_lio_reloc.service" not in fake.active
+    assert ["sudo", "systemctl", "stop", "lingtu-slam-dds.service"] in fake.commands
     assert ["sudo", "systemctl", "stop", "robot-fastlio2.service"] in fake.commands
     assert ["sudo", "systemctl", "stop", "localization.service"] in fake.commands
+    assert ["sudo", "systemctl", "stop", "robot-genz-icp.service"] in fake.commands
+    assert ["sudo", "systemctl", "stop", "genz-icp.service"] in fake.commands
+    assert ["sudo", "systemctl", "stop", "robot-hba.service"] in fake.commands
     assert ["sudo", "systemctl", "stop", "robot-super-lio.service"] in fake.commands
     assert ["sudo", "systemctl", "stop", "super_lio.service"] in fake.commands
     assert [

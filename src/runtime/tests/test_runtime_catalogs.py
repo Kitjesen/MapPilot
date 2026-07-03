@@ -3,17 +3,17 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from runtime.blueprints.catalog.endpoints import (
+from runtime.profiles.catalog.endpoints import (
     COMPAT_RUNTIME_ENDPOINT_ALIASES as CATALOG_COMPAT_ENDPOINT_ALIASES,
 )
-from runtime.blueprints.catalog.endpoints import (
+from runtime.profiles.catalog.endpoints import (
     PRODUCT_RUNTIME_ENDPOINT_ALIASES as CATALOG_PRODUCT_ENDPOINT_ALIASES,
 )
-from runtime.blueprints.catalog.endpoints import (
+from runtime.profiles.catalog.endpoints import (
     RUNTIME_ENDPOINT_ALIASES as CATALOG_ENDPOINT_ALIASES,
 )
-from runtime.blueprints.catalog.endpoints import RUNTIME_ENDPOINTS as CATALOG_ENDPOINTS
-from runtime.blueprints.catalog.products import (
+from runtime.profiles.catalog.endpoints import RUNTIME_ENDPOINTS as CATALOG_ENDPOINTS
+from runtime.profiles.catalog.products import (
     LIGHTWEIGHT_PRODUCT_PROFILES,
     PRODUCT_INTENT_PROFILES,
     PRODUCT_PROFILES,
@@ -24,10 +24,10 @@ from runtime.blueprints.catalog.products import (
     is_simulation_profile,
     product_profile,
 )
-from runtime.blueprints.catalog.products import (
+from runtime.profiles.catalog.products import (
     PROFILES as CATALOG_PROFILES,
 )
-from runtime.blueprints.catalog.robots import (
+from runtime.profiles.catalog.robots import (
     CANONICAL_ROBOT_DRIVER_PROFILES,
     CANONICAL_ROBOT_PRESETS,
     COMPAT_ROBOT_DRIVER_PROFILES as CATALOG_COMPAT_ROBOT_DRIVER_PROFILES,
@@ -38,7 +38,7 @@ from runtime.blueprints.catalog.robots import (
     robot_driver_profile_names,
     robot_preset_names,
 )
-from runtime.blueprints.catalog.runtime_paths import _resolve_tomogram
+from runtime.profiles.catalog.runtime_paths import _resolve_tomogram
 from runtime.profiles.catalog.endpoints import (
     PRODUCT_PROFILE_ENDPOINTS,
     RUNTIME_ENDPOINTS as RUNTIME_CATALOG_ENDPOINTS,
@@ -97,13 +97,13 @@ from runtime.profiles.endpoints import (
 from runtime.profiles.endpoints import (
     resolve_runtime_run_spec as resolve_runtime_run_spec_runtime,
 )
-from runtime.blueprints.runtime_endpoint import (
+from runtime.profiles.endpoints import (
     RUNTIME_ENDPOINTS as COMPAT_ENDPOINTS,
 )
-from runtime.blueprints.runtime_endpoint import (
+from runtime.profiles.endpoints import (
     resolve_runtime_run_spec as resolve_runtime_run_spec_compat,
 )
-from runtime.blueprints.runtime_endpoint import runtime_endpoint_names
+from runtime.profiles.endpoints import runtime_endpoint_names
 from runtime.blueprints.stacks.driver import RobotProfile
 from runtime.runtime_profiles import PROFILES as COMPAT_PROFILES
 from runtime.runtime_profiles import ROBOT_PRESETS as RUNTIME_PROFILES_ROBOT_PRESETS
@@ -117,7 +117,7 @@ def test_runtime_profiles_reexports_robot_catalog() -> None:
     assert RUNTIME_PROFILES_ROBOT_PRESETS is ROBOT_PRESETS
 
 
-def test_blueprint_catalog_imports_are_runtime_catalog_facades() -> None:
+def test_runtime_profile_catalog_is_single_source() -> None:
     assert CATALOG_ENDPOINTS is RUNTIME_CATALOG_ENDPOINTS
     assert CATALOG_PROFILES is RUNTIME_CATALOG_PROFILES
     assert ROBOT_PRESETS is RUNTIME_ROBOT_PRESETS
@@ -147,6 +147,7 @@ def test_runtime_endpoint_resolver_reexports_endpoint_catalog() -> None:
         "localization_adapter": "cpp_slam_status",
         "nav_in_adapter": "dds_nav_input",
         "nav_out_adapter": "dds_nav_output",
+        "manage_session_services": False,
         "enable_nav_in": True,
         "enable_nav_out": True,
         "enable_camera": True,
@@ -214,7 +215,7 @@ def test_robot_catalog_hides_legacy_board_names_from_canonical_presets() -> None
 def test_thunder_is_canonical_product_robot_name() -> None:
     assert ROBOT_PRESETS["thunder"]["robot"] == "thunder"
     assert ROBOT_PRESETS["thunder"]["dog_host"] == "127.0.0.1"
-    assert ROBOT_PRESETS["thunder_remote"]["dog_host"] == "192.168.66.190"
+    assert ROBOT_PRESETS["thunder_remote"]["dog_host"] == "192.168.66.13"
     assert ROBOT_PRESETS["s100p"]["robot"] == "thunder"
     assert ROBOT_PRESETS["navigate"]["robot"] == "thunder"
 
@@ -505,6 +506,13 @@ def test_product_runtime_configs_use_ros_free_autonomy_backends() -> None:
         )
 
 
+def test_only_teleop_avoid_enables_cmd_vel_collision_monitor() -> None:
+    for profile in PRODUCT_PROFILES:
+        resolved = resolve_runtime_config(profile)
+        enabled = bool(resolved.config.get("cmd_vel_mux_collision_monitor", False))
+        assert enabled is (profile == "teleop_avoid"), profile
+
+
 def test_no_product_profiles_are_optional_native_runtime_configs() -> None:
     assert OPTIONAL_NATIVE_PRODUCT_PROFILES == ()
 
@@ -578,7 +586,7 @@ def test_product_blueprints_do_not_import_compat_runtime_profiles() -> None:
 
 
 def test_profile_graph_does_not_hardcode_legacy_robot_driver_aliases() -> None:
-    source = (SRC / "runtime" / "blueprints" / "profile_graph.py").read_text(
+    source = (SRC / "runtime" / "introspection" / "profile_graph.py").read_text(
         encoding="utf-8-sig"
     )
 

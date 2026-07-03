@@ -279,7 +279,7 @@ def _make_slamcheck_harness(tmp_path: Path) -> dict[str, Path | str]:
                 unit="${1:-}"
                 active=inactive
                 case "$unit" in
-                    robot-lidar.service|robot-camera.service|robot-brainstem.service|robot-fastlio2.service|robot-localizer.service|robot-super-lio.service|robot-super-lio-relocation.service|lingtu.service)
+                    lingtu-livox-dds.service|lingtu-slam-dds.service|lingtu-nav-dds.service|lingtu.service|robot-camera.service|robot-brainstem.service)
                         active=active ;;
                 esac
                 case " ${FAKE_LEGACY_ACTIVE:-} " in
@@ -804,6 +804,25 @@ def test_s100p_super_lio_services_publish_canonical_nav_topics(service_path):
     assert '-r "/lio/robo/odom:=/nav/robot_odom"' in text
 
 
+def test_s100p_genz_icp_service_publishes_canonical_slam_topics():
+    text = _read("scripts/deploy/s100p/genz_icp.service")
+
+    assert f"-r pointcloud_topic:={TOPICS.lidar_scan}" in text
+    assert f"-r /genz/odometry:={TOPICS.odometry}" in text
+    assert f"-r /genz/local_map:={TOPICS.map_cloud}" in text
+    assert "-p odom_frame:=odom" in text
+    assert "-p base_frame:=body" in text
+
+
+def test_s100p_hba_service_exposes_offline_map_optimization_services():
+    text = _read("scripts/deploy/s100p/hba.service")
+
+    assert "exec ros2 run hba hba_node" in text
+    assert "-r refine_map:=/slam/hba/refine_map" in text
+    assert "-r save_poses:=/slam/hba/save_poses" in text
+    assert "-r map_points:=/slam/hba/map_points" in text
+
+
 def test_topic_contract_names_static_map_and_global_relocalize():
     text = _read("config/topic_contract.yaml")
 
@@ -895,9 +914,9 @@ def test_lingtu_doctor_checks_camera_device_online_status():
 def test_lingtu_doctor_reports_standard_quality_topic_with_legacy_hint():
     text = _read("scripts/lingtu")
 
-    assert "/nav/localization_quality" in text
+    assert "/slam/localization_quality" in text
     assert "/localization_quality" in text
-    assert "legacy; remap to /nav/localization_quality" in text
+    assert "legacy; remap to /slam/localization_quality" in text
 
 
 def test_lingtu_doctor_json_gates_runtime_readiness_freshness():
@@ -2034,6 +2053,9 @@ def test_thunder_legacy_service_installer_installs_ros2_env_helper():
 
     assert 'CONFIG_DIR="${LINGTU_CONFIG_DIR:-/opt/lingtu/config}"' in install
     assert 'cp "${ROS2_ENV_SRC}" "${CONFIG_DIR}/ros2-env.sh"' in install
+    assert "LINGTU_ENABLE_LEGACY_ROS2_SERVICES" in install
+    assert "Legacy ROS2 compat services installed but not enabled" in install
+    assert "Native default: scripts/deploy/thunder/install_services.sh field-cpp" in install
     assert 'cp "${SCRIPT_DIR}/ros2-env.sh" "${CONFIG_DIR}/ros2-env.sh"' in thunder_install
 
 
@@ -2051,10 +2073,86 @@ def test_lingtu_cli_has_lightweight_localization_recovery():
     docs = _read("docs/04-deployment/lingtu_cli.md")
 
     assert "svc_restart_localization_chain()" in script
+    assert "svc_start_unit lingtu-livox-dds.service" in script
+    assert "svc_start_unit lingtu-slam-dds.service" in script
+    assert 'slam_dds_wait_status "" 0 35' in script
     assert "svc_force_stop_unit robot-localizer.service" in script
     assert "svc_force_stop_unit robot-fastlio2.service" in script
-    assert "svc_wait_topic_publishers /nav/odometry 1 30" in script
-    assert "svc_wait_topic_publishers /nav/localization_health 1 30" in script
+    assert "native SLAM DDS service is not installed: lingtu-slam-dds.service" in script
+    assert "Use legacy_fastlio2 / legacy_localizer explicitly" in script
     assert "svc_wait_gateway_ready 35" in script
     assert "localization|localization_chain|slam_chain|loc)" in script
     assert "lingtu svc restart localization" in docs
+    assert "lingtu-slam-dds.service" in docs
+    assert "legacy_fastlio2" in docs
+
+
+def test_lingtu_nav_start_auto_relocalizes_when_tracking_not_reusable():
+    script = _read("scripts/lingtu")
+    nav_start = script.split("cmd_nav() {", 1)[1].split("\n        stop|end)", 1)[0]
+    reuse_check = script.split("nav_relocalization_ready_without_request() {", 1)[1].split(
+        "\nPY\n}", 1
+    )[0]
+
+    assert 'elif nav_relocalization_ready_without_request "$map"; then' in nav_start
+    assert 'nav_global_relocalize_saved_map "$map" || exit 1' in nav_start
+    assert 'nav_relocalize_saved_map "$map" "$initial_x" "$initial_y" "$initial_yaw" || exit 1' in nav_start
+    assert 'tf.get("valid") is True' in reuse_check
+    assert 'reported_map == map_name' in reuse_check
+    assert "pose_fresh_ok" in reuse_check
+
+
+def test_lingtu_svc_status_defaults_to_native_services():
+    script = _read("scripts/lingtu")
+    docs = _read("docs/04-deployment/lingtu_cli.md")
+    status_case = script.split("cmd_svc() {", 1)[1].split("\n        restart)", 1)[0]
+    default_status = status_case.split("status)", 1)[1].split(
+        "status-legacy|legacy-status", 1
+    )[0]
+    legacy_status = status_case.split("status-legacy|legacy-status", 1)[1]
+
+    assert "lingtu-livox-dds.service" in default_status
+    assert "lingtu-slam-dds.service" in default_status
+    assert "lingtu-nav-dds.service" in default_status
+    assert "lingtu.service" in default_status
+    assert "robot-lidar.service" not in default_status
+    assert "robot-fastlio2.service" not in default_status
+    assert "robot-localizer.service" not in default_status
+    assert "robot-lidar.service" in legacy_status
+    assert "robot-fastlio2.service" in legacy_status
+    assert "robot-localizer.service" in legacy_status
+    assert "legacy/experimental services are active" in script
+    assert "status-legacy|restart" in script
+    assert "if [ \"$ros2\" = \"1\" ]; then" in script
+    assert "cmd_svc status-legacy" in script
+    assert "lingtu svc status-legacy" in docs
+
+
+def test_lingtu_svc_status_output_hides_legacy_rows_by_default(tmp_path):
+    result, _ = _run_lingtu_command(tmp_path, "svc status")
+
+    assert result.returncode == 0, result.stderr
+    assert "lingtu-livox-dds.service" in result.stdout
+    assert "lingtu-slam-dds.service" in result.stdout
+    assert "lingtu-nav-dds.service" in result.stdout
+    assert "legacy_lidar" not in result.stdout
+    assert "robot-lidar.service" not in result.stdout
+    assert "legacy_fastlio2" not in result.stdout
+    assert "robot-fastlio2.service" not in result.stdout
+    assert "legacy/experimental services are active" not in result.stdout
+    assert "lingtu svc status-legacy" not in result.stdout
+
+
+def test_lingtu_svc_status_legacy_output_lists_compat_rows(tmp_path):
+    result, _ = _run_lingtu_command(tmp_path, "svc status-legacy")
+
+    assert result.returncode == 0, result.stderr
+    assert "lingtu-livox-dds.service" in result.stdout
+    assert "lingtu-slam-dds.service" in result.stdout
+    assert "legacy_lidar" in result.stdout
+    assert "robot-lidar.service" in result.stdout
+    assert "legacy_fastlio2" in result.stdout
+    assert "robot-fastlio2.service" in result.stdout
+    assert "legacy_localizer" in result.stdout
+    assert "robot-localizer.service" in result.stdout
+    assert "super_lio" in result.stdout

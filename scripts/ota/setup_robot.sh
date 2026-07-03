@@ -13,6 +13,20 @@
 # ============================================================================
 set -euo pipefail
 
+if [ "${LINGTU_ENABLE_LEGACY_ROS2_OTA:-0}" != "1" ]; then
+    cat >&2 <<'EOF'
+ERROR: scripts/ota/setup_robot.sh is a legacy ROS2/colcon OTA installer.
+
+The product deployment path is native DDS:
+  bash scripts/deploy/thunder/install_services.sh field-cpp
+  bash scripts/deploy/cut_release.sh vX.Y.Z
+
+To intentionally install the old ROS2 OTA service, rerun with:
+  LINGTU_ENABLE_LEGACY_ROS2_OTA=1 sudo -E bash scripts/ota/setup_robot.sh
+EOF
+    exit 2
+fi
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'

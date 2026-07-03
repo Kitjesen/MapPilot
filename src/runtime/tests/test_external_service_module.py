@@ -65,10 +65,21 @@ def test_external_service_plan_runs_during_module_setup(monkeypatch):
     module.setup()
 
     assert fake.calls == [
-        ("stop", ("localizer", "super_lio", "super_lio_relocation"), None),
-        ("ensure", ("slam", "slam_pgo", "camera"), None),
-        ("wait_ready", ("slam", "slam_pgo"), 10.0),
-        ("status", ("slam", "slam_pgo", "camera"), None),
+        (
+            "stop",
+            (
+                "slam_pgo",
+                "localizer",
+                "hba",
+                "genz_icp",
+                "super_lio",
+                "super_lio_relocation",
+            ),
+            None,
+        ),
+        ("ensure", ("slam", "camera"), None),
+        ("wait_ready", ("slam",), 10.0),
+        ("status", ("slam", "camera"), None),
     ]
 
 
@@ -126,12 +137,10 @@ def test_lidar_start_driver_starts_official_lidar_service_before_slam():
     assert bp._entries[0].config["ensure_services"] == (
         "lidar",
         "slam",
-        "slam_pgo",
     )
     assert bp._entries[0].config["wait_ready_services"] == (
         "lidar",
         "slam",
-        "slam_pgo",
     )
 
 
@@ -147,8 +156,8 @@ def test_default_lidar_does_not_start_official_lidar_service():
     )
 
     assert [entry.name for entry in bp._entries] == ["ExternalServiceManagerModule"]
-    assert bp._entries[0].config["ensure_services"] == ("slam", "slam_pgo")
-    assert bp._entries[0].config["wait_ready_services"] == ("slam", "slam_pgo")
+    assert bp._entries[0].config["ensure_services"] == ("slam",)
+    assert bp._entries[0].config["wait_ready_services"] == ("slam",)
 
 
 def test_official_lidar_service_can_be_disabled_explicitly():
@@ -165,8 +174,8 @@ def test_official_lidar_service_can_be_disabled_explicitly():
         },
     )
 
-    assert bp._entries[0].config["ensure_services"] == ("slam", "slam_pgo")
-    assert bp._entries[0].config["wait_ready_services"] == ("slam", "slam_pgo")
+    assert bp._entries[0].config["ensure_services"] == ("slam",)
+    assert bp._entries[0].config["wait_ready_services"] == ("slam",)
 
 
 def test_bridge_external_service_plan_only_starts_needed_camera():

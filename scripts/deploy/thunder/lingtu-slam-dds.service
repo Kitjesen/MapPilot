@@ -20,7 +20,7 @@ Environment=LINGTU_SLAM_STATUS_JSON_HZ=10
 Environment=LINGTU_SLAM_CLOUD_SNAPSHOT_DIR=/dev/shm/lingtu_slam
 Environment=LINGTU_SLAM_CLOUD_SNAPSHOT_HZ=5
 Environment=LINGTU_CYCLONEDDS_PREFIX=
-ExecStart=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime --backend fastlio2 --mode mapping --config /opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml --domain-id 0 --tick-hz 50 --log-status-s 5 --status-json /tmp/lingtu_slam_status.json --status-json-hz 10 --cloud-snapshot-dir /dev/shm/lingtu_slam --cloud-snapshot-hz 5
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_slam_dds.sh
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

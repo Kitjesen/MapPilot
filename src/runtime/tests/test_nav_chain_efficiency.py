@@ -28,6 +28,21 @@ from nav.mission.navigation import Navigation
 from nav.services.plan.contracts import GLOBAL_PLAN_SCHEMA_VERSION
 
 
+def _identity_map_odom_tf() -> dict:
+    return {
+        "valid": True,
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0,
+    }
+
+
 # ===================================================================
 # Fake planners 茅聳?inject controlled last_plan_report into the chain
 # ===================================================================
@@ -488,6 +503,7 @@ class TestNavChainPathFollowerEfficiency:
         pf.cmd_vel._add_callback(cmd_vel_out.append)
 
         pf._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
+        pf._on_map_odom_tf(_identity_map_odom_tf())
         pf._on_path(Path(
             poses=[
                 PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
@@ -513,6 +529,7 @@ class TestNavChainPathFollowerEfficiency:
         pf.cmd_vel._add_callback(cmd_vel_out.append)
 
         pf._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
+        pf._on_map_odom_tf(_identity_map_odom_tf())
         pf._on_path(Path(
             poses=[
                 PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
@@ -531,7 +548,7 @@ class TestNavChainPathFollowerEfficiency:
         """PathFollower publishes alive=True when started, False when stopped."""
         from nav.local.path_follower import PathFollower
 
-        pf = PathFollower(backend="nav_kernel")
+        pf = PathFollower(backend="pid")
         pf.setup()
 
         alive_signals = []

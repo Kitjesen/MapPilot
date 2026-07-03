@@ -57,6 +57,7 @@ PRODUCT_SEMANTIC_CONFIG_KEYS: tuple[str, ...] = (
     "stuck_dist_thre",
     "downsample_dist",
     "path_follower_goal_tolerance",
+    "path_follower_native_max_accel",
     "local_planner_allow_direct_track_fallback",
     "local_planner_ignore_near_field_stop",
     "local_planner_direct_track_fallback_min_distance_m",

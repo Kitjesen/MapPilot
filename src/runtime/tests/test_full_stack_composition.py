@@ -113,6 +113,35 @@ def test_compose_full_stack_modules_can_disable_endpoint_host_services() -> None
     assert gateway_entry.config["manage_session_services"] is False
 
 
+def test_compose_full_stack_modules_honors_session_service_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("LINGTU_MANAGE_SESSION_SERVICES", "0")
+
+    bp = compose_full_stack_modules(
+        robot="stub",
+        driver_module="StubDogModule",
+        slam_profile="bridge",
+        detector="yoloe",
+        encoder="mobileclip",
+        llm="mock",
+        planner_backend="astar",
+        tomogram="",
+        gateway_port=5050,
+        enable_native=False,
+        enable_semantic=False,
+        enable_gateway=True,
+        enable_map_modules=False,
+        manage_external_services=False,
+        config={
+            "enable_device_manager": False,
+            "enable_robot_driver": False,
+            "localization_adapter": "dds_endpoint",
+        },
+    )
+    gateway_entry = next(entry for entry in bp._entries if entry.name == "GatewayModule")
+
+    assert gateway_entry.config["manage_session_services"] is False
+
+
 def test_compose_full_stack_modules_can_disable_local_lidar_driver() -> None:
     bp = compose_full_stack_modules(
         robot="thunder",

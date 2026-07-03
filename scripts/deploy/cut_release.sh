@@ -7,6 +7,7 @@
 # Default release gates are native-first:
 #   - LingTu native navigation kernel must be built.
 #   - OctoPlanner3D C++ headless executable must be available.
+#   - OctoPlanner3D PCD converter must be available for saved-map builds.
 #   - ROS 2 compatibility install packages are checked only when
 #     LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1.
 #
@@ -35,6 +36,7 @@ TARGET_DIR="$RELEASES_DIR/$VERSION"
 CURRENT_LINK="${LINGTU_CURRENT_LINK:-/opt/lingtu/current}"
 GATEWAY_URL="${LINGTU_GATEWAY_URL:-http://localhost:5050}"
 REQUIRE_OCTOPLANNER3D="${LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D:-1}"
+REQUIRE_OCTOMAP_CONVERTER="${LINGTU_RELEASE_REQUIRE_OCTOMAP_CONVERTER:-$REQUIRE_OCTOPLANNER3D}"
 REQUIRE_ROS2_COMPAT="${LINGTU_RELEASE_REQUIRE_ROS2_COMPAT:-0}"
 RESTART_ROS2_COMPAT="${LINGTU_RELEASE_RESTART_ROS2_COMPAT:-$REQUIRE_ROS2_COMPAT}"
 
@@ -138,6 +140,13 @@ require_native_artifacts() {
         exit 1
     fi
     OCTOMAP_CONVERTER_SOURCE="$(find_octomap_converter_executable)"
+    if [ "$REQUIRE_OCTOMAP_CONVERTER" = "1" ] \
+        && [ -z "$OCTOMAP_CONVERTER_SOURCE" ]; then
+        echo "ERROR: OctoMap PCD converter not found. Build it first:"
+        echo "  cd $DEV_DIR && bash scripts/build/build_octoplanner3d.sh --require-pcl"
+        echo "Or set LINGTU_RELEASE_REQUIRE_OCTOMAP_CONVERTER=0 for an explicit no-converter release."
+        exit 1
+    fi
 }
 
 require_ros2_compat_install() {
@@ -233,15 +242,31 @@ resolve_release_services() {
         return 0
     fi
 
+    local emitted=0
+    for candidate in \
+        lingtu-livox-dds.service \
+        lingtu-slam-dds.service \
+        lingtu-nav-dds.service; do
+        if unit_exists "$candidate"; then
+            printf '%s\n' "$candidate"
+            emitted=1
+        fi
+    done
+
     for candidate in \
         lingtu-thunder-dds-endpoint.service \
         lingtu-thunder-lite.service \
         lingtu.service; do
         if unit_exists "$candidate"; then
             emit_release_services "$candidate"
+            emitted=1
             return 0
         fi
     done
+
+    if [ "$emitted" = "1" ]; then
+        return 0
+    fi
 
     emit_release_services "lingtu-thunder-dds-endpoint.service"
 }
