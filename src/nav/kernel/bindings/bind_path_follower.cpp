@@ -38,7 +38,10 @@ void bind_path_follower(nb::module_& m) {
     .def(nb::init<>())
     .def_rw("vehicle_speed", &PathFollowerState::vehicleSpeed)
     .def_rw("path_point_id", &PathFollowerState::pathPointID)
-    .def_rw("nav_fwd", &PathFollowerState::navFwd);
+    .def_rw("last_path_point_id", &PathFollowerState::lastPathPointID)
+    .def_rw("last_path_size", &PathFollowerState::lastPathSize)
+    .def_rw("nav_fwd", &PathFollowerState::navFwd)
+    .def_rw("switch_time", &PathFollowerState::switchTime);
 
   nb::class_<PathFollowerOutput>(m, "PathFollowerOutput")
     .def(nb::init<>())

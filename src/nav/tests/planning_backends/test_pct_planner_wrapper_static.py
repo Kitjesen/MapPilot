@@ -4,7 +4,9 @@ from pathlib import Path
 
 
 NAV_ROOT = Path(__file__).resolve().parents[2]
-PCT_VENDOR_ROOT = NAV_ROOT / "planning" / "vendor"
+PCT_VENDOR_ROOT = (
+    NAV_ROOT / "services" / "plan" / "global_planner" / "algorithm" / "pct" / "vendor"
+)
 PCT_PLANNER_ROOT = PCT_VENDOR_ROOT / "pct_planner"
 
 

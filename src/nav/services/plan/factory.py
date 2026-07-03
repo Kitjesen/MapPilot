@@ -17,7 +17,9 @@ def create_planner_service(
     plan_safety_policy: str = "observe",
     fallback_planner_name: str = "",
     expected_saved_map_frame_id: str | None = None,
+    map_artifact_gate_required: bool | None = None,
     octoplanner3d_constraints: dict[str, Any] | None = None,
+    octoplanner3d_timeout_s: float | None = None,
 ) -> PlannerService:
     """Return the planner service for a runtime profile."""
 
@@ -47,5 +49,7 @@ def create_planner_service(
         plan_safety_policy=plan_safety_policy,
         fallback_planner_name=canonical_fallback_planner_name,
         expected_saved_map_frame_id=expected_saved_map_frame_id,
+        map_artifact_gate_required=map_artifact_gate_required,
         octoplanner3d_constraints=octoplanner3d_constraints,
+        octoplanner3d_timeout_s=octoplanner3d_timeout_s,
     )

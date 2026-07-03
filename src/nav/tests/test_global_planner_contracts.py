@@ -23,6 +23,7 @@ from nav.services.plan.global_planner.backend_runtime import (
 )
 from nav.services.plan.global_planner.service import GlobalPlanner
 from nav.services.plan.preview import PlanPreviewService
+from nav.services.safety.plan_safety import PlanSafetyGrid, evaluate_plan_safety
 
 
 class _Backend:
@@ -154,6 +155,38 @@ def test_plan_preview_exposes_global_plan_wire_payload():
     assert result["feasible"] is True
     assert result["global_plan"]["schema_version"] == GLOBAL_PLAN_SCHEMA_VERSION
     assert result["global_plan"]["path"] == [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+
+
+def test_plan_safety_ignores_start_footprint_but_blocks_later_obstacle():
+    grid = np.zeros((1, 12), dtype=float)
+    grid[0, 2] = 100.0
+    safety = PlanSafetyGrid(grid=grid, resolution=0.1, origin=(0.0, 0.0))
+    path = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+
+    result = evaluate_plan_safety(
+        path,
+        safety,
+        obstacle_thr=50.0,
+        max_step_m=0.1,
+        start_ignore_radius_m=0.25,
+    )
+
+    assert result["ok"] is True
+    assert result["ignored_start_sample_count"] == 1
+
+    grid[0, 7] = 100.0
+    blocked = evaluate_plan_safety(
+        path,
+        safety,
+        obstacle_thr=50.0,
+        max_step_m=0.1,
+        start_ignore_radius_m=0.25,
+    )
+
+    assert blocked["ok"] is False
+    assert blocked["ignored_start_sample_count"] == 1
+    assert blocked["blocked_sample_count"] == 1
+    assert blocked["blocked_samples"][0]["x"] == 0.7
 
 
 def test_reload_map_replays_live_safety_overlay_to_recreated_backend():

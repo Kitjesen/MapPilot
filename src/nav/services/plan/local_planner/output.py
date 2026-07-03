@@ -158,6 +158,9 @@ class LocalPlannerOutputMixin:
             "last_local_path_span_m": round(self._last_local_path_span_m, 3),
             "last_result": dict(self._last_result_diagnostics),
             "frame_status": dict(getattr(self, "_last_frame_status", {}) or {}),
+            "odometry_transform": dict(
+                getattr(self, "_last_odometry_transform_status", {}) or {}
+            ),
             "traversability": getattr(self, "_traversability_summary", lambda: {})(),
             "traversability_grid": dict(
                 getattr(self, "_last_traversability_grid_status", {}) or {}

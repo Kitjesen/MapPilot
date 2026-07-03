@@ -16,7 +16,10 @@ def repo_root_for_nav_kernel(anchor: str | Path | None = None) -> Path:
     start = here.parent if here.is_file() else here
 
     for parent in (start, *start.parents):
-        if (parent / "lingtu.py").exists() or (parent / "src").is_dir():
+        if (parent / "lingtu.py").exists() or (
+            (parent / "pyproject.toml").exists()
+            and (parent / "AGENTS.md").exists()
+        ):
             return parent
 
     if here.is_file():

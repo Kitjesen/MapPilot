@@ -54,7 +54,9 @@ class GlobalPlanner(
         plan_safety_policy: str = "observe",
         fallback_planner_name: str = "",
         expected_saved_map_frame_id: str | None = None,
+        map_artifact_gate_required: bool | None = None,
         octoplanner3d_constraints: dict[str, Any] | None = None,
+        octoplanner3d_timeout_s: float | None = None,
     ) -> None:
         self._planner_name = normalize_planner_name(planner_name) or "octoplanner3d"
         self._tomogram = tomogram
@@ -63,6 +65,8 @@ class GlobalPlanner(
         self._plan_safety_policy = plan_safety_policy
         self._fallback_planner_name = normalize_planner_name(fallback_planner_name)
         self._expected_saved_map_frame_id = expected_saved_map_frame_id
+        self._map_artifact_gate_required = map_artifact_gate_required
+        self._octoplanner3d_timeout_s = octoplanner3d_timeout_s
         self._octoplanner3d_constraints = normalize_octoplanner3d_constraints(
             octoplanner3d_constraints
         )
@@ -81,7 +85,12 @@ class GlobalPlanner(
     def _create_backend(self, name: str | None = None):
         name = normalize_planner_name(name or self._planner_name)
         map_path = self._backend_constructor_map_path(name)
-        backend = create_planner_backend(name, map_path, self._obstacle_thr)
+        backend = create_planner_backend(
+            name,
+            map_path,
+            self._obstacle_thr,
+            octoplanner3d_timeout_s=self._octoplanner3d_timeout_s,
+        )
         configure_backend(backend, name, self._octoplanner3d_constraints)
         load_static_occupancy_into_backend(backend, self._resolve_occupancy_path(map_path))
         return backend
@@ -555,6 +564,8 @@ class GlobalPlanner(
         self,
         start: np.ndarray,
         goal: np.ndarray,
+        *,
+        planner_constraints: dict[str, Any] | None = None,
     ) -> tuple[list[np.ndarray], float]:
         """Run the configured map-backed backend without live safety overlays.
 
@@ -583,8 +594,22 @@ class GlobalPlanner(
             }
             raise RuntimeError(f"GlobalPlanner: {reason}")
 
-        requested_goal = np.asarray(goal[:3], dtype=float).copy()
-        raw_path, plan_ms = self._plan_with_backend(self._backend, start, goal)
+        previous_constraints = dict(self._octoplanner3d_constraints)
+        override_constraints = normalize_octoplanner3d_constraints(planner_constraints)
+        if override_constraints:
+            self._octoplanner3d_constraints = {
+                **self._octoplanner3d_constraints,
+                **override_constraints,
+            }
+            configure_backend(self._backend, self._planner_name, self._octoplanner3d_constraints)
+
+        try:
+            requested_goal = np.asarray(goal[:3], dtype=float).copy()
+            raw_path, plan_ms = self._plan_with_backend(self._backend, start, goal)
+        finally:
+            if override_constraints:
+                self._octoplanner3d_constraints = previous_constraints
+                configure_backend(self._backend, self._planner_name, previous_constraints)
         reached_goal = bool(getattr(self._backend, "_last_plan_reached_goal", True))
         planner_diagnostics = backend_plan_diagnostics(self._backend)
         if not raw_path:
@@ -669,7 +694,15 @@ class GlobalPlanner(
     def _evaluate_path_safety(self, backend: Any, path: list) -> dict[str, Any] | None:
         if self._plan_safety_policy == "off":
             return None
-        return evaluate_backend_path_safety(path, backend, obstacle_thr=self._obstacle_thr)
+        start_ignore_radius_m = float(
+            self._octoplanner3d_constraints.get("robot_radius") or 0.35
+        )
+        return evaluate_backend_path_safety(
+            path,
+            backend,
+            obstacle_thr=self._obstacle_thr,
+            start_ignore_radius_m=start_ignore_radius_m,
+        )
 
     def _can_use_fallback_planner(self) -> bool:
         fallback = str(self._fallback_planner_name or "").strip().lower()

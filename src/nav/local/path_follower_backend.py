@@ -36,6 +36,7 @@ class NavKernelPathFollowerConfig:
     stop_yaw_rate_gain: float
     dir_diff_thre: float
     two_way_drive: bool
+    max_accel: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -87,7 +88,7 @@ def build_nav_kernel_path_follower(
         if config.max_yaw_rate is not None
         else 45.0
     )
-    params.max_accel = 1.0
+    params.max_accel = max(0.01, float(config.max_accel))
     if hasattr(params, "turn_speed_yaw_rate_start"):
         params.turn_speed_yaw_rate_start = config.turn_speed_yaw_rate_start
     if hasattr(params, "turn_speed_min_scale"):
@@ -137,6 +138,7 @@ def create_nav_kernel_path_follower_adapter_from_tuning(
     stop_yaw_rate_gain: float,
     dir_diff_thre: float,
     two_way_drive: bool,
+    native_max_accel: float = 1.0,
     importer: Callable[[tuple[str, ...]], Any | None] = try_import_nav_kernel,
     build_hint: Callable[[], str] = nav_kernel_build_hint,
 ) -> NavKernelPathFollowerAdapter:
@@ -153,6 +155,7 @@ def create_nav_kernel_path_follower_adapter_from_tuning(
             stop_yaw_rate_gain=stop_yaw_rate_gain,
             dir_diff_thre=dir_diff_thre,
             two_way_drive=two_way_drive,
+            max_accel=native_max_accel,
         ),
         importer=importer,
         build_hint=build_hint,

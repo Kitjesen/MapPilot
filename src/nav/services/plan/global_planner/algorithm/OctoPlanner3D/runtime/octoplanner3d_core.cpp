@@ -141,6 +141,26 @@ void applyPlannerOptions(
     planner.preblocked_costmap_weight_ = options.preblocked_costmap_weight;
   }
   planner.lowest_traversable_only_ = options.lowest_traversable_only;
+  if (std::isfinite(options.floor_change_penalty) && options.floor_change_penalty >= 0.0) {
+    planner.floor_change_penalty_ = options.floor_change_penalty;
+  }
+  if (std::isfinite(options.max_step_height) && options.max_step_height >= 0.0) {
+    planner.max_step_height_ = options.max_step_height;
+  }
+  if (std::isfinite(options.max_slope) && options.max_slope >= 0.0) {
+    planner.max_slope_ = options.max_slope;
+  }
+  planner.same_floor_preference_ = options.same_floor_preference;
+  if (std::isfinite(options.same_floor_z_tolerance) &&
+      options.same_floor_z_tolerance >= 0.0) {
+    planner.same_floor_z_tolerance_ = options.same_floor_z_tolerance;
+  }
+  planner.obstacle_clearance_radius_cells_ =
+    std::max(0, options.obstacle_clearance_radius_cells);
+  if (std::isfinite(options.obstacle_clearance_weight) &&
+      options.obstacle_clearance_weight >= 0.0) {
+    planner.obstacle_clearance_weight_ = options.obstacle_clearance_weight;
+  }
 }
 
 }  // namespace

@@ -28,6 +28,7 @@ class PathFollowerTuning:
     stop_yaw_rate_gain: float
     dir_diff_thre: float
     two_way_drive: bool
+    native_max_accel: float
 
 
 @dataclass(frozen=True)
@@ -99,23 +100,17 @@ def _setup_native_kernel(
         stop_yaw_rate_gain=tuning.stop_yaw_rate_gain,
         dir_diff_thre=tuning.dir_diff_thre,
         two_way_drive=tuning.two_way_drive,
+        native_max_accel=tuning.native_max_accel,
         **({"importer": importer} if importer is not None else {}),
     )
     if adapter.runtime is None:
         reason = adapter.degraded_reason or "compatible LingTu native navigation kernel missing"
-        if adapter.build_hint:
-            logger.info(
-                "PathFollower: LingTu native navigation kernel not found - using pid backend.\n"
-                "  To enable C++ path follower:\n  %s",
-                adapter.build_hint,
-            )
-        else:
-            logger.warning(
-                "PathFollower: native navigation kernel error: %s - using pid backend",
-                reason,
-            )
-        status.use("pid", reason=reason)
-        return _setup_pid(status, tuning.max_speed)
+        hint = f" To build: {adapter.build_hint}" if adapter.build_hint else ""
+        raise RuntimeError(
+            "PathFollower [nav_kernel]: "
+            f"{reason}. Rebuild the native kernel or explicitly choose "
+            f"backend='pid' for testing/fallback.{hint}"
+        )
 
     logger.info("PathFollower [nav_kernel]: C++ compute_control loaded")
     return PathFollowerRuntime(

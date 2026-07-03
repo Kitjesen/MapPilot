@@ -56,6 +56,19 @@ void bind_map_layers(nb::module_& m) {
     .def_rw("safe_distance", &TraversabilityParams::safeDistance)
     .def_rw("proximity_cap", &TraversabilityParams::proximityCap);
 
+  nb::class_<CmdVelCollisionParams>(m, "CmdVelCollisionParams")
+    .def(nb::init<>())
+    .def_rw("horizon_s", &CmdVelCollisionParams::horizonS)
+    .def_rw("step_s", &CmdVelCollisionParams::stepS)
+    .def_rw("stop_cost", &CmdVelCollisionParams::stopCost)
+    .def_rw("slow_cost", &CmdVelCollisionParams::slowCost);
+
+  nb::class_<CmdVelCollisionResult>(m, "CmdVelCollisionResult")
+    .def(nb::init<>())
+    .def_rw("action", &CmdVelCollisionResult::action)
+    .def_rw("reason", &CmdVelCollisionResult::reason)
+    .def_rw("max_cost", &CmdVelCollisionResult::maxCost);
+
   m.def("make_grid_2d", &makeGrid2D,
     nb::arg("rows"), nb::arg("cols"), nb::arg("resolution"),
     nb::arg("origin_x"), nb::arg("origin_y"), nb::arg("fill") = 0.0f);
@@ -69,6 +82,10 @@ void bind_map_layers(nb::module_& m) {
   m.def("fuse_traversability_cost", &fuseTraversabilityCost,
     nb::arg("costmap"), nb::arg("slope_deg"), nb::arg("esdf_distance"),
     nb::arg("terrain_risk"), nb::arg("params") = TraversabilityParams());
+  m.def("project_cmd_vel_collision", &projectCmdVelCollision,
+    nb::arg("costmap"), nb::arg("x"), nb::arg("y"), nb::arg("yaw"),
+    nb::arg("vx"), nb::arg("vy"), nb::arg("wz"),
+    nb::arg("params") = CmdVelCollisionParams());
 }
 
 }  // namespace lingtu_nav_kernel_bindings

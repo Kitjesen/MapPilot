@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "nav_kernel/path_follower_core.hpp"
+#include <algorithm>
 #include <cmath>
 
 using namespace nav_kernel;
@@ -74,6 +75,23 @@ TEST_F(PathFollowerStraight, CanAccelForward) {
   EXPECT_NEAR(out.dirDiff, 0.0, 0.01);
 }
 
+TEST_F(PathFollowerStraight, PersistsTargetIndexAndTracksPathSize) {
+  Vec3 robot{0.0, 0.0, 0.0};
+  auto out = computeControl(robot, 0.0, path, 1.0, 0.0, 1.0, 0, p, state);
+
+  EXPECT_TRUE(out.canAccel);
+  EXPECT_EQ(state.lastPathSize, static_cast<int>(path.size()));
+  EXPECT_EQ(state.lastPathPointID, state.pathPointID);
+  EXPECT_GT(state.pathPointID, 0);
+
+  std::vector<Vec3> shorter_path = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
+  computeControl(robot, 0.0, shorter_path, 1.0, 0.1, 1.0, 0, p, state);
+
+  EXPECT_EQ(state.lastPathSize, static_cast<int>(shorter_path.size()));
+  EXPECT_EQ(state.lastPathPointID, state.pathPointID);
+  EXPECT_LT(state.pathPointID, static_cast<int>(shorter_path.size()));
+}
+
 TEST_F(PathFollowerStraight, StopsAtGoal) {
   Vec3 robot{2.95, 0.0, 0.0};  // 接近终点
   auto out = computeControl(robot, 0.0, path, 1.0, 0.0, 1.0, 0, p, state);
@@ -83,9 +101,10 @@ TEST_F(PathFollowerStraight, StopsAtGoal) {
 
 TEST_F(PathFollowerStraight, SafetyStopLevel1) {
   Vec3 robot{0.0, 0.0, 0.0};
-  auto out = computeControl(robot, 0.0, path, 1.0, 0.0, 1.0, 1, p, state);
+  auto out = computeControl(robot, 0.4, path, 1.0, 0.0, 1.0, 1, p, state);
   // safetyStop=1: linear speed = 0, yaw rate preserved
   EXPECT_DOUBLE_EQ(state.vehicleSpeed, 0.0);
+  EXPECT_NE(out.cmd.wz, 0.0);
 }
 
 TEST_F(PathFollowerStraight, SafetyStopLevel2) {
@@ -263,4 +282,72 @@ TEST(PathFollowerEdge, SinglePointPath) {
   // pathSize <= 1 → joySpeed2 = 0, yawRate = 0
   EXPECT_DOUBLE_EQ(out.cmd.vx, 0.0);
   EXPECT_DOUBLE_EQ(out.cmd.wz, 0.0);
+}
+
+TEST(PathFollowerGroundTruth, FixedOffsetCommandMatchesGolden) {
+  PathFollowerParams p;
+  p.maxSpeed = 1.0;
+  p.maxAccel = 50.0;
+  p.maxYawRate = 90.0;
+  p.dirDiffThre = 1.5;
+  p.twoWayDrive = false;
+  PathFollowerState state;
+  state.vehicleSpeed = 1.0;
+
+  const std::vector<Vec3> path = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}};
+  const Vec3 robot{0.0, 0.2, 0.0};
+
+  auto out = computeControl(robot, 0.0, path, 1.0, 0.0, 1.0, 0, p, state);
+
+  EXPECT_TRUE(out.canAccel);
+  EXPECT_NEAR(out.dirDiff, 0.19739556, 1e-6);
+  EXPECT_NEAR(out.cmd.vx, 0.98058068, 1e-6);
+  EXPECT_NEAR(out.cmd.vy, -0.19611614, 1e-6);
+  EXPECT_NEAR(out.cmd.wz, -1.48046673, 1e-6);
+  EXPECT_NEAR(state.vehicleSpeed, 1.0, 1e-6);
+}
+
+TEST(PathFollowerGroundTruth, ClosedLoopSimulationConverges) {
+  PathFollowerParams p;
+  p.maxSpeed = 0.8;
+  p.maxAccel = 4.0;
+  p.maxYawRate = 90.0;
+  p.dirDiffThre = 0.6;
+  p.baseLookAheadDis = 0.35;
+  p.minLookAheadDis = 0.25;
+  p.maxLookAheadDis = 1.0;
+  p.twoWayDrive = false;
+  PathFollowerState state;
+
+  std::vector<Vec3> path;
+  for (int i = 0; i <= 50; ++i) {
+    path.push_back({0.1 * i, 0.0, 0.0});
+  }
+
+  Vec3 robot{0.0, 0.35, 0.0};
+  double yaw = 0.0;
+  double min_goal_distance = std::hypot(path.back().x - robot.x, path.back().y - robot.y);
+  double max_speed_seen = 0.0;
+  double max_yaw_seen = 0.0;
+  constexpr double dt = 0.01;
+
+  for (int tick = 0; tick < 1000; ++tick) {
+    auto out = computeControl(robot, yaw, path, 1.0, tick * dt, 1.0, 0, p, state);
+    max_speed_seen = std::max(max_speed_seen, std::hypot(out.cmd.vx, out.cmd.vy));
+    max_yaw_seen = std::max(max_yaw_seen, std::fabs(out.cmd.wz));
+
+    const double cos_yaw = std::cos(yaw);
+    const double sin_yaw = std::sin(yaw);
+    robot.x += (cos_yaw * out.cmd.vx - sin_yaw * out.cmd.vy) * dt;
+    robot.y += (sin_yaw * out.cmd.vx + cos_yaw * out.cmd.vy) * dt;
+    yaw += out.cmd.wz * dt;
+
+    const double goal_distance = std::hypot(path.back().x - robot.x, path.back().y - robot.y);
+    min_goal_distance = std::min(min_goal_distance, goal_distance);
+  }
+
+  EXPECT_LT(min_goal_distance, 0.35);
+  EXPECT_LT(std::fabs(robot.y), 0.12);
+  EXPECT_LE(max_speed_seen, p.maxSpeed + 1e-6);
+  EXPECT_LE(max_yaw_seen, p.maxYawRate * M_PI / 180.0 + 1e-6);
 }

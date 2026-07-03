@@ -30,7 +30,13 @@ except ImportError:
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from runtime.msgs.nav import OccupancyGrid, Odometry, Path
 from runtime.msgs.sensor import PointCloud2
-from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
+from runtime.runtime_interface import (
+    TOPICS,
+    body_frame_id,
+    map_frame_id,
+    odom_frame_id,
+    topic_default_frame_id,
+)
 
 # ---------------------------------------------------------------------------
 # 1. WaypointTracker
@@ -42,6 +48,21 @@ from nav.mission.tracking.waypoint_tracker import (
     EV_WAYPOINT_REACHED,
     WaypointTracker,
 )
+
+
+def _identity_map_odom_tf() -> dict[str, object]:
+    return {
+        "valid": True,
+        "frame_id": map_frame_id(),
+        "child_frame_id": odom_frame_id(),
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0,
+    }
 
 
 class TestWaypointTracker(unittest.TestCase):
@@ -339,7 +360,9 @@ class TestGlobalPlanner(unittest.TestCase):
                 np.array([2, 0, 0]), np.array([3, 0, 0]),
                 np.array([5, 0, 0]), np.array([7, 0, 0])]
         goal = np.array([7.0, 0.0, 0.0])
-        result = svc._downsample(path, goal)
+        from nav.services.plan.global_planner.postprocess import downsample_path
+
+        result = downsample_path(path, goal, svc._downsample_dist)
         np.testing.assert_array_almost_equal(result[-1], goal)
 
     def test_downsample_keeps_precise_goal_near_grid_center(self):
@@ -347,7 +370,9 @@ class TestGlobalPlanner(unittest.TestCase):
         path = [np.array([0.0, 0.0, 0.0]), np.array([0.95, 0.0, 0.0])]
         goal = np.array([1.0, 0.0, 0.0])
 
-        result = svc._downsample(path, goal)
+        from nav.services.plan.global_planner.postprocess import downsample_path
+
+        result = downsample_path(path, goal, svc._downsample_dist)
 
         np.testing.assert_array_almost_equal(result[-1], goal)
 
@@ -357,7 +382,9 @@ class TestGlobalPlanner(unittest.TestCase):
         svc = GlobalPlanner(downsample_dist=2.0)
         path = [np.array([float(i), 0, 0]) for i in range(20)]
         goal = np.array([19.0, 0.0, 0.0])
-        result = svc._downsample(path, goal)
+        from nav.services.plan.global_planner.postprocess import downsample_path
+
+        result = downsample_path(path, goal, svc._downsample_dist)
         # All interior segments should be >= 2.0
         for i in range(1, len(result) - 1):
             dist = np.linalg.norm(result[i] - result[i - 1])
@@ -391,6 +418,9 @@ class _FakeNavKernel:
             self.vehicle_speed = 0.0
             self.nav_fwd = 0
             self.pathPointID = 0
+            self.lastPathPointID = 0
+            self.lastPathSize = 0
+            self.switchTime = 0.0
 
     @staticmethod
     def compute_control(*_args):
@@ -580,7 +610,10 @@ class TestPathFollower(unittest.TestCase):
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
-        m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
+        m._on_odom(Odometry(
+            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+            frame_id="map",
+        ))
         m._on_path(Path(
             poses=[
                 PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
@@ -588,10 +621,13 @@ class TestPathFollower(unittest.TestCase):
             ],
             frame_id="map",
         ))
-        m._on_odom(Odometry(pose=Pose(position=Vector3(0.1, 0.0, 0.0))))
+        m._on_odom(Odometry(
+            pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
+            frame_id="map",
+        ))
 
-        self.assertGreater(outputs[-1].linear.x, 0.0)
-        self.assertGreater(outputs[-1].angular.z, 0.0)
+        self.assertAlmostEqual(outputs[-1].linear.x, 1.0)
+        self.assertAlmostEqual(outputs[-1].angular.z, 0.4)
 
         m._on_path(Path(poses=[], frame_id="map"))
 
@@ -615,7 +651,11 @@ class TestPathFollower(unittest.TestCase):
         m._nc_state.vehicle_speed = 1.7
         m._nc_state.nav_fwd = 1
         m._nc_state.pathPointID = 5
+        m._nc_state.lastPathPointID = 5
+        m._nc_state.lastPathSize = 10
+        m._nc_state.switchTime = 3.0
 
+        m._on_map_odom_tf(_identity_map_odom_tf())
         m._on_odom(Odometry(pose=Pose(position=Vector3(1.0, 0.0, 0.0)), ts=1.0))
         m._on_path(Path(
             poses=[
@@ -625,10 +665,40 @@ class TestPathFollower(unittest.TestCase):
             frame_id="map",
         ))
 
-        self.assertEqual(m._nc_state.vehicle_speed, 0.0)
+        self.assertEqual(m._nc_state.vehicle_speed, 1.7)
         self.assertEqual(m._nc_state.nav_fwd, 0)
         self.assertEqual(m._nc_state.pathPointID, 0)
+        self.assertEqual(m._nc_state.lastPathPointID, 0)
+        self.assertEqual(m._nc_state.lastPathSize, 0)
+        self.assertEqual(m._nc_state.switchTime, 0.0)
         self.assertEqual(len(m._nc_path), 2)
+
+    def test_nav_kernel_health_exposes_native_state(self):
+        from nav.local.path_follower import PathFollower
+
+        m = PathFollower(backend="nav_kernel")
+        m._nc = _FakeNavKernel
+        m._nc_params = object()
+        m._nc_state = _FakeNavKernel.PathFollowerState()
+        m._nc_state.vehicle_speed = 0.3
+        m._nc_state.nav_fwd = 1
+        m._nc_state.pathPointID = 4
+        m._nc_state.lastPathPointID = 5
+        m._nc_state.lastPathSize = 9
+        m._nc_state.switchTime = 12.5
+
+        h = m.health()["path_follower"]
+
+        self.assertEqual(h["vehicle_speed"], 0.3)
+        self.assertEqual(h["nav_fwd"], 1)
+        self.assertEqual(h["native_state"], {
+            "vehicle_speed": 0.3,
+            "path_point_id": 4,
+            "last_path_point_id": 5,
+            "last_path_size": 9,
+            "nav_fwd": 1,
+            "switch_time": 12.5,
+        })
 
     def test_nav_kernel_applies_local_planner_control_hint(self):
         from nav.local.path_follower import PathFollower
@@ -650,6 +720,7 @@ class TestPathFollower(unittest.TestCase):
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
+        m._on_map_odom_tf(_identity_map_odom_tf())
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)), ts=1.0))
         m._on_path(Path(
             poses=[
@@ -760,6 +831,7 @@ class TestPathFollower(unittest.TestCase):
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
+        m._on_map_odom_tf(_identity_map_odom_tf())
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)), ts=1.0))
         m._on_path(Path(
             poses=[
@@ -799,7 +871,10 @@ class TestPathFollower(unittest.TestCase):
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
-        m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
+        m._on_odom(Odometry(
+            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+            frame_id="map",
+        ))
         m._on_path(Path(
             poses=[
                 PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
@@ -807,12 +882,18 @@ class TestPathFollower(unittest.TestCase):
             ],
             frame_id="map",
         ))
-        m._on_odom(Odometry(pose=Pose(position=Vector3(0.1, 0.0, 0.0))))
+        m._on_odom(Odometry(
+            pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
+            frame_id="map",
+        ))
 
         self.assertGreater(outputs[-1].linear.x, 0.0)
         m._nc_state.vehicle_speed = 2.0
         m._nc_state.nav_fwd = 1
         m._nc_state.pathPointID = 4
+        m._nc_state.lastPathPointID = 4
+        m._nc_state.lastPathSize = 6
+        m._nc_state.switchTime = 2.0
 
         m._on_map_frame_jump({"dt_m": 1.0, "dyaw_deg": 20.0})
 
@@ -826,6 +907,47 @@ class TestPathFollower(unittest.TestCase):
         self.assertEqual(m._nc_state.vehicle_speed, 0.0)
         self.assertEqual(m._nc_state.nav_fwd, 0)
         self.assertEqual(m._nc_state.pathPointID, 0)
+        self.assertEqual(m._nc_state.lastPathPointID, 0)
+        self.assertEqual(m._nc_state.lastPathSize, 0)
+        self.assertEqual(m._nc_state.switchTime, 0.0)
+
+    def test_nav_kernel_preserves_speed_across_frequent_path_refresh(self):
+        from nav.local.path_follower import PathFollower
+
+        class AccelGateNavKernel(_FakeNavKernel):
+            @staticmethod
+            def compute_control(*args):
+                state = args[-1]
+                state.vehicle_speed += 0.01
+                vx = state.vehicle_speed if state.vehicle_speed > 0.01 else 0.0
+                return _FakeNavKernel.ControlOut(_FakeNavKernel.Cmd(vx, 0.0, 0.0))
+
+        m = PathFollower(backend="nav_kernel")
+        m._nc = AccelGateNavKernel
+        m._nc_params = object()
+        m._nc_state = AccelGateNavKernel.PathFollowerState()
+        outputs = []
+        m.cmd_vel._add_callback(outputs.append)
+
+        path = Path(
+            poses=[
+                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+            ],
+            frame_id="map",
+        )
+        m._on_odom(Odometry(
+            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+            frame_id="map",
+            ts=1.0,
+        ))
+
+        m._on_path(path)
+        self.assertEqual(outputs[-1].linear.x, 0.0)
+
+        m._on_path(path)
+        self.assertGreater(outputs[-1].linear.x, 0.0)
+        self.assertGreater(m._nc_state.vehicle_speed, 0.01)
 
     def test_pid_publishes_zero_when_path_is_cleared(self):
         from nav.local.path_follower import PathFollower
@@ -833,7 +955,10 @@ class TestPathFollower(unittest.TestCase):
         m = PathFollower(backend="pid")
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
-        m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
+        m._on_odom(Odometry(
+            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+            frame_id="map",
+        ))
 
         m._on_path(Path(
             poses=[
@@ -1914,6 +2039,52 @@ class TestSafetyRing(unittest.TestCase):
         self.assertGreater(len(safety_states), 0)
         self.assertEqual(safety_states[-1].level, 1)
         self.assertIn(1, stop_cmds)
+
+    def test_planning_path_without_cmd_vel_does_not_warn(self):
+        """Planning may publish a path before path follower emits cmd_vel."""
+        m = self._make_module(odom_timeout_ms=500.0, cmd_vel_timeout_ms=50.0)
+
+        poses = [
+            PoseStamped(pose=Pose(position=Vector3(0, 0, 0))),
+            PoseStamped(pose=Pose(position=Vector3(1, 0, 0))),
+        ]
+        m.path._deliver(Path(poses=poses, frame_id="map"))
+        m.mission_status._deliver({"state": "PLANNING"})
+
+        safety_states = []
+        stop_cmds = []
+        m.safety_state._add_callback(lambda s: safety_states.append(s))
+        m.stop_cmd._add_callback(lambda v: stop_cmds.append(v))
+
+        time.sleep(0.06)
+        m.odometry._deliver(self._make_odom())
+
+        self.assertGreater(len(safety_states), 0)
+        self.assertEqual(safety_states[-1].level, 0)
+        self.assertNotIn(1, stop_cmds)
+
+    def test_idle_mission_stale_path_without_cmd_vel_does_not_warn(self):
+        """A finished mission may leave a stale path without implying motion intent."""
+        m = self._make_module(odom_timeout_ms=500.0, cmd_vel_timeout_ms=50.0)
+
+        poses = [
+            PoseStamped(pose=Pose(position=Vector3(0, 0, 0))),
+            PoseStamped(pose=Pose(position=Vector3(1, 0, 0))),
+        ]
+        m.path._deliver(Path(poses=poses, frame_id="map"))
+        m.mission_status._deliver({"state": "IDLE"})
+
+        safety_states = []
+        stop_cmds = []
+        m.safety_state._add_callback(lambda s: safety_states.append(s))
+        m.stop_cmd._add_callback(lambda v: stop_cmds.append(v))
+
+        time.sleep(0.06)
+        m.odometry._deliver(self._make_odom())
+
+        self.assertGreater(len(safety_states), 0)
+        self.assertEqual(safety_states[-1].level, 0)
+        self.assertNotIn(1, stop_cmds)
 
 
 if __name__ == "__main__":

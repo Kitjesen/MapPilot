@@ -31,19 +31,23 @@ include(FetchContent)
 # OpenMP is optional and is used for terrain/scoring parallelization.
 find_package(OpenMP QUIET)
 
+add_library(${PROJECT_NAME} STATIC
+  src/path_follower_core.cpp)
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  $<INSTALL_INTERFACE:include/services/plan/local_planner/cpp>)
+set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(${PROJECT_NAME} PUBLIC OpenMP::OpenMP_CXX)
+endif()
+
 # Dual mode: ament_cmake for ROS 2, standalone for Windows/CI.
 if(DEFINED ENV{AMENT_PREFIX_PATH})
   # ROS 2 mode for S100P / sunrise aarch64.
   find_package(ament_cmake REQUIRED)
 
-  # Header-only library.
-  add_library(${PROJECT_NAME} INTERFACE)
-  target_include_directories(${PROJECT_NAME} INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-    $<INSTALL_INTERFACE:include/services/plan/local_planner/cpp>)
   if(OpenMP_CXX_FOUND)
-    target_link_libraries(${PROJECT_NAME} INTERFACE OpenMP::OpenMP_CXX)
     ament_export_dependencies(OpenMP)
   endif()
 
@@ -64,7 +68,7 @@ if(DEFINED ENV{AMENT_PREFIX_PATH})
     macro(nav_kernel_add_test target src)
       ament_add_gtest(${target} ${src})
       target_include_directories(${target} PRIVATE include)
-      target_link_libraries(${target} local_planner_cpp)
+      target_link_libraries(${target} ${PROJECT_NAME} local_planner_cpp)
       if(OpenMP_CXX_FOUND)
         target_link_libraries(${target} OpenMP::OpenMP_CXX)
       endif()
@@ -110,27 +114,27 @@ else()
 
   add_executable(test_path_follower_core tests/test_path_follower_core.cpp)
   target_include_directories(test_path_follower_core PRIVATE include)
-  target_link_libraries(test_path_follower_core GTest::gtest_main local_planner_cpp)
+  target_link_libraries(test_path_follower_core GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_path_follower_core)
 
   add_executable(test_pct_adapter_core tests/test_pct_adapter_core.cpp)
   target_include_directories(test_pct_adapter_core PRIVATE include)
-  target_link_libraries(test_pct_adapter_core GTest::gtest_main local_planner_cpp)
+  target_link_libraries(test_pct_adapter_core GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_pct_adapter_core)
 
   add_executable(test_param_sensitivity tests/test_param_sensitivity.cpp)
   target_include_directories(test_param_sensitivity PRIVATE include)
-  target_link_libraries(test_param_sensitivity GTest::gtest_main local_planner_cpp)
+  target_link_libraries(test_param_sensitivity GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_param_sensitivity)
 
   add_executable(test_path_edge_cases tests/test_path_edge_cases.cpp)
   target_include_directories(test_path_edge_cases PRIVATE include)
-  target_link_libraries(test_path_edge_cases GTest::gtest_main local_planner_cpp)
+  target_link_libraries(test_path_edge_cases GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_path_edge_cases)
 
   add_executable(test_benchmark tests/test_benchmark.cpp)
   target_include_directories(test_benchmark PRIVATE include)
-  target_link_libraries(test_benchmark GTest::gtest_main Taskflow local_planner_cpp)
+  target_link_libraries(test_benchmark GTest::gtest_main Taskflow ${PROJECT_NAME} local_planner_cpp)
   if(OpenMP_CXX_FOUND)
     target_link_libraries(test_benchmark OpenMP::OpenMP_CXX)
   endif()
@@ -138,19 +142,19 @@ else()
 
   add_executable(test_validation tests/test_validation.cpp)
   target_include_directories(test_validation PRIVATE include)
-  target_link_libraries(test_validation GTest::gtest_main local_planner_cpp)
+  target_link_libraries(test_validation GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_validation)
 
   add_executable(test_map_layers_core tests/test_map_layers_core.cpp)
   target_include_directories(test_map_layers_core PRIVATE include)
-  target_link_libraries(test_map_layers_core GTest::gtest_main local_planner_cpp)
+  target_link_libraries(test_map_layers_core GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_map_layers_core)
 
   option(NAV_KERNEL_BUILD_PYTHON_BINDINGS "Build nav_kernel Python bindings" OFF)
   if(NAV_KERNEL_BUILD_PYTHON_BINDINGS)
-    find_package(Python3 COMPONENTS Interpreter Development QUIET)
+    find_package(Python COMPONENTS Interpreter Development QUIET)
   endif()
-  if(NAV_KERNEL_BUILD_PYTHON_BINDINGS AND Python3_FOUND AND EXISTS "${Python3_INCLUDE_DIRS}/Python.h")
+  if(NAV_KERNEL_BUILD_PYTHON_BINDINGS AND Python_FOUND AND EXISTS "${Python_INCLUDE_DIRS}/Python.h")
     # nanobind replaces pybind11 for faster builds, smaller modules, and numpy zero-copy support.
     FetchContent_Declare(nanobind
       GIT_REPOSITORY https://github.com/wjakob/nanobind.git
@@ -166,7 +170,7 @@ else()
       bindings/bind_terrain.cpp)
     nanobind_add_module(lingtu_nav_kernel ${NAV_KERNEL_BINDING_SOURCES})
     target_include_directories(lingtu_nav_kernel PRIVATE include)
-    target_link_libraries(lingtu_nav_kernel PRIVATE local_planner_cpp)
+    target_link_libraries(lingtu_nav_kernel PRIVATE ${PROJECT_NAME} local_planner_cpp)
   elseif(NAV_KERNEL_BUILD_PYTHON_BINDINGS)
     message(WARNING "Skipping nav_kernel Python bindings because Python development headers were not found")
   endif()

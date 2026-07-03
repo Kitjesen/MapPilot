@@ -150,6 +150,7 @@ class TestLocalPlanner:
             "waypoint": PoseStamped,
             "global_path": Path,
             "clear_path": bool,
+            "map_odom_tf": dict,
             "map_frame_jump_event": dict,
             "boundary": PointCloud2,
             "added_obstacles": PointCloud2,
@@ -252,6 +253,7 @@ class TestPathFollower:
             "odometry": Odometry,
             "local_path": Path,
             "control_hint": dict,
+            "map_odom_tf": dict,
             "map_frame_jump_event": dict,
         }
         assert len(mod._ports_in) == len(expected_in), (

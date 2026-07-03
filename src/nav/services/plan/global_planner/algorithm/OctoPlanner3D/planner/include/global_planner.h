@@ -116,6 +116,12 @@ private:
 
   double getPreblockedCost(const GridIndex & idx) const;
 
+  void rebuildObstacleClearanceCostmap();
+
+  double getObstacleClearanceCost(const GridIndex & idx) const;
+
+  bool isMotionAllowed(const GridIndex & from, const GridIndex & to) const;
+
 //   void publishCellSetMarker(
 //     const std::unordered_set<GridIndex, GridIndexHash> & cells,
 //     const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr & publisher,
@@ -185,6 +191,13 @@ private:
   int preblocked_costmap_radius_cells_ = 3;
   double preblocked_costmap_weight_ = 1.5;
   bool lowest_traversable_only_ = false;
+  double floor_change_penalty_ = 4.0;
+  double max_step_height_ = 0.45;
+  double max_slope_ = 0.0;
+  bool same_floor_preference_ = true;
+  double same_floor_z_tolerance_ = 0.75;
+  int obstacle_clearance_radius_cells_ = 4;
+  double obstacle_clearance_weight_ = 2.0;
 
   bool map_ready_ = false;
   bool has_start_ = false;
@@ -208,6 +221,7 @@ private:
   std::unordered_set<GridIndex, GridIndexHash> preblocked_cells_;
   std::unordered_set<GridIndex, GridIndexHash> external_preblocked_cells_;
   std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;
+  std::unordered_map<GridIndex, double, GridIndexHash> obstacle_clearance_costmap_;
 };
 
 }  // namespace global_planner

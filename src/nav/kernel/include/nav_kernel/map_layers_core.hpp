@@ -122,6 +122,19 @@ struct TraversabilityParams {
   float proximityCap = 50.0f;
 };
 
+struct CmdVelCollisionParams {
+  double horizonS = 1.0;
+  double stepS = 0.1;
+  float stopCost = 99.0f;
+  float slowCost = 60.0f;
+};
+
+struct CmdVelCollisionResult {
+  int action = 0;  // 0=pass, 1=slowdown, 2=stop
+  int reason = 0;  // 0=clear, 1=near obstacle, 2=collision, 3=outside, 4=invalid
+  float maxCost = 0.0f;
+};
+
 inline float clampFloat(float v, float lo, float hi) {
   return std::max(lo, std::min(hi, v));
 }
@@ -502,6 +515,86 @@ inline Grid2D fuseTraversabilityCost(
     fused.data[idx] = clampFloat(fused.data[idx], 0.0f, 100.0f);
   }
   return fused;
+}
+
+inline float sampleGridCostAtWorld(
+    const Grid2D& grid,
+    double x,
+    double y,
+    bool& inside) {
+  inside = false;
+  const int col = static_cast<int>(std::floor((x - grid.originX) / grid.resolution));
+  const int row = static_cast<int>(std::floor((y - grid.originY) / grid.resolution));
+  if (row < 0 || row >= grid.rows || col < 0 || col >= grid.cols) {
+    return 0.0f;
+  }
+  inside = true;
+  const float cost = grid.data[static_cast<size_t>(grid.index(row, col))];
+  return std::isfinite(cost) ? clampFloat(cost, 0.0f, 100.0f) : 100.0f;
+}
+
+inline CmdVelCollisionResult projectCmdVelCollision(
+    const Grid2D& costmap,
+    double x,
+    double y,
+    double yaw,
+    double vx,
+    double vy,
+    double wz,
+    const CmdVelCollisionParams& params = CmdVelCollisionParams()) {
+  CmdVelCollisionResult result;
+  if (costmap.empty()) {
+    result.action = 2;
+    result.reason = 4;
+    return result;
+  }
+  costmap.validate("costmap");
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(yaw) ||
+      !std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(wz)) {
+    result.action = 2;
+    result.reason = 4;
+    return result;
+  }
+
+  const double horizon = std::max(0.05, params.horizonS);
+  const double step = std::max(0.02, params.stepS);
+  const float stopCost = clampFloat(params.stopCost, 0.0f, 100.0f);
+  const float slowCost = clampFloat(params.slowCost, 0.0f, stopCost);
+  const int steps = std::max(1, static_cast<int>(std::ceil(horizon / step)));
+
+  float maxCost = 0.0f;
+  for (int i = 0; i <= steps; ++i) {
+    if (i > 0) {
+      const double c = std::cos(yaw);
+      const double s = std::sin(yaw);
+      x += (c * vx - s * vy) * step;
+      y += (s * vx + c * vy) * step;
+      yaw += wz * step;
+    }
+
+    bool inside = false;
+    const float cost = sampleGridCostAtWorld(costmap, x, y, inside);
+    if (!inside) {
+      result.action = 2;
+      result.reason = 3;
+      result.maxCost = maxCost;
+      return result;
+    }
+    maxCost = std::max(maxCost, cost);
+    if (cost >= stopCost) {
+      result.action = 2;
+      result.reason = 2;
+      result.maxCost = cost;
+      return result;
+    }
+  }
+
+  result.maxCost = maxCost;
+  if (maxCost >= slowCost) {
+    result.action = 1;
+    result.reason = 1;
+  }
+  return result;
 }
 
 }  // namespace nav_kernel

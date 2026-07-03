@@ -45,6 +45,10 @@ from nav.services.plan.local_planner.obstacles import (
     merge_obstacle_clouds,
     traversability_grid_from_payload,
 )
+from nav.services.frame_transforms import (
+    is_map_frame_jump_event,
+    transform_xyz_yaw_with_map_odom,
+)
 from nav.services.plan.contracts import (
     LOCAL_PLANNER_BACKENDS,
     require_local_planner_backend,
@@ -87,6 +91,7 @@ class LocalPlanner(Module, LocalPlannerOutputMixin, layer=2):
     waypoint:    In[PoseStamped]
     global_path: In[Path]
     clear_path:  In[bool]
+    map_odom_tf: In[dict]
     map_frame_jump_event: In[dict]
     boundary:    In[PointCloud2]
     added_obstacles: In[PointCloud2]
@@ -155,6 +160,8 @@ class LocalPlanner(Module, LocalPlannerOutputMixin, layer=2):
         self._last_result_diagnostics: dict[str, Any] = {}
         self._last_traversability_grid_status: dict[str, Any] = {}
         self._input_frames: dict[str, str] = {}
+        self._map_odom_tf: dict[str, Any] | None = None
+        self._last_odometry_transform_status: dict[str, Any] = {}
         self._last_frame_status: dict[str, Any] = {
             "planning_frame": self._planning_frame_id,
             "ok": True,
@@ -182,6 +189,7 @@ class LocalPlanner(Module, LocalPlannerOutputMixin, layer=2):
         self.waypoint.subscribe(self._on_waypoint)
         self.global_path.subscribe(self._on_global_path)
         self.clear_path.subscribe(self._on_clear_path)
+        self.map_odom_tf.subscribe(self._on_map_odom_tf)
         self.map_frame_jump_event.subscribe(self._on_map_frame_jump)
         self.boundary.subscribe(self._on_boundary)
         self.boundary.set_policy("latest")
@@ -277,14 +285,35 @@ class LocalPlanner(Module, LocalPlannerOutputMixin, layer=2):
         self._publish_local_path([])
         return False
 
+    def _on_map_odom_tf(self, msg: dict) -> None:
+        if isinstance(msg, dict) and msg.get("valid") is not False:
+            self._map_odom_tf = dict(msg)
+        else:
+            self._map_odom_tf = None
+
     # ------------------------------------------------------------------ #
     # Input handlers                                                       #
     # ------------------------------------------------------------------ #
 
     def _on_odom(self, odom: Odometry):
-        self._record_input_frame("odometry", getattr(odom, "frame_id", None))
-        self._robot_pos = [odom.x, odom.y, getattr(odom, "z", 0.0)]
-        self._robot_yaw = getattr(odom, "yaw", 0.0)
+        source_frame = normalize_frame_id(getattr(odom, "frame_id", None))
+        pos, yaw, output_frame, transformed, reason = transform_xyz_yaw_with_map_odom(
+            [odom.x, odom.y, getattr(odom, "z", 0.0)],
+            getattr(odom, "yaw", 0.0),
+            source_frame=source_frame,
+            target_frame=self._planning_frame_id,
+            map_odom_tf=self._map_odom_tf,
+        )
+        self._record_input_frame("odometry", output_frame or source_frame)
+        self._last_odometry_transform_status = {
+            "source_frame": source_frame,
+            "target_frame": self._planning_frame_id,
+            "output_frame": output_frame,
+            "transformed": transformed,
+            "reason": reason,
+        }
+        self._robot_pos = pos
+        self._robot_yaw = float(yaw if yaw is not None else getattr(odom, "yaw", 0.0))
 
         if self._backend == "nanobind" and self._latest_waypoint is not None:
             if not self._ensure_frames_for_planning():
@@ -393,7 +422,7 @@ class LocalPlanner(Module, LocalPlannerOutputMixin, layer=2):
         self._publish_local_path([])
 
     def _on_map_frame_jump(self, event: dict) -> None:
-        if isinstance(event, dict):
+        if is_map_frame_jump_event(event):
             self._clear_local_plan()
 
     def _waypoint_goal(self, wp: PoseStamped) -> np.ndarray:

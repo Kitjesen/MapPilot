@@ -5,9 +5,14 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from nav.services.plan.global_planner.service import GlobalPlanner
 from sim.engine.scenarios.nav_corridor_assets import build_corridor_gap_assets
+
+pytestmark = pytest.mark.skip(
+    reason="legacy 2D astar backend was removed; product global planning uses OctoPlanner3D"
+)
 
 
 def test_corridor_gap_tomogram_forces_astar_detour(tmp_path):

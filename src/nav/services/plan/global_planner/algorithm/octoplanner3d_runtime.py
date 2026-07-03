@@ -195,6 +195,8 @@ class OctoPlanner3DRuntime:
             return env_value
 
         for local_candidate in OctoPlanner3DRuntime.local_build_candidates():
+            if os.name == "nt" and local_candidate.suffix.lower() != ".exe":
+                continue
             if local_candidate.is_file():
                 return str(local_candidate)
 
@@ -253,8 +255,17 @@ class OctoPlanner3DRuntime:
         return value
 
     @staticmethod
+    def repo_root() -> Path:
+        for parent in Path(__file__).resolve().parents:
+            if (parent / "lingtu.py").is_file():
+                return parent
+            if (parent / "pyproject.toml").is_file() and (parent / "AGENTS.md").is_file():
+                return parent
+        return Path(__file__).resolve().parents[6]
+
+    @staticmethod
     def local_build_candidates() -> list[Path]:
-        repo_root = Path(__file__).resolve().parents[7]
+        repo_root = OctoPlanner3DRuntime.repo_root()
         build_root = repo_root / "build" / "octoplanner3d_headless"
         candidates: list[Path] = []
         for name in DEFAULT_EXECUTABLE_NAMES:
@@ -265,8 +276,9 @@ class OctoPlanner3DRuntime:
 
     @staticmethod
     def local_wsl_build_candidates() -> list[Path]:
-        repo_root = Path(__file__).resolve().parents[7]
+        repo_root = OctoPlanner3DRuntime.repo_root()
         build_roots = (
+            repo_root / "build" / "octoplanner3d_headless",
             repo_root / "build" / "octoplanner3d_headless_wsl",
             repo_root / "build" / "octoplanner3d_headless_wsl_pcl",
         )

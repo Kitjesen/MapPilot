@@ -167,7 +167,11 @@ class SafetyRing(Module, layer=0):
     def _has_motion_intent(self) -> bool:
         mission = self._latest_mission or {}
         state = str(mission.get("state", "")).upper()
+        if state in {"PLANNING", "REPLANNING", "WAITING_FOR_PLAN"}:
+            return self._cmd_speed > self._stall_thr
         idle_states = {"", "IDLE", "SUCCESS", "DONE", "CANCELLED", "CANCELED", "FAILED", "ABORTED"}
+        if state and state in idle_states:
+            return self._cmd_speed > self._stall_thr
         return (
             state not in idle_states
             or self._path_points is not None

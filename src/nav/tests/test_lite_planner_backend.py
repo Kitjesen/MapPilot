@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.nav import Path as NavPath
 from nav.services.plan.contracts import GlobalPlanRequest, GlobalPlanResult
@@ -43,13 +45,11 @@ def test_direct_path_backend_uses_plan_request_contract() -> None:
 
 
 def test_direct_path_backend_rejects_nonfinite_goal() -> None:
-    backend = DirectPathBackend()
-
-    path = backend.plan(np.asarray([1.0, 2.0, 0.0]), np.asarray([float("nan"), 4.0, 0.0]))
-
-    assert path == []
-    assert backend._last_plan_reached_goal is False
-    assert "non-finite" in backend._last_plan_error
+    with pytest.raises(ValueError, match="goal must contain finite"):
+        GlobalPlanRequest(
+            start=np.asarray([1.0, 2.0, 0.0]),
+            goal=np.asarray([float("nan"), 4.0, 0.0]),
+        )
 
 
 def test_direct_path_backend_collapses_near_zero_route_to_goal() -> None:

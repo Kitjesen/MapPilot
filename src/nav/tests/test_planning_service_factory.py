@@ -92,6 +92,19 @@ def test_create_map_backed_planner_service_passes_octoplanner3d_constraints() ->
     assert status["octoplanner3d_constraints"]["preblocked_costmap_weight"] == 4.0
 
 
+def test_create_map_backed_planner_service_can_disable_saved_map_gate() -> None:
+    svc = create_planner_service(
+        planner_name="octoplanner3d",
+        map_artifact_gate_required=False,
+    )
+
+    gate = svc._validate_map_artifact_gate()
+
+    assert gate["required"] is False
+    assert gate["ok"] is True
+    assert gate["reason"] == "disabled_by_runtime_profile"
+
+
 def test_default_map_backed_service_setup_does_not_load_ros2_modules() -> None:
     script = (
         "import sys\n"

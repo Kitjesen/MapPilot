@@ -69,6 +69,7 @@ class TestLocalPlannerBackends:
             "waypoint": PoseStamped,
             "global_path": Path,
             "clear_path": bool,
+            "map_odom_tf": dict,
             "map_frame_jump_event": dict,
             "boundary": PointCloud2,
             "added_obstacles": PointCloud2,
@@ -100,6 +101,144 @@ class TestLocalPlannerBackends:
                 f"Out.{name}: expected {expected_type.__name__}, "
                 f"got {mod._ports_out[name].msg_type.__name__}"
             )
+
+    def test_nanobind_uses_map_odom_tf_for_odom_framed_pose(self) -> None:
+        """Local planner must not reject normal odom-frame SLAM pose."""
+        from nav.services.plan.local_planner.service import LocalPlanner
+
+        class FakeCore:
+            def set_vehicle(self, *_args):
+                pass
+
+            def set_goal(self, *_args):
+                pass
+
+            def plan(self, _obstacle_xyzi, _timestamp):
+                class Result:
+                    path = []
+                    path_found = False
+                    near_field_stop = False
+                    recovery_state = 0
+                    slow_down = 0
+
+                return Result()
+
+        mod = LocalPlanner(
+            backend="nanobind",
+            allow_direct_track_fallback=True,
+            direct_track_fallback_min_distance_m=0.05,
+            min_trackable_local_path_m=0.05,
+        )
+        mod._core = FakeCore()
+        mod._latest_waypoint = PoseStamped(
+            pose=Pose(
+                position=Vector3(4.0, 0.0, 0.0),
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+            frame_id="map",
+            ts=1.0,
+        )
+        paths: list[Path] = []
+        mod.local_path._add_callback(paths.append)
+        mod._on_map_odom_tf(
+            {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 1.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            }
+        )
+
+        mod._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
+                frame_id="odom",
+            )
+        )
+
+        assert mod.health()["local_planner"]["frame_status"]["ok"] is True
+        assert mod.health()["local_planner"]["odometry_transform"]["transformed"] is True
+        assert mod._robot_pos[0] == pytest.approx(3.0)
+        assert mod._last_result_diagnostics.get("reason") != "frame_mismatch"
+        assert paths and len(paths[-1].poses) >= 2
+
+    def test_map_odom_tf_payload_does_not_clear_local_plan(self) -> None:
+        """Only explicit frame-jump events may clear the active local path."""
+        from nav.services.plan.local_planner.service import LocalPlanner
+
+        mod = LocalPlanner(backend="simple")
+        paths: list[Path] = []
+        mod.local_path._add_callback(paths.append)
+        mod._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        mod._on_waypoint(
+            PoseStamped(
+                pose=Pose(
+                    position=Vector3(1.0, 0.0, 0.0),
+                    orientation=Quaternion(0, 0, 0, 1),
+                ),
+                frame_id="map",
+            )
+        )
+
+        assert mod._latest_waypoint is not None
+        assert paths and len(paths[-1].poses) >= 2
+
+        mod._on_map_frame_jump(
+            {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            }
+        )
+
+        assert mod._latest_waypoint is not None
+        assert len(paths[-1].poses) >= 2
+
+        mod._on_map_frame_jump(
+            {
+                "source": "slam_runtime",
+                "reason": "tracking",
+                "map_frame_jump": False,
+                "state": "TRACKING",
+            }
+        )
+
+        assert mod._latest_waypoint is not None
+        assert len(paths[-1].poses) >= 2
+
+        mod._on_map_frame_jump({"dt_m": 0.0, "dyaw_deg": 0.0})
+
+        assert mod._latest_waypoint is not None
+        assert len(paths[-1].poses) >= 2
+
+        mod._on_map_frame_jump(
+            {"type": "map_frame_jump", "dt_m": 0.0, "dyaw_deg": 0.0}
+        )
+
+        assert mod._latest_waypoint is not None
+        assert len(paths[-1].poses) >= 2
+
+        mod._on_map_frame_jump({"type": "map_frame_jump", "dt_m": 1.0})
+        assert mod._latest_waypoint is None
+        assert paths[-1].poses == []
 
     # ------------------------------------------------------------------ #
     # Lifecycle (simple backend)

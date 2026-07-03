@@ -22,8 +22,9 @@ PATH_START_INSERT_MAX_M = 2.0
 
 
 class _MapOnlyPreviewPlanner:
-    def __init__(self, planner: Any) -> None:
+    def __init__(self, planner: Any, planner_constraints: dict[str, Any] | None = None) -> None:
         self._planner = planner
+        self._planner_constraints = dict(planner_constraints or {})
 
     @property
     def is_ready(self) -> bool:
@@ -60,7 +61,11 @@ class _MapOnlyPreviewPlanner:
 
     def plan_request(self, request: GlobalPlanRequest) -> GlobalPlanResult:
         try:
-            path, plan_ms = self._planner.plan_map_only(request.start, request.goal)
+            path, plan_ms = self._planner.plan_map_only(
+                request.start,
+                request.goal,
+                planner_constraints=self._planner_constraints,
+            )
         except Exception as exc:
             report = self.last_plan_report
             return GlobalPlanResult(
@@ -93,6 +98,7 @@ class NavigationPlanningMixin:
         z: float = 0.0,
         *,
         map_only: bool = False,
+        planner_constraints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return a client-facing path preview without changing mission state."""
         frame_blocker = self._frame_contract.planning_frame_blocker(
@@ -101,7 +107,7 @@ class NavigationPlanningMixin:
         )
         planner = self._planner_svc
         if map_only and hasattr(self._planner_svc, "plan_map_only"):
-            planner = _MapOnlyPreviewPlanner(self._planner_svc)
+            planner = _MapOnlyPreviewPlanner(self._planner_svc, planner_constraints)
         return self._plan_preview.preview(
             planner=planner,
             start=self._robot_pos,

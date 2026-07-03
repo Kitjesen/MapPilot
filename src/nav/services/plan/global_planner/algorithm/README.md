@@ -135,7 +135,15 @@ The executable protocol is JSON over stdin/stdout. Inputs:
     "enable_preblocked_costmap": true,
     "preblocked_costmap_radius_cells": 3,
     "preblocked_costmap_weight": 2.5,
-    "lowest_traversable_only": false
+    "lowest_traversable_only": false,
+    "floor_change_penalty": 6.0,
+    "max_step_height": 0.35,
+    "max_slope": 0.0,
+    "same_floor_preference": true,
+    "same_floor_z_tolerance": 0.75,
+    "max_same_floor_z_excursion": 2.0,
+    "obstacle_clearance_radius_cells": 4,
+    "obstacle_clearance_weight": 3.0
   }
 }
 ```
@@ -155,7 +163,9 @@ Input fields:
   traversability checks for collision/traversal decisions.
 - `options`: C++ OctoPlanner3D options. LingTu product profiles set the
   quadruped bounding radius and terrain-support constraints here; the C++
-  wrapper applies them before calling `GlobalPlanner::setOctomap()`.
+  wrapper applies them before calling `GlobalPlanner::setOctomap()`. The
+  vertical-motion and clearance fields keep routes away from walls/edges and
+  reject same-floor plans that climb through unrelated floors.
 
 Output:
 

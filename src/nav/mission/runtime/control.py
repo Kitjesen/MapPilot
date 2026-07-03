@@ -7,6 +7,7 @@ import time
 
 from nav.mission.model.geometry import distance_xyz_or_xy, point_summary
 from nav.mission.model.state import MissionEvent, MissionState
+from nav.services.frame_transforms import is_map_frame_jump_event
 from runtime.msgs.geometry import PoseStamped, Twist
 from runtime.msgs.numpy_compat import np
 
@@ -377,7 +378,7 @@ class NavigationControlMixin:
         so it remains valid; ESDF / OccupancyGrid handle their own clear via
         their own subscription to this event.
         """
-        if not isinstance(event, dict):
+        if not is_map_frame_jump_event(event):
             return
         dt_m = event.get("dt_m", 0.0)
         dyaw = event.get("dyaw_deg", 0.0)

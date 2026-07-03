@@ -52,20 +52,39 @@ DEFAULT_PLANNER_CONSTRAINTS: dict[str, Any] = {
     "preblocked_costmap_radius_cells": 3,
     "preblocked_costmap_weight": 2.5,
     "lowest_traversable_only": False,
+    "floor_change_penalty": 4.0,
+    "max_step_height": 0.45,
+    "max_slope": 0.0,
+    "same_floor_preference": True,
+    "same_floor_z_tolerance": 0.75,
+    "max_same_floor_z_excursion": 2.0,
+    "obstacle_clearance_radius_cells": 4,
+    "obstacle_clearance_weight": 2.0,
 }
-FLOAT_CONSTRAINT_KEYS = {"robot_radius", "preblocked_costmap_weight"}
+FLOAT_CONSTRAINT_KEYS = {
+    "robot_radius",
+    "preblocked_costmap_weight",
+    "floor_change_penalty",
+    "max_step_height",
+    "max_slope",
+    "same_floor_z_tolerance",
+    "max_same_floor_z_excursion",
+    "obstacle_clearance_weight",
+}
 INT_CONSTRAINT_KEYS = {
     "max_iterations",
     "snap_search_radius_cells",
     "ground_support_xy_radius_cells",
     "ground_support_depth_cells",
     "preblocked_costmap_radius_cells",
+    "obstacle_clearance_radius_cells",
 }
 BOOL_CONSTRAINT_KEYS = {
     "require_ground_support",
     "strict_direct_ground_support",
     "enable_preblocked_costmap",
     "lowest_traversable_only",
+    "same_floor_preference",
 }
 PLANNER_INPUT_SCHEMA = {
     "map_source": {
@@ -143,6 +162,14 @@ PLANNER_INPUT_SCHEMA = {
             "preblocked_costmap_radius_cells": "Preblocked risk dilation radius in cells.",
             "preblocked_costmap_weight": "Additional cost weight for preblocked-risk cells.",
             "lowest_traversable_only": "Restrict candidate cells to the lowest traversable layer.",
+            "floor_change_penalty": "Extra A* cost per meter of vertical motion.",
+            "max_step_height": "Reject one-step vertical changes above this height in meters; 0 disables.",
+            "max_slope": "Reject segment dz/dxy above this value; 0 disables.",
+            "same_floor_preference": "When start/goal are near the same z layer, penalize leaving that layer.",
+            "same_floor_z_tolerance": "Start/goal z difference treated as same-floor below this value.",
+            "max_same_floor_z_excursion": "Reject same-floor plans whose z range exceeds this value.",
+            "obstacle_clearance_radius_cells": "Cells around occupied voxels used to create a soft clearance cost.",
+            "obstacle_clearance_weight": "Additional cost weight for the soft obstacle-clearance costmap.",
         },
     },
 }
@@ -203,8 +230,8 @@ def normalize_constraints(options: Mapping[str, Any] | None) -> dict[str, Any]:
                 raise ValueError(f"{key} must be finite")
             if key == "robot_radius" and float_value <= 0.0:
                 raise ValueError("robot_radius must be positive")
-            if key == "preblocked_costmap_weight" and float_value < 0.0:
-                raise ValueError("preblocked_costmap_weight must be non-negative")
+            if key != "robot_radius" and float_value < 0.0:
+                raise ValueError(f"{key} must be non-negative")
             normalized[key] = float_value
     return normalized
 

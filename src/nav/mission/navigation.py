@@ -165,6 +165,14 @@ class Navigation(
         octoplanner3d_preblocked_costmap_radius_cells: int | None = None,
         octoplanner3d_preblocked_costmap_weight: float | None = None,
         octoplanner3d_lowest_traversable_only: bool | None = None,
+        octoplanner3d_floor_change_penalty: float | None = None,
+        octoplanner3d_max_step_height: float | None = None,
+        octoplanner3d_max_slope: float | None = None,
+        octoplanner3d_same_floor_preference: bool | None = None,
+        octoplanner3d_same_floor_z_tolerance: float | None = None,
+        octoplanner3d_max_same_floor_z_excursion: float | None = None,
+        octoplanner3d_obstacle_clearance_radius_cells: int | None = None,
+        octoplanner3d_obstacle_clearance_weight: float | None = None,
         accept_partial_goal_progress: bool = False,
         partial_goal_repeat_ignore_window_s: float = 5.0,
         defer_empty_path_planning_failure: bool = False,
@@ -173,6 +181,7 @@ class Navigation(
         replan_on_costmap_update: bool | None = None,
         auto_resume_after_teleop: bool = False,
         allow_path_start_insert: bool = False,
+        octoplanner3d_timeout_s: float | None = None,
         **kw,
     ):
         if "enable_ros2_bridge" in kw:
@@ -229,6 +238,7 @@ class Navigation(
             kw.get("expected_saved_map_frame_id", planning_frame_id)
             or planning_frame_id
         )
+        map_artifact_gate_required = kw.get("map_artifact_gate_required")
         octoplanner3d_constraints = {
             "robot_radius": octoplanner3d_robot_radius,
             "max_iterations": octoplanner3d_max_iterations,
@@ -243,6 +253,16 @@ class Navigation(
             ),
             "preblocked_costmap_weight": octoplanner3d_preblocked_costmap_weight,
             "lowest_traversable_only": octoplanner3d_lowest_traversable_only,
+            "floor_change_penalty": octoplanner3d_floor_change_penalty,
+            "max_step_height": octoplanner3d_max_step_height,
+            "max_slope": octoplanner3d_max_slope,
+            "same_floor_preference": octoplanner3d_same_floor_preference,
+            "same_floor_z_tolerance": octoplanner3d_same_floor_z_tolerance,
+            "max_same_floor_z_excursion": octoplanner3d_max_same_floor_z_excursion,
+            "obstacle_clearance_radius_cells": (
+                octoplanner3d_obstacle_clearance_radius_cells
+            ),
+            "obstacle_clearance_weight": octoplanner3d_obstacle_clearance_weight,
         }
 
         self._planner_svc: PlannerService = create_planner_service(
@@ -253,7 +273,9 @@ class Navigation(
             plan_safety_policy=plan_safety_policy,
             fallback_planner_name=fallback_planner_name,
             expected_saved_map_frame_id=expected_saved_map_frame_id,
+            map_artifact_gate_required=map_artifact_gate_required,
             octoplanner3d_constraints=octoplanner3d_constraints,
+            octoplanner3d_timeout_s=octoplanner3d_timeout_s,
         )
         self._tracker = WaypointTracker(
             threshold=waypoint_threshold,

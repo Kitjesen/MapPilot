@@ -97,7 +97,7 @@ def planner_preview_report_fields(planner: Any) -> dict[str, Any]:
         or status.get("backend")
         or planner_service_name(planner)
     )
-    return {
+    fields = {
         "planner": selected or planner_service_name(planner),
         "selected_planner": selected,
         "plan_safety_policy": (
@@ -107,6 +107,12 @@ def planner_preview_report_fields(planner: Any) -> dict[str, Any]:
         "fallback_reason": report.get("fallback_reason", ""),
         "rejected_plans": list(report.get("rejected_plans") or []),
     }
+    diagnostics = report.get("planner_diagnostics")
+    if isinstance(diagnostics, dict):
+        fields["planner_diagnostics"] = dict(diagnostics)
+    if "reached_goal" in report:
+        fields["reached_goal"] = bool(report.get("reached_goal"))
+    return fields
 
 
 def planner_backend_status(planner: Any) -> dict[str, Any]:
@@ -372,6 +378,13 @@ class PlanPreviewService:
             if goal_delta > 0.05
             else None
         )
+        report = planner_last_plan_report(planner)
+        reported_reached_goal = report.get("reached_goal")
+        reached_goal = (
+            bool(reported_reached_goal)
+            if isinstance(reported_reached_goal, bool)
+            else adjusted_goal is None
+        )
 
         result.update({
             "feasible": True,
@@ -383,7 +396,7 @@ class PlanPreviewService:
             "global_plan": GlobalPlanResult(
                 path=path_arrays,
                 plan_ms=plan_ms_value,
-                reached_goal=adjusted_goal is None,
+                reached_goal=reached_goal,
                 frame_id=frame_id,
                 adjusted_goal=final if adjusted_goal is not None else None,
                 diagnostics={"source": "navigation_preview"},

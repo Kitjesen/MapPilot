@@ -23,6 +23,14 @@ struct PlannerOptions {
   int preblocked_costmap_radius_cells{3};
   double preblocked_costmap_weight{2.5};
   bool lowest_traversable_only{false};
+  double floor_change_penalty{4.0};
+  double max_step_height{0.45};
+  double max_slope{0.0};
+  bool same_floor_preference{true};
+  double same_floor_z_tolerance{0.75};
+  double max_same_floor_z_excursion{2.0};
+  int obstacle_clearance_radius_cells{4};
+  double obstacle_clearance_weight{2.0};
 };
 
 struct PlanRequest {

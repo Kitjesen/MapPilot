@@ -114,7 +114,7 @@ class TestAutonomyPipeline:
         pf = system.get_module("nav.path_follower")
 
         # Pre-load robot position via odometry
-        odom = Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)))
+        odom = Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)), frame_id="map")
         lp.odometry._deliver(odom)
 
         # Inject a clear waypoint â?simple backend generates straight-line path
@@ -157,7 +157,7 @@ class TestAutonomyPipeline:
         tm.map_cloud._deliver(PointCloud2(points=pts))
 
         # Step 2: Inject odometry to both LocalPlanner and PathFollower
-        odom = Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)))
+        odom = Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)), frame_id="map")
         lp.odometry._deliver(odom)
         pf.odometry._deliver(odom)
 

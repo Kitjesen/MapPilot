@@ -31,6 +31,7 @@ LOCAL_PLAN_PORT_CONTRACT: dict[str, tuple[str, str]] = {
     "waypoint": ("In", "PoseStamped"),
     "global_path": ("In", "Path"),
     "clear_path": ("In", "bool"),
+    "map_odom_tf": ("In", "dict"),
     "map_frame_jump_event": ("In", "dict"),
     "boundary": ("In", "PointCloud2"),
     "added_obstacles": ("In", "PointCloud2"),

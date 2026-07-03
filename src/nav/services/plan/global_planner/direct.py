@@ -160,3 +160,6 @@ class MaplessDirectPlannerService:
         if self._backend is not None:
             self._backend._tomogram_path = self._tomogram
         return {"ok": True, "backend": self.planner_name, "mode": "mapless_direct"}
+
+    def reload_map(self, map_path: str = "") -> dict[str, Any]:
+        return self.reload_tomogram(map_path)

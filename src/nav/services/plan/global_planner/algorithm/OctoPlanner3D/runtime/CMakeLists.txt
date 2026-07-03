@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(octoplanner3d_runtime LANGUAGES CXX)
+include(CTest)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(OCTOPLANNER3D_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." CACHE PATH "Path to the local OctoPlanner3D source")
+option(OCTOPLANNER3D_REQUIRE_PCL "Require the PCL-backed octoplanner3d_pcd_to_octomap target" OFF)
 
 if(NOT EXISTS "${OCTOPLANNER3D_SOURCE_DIR}/planner/include/global_planner.h")
   message(FATAL_ERROR "OCTOPLANNER3D_SOURCE_DIR must point to a checkout with planner/include/global_planner.h: ${OCTOPLANNER3D_SOURCE_DIR}")
@@ -34,9 +36,13 @@ if(PCL_FOUND)
   if(EXISTS "${OCTOPLANNER3D_PCD_CONVERTER_HEADER}" AND EXISTS "${OCTOPLANNER3D_PCD_CONVERTER_SOURCE}")
     set(OCTOPLANNER3D_ENABLE_PCD ON)
     message(STATUS "PCL found: enabling .pcd -> OctoMap conversion in octoplanner3d_headless")
+  elseif(OCTOPLANNER3D_REQUIRE_PCL)
+    message(FATAL_ERROR "OCTOPLANNER3D_REQUIRE_PCL=ON but OctoPlanner3D PCD converter source/header is missing")
   else()
     message(WARNING "PCL found but OctoPlanner3D PCD converter source/header missing: building octoplanner3d_headless with .bt OctoMap input support only")
   endif()
+elseif(OCTOPLANNER3D_REQUIRE_PCL)
+  message(FATAL_ERROR "OCTOPLANNER3D_REQUIRE_PCL=ON but PCL common/io/octree was not found")
 else()
   message(WARNING "PCL not found: building octoplanner3d_headless with .bt OctoMap input support only")
 endif()
@@ -124,6 +130,23 @@ set_target_properties(octoplanner3d_edit_octomap PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 
+add_executable(octoplanner3d_make_test_octomap make_test_octomap.cpp)
+target_link_libraries(octoplanner3d_make_test_octomap
+  PRIVATE
+    octomap_vendor
+    octomath_vendor
+)
+set_target_properties(octoplanner3d_make_test_octomap PROPERTIES
+  BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
+  INSTALL_RPATH "$ORIGIN"
+)
+if(BUILD_TESTING)
+  add_test(
+    NAME octoplanner3d_make_test_octomap_smoke
+    COMMAND octoplanner3d_make_test_octomap
+      --output "${CMAKE_CURRENT_BINARY_DIR}/octoplanner3d_test_gap.bt")
+endif()
+
 if(OCTOPLANNER3D_ENABLE_PCD)
   add_executable(octoplanner3d_pcd_to_octomap pcd_to_octomap.cpp)
   target_link_libraries(octoplanner3d_pcd_to_octomap
@@ -136,7 +159,11 @@ if(OCTOPLANNER3D_ENABLE_PCD)
   )
 endif()
 
-install(TARGETS octoplanner3d_headless octoplanner3d_edit_octomap RUNTIME DESTINATION bin)
+install(TARGETS
+  octoplanner3d_headless
+  octoplanner3d_edit_octomap
+  octoplanner3d_make_test_octomap
+  RUNTIME DESTINATION bin)
 if(OCTOPLANNER3D_ENABLE_PCD)
   install(TARGETS octoplanner3d_pcd_to_octomap RUNTIME DESTINATION bin)
 endif()

@@ -224,11 +224,27 @@ class OctoPlanner3DPlanner:
             )
             return []
 
+        z_report = self._same_floor_z_report(path, start_xyz, goal_xyz)
+        if not z_report["same_floor_ok"]:
+            self._last_plan_error = "same-floor plan has excessive z excursion"
+            self._last_plan_reached_goal = False
+            diagnostics = result_diagnostics(result)
+            diagnostics.update(z_report)
+            self._last_plan_diagnostics = self._base_diagnostics(
+                stage="z_excursion_rejected",
+                available=True,
+                start_xyz=jsonable_point(start_xyz),
+                goal_xyz=jsonable_point(goal_xyz),
+                **diagnostics,
+            )
+            return []
+
         self._last_plan_error = ""
         self._last_plan_reached_goal = bool(result.get("reached_goal", True))
         diagnostics = result_diagnostics(result)
         diagnostics.setdefault("path_points", len(path))
         diagnostics.setdefault("goal_reached", self._last_plan_reached_goal)
+        diagnostics.update(z_report)
         self._last_plan_diagnostics = self._base_diagnostics(
             stage="cxx_plan_success",
             available=True,
@@ -249,6 +265,38 @@ class OctoPlanner3DPlanner:
             resolution=self._resolution,
             origin=self._origin,
         )
+
+    def _same_floor_z_report(
+        self,
+        path: list[np.ndarray],
+        start_xyz: np.ndarray,
+        goal_xyz: np.ndarray,
+    ) -> dict[str, Any]:
+        constraints = self._planner_constraints
+        if not bool(constraints.get("same_floor_preference", True)):
+            return {"same_floor_ok": True, "same_floor_check": "disabled"}
+        tolerance = float(constraints.get("same_floor_z_tolerance", 0.75))
+        max_excursion = float(constraints.get("max_same_floor_z_excursion", 2.0))
+        start_goal_dz = abs(float(goal_xyz[2] - start_xyz[2]))
+        if start_goal_dz > tolerance or max_excursion <= 0.0:
+            return {
+                "same_floor_ok": True,
+                "same_floor_check": "not_same_floor",
+                "start_goal_dz_m": start_goal_dz,
+            }
+        z_values = [float(point[2]) for point in path]
+        z_min = min(z_values)
+        z_max = max(z_values)
+        z_range = z_max - z_min
+        return {
+            "same_floor_ok": z_range <= max_excursion,
+            "same_floor_check": "checked",
+            "start_goal_dz_m": start_goal_dz,
+            "path_z_min_m": z_min,
+            "path_z_max_m": z_max,
+            "path_z_range_m": z_range,
+            "max_same_floor_z_excursion_m": max_excursion,
+        }
 
     def _base_diagnostics(self, **extra: Any) -> dict[str, Any]:
         runtime_path = self._runtime_map_path()

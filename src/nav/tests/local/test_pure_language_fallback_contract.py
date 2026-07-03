@@ -1,8 +1,8 @@
 ﻿"""Default local autonomy fallbacks must stay inside the process.
 
-The product path prefers nanobind/C++ kernels, but a missing optional
-``lingtu_nav_kernel`` extension must degrade to ROS-free Python/runtimes rather
-than resurrecting legacy NativeModule subprocesses.
+The product path prefers nanobind/C++ kernels.  Missing native product
+backends must fail fast or use explicit ROS-free Python test backends, never
+resurrect legacy NativeModule subprocesses.
 """
 
 from __future__ import annotations
@@ -252,11 +252,12 @@ def test_default_autonomy_fallback_chain_never_uses_native_module(
     terrain.setup()
     with pytest.raises(RuntimeError, match="compatible LingTu native navigation kernel missing"):
         local_planner.setup()
-    path_follower.setup()
+    with pytest.raises(RuntimeError, match="compatible LingTu native navigation kernel missing"):
+        path_follower.setup()
 
     assert terrain._backend == "simple"
     assert local_planner._backend == "nanobind"
-    assert path_follower._backend == "pid"
+    assert path_follower._backend == "nav_kernel"
 
 
 def test_legacy_ros2_autonomy_backend_names_are_rejected() -> None:

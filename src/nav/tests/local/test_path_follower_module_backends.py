@@ -64,6 +64,7 @@ class TestPathFollowerBackends:
             "odometry": Odometry,
             "local_path": Path,
             "control_hint": dict,
+            "map_odom_tf": dict,
             "map_frame_jump_event": dict,
         }
         assert len(mod._ports_in) == len(expected_in), (
@@ -107,11 +108,120 @@ class TestPathFollowerBackends:
         assert mod._running
 
         mod.stop()
+
+    def test_pid_backend_transforms_odom_pose_into_map_path_frame(self) -> None:
+        """Map-framed local paths must be tracked from odom-framed SLAM pose."""
+        from nav.local.path_follower import PathFollower
+
+        mod = PathFollower(backend="pid")
+        mod.setup()
+        cmd_values: list[Twist] = []
+        mod.cmd_vel._add_callback(cmd_values.append)
+        mod._on_map_odom_tf(
+            {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 1.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            }
+        )
+        mod._on_path(
+            Path(
+                poses=[
+                    PoseStamped(
+                        pose=Pose(position=Vector3(1.0, 0.0, 0.0)),
+                        frame_id="map",
+                    ),
+                    PoseStamped(
+                        pose=Pose(position=Vector3(2.0, 0.0, 0.0)),
+                        frame_id="map",
+                    ),
+                ],
+                frame_id="map",
+            )
+        )
+
+        mod._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="odom",
+            )
+        )
+
+        health = mod.health()["path_follower"]
+        assert health["frames"]["robot_pose_frame"] == "map"
+        assert health["frames"]["odometry_transform"]["transformed"] is True
+        assert cmd_values[-1].linear.x > 0.0
         assert not mod._running
 
         # stop is idempotent
         mod.stop()
         assert not mod._running
+
+    def test_map_odom_tf_payload_does_not_reset_path_tracking(self) -> None:
+        """Only explicit frame-jump events may reset path follower state."""
+        from nav.local.path_follower import PathFollower
+
+        mod = PathFollower(backend="pid")
+        mod.setup()
+        path = Path(
+            poses=[
+                PoseStamped(
+                    pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                    frame_id="map",
+                ),
+                PoseStamped(
+                    pose=Pose(position=Vector3(1.0, 0.0, 0.0)),
+                    frame_id="map",
+                ),
+            ],
+            frame_id="map",
+        )
+        mod._on_path(path)
+        assert mod._path_points is not None
+
+        mod._on_map_frame_jump(
+            {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            }
+        )
+
+        assert mod._path_points is not None
+
+        mod._on_map_frame_jump(
+            {
+                "source": "slam_runtime",
+                "reason": "tracking",
+                "map_frame_jump": False,
+                "state": "TRACKING",
+            }
+        )
+
+        assert mod._path_points is not None
+
+        mod._on_map_frame_jump(
+            {"type": "map_frame_jump", "dt_m": 0.0, "dyaw_deg": 0.0}
+        )
+
+        assert mod._path_points is not None
+
+        mod._on_map_frame_jump({"type": "map_frame_jump", "dt_m": 1.0})
+        assert mod._path_points is None
 
     def test_pid_backend_alive_toggles(self) -> None:
         """alive Out[bool] publishes True on start(), False on stop()."""
@@ -260,6 +370,7 @@ class TestPathFollowerBackends:
             lookahead=1.2,
             goal_tolerance=0.3,
             max_yaw_rate=0.6,
+            native_max_accel=8.0,
             two_way_drive=False,
         )
         mod.setup()
@@ -272,6 +383,7 @@ class TestPathFollowerBackends:
                 "max_yaw_rate": 0.6,
                 "turn_speed_yaw_rate_start": 0.0,
                 "turn_speed_min_scale": 1.0,
+                "native_max_accel": 8.0,
                 "yaw_rate_gain": 7.5,
                 "stop_yaw_rate_gain": 7.5,
                 "dir_diff_thre": 0.1,
@@ -282,13 +394,12 @@ class TestPathFollowerBackends:
         assert mod._nc_params is sentinel_params
         assert mod._nc_state is sentinel_state
 
-    def test_nav_kernel_setup_falls_back_to_pid_without_nav_kernel(self, monkeypatch) -> None:
-        """Default path follower must degrade to a ROS-free Python runtime."""
+    def test_nav_kernel_setup_fails_without_nav_kernel(self, monkeypatch) -> None:
+        """Default path follower must fail fast when native nav_kernel is missing."""
         from nav.local import path_follower as module_under_test
         from nav.local import path_follower_runtime as runtime_under_test
         from nav.local.path_follower_backend import (
             NavKernelPathFollowerAdapter,
-            PidFallbackParams,
         )
 
         def fake_create_nav_kernel_path_follower_adapter_from_tuning(**_tuning):
@@ -298,41 +409,25 @@ class TestPathFollowerBackends:
                 build_hint="build nav core",
             )
 
-        def fake_read_pid_fallback_params(max_speed: float) -> PidFallbackParams:
-            return PidFallbackParams(
-                k_v=0.8,
-                l_min=0.35,
-                l_max=2.4,
-                a_max=1.2,
-                v_max=max_speed,
-                loaded_from_config=False,
-            )
-
         monkeypatch.setattr(
             runtime_under_test,
             "create_nav_kernel_path_follower_adapter_from_tuning",
             fake_create_nav_kernel_path_follower_adapter_from_tuning,
-        )
-        monkeypatch.setattr(
-            runtime_under_test,
-            "read_pid_fallback_params",
-            fake_read_pid_fallback_params,
         )
 
         mod = module_under_test.PathFollower(
             backend="nav_kernel",
             max_speed=0.75,
         )
-        mod.setup()
+        with pytest.raises(RuntimeError, match="compatible LingTu native navigation kernel missing"):
+            mod.setup()
 
-        assert mod._backend == "pid"
+        assert mod._backend == "nav_kernel"
         assert mod._backend_status.configured == "nav_kernel"
-        assert mod._backend_status.effective == "pid"
-        assert mod._backend_status.degraded is True
-        assert mod._backend_status.degraded_reason == "compatible LingTu native navigation kernel missing"
+        assert mod._backend_status.effective == "nav_kernel"
+        assert mod._backend_status.degraded is False
+        assert mod._backend_status.degraded_reason == ""
         assert mod._nc is None
-        assert mod._pp_k_v == 0.8
-        assert mod._pp_v_max == 0.75
 
     def test_pid_setup_uses_adapter_owned_params(self, monkeypatch) -> None:
         """pid setup should read fallback params through the adapter helper."""

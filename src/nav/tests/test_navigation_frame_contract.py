@@ -871,6 +871,54 @@ def test_navigation_clears_motion_before_replanning_after_map_frame_jump():
     assert waypoints[-1].frame_id == "map"
 
 
+def test_navigation_ignores_plain_map_odom_tf_on_jump_event_port():
+    nav = Navigation()
+    nav._planner_svc = _RecordingPlanner()
+    clears: list[bool] = []
+    zeros = []
+    paths: list[list[np.ndarray]] = []
+    nav.clear_path._add_callback(clears.append)
+    nav.recovery_cmd_vel._add_callback(zeros.append)
+    nav.global_path._add_callback(paths.append)
+    nav._on_odom(Odometry(
+        pose=Pose(position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion()),
+        frame_id="map",
+    ))
+    nav._state = "EXECUTING"
+    nav._goal = np.array([2.0, 0.0, 0.0])
+    nav._tracker.reset([np.array([2.0, 0.0, 0.0])], nav._robot_pos)
+
+    nav._on_map_frame_jump({
+        "valid": True,
+        "frame_id": "map",
+        "child_frame_id": "odom",
+        "tx": 0.0,
+        "ty": 0.0,
+        "tz": 0.0,
+        "qx": 0.0,
+        "qy": 0.0,
+        "qz": 0.0,
+        "qw": 1.0,
+    })
+
+    assert clears == []
+    assert zeros == []
+    assert paths == []
+    assert nav._state == "EXECUTING"
+
+    nav._on_map_frame_jump({
+        "type": "map_frame_jump",
+        "dt_m": 0.0,
+        "dyaw_deg": 0.0,
+        "reason": "relocalized_same_pose",
+    })
+
+    assert clears == []
+    assert zeros == []
+    assert paths == []
+    assert nav._state == "EXECUTING"
+
+
 def test_navigation_passes_safe_goal_tolerance_to_planner_service():
     nav = Navigation(safe_goal_tolerance=0.0)
     planner = _RecordingPlanner()

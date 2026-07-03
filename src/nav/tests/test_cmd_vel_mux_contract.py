@@ -9,7 +9,8 @@ from __future__ import annotations
 import time
 import unittest
 
-from runtime.msgs.geometry import Twist, Vector3
+from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
+from runtime.msgs.nav import Odometry
 from runtime.stream import In, Out
 
 
@@ -24,6 +25,34 @@ class TestVelocityMuxContract(unittest.TestCase):
     def _twist(vx: float = 0.0, vy: float = 0.0, wz: float = 0.0) -> Twist:
         return Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz))
 
+    @staticmethod
+    def _odom(x: float = 0.0, y: float = 0.0, yaw: float = 0.0) -> Odometry:
+        return Odometry(
+            pose=Pose(
+                position=Vector3(x, y, 0.0),
+                orientation=Quaternion.from_yaw(yaw),
+            )
+        )
+
+    @staticmethod
+    def _costmap(cost: float = 0.0) -> dict:
+        grid = [[0.0 for _ in range(5)] for _ in range(5)]
+        grid[2][3] = cost
+        return {"grid": grid, "resolution": 1.0, "origin": [-2.0, -2.0]}
+
+    def _make_collision_mux(self, **kwargs):
+        from nav.services.safety.velocity_mux import VelocityMux
+
+        mux = VelocityMux(
+            source_timeout=5.0,
+            enable_collision_monitor=True,
+            collision_monitor_horizon_s=1.0,
+            collision_monitor_step_s=0.5,
+            **kwargs,
+        )
+        mux.setup()
+        return mux
+
     def test_ports_in(self):
         """Must declare input ports for all 4 velocity sources."""
         m = self._make()
@@ -31,8 +60,16 @@ class TestVelocityMuxContract(unittest.TestCase):
         self.assertIn("visual_servo_cmd_vel", m.ports_in)
         self.assertIn("recovery_cmd_vel", m.ports_in)
         self.assertIn("path_follower_cmd_vel", m.ports_in)
-        for port_name in ("teleop_cmd_vel", "visual_servo_cmd_vel",
-                          "recovery_cmd_vel", "path_follower_cmd_vel"):
+        self.assertIn("collision_odometry", m.ports_in)
+        self.assertIn("collision_costmap", m.ports_in)
+        for port_name in (
+            "teleop_cmd_vel",
+            "visual_servo_cmd_vel",
+            "recovery_cmd_vel",
+            "path_follower_cmd_vel",
+            "collision_odometry",
+            "collision_costmap",
+        ):
             self.assertIsInstance(m.ports_in[port_name], In)
 
     def test_ports_out(self):
@@ -95,6 +132,32 @@ class TestVelocityMuxContract(unittest.TestCase):
         self.assertGreaterEqual(len(driver_twists), 1)
         self.assertAlmostEqual(driver_twists[-1].linear.x, 0.8)
         self.assertAlmostEqual(driver_twists[-1].angular.z, 0.5)
+
+    def test_zero_autonomy_command_releases_source(self):
+        m = self._make(source_timeout=5.0)
+        m.setup()
+        driver_twists = []
+        m.driver_cmd_vel._add_callback(driver_twists.append)
+
+        m._on_source("recovery", self._twist(vx=0.2))
+        self.assertEqual(m.health()["active_source"], "recovery")
+
+        m._on_source("recovery", Twist.zero())
+
+        health = m.health()
+        self.assertEqual(health["active_source"], "none")
+        self.assertFalse(health["sources"]["recovery"]["active"])
+        self.assertTrue(driver_twists[-1].is_zero())
+
+    def test_teleop_zero_keeps_manual_source_active(self):
+        m = self._make(source_timeout=5.0)
+        m.setup()
+
+        m._on_source("teleop", Twist.zero())
+
+        health = m.health()
+        self.assertEqual(health["active_source"], "teleop")
+        self.assertTrue(health["sources"]["teleop"]["active"])
 
     def test_timeout_fallthrough(self):
         """When the active source times out, next highest priority must take over."""
@@ -209,6 +272,72 @@ class TestVelocityMuxContract(unittest.TestCase):
 
         winner = m._select_active(now)
         self.assertEqual(winner, "")
+
+    def test_collision_monitor_passes_clear_projected_motion(self):
+        m = self._make_collision_mux()
+        driver_twists = []
+        m.driver_cmd_vel._add_callback(driver_twists.append)
+
+        m._on_odometry(self._odom())
+        m._on_costmap(self._costmap(0.0))
+        m._on_source("teleop", self._twist(vx=1.0))
+
+        self.assertAlmostEqual(driver_twists[-1].linear.x, 1.0)
+        self.assertEqual(m.health()["collision_monitor"]["action"], "pass")
+
+    def test_collision_monitor_stops_projected_collision(self):
+        m = self._make_collision_mux()
+        driver_twists = []
+        m.driver_cmd_vel._add_callback(driver_twists.append)
+
+        m._on_odometry(self._odom())
+        m._on_costmap(self._costmap(100.0))
+        m._on_source("teleop", self._twist(vx=1.0))
+
+        self.assertTrue(driver_twists[-1].is_zero())
+        monitor = m.health()["collision_monitor"]
+        self.assertEqual(monitor["action"], "stop")
+        self.assertEqual(monitor["reason"], "projected_collision")
+
+    def test_collision_monitor_slows_near_obstacle(self):
+        m = self._make_collision_mux(collision_monitor_slowdown_scale=0.25)
+        driver_twists = []
+        m.driver_cmd_vel._add_callback(driver_twists.append)
+
+        m._on_odometry(self._odom())
+        m._on_costmap(self._costmap(70.0))
+        m._on_source("teleop", self._twist(vx=1.0))
+
+        self.assertAlmostEqual(driver_twists[-1].linear.x, 0.25)
+        self.assertEqual(m.health()["collision_monitor"]["action"], "slowdown")
+
+    def test_collision_monitor_stops_without_costmap(self):
+        m = self._make_collision_mux()
+        driver_twists = []
+        m.driver_cmd_vel._add_callback(driver_twists.append)
+
+        m._on_odometry(self._odom())
+        m._on_source("teleop", self._twist(vx=1.0))
+
+        self.assertTrue(driver_twists[-1].is_zero())
+        monitor = m.health()["collision_monitor"]
+        self.assertEqual(monitor["action"], "stop")
+        self.assertEqual(monitor["reason"], "costmap_missing")
+
+    def test_collision_monitor_rechecks_when_costmap_changes(self):
+        m = self._make_collision_mux()
+        driver_twists = []
+        m.driver_cmd_vel._add_callback(driver_twists.append)
+
+        m._on_odometry(self._odom())
+        m._on_costmap(self._costmap(0.0))
+        m._on_source("teleop", self._twist(vx=1.0))
+        self.assertAlmostEqual(driver_twists[-1].linear.x, 1.0)
+
+        m._on_costmap(self._costmap(100.0))
+
+        self.assertTrue(driver_twists[-1].is_zero())
+        self.assertEqual(m.health()["collision_monitor"]["reason"], "projected_collision")
 
 
 if __name__ == "__main__":

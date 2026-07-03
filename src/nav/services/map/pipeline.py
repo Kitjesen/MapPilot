@@ -51,6 +51,8 @@ class MapPipelineService:
         map_artifact_converter_command: Any = None,
         octomap_build_mode: str = "external_pcl_converter",
         octomap_resolution: float = 0.20,
+        octomap_free_layers_above: int = 3,
+        octomap_free_dilation_cells: int = 1,
         octomap_build_timeout_sec: float = 60.0,
         build_octomap_on_save: bool = True,
     ) -> None:
@@ -61,6 +63,8 @@ class MapPipelineService:
         self.map_artifact_converter_command = map_artifact_converter_command
         self.octomap_build_mode = str(octomap_build_mode or "external_pcl_converter")
         self.octomap_resolution = float(octomap_resolution)
+        self.octomap_free_layers_above = int(octomap_free_layers_above)
+        self.octomap_free_dilation_cells = int(octomap_free_dilation_cells)
         self.octomap_build_timeout_sec = float(octomap_build_timeout_sec)
         self.build_octomap_on_save = bool(build_octomap_on_save)
 
@@ -587,6 +591,8 @@ class MapPipelineService:
                 use_env_converter=True,
                 build_mode=self.octomap_build_mode,
                 resolution=self.octomap_resolution,
+                free_layers_above=self.octomap_free_layers_above,
+                free_dilation_cells=self.octomap_free_dilation_cells,
                 frame_id=topic_default_frame_id(TOPICS.saved_map_cloud),
                 source_profile=self.source_profile,
                 data_source=self.runtime_data_source,

@@ -33,6 +33,14 @@ _OCTOPLANNER3D_CONSTRAINT_KEYS = {
     "preblocked_costmap_radius_cells",
     "preblocked_costmap_weight",
     "lowest_traversable_only",
+    "floor_change_penalty",
+    "max_step_height",
+    "max_slope",
+    "same_floor_preference",
+    "same_floor_z_tolerance",
+    "max_same_floor_z_excursion",
+    "obstacle_clearance_radius_cells",
+    "obstacle_clearance_weight",
 }
 
 
@@ -55,14 +63,24 @@ def normalize_octoplanner3d_constraints(
     }
 
 
-def create_planner_backend(name: str, map_path: str, obstacle_thr: float) -> Any:
+def create_planner_backend(
+    name: str,
+    map_path: str,
+    obstacle_thr: float,
+    *,
+    octoplanner3d_timeout_s: float | None = None,
+) -> Any:
     canonical = normalize_planner_name(name)
     if canonical == "octoplanner3d":
         from nav.services.plan.global_planner.algorithm.octoplanner3d_planner import (
             OctoPlanner3DPlanner,
         )
 
-        backend = OctoPlanner3DPlanner(map_path, obstacle_thr)
+        backend = OctoPlanner3DPlanner(
+            map_path,
+            obstacle_thr,
+            timeout_s=octoplanner3d_timeout_s,
+        )
     elif canonical == "pct":
         from nav.services.plan.global_planner.algorithm.pct.planner import PCTPlanner
 

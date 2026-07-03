@@ -133,7 +133,9 @@ class MapService(Module, MapServiceFacadeMixin, layer=6):
             octomap_build_mode=str(
                 config.get("octomap_build_mode") or "external_pcl_converter"
             ).strip(),
-            octomap_resolution=float(config.get("octomap_resolution", 0.20)),
+            octomap_resolution=float(config.get("octomap_resolution", 0.15)),
+            octomap_free_layers_above=int(config.get("octomap_free_layers_above", 3)),
+            octomap_free_dilation_cells=int(config.get("octomap_free_dilation_cells", 0)),
             octomap_build_timeout_sec=float(
                 config.get("octomap_build_timeout_sec", 60.0)
             ),

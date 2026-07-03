@@ -83,3 +83,36 @@ TEST(MapLayersCore, FusedCostPreservesHardCellsAndUsesRiskLayers) {
   EXPECT_GE(fused.data[static_cast<size_t>(fused.index(1, 2))], 37.0f);
   EXPECT_FLOAT_EQ(fused.data[static_cast<size_t>(fused.index(2, 2))], 80.0f);
 }
+
+TEST(MapLayersCore, ProjectCmdVelCollisionStopsOnHardProjectedCell) {
+  Grid2D cost = makeGrid2D(5, 5, 1.0, -2.0, -2.0, 0.0f);
+  cost.data[static_cast<size_t>(cost.index(2, 3))] = 100.0f;
+
+  CmdVelCollisionParams params;
+  params.horizonS = 1.0;
+  params.stepS = 0.5;
+  params.stopCost = 99.0f;
+
+  const auto result = projectCmdVelCollision(cost, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, params);
+
+  EXPECT_EQ(result.action, 2);
+  EXPECT_EQ(result.reason, 2);
+  EXPECT_GE(result.maxCost, 99.0f);
+}
+
+TEST(MapLayersCore, ProjectCmdVelCollisionSlowsOnSoftProjectedCell) {
+  Grid2D cost = makeGrid2D(5, 5, 1.0, -2.0, -2.0, 0.0f);
+  cost.data[static_cast<size_t>(cost.index(2, 3))] = 70.0f;
+
+  CmdVelCollisionParams params;
+  params.horizonS = 1.0;
+  params.stepS = 0.5;
+  params.stopCost = 99.0f;
+  params.slowCost = 60.0f;
+
+  const auto result = projectCmdVelCollision(cost, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, params);
+
+  EXPECT_EQ(result.action, 1);
+  EXPECT_EQ(result.reason, 1);
+  EXPECT_FLOAT_EQ(result.maxCost, 70.0f);
+}

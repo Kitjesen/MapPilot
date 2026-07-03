@@ -317,6 +317,38 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     body,
     "lowest_traversable_only",
     options.lowest_traversable_only);
+  options.floor_change_penalty = optionalDouble(
+    body,
+    "floor_change_penalty",
+    options.floor_change_penalty);
+  options.max_step_height = optionalDouble(
+    body,
+    "max_step_height",
+    options.max_step_height);
+  options.max_slope = optionalDouble(
+    body,
+    "max_slope",
+    options.max_slope);
+  options.same_floor_preference = optionalBool(
+    body,
+    "same_floor_preference",
+    options.same_floor_preference);
+  options.same_floor_z_tolerance = optionalDouble(
+    body,
+    "same_floor_z_tolerance",
+    options.same_floor_z_tolerance);
+  options.max_same_floor_z_excursion = optionalDouble(
+    body,
+    "max_same_floor_z_excursion",
+    options.max_same_floor_z_excursion);
+  options.obstacle_clearance_radius_cells = optionalInt(
+    body,
+    "obstacle_clearance_radius_cells",
+    options.obstacle_clearance_radius_cells);
+  options.obstacle_clearance_weight = optionalDouble(
+    body,
+    "obstacle_clearance_weight",
+    options.obstacle_clearance_weight);
 }
 
 PlanRequest parseRequest(const std::string & json)
@@ -353,7 +385,18 @@ void emitConstraints(const PlannerOptions & options)
             << "\"preblocked_costmap_weight\":"
             << options.preblocked_costmap_weight << ','
             << "\"lowest_traversable_only\":"
-            << (options.lowest_traversable_only ? "true" : "false")
+            << (options.lowest_traversable_only ? "true" : "false") << ','
+            << "\"floor_change_penalty\":" << options.floor_change_penalty << ','
+            << "\"max_step_height\":" << options.max_step_height << ','
+            << "\"max_slope\":" << options.max_slope << ','
+            << "\"same_floor_preference\":"
+            << (options.same_floor_preference ? "true" : "false") << ','
+            << "\"same_floor_z_tolerance\":" << options.same_floor_z_tolerance << ','
+            << "\"max_same_floor_z_excursion\":"
+            << options.max_same_floor_z_excursion << ','
+            << "\"obstacle_clearance_radius_cells\":"
+            << options.obstacle_clearance_radius_cells << ','
+            << "\"obstacle_clearance_weight\":" << options.obstacle_clearance_weight
             << '}';
 }
 

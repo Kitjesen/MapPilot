@@ -32,6 +32,7 @@ namespace global_planner
         rebuildPreblockedCells();
         rebuildDerivedLayers();
         rebuildPreblockedCostmap();
+        rebuildObstacleClearanceCostmap();
     }
 
     void GlobalPlanner::makePlan(const PointPose start,const PointPose goal)
@@ -77,6 +78,7 @@ namespace global_planner
 
     bool GlobalPlanner::startPlan()
     {
+        planner_results_.clear();
         const double robot_radius = robot_radius_;
         const int max_iterations = max_iterations_;
         const int snap_radius = snap_search_radius_cells_;
@@ -86,6 +88,12 @@ namespace global_planner
         const int support_depth_cells = ground_support_depth_cells_;
         const bool enable_preblocked_costmap =  enable_preblocked_costmap_;
         const double preblocked_costmap_weight = preblocked_costmap_weight_;
+        const double floor_change_penalty = floor_change_penalty_;
+        const bool same_floor_preference = same_floor_preference_;
+        const double same_floor_z_tolerance = same_floor_z_tolerance_;
+        const int obstacle_clearance_radius_cells = obstacle_clearance_radius_cells_;
+        const double obstacle_clearance_weight = obstacle_clearance_weight_;
+        const double resolution = octree_->getResolution();
 
         const GridIndex start_raw = worldToGrid(
         start_point_.x, start_point_.y, start_point_.z);
@@ -124,6 +132,9 @@ namespace global_planner
             const auto p = gridToWorld(goal);
             printf("GlobalPlanner::startPlan() Goal snapped to free cell: [%.2f, %.2f, %.2f] \n",p.x(), p.y(), p.z());
         }
+        const bool same_floor_request =
+            same_floor_preference &&
+            std::abs(static_cast<double>(goal.z - start.z) * resolution) <= same_floor_z_tolerance;
 
         std::priority_queue<QueueNode, std::vector<QueueNode>, QueueNodeCompare> open_set;
         std::unordered_map<GridIndex, double, GridIndexHash> g_score;
@@ -177,10 +188,22 @@ namespace global_planner
                 {
                 continue;
                 }
+                if (!isMotionAllowed(current.idx, nbr)) {
+                continue;
+                }
                 const double step_cost = euclidean(current.idx, nbr);
                 double tentative_g = current.g + step_cost;
                 if (enable_preblocked_costmap) {
                 tentative_g += preblocked_costmap_weight * getPreblockedCost(nbr);
+                }
+                const double dz_m = std::abs(static_cast<double>(nbr.z - current.idx.z)) * resolution;
+                tentative_g += floor_change_penalty * dz_m;
+                if (same_floor_request) {
+                tentative_g += floor_change_penalty * 0.5 *
+                    std::abs(static_cast<double>(nbr.z - start.z)) * resolution;
+                }
+                if (obstacle_clearance_weight > 0.0 && obstacle_clearance_radius_cells > 0) {
+                tentative_g += obstacle_clearance_weight * getObstacleClearanceCost(nbr);
                 }
 
                 auto g_it = g_score.find(nbr);
@@ -260,6 +283,34 @@ namespace global_planner
         return 0.0;
         }
         return it->second;
+    }
+
+    double GlobalPlanner::getObstacleClearanceCost(const GridIndex & idx) const
+    {
+        const auto it = obstacle_clearance_costmap_.find(idx);
+        if (it == obstacle_clearance_costmap_.end()) {
+        return 0.0;
+        }
+        return it->second;
+    }
+
+    bool GlobalPlanner::isMotionAllowed(const GridIndex & from, const GridIndex & to) const
+    {
+        const double r = octree_->getResolution();
+        const double dx = static_cast<double>(to.x - from.x) * r;
+        const double dy = static_cast<double>(to.y - from.y) * r;
+        const double dz = std::abs(static_cast<double>(to.z - from.z) * r);
+        if (max_step_height_ > 0.0 && dz > max_step_height_) {
+        return false;
+        }
+        if (max_slope_ <= 0.0 || dz <= 0.0) {
+        return true;
+        }
+        const double dxy = std::sqrt(dx * dx + dy * dy);
+        if (dxy <= 1e-9) {
+        return false;
+        }
+        return (dz / dxy) <= max_slope_;
     }
 
     std::vector<GridIndex> GlobalPlanner::make26Directions() const
@@ -615,6 +666,52 @@ namespace global_planner
         // preblocked_costmap_.size(), radius_cells);
         printf("Preblocked costmap rebuilt. cells=%zu radius=%d \n",preblocked_costmap_.size(),radius_cells);
         // publishRiskCostCloud();
+    }
+
+    void GlobalPlanner::rebuildObstacleClearanceCostmap()
+    {
+        obstacle_clearance_costmap_.clear();
+        if (!octree_ || obstacle_clearance_radius_cells_ <= 0) {
+        return;
+        }
+
+        const int radius_cells = std::max(1, obstacle_clearance_radius_cells_);
+        const double denom = static_cast<double>(radius_cells) + 1.0;
+
+        for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+        if (!octree_->isNodeOccupied(*it)) {
+            continue;
+        }
+        const GridIndex occ = worldToGrid(it.getX(), it.getY(), it.getZ());
+        for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
+            for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+            for (int dz = -radius_cells; dz <= radius_cells; ++dz) {
+                const GridIndex n{occ.x + dx, occ.y + dy, occ.z + dz};
+                if (!isInsideMetricBounds(n)) {
+                continue;
+                }
+                if (traversable_cells_.find(n) == traversable_cells_.end()) {
+                continue;
+                }
+                if (isOccupiedCell(n)) {
+                continue;
+                }
+                const double d = std::sqrt(
+                static_cast<double>(dx * dx + dy * dy + dz * dz));
+                if (d > static_cast<double>(radius_cells)) {
+                continue;
+                }
+                const double cost = std::max(0.0, (denom - d) / denom);
+                auto cost_it = obstacle_clearance_costmap_.find(n);
+                if (cost_it == obstacle_clearance_costmap_.end() || cost > cost_it->second) {
+                obstacle_clearance_costmap_[n] = cost;
+                }
+            }
+            }
+        }
+        }
+
+        printf("Obstacle clearance costmap rebuilt. cells=%zu radius=%d \n",obstacle_clearance_costmap_.size(),radius_cells);
     }
 
 

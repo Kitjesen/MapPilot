@@ -47,6 +47,7 @@ def _config(**overrides) -> NavKernelPathFollowerConfig:
         "stop_yaw_rate_gain": 6.5,
         "dir_diff_thre": 0.1,
         "two_way_drive": True,
+        "max_accel": 1.0,
     }
     values.update(overrides)
     return NavKernelPathFollowerConfig(**values)
@@ -75,6 +76,7 @@ def test_nav_kernel_adapter_assembles_fake_runtime_params() -> None:
     assert adapter.params.yaw_rate_gain == 7.5
     assert adapter.params.stop_yaw_rate_gain == 6.5
     assert adapter.params.max_yaw_rate == math.degrees(0.8)
+    assert adapter.params.max_accel == pytest.approx(1.0)
     assert adapter.params.turn_speed_yaw_rate_start == 0.3
     assert adapter.params.turn_speed_min_scale == 0.6
     assert adapter.params.switch_time_thre == 1.0
@@ -118,6 +120,7 @@ def test_nav_kernel_adapter_from_tuning_builds_runtime_config() -> None:
         stop_yaw_rate_gain=5.0,
         dir_diff_thre=0.12,
         two_way_drive=False,
+        native_max_accel=8.0,
         importer=importer,
         build_hint=lambda: "build nav core",
     )
@@ -128,6 +131,7 @@ def test_nav_kernel_adapter_from_tuning_builds_runtime_config() -> None:
     assert adapter.params.stop_dis_thre == 0.3
     assert adapter.params.max_look_ahead_dis == 1.8
     assert adapter.params.max_yaw_rate == math.degrees(0.5)
+    assert adapter.params.max_accel == pytest.approx(8.0)
     assert adapter.params.turn_speed_yaw_rate_start == 0.2
     assert adapter.params.turn_speed_min_scale == 0.55
     assert adapter.params.yaw_rate_gain == 6.0

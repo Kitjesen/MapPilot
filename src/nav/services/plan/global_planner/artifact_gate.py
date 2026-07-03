@@ -14,8 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalPlannerArtifactGateMixin:
+    def _map_artifact_gate_required_by_config(self) -> bool:
+        override = getattr(self, "_map_artifact_gate_required", None)
+        if override is not None:
+            return bool(override)
+        return self._is_pct_planner() or self._is_octoplanner3d()
+
     def _default_map_artifact_gate(self) -> dict[str, Any]:
-        required = self._is_pct_planner() or self._is_octoplanner3d()
+        required = self._map_artifact_gate_required_by_config()
         return {
             "required": required,
             "ok": True,
@@ -36,6 +42,15 @@ class GlobalPlannerArtifactGateMixin:
             logger.info("GlobalPlanner: using map artifact: %s", map_path)
         return map_path
     def _validate_map_artifact_gate(self) -> dict[str, Any]:
+        if not self._map_artifact_gate_required_by_config():
+            return {
+                "schema_version": "lingtu.saved_map_artifacts.gate.v1",
+                "required": False,
+                "ok": True,
+                "reason": "disabled_by_runtime_profile",
+                "planner": self._planner_name,
+                "blockers": [],
+            }
         expected_frame_id = (
             self._expected_saved_map_frame_id
             or topic_default_frame_id(TOPICS.saved_map_cloud)

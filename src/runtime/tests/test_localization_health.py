@@ -1562,7 +1562,7 @@ class TestNavigationDegeneracyResponse(unittest.TestCase):
 
     def _make(self):
         from nav.mission.navigation import MissionState, Navigation
-        m = Navigation(planner="astar")
+        m = Navigation(planner="direct")
         m.setup()
         return m, MissionState
 

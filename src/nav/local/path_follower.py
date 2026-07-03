@@ -28,6 +28,10 @@ from nav.local.path_follower_runtime import (
     PathFollowerRuntime,
     setup_path_follower_runtime,
 )
+from nav.services.frame_transforms import (
+    is_map_frame_jump_event,
+    transform_xyz_yaw_with_map_odom,
+)
 from runtime.backend_status import BackendStatus
 from runtime.module import Module
 from runtime.msgs.geometry import Twist, Vector3
@@ -62,6 +66,7 @@ class PathFollower(Module, layer=2):
     odometry: In[Odometry]
     local_path: In[Path]
     control_hint: In[dict]
+    map_odom_tf: In[dict]
     map_frame_jump_event: In[dict]
 
     # -- Outputs --
@@ -75,6 +80,7 @@ class PathFollower(Module, layer=2):
                  max_yaw_rate: float | None = None,
                  turn_speed_yaw_rate_start: float = 0.0,
                  turn_speed_min_scale: float = 1.0,
+                 native_max_accel: float = 1.0,
                  yaw_rate_gain: float = 7.5,
                  stop_yaw_rate_gain: float = 7.5,
                  dir_diff_thre: float = 0.1,
@@ -100,6 +106,7 @@ class PathFollower(Module, layer=2):
         self._max_yaw_rate = max_yaw_rate
         self._turn_speed_yaw_rate_start = max(0.0, float(turn_speed_yaw_rate_start or 0.0))
         self._turn_speed_min_scale = max(0.0, min(1.0, float(turn_speed_min_scale)))
+        self._native_max_accel = max(0.01, float(native_max_accel or 1.0))
         self._yaw_rate_gain = max(0.0, float(yaw_rate_gain))
         self._stop_yaw_rate_gain = max(0.0, float(stop_yaw_rate_gain))
         self._dir_diff_thre = max(0.0, float(dir_diff_thre))
@@ -140,6 +147,10 @@ class PathFollower(Module, layer=2):
         self._cos_yaw_rec = 1.0
         self._sin_yaw_rec = 0.0
         self._odom_frame_id = map_frame_id()
+        self._path_frame_id = map_frame_id()
+        self._robot_pose_frame_id = map_frame_id()
+        self._map_odom_tf: dict[str, Any] | None = None
+        self._last_odometry_transform_status: dict[str, Any] = {}
         self._last_odom_ts = 0.0
         self._control_hint_timeout = float(kw.get("control_hint_timeout", 0.75))
         self._control_hint_ts = 0.0
@@ -155,6 +166,7 @@ class PathFollower(Module, layer=2):
         self.odometry.subscribe(self._on_odom)
         self.local_path.subscribe(self._on_path)
         self.control_hint.subscribe(self._on_control_hint)
+        self.map_odom_tf.subscribe(self._on_map_odom_tf)
         self.map_frame_jump_event.subscribe(self._on_map_frame_jump)
 
         runtime = self._create_runtime(self._backend)
@@ -172,6 +184,7 @@ class PathFollower(Module, layer=2):
             stop_yaw_rate_gain=self._stop_yaw_rate_gain,
             dir_diff_thre=self._dir_diff_thre,
             two_way_drive=self._two_way_drive,
+            native_max_accel=self._native_max_accel,
         )
 
     def _create_runtime(self, backend: str) -> PathFollowerRuntime:
@@ -226,7 +239,42 @@ class PathFollower(Module, layer=2):
         state = self._nc_state
         if state is None:
             return
-        for attr in ("vehicle_speed", "vehicleSpeed", "nav_fwd", "pathPointID", "path_point_id"):
+        for attr in (
+            "vehicle_speed",
+            "vehicleSpeed",
+            "nav_fwd",
+            "pathPointID",
+            "path_point_id",
+            "lastPathPointID",
+            "last_path_point_id",
+            "lastPathSize",
+            "last_path_size",
+            "switchTime",
+            "switch_time",
+        ):
+            if hasattr(state, attr):
+                try:
+                    setattr(state, attr, 0)
+                except (AttributeError, TypeError):
+                    pass
+
+    def _reset_native_kernel_path_progress(self) -> None:
+        if self._backend != "nav_kernel":
+            return
+        state = self._nc_state
+        if state is None:
+            return
+        for attr in (
+            "nav_fwd",
+            "pathPointID",
+            "path_point_id",
+            "lastPathPointID",
+            "last_path_point_id",
+            "lastPathSize",
+            "last_path_size",
+            "switchTime",
+            "switch_time",
+        ):
             if hasattr(state, attr):
                 try:
                     setattr(state, attr, 0)
@@ -356,19 +404,42 @@ class PathFollower(Module, layer=2):
         return 1.0 - (1.0 - self._turn_speed_min_scale) * ratio
 
     def _on_map_frame_jump(self, event: dict) -> None:
-        if isinstance(event, dict):
+        if is_map_frame_jump_event(event):
             self._reset_path_tracking(reset_native_kernel_state=True)
+
+    def _on_map_odom_tf(self, msg: dict) -> None:
+        if isinstance(msg, dict) and msg.get("valid") is not False:
+            self._map_odom_tf = dict(msg)
+        else:
+            self._map_odom_tf = None
 
     def _on_odom(self, odom: Odometry):
         _prev_x, _prev_y = self._robot_x, self._robot_y
-        self._robot_x = odom.pose.position.x
-        self._robot_y = odom.pose.position.y
-        if getattr(odom, "frame_id", None):
-            self._odom_frame_id = str(odom.frame_id)
+        source_frame = normalize_frame_id(getattr(odom, "frame_id", None))
+        if source_frame:
+            self._odom_frame_id = source_frame
+        target_frame = self._path_frame_id
+        pos, yaw, output_frame, transformed, reason = transform_xyz_yaw_with_map_odom(
+            [odom.pose.position.x, odom.pose.position.y, odom.pose.position.z],
+            odom.yaw,
+            source_frame=source_frame,
+            target_frame=target_frame,
+            map_odom_tf=self._map_odom_tf,
+        )
+        self._robot_x = pos[0]
+        self._robot_y = pos[1]
+        self._robot_pose_frame_id = output_frame or source_frame or self._odom_frame_id
+        self._last_odometry_transform_status = {
+            "source_frame": source_frame,
+            "target_frame": target_frame,
+            "output_frame": self._robot_pose_frame_id,
+            "transformed": transformed,
+            "reason": reason,
+        }
         self._last_odom_ts = float(getattr(odom, "ts", 0.0) or time.time())
 
         # Extract yaw from quaternion (reliable, works at all speeds)
-        self._robot_yaw = odom.yaw
+        self._robot_yaw = float(yaw if yaw is not None else odom.yaw)
         self._update_incline_guard(odom)
 
         if self._backend == "nav_kernel" and self._nc_path:
@@ -385,6 +456,7 @@ class PathFollower(Module, layer=2):
         if self._backend == "nav_kernel":
             # Record robot pose at path receipt - defines the reference frame
             frame_id = normalize_frame_id(getattr(path, "frame_id", None))
+            self._path_frame_id = frame_id or self._odom_frame_id
             fixed_frame_path = frame_id in runtime_fixed_path_frame_ids(
                 self._odom_frame_id,
             )
@@ -418,7 +490,7 @@ class PathFollower(Module, layer=2):
             if len(pts) < 2:
                 self._reset_path_tracking(reset_native_kernel_state=True)
                 return
-            self._reset_native_kernel_state()
+            self._reset_native_kernel_path_progress()
             self._nc_path = pts
             if self._last_odom_ts > 0:
                 self._native_kernel_step(self._last_odom_ts)
@@ -427,6 +499,10 @@ class PathFollower(Module, layer=2):
             # at a stale path point after a replan or patrol checkpoint switch.
 
         elif self._backend == "pid":
+            self._path_frame_id = (
+                normalize_frame_id(getattr(path, "frame_id", None))
+                or self._odom_frame_id
+            )
             pts = []
             for ps in path.poses:
                 pts.append([ps.pose.position.x, ps.pose.position.y])
@@ -452,6 +528,9 @@ class PathFollower(Module, layer=2):
         """Compute cmd_vel using C++ compute_control."""
         if not self._nc_path:
             self._publish_zero()
+            return
+        if self._robot_pose_frame_id != self._path_frame_id:
+            self._publish_zero(reset_native_kernel_state=False)
             return
 
         nc = self._nc
@@ -486,14 +565,12 @@ class PathFollower(Module, layer=2):
             self._nc_state,
         )
 
-        # Apply exponential smoothing (alpha=0.3, same as pid backend)
-        alpha = 0.3
-        self._smooth_vx = (1 - alpha) * self._smooth_vx + alpha * out.cmd.vx
-        self._smooth_wz = (1 - alpha) * self._smooth_wz + alpha * out.cmd.wz
+        self._smooth_vx = out.cmd.vx
+        self._smooth_wz = out.cmd.wz
 
         self.cmd_vel.publish(Twist(
-            linear=Vector3(self._smooth_vx, out.cmd.vy, 0.0),
-            angular=Vector3(0.0, 0.0, self._smooth_wz),
+            linear=Vector3(out.cmd.vx, out.cmd.vy, 0.0),
+            angular=Vector3(0.0, 0.0, out.cmd.wz),
         ))
 
     # -- Python PID (fallback) --
@@ -502,6 +579,9 @@ class PathFollower(Module, layer=2):
         """Simple Pure Pursuit in Python for testing."""
         if self._path_points is None or len(self._path_points) < 2:
             self._publish_zero()
+            return
+        if self._robot_pose_frame_id != self._path_frame_id:
+            self._publish_zero(reset_native_kernel_state=False)
             return
         slow_factor, safety_stop = self._active_control_guard()
         if safety_stop >= 1:
@@ -565,6 +645,13 @@ class PathFollower(Module, layer=2):
 
     # -- Health --
 
+    @staticmethod
+    def _native_state_attr(state: Any, *names: str, default: Any = None) -> Any:
+        for name in names:
+            if hasattr(state, name):
+                return getattr(state, name)
+        return default
+
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
         h = {
@@ -574,6 +661,7 @@ class PathFollower(Module, layer=2):
             "max_yaw_rate": self._max_yaw_rate,
             "turn_speed_yaw_rate_start": self._turn_speed_yaw_rate_start,
             "turn_speed_min_scale": self._turn_speed_min_scale,
+            "native_max_accel": self._native_max_accel,
             "yaw_rate_gain": self._yaw_rate_gain,
             "stop_yaw_rate_gain": self._stop_yaw_rate_gain,
             "dir_diff_thre": self._dir_diff_thre,
@@ -589,13 +677,59 @@ class PathFollower(Module, layer=2):
                     else None
                 ),
             },
+            "frames": {
+                "path_frame": self._path_frame_id,
+                "odom_frame": self._odom_frame_id,
+                "robot_pose_frame": self._robot_pose_frame_id,
+                "odometry_transform": dict(self._last_odometry_transform_status),
+            },
             "incline_guard": {
                 "slow_active": self._incline_slow_start_ts > 0,
                 "stop_active": time.time() < self._incline_stop_until_ts,
             },
         }
         if self._backend == "nav_kernel" and self._nc_state is not None:
-            h["vehicle_speed"] = self._nc_state.vehicle_speed
-            h["nav_fwd"] = self._nc_state.nav_fwd
+            state = self._nc_state
+            native_state = {
+                "vehicle_speed": self._native_state_attr(
+                    state,
+                    "vehicle_speed",
+                    "vehicleSpeed",
+                    default=0.0,
+                ),
+                "path_point_id": self._native_state_attr(
+                    state,
+                    "path_point_id",
+                    "pathPointID",
+                    default=0,
+                ),
+                "last_path_point_id": self._native_state_attr(
+                    state,
+                    "last_path_point_id",
+                    "lastPathPointID",
+                    default=0,
+                ),
+                "last_path_size": self._native_state_attr(
+                    state,
+                    "last_path_size",
+                    "lastPathSize",
+                    default=0,
+                ),
+                "nav_fwd": self._native_state_attr(
+                    state,
+                    "nav_fwd",
+                    "navFwd",
+                    default=True,
+                ),
+                "switch_time": self._native_state_attr(
+                    state,
+                    "switch_time",
+                    "switchTime",
+                    default=0.0,
+                ),
+            }
+            h["native_state"] = native_state
+            h["vehicle_speed"] = native_state["vehicle_speed"]
+            h["nav_fwd"] = native_state["nav_fwd"]
         info["path_follower"] = h
         return info

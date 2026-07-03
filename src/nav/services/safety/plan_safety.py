@@ -201,6 +201,7 @@ def evaluate_plan_safety(
     obstacle_thr: float,
     max_step_m: float | None = None,
     blocked_sample_limit: int = 10,
+    start_ignore_radius_m: float = 0.0,
 ) -> dict[str, Any]:
     if not path:
         return {
@@ -216,6 +217,9 @@ def evaluate_plan_safety(
     samples = _path_samples_xyz(path, max_step_m=step)
     cost_reports = [grid.sample_cost(x, y, z) for x, y, z in samples]
     costs = [float(report["cost"]) for report in cost_reports]
+    start = np.asarray(path[0][:2], dtype=float)
+    ignore_radius = max(0.0, float(start_ignore_radius_m or 0.0))
+    ignored_start_samples = 0
     blocked = [
         {
             "x": round(float(samples[idx][0]), 4),
@@ -236,14 +240,47 @@ def evaluate_plan_safety(
             ),
         }
         for idx, cost in enumerate(costs)
-        if (not math.isfinite(float(cost))) or float(cost) >= obstacle_thr
+        if (
+            (not math.isfinite(float(cost))) or float(cost) >= obstacle_thr
+        )
+        and not (
+            ignore_radius > 0.0
+            and math.isfinite(float(samples[idx][0]))
+            and math.isfinite(float(samples[idx][1]))
+            and cost_reports[idx].get("row") is not None
+            and cost_reports[idx].get("col") is not None
+            and float(
+                np.linalg.norm(
+                    np.asarray(samples[idx][:2], dtype=float) - start
+                )
+            )
+            <= ignore_radius
+        )
     ]
+    if ignore_radius > 0.0:
+        for idx, cost in enumerate(costs):
+            if not ((not math.isfinite(float(cost))) or float(cost) >= obstacle_thr):
+                continue
+            if cost_reports[idx].get("row") is None or cost_reports[idx].get("col") is None:
+                continue
+            if not (
+                math.isfinite(float(samples[idx][0]))
+                and math.isfinite(float(samples[idx][1]))
+            ):
+                continue
+            distance = float(
+                np.linalg.norm(np.asarray(samples[idx][:2], dtype=float) - start)
+            )
+            if distance <= ignore_radius:
+                ignored_start_samples += 1
     finite_costs = [float(cost) for cost in costs if math.isfinite(float(cost))]
     return {
         "ok": not blocked,
         "max_cost": round(float(max(finite_costs)), 4) if finite_costs else float("inf"),
         "blocked_sample_count": len(blocked),
         "blocked_samples": blocked[:blocked_sample_limit],
+        "ignored_start_sample_count": ignored_start_samples,
+        "start_ignore_radius_m": round(ignore_radius, 4),
         "sample_count": len(samples),
         "resolution": float(grid.resolution),
         "index_order": grid.index_order,
@@ -330,8 +367,14 @@ def evaluate_backend_path_safety(
     backend: Any,
     *,
     obstacle_thr: float,
+    start_ignore_radius_m: float = 0.0,
 ) -> dict[str, Any] | None:
     grid = grid_from_backend(backend)
     if grid is None:
         return None
-    return evaluate_plan_safety(path, grid, obstacle_thr=obstacle_thr)
+    return evaluate_plan_safety(
+        path,
+        grid,
+        obstacle_thr=obstacle_thr,
+        start_ignore_radius_m=start_ignore_radius_m,
+    )

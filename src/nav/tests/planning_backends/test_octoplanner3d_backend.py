@@ -399,6 +399,14 @@ def test_octoplanner3d_constraints_are_configurable_in_payload(tmp_path, monkeyp
             "ground_support_depth_cells": 2,
             "preblocked_costmap_weight": 4.0,
             "lowest_traversable_only": True,
+            "floor_change_penalty": 6.0,
+            "max_step_height": 0.35,
+            "max_slope": 1.1,
+            "same_floor_preference": True,
+            "same_floor_z_tolerance": 0.75,
+            "max_same_floor_z_excursion": 2.0,
+            "obstacle_clearance_radius_cells": 5,
+            "obstacle_clearance_weight": 3.0,
         }
     )
 
@@ -410,7 +418,51 @@ def test_octoplanner3d_constraints_are_configurable_in_payload(tmp_path, monkeyp
     assert payload["options"]["ground_support_depth_cells"] == 2
     assert payload["options"]["preblocked_costmap_weight"] == pytest.approx(4.0)
     assert payload["options"]["lowest_traversable_only"] is True
+    assert payload["options"]["floor_change_penalty"] == pytest.approx(6.0)
+    assert payload["options"]["max_step_height"] == pytest.approx(0.35)
+    assert payload["options"]["max_slope"] == pytest.approx(1.1)
+    assert payload["options"]["same_floor_preference"] is True
+    assert payload["options"]["same_floor_z_tolerance"] == pytest.approx(0.75)
+    assert payload["options"]["max_same_floor_z_excursion"] == pytest.approx(2.0)
+    assert payload["options"]["obstacle_clearance_radius_cells"] == 5
+    assert payload["options"]["obstacle_clearance_weight"] == pytest.approx(3.0)
     assert backend._last_plan_diagnostics["constraints"]["robot_radius"] == pytest.approx(0.6)
+
+
+def test_octoplanner3d_rejects_same_floor_path_with_large_z_excursion(tmp_path, monkeypatch):
+    module = importlib.import_module(MODULE)
+    runtime_module = _runtime_module()
+    exe = tmp_path / "octoplanner3d_headless"
+    exe.write_text("# fake executable; subprocess.run is monkeypatched\n", encoding="utf-8")
+    exe.chmod(0o755)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "path": [[0.0, 0.0, 0.0], [1.0, 0.0, 13.0], [2.0, 0.0, 0.0]],
+                    "reached_goal": True,
+                    "diagnostics": {"source": "fake"},
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(runtime_module.subprocess, "run", fake_run)
+
+    backend = module.OctoPlanner3DBackend(
+        tomogram_path=str(_dummy_map(tmp_path)),
+        executable_path=str(exe),
+    )
+
+    assert backend.plan([0.0, 0.0, 0.0], [2.0, 0.0, 0.0]) == []
+    assert backend._last_plan_error == "same-floor plan has excessive z excursion"
+    assert backend._last_plan_diagnostics["stage"] == "z_excursion_rejected"
+    assert backend._last_plan_diagnostics["same_floor_ok"] is False
+    assert backend._last_plan_diagnostics["path_z_range_m"] == pytest.approx(13.0)
 
 
 def test_nonzero_headless_json_failure_preserves_cxx_diagnostics(tmp_path, monkeypatch):
@@ -519,6 +571,43 @@ def test_default_wsl_build_output_is_auto_discovered(tmp_path, monkeypatch):
     ]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows WSL launcher behavior")
+def test_windows_extensionless_local_build_output_uses_wsl(tmp_path, monkeypatch):
+    module = importlib.import_module(MODULE)
+    runtime_module = _runtime_module()
+    monkeypatch.delenv("LINGTU_OCTOPLANNER3D_EXECUTABLE", raising=False)
+    monkeypatch.delenv("LINGTU_OCTOPLANNER3D_WSL_EXECUTABLE", raising=False)
+    monkeypatch.setattr(
+        runtime_module.OctoPlanner3DRuntime,
+        "repo_root",
+        staticmethod(lambda: tmp_path),
+    )
+    monkeypatch.setattr(
+        runtime_module.OctoPlanner3DRuntime,
+        "supports_wsl_launcher",
+        staticmethod(lambda: True),
+    )
+    monkeypatch.setattr(runtime_module.shutil, "which", lambda name: "/usr/bin/wsl.exe" if name == "wsl.exe" else None)
+
+    exe = tmp_path / "build" / "octoplanner3d_headless" / "octoplanner3d_headless"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"\x7fELF fake executable")
+    map_path = tmp_path / "map.bt"
+    map_path.write_bytes(b"dummy")
+
+    backend = module.OctoPlanner3DBackend(tomogram_path=str(map_path))
+
+    assert backend.executable_path == ""
+    assert backend.available is True
+    assert backend._runtime.wsl_executable_path == runtime_module.OctoPlanner3DRuntime.to_wsl_path(str(exe))
+    assert backend._runtime.command() == [
+        "/usr/bin/wsl.exe",
+        "bash",
+        "-lc",
+        "exec " + runtime_module.shlex.quote(backend._runtime.wsl_executable_path),
+    ]
+
+
 def test_linux_home_executable_path_stays_native(tmp_path, monkeypatch):
     module = importlib.import_module(MODULE)
     runtime_module = _runtime_module()
@@ -576,6 +665,7 @@ def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
     assert 'extractNumberArray(json, "start")' in source
     assert 'extractNumberArray(json, "goal")' in source
     assert 'applyOptionsFromJson(request.options, json)' in source
+    assert '"max_same_floor_z_excursion"' in source
     assert 'emitConstraints(result.options)' in source
     assert '\\"path\\"' in source
 
@@ -603,6 +693,8 @@ def test_headless_cmake_builds_dedicated_executable_against_upstream_core():
     assert "planner/src/global_planner.cpp" in cmake
     assert "octomap/src/pcd2octomap_converter.cpp" in cmake
     assert "find_package(PCL QUIET COMPONENTS common io octree)" in cmake
+    assert "option(OCTOPLANNER3D_REQUIRE_PCL" in cmake
+    assert "OCTOPLANNER3D_REQUIRE_PCL=ON but PCL common/io/octree was not found" in cmake
     assert "find_library(OCTOMAP_SYSTEM_LIBRARY NAMES octomap)" in cmake
     assert "Using system OctoMap" in cmake
     assert "set(OCTOPLANNER3D_ENABLE_PCD OFF)" in cmake
@@ -610,6 +702,7 @@ def test_headless_cmake_builds_dedicated_executable_against_upstream_core():
     assert "PCL not found: building octoplanner3d_headless with .bt OctoMap input support only" in cmake
     assert "PCL found but OctoPlanner3D PCD converter source/header missing" in cmake
     assert "OCTOPLANNER3D_ENABLE_PCD" in cmake
+    assert "OCTOPLANNER3D_REQUIRE_PCL" in cmake
     assert "OCTOPLANNER3D_SOURCE_DIR" in cmake
     assert "colcon" not in cmake
 
@@ -672,6 +765,8 @@ def test_build_script_points_at_headless_cxx_wrapper_not_ros2_launch():
     assert "OCTOPLANNER3D_BUILD_PYTHON_BINDINGS" not in script
     assert "_native*.so" not in script
     assert "LINGTU_OCTOPLANNER3D_SOURCE_DIR" in script
+    assert "--require-pcl" in script
+    assert "-DOCTOPLANNER3D_REQUIRE_PCL=ON" in script
     assert "LINGTU_OCTOPLANNER3D_EXECUTABLE" in script
     assert "LINGTU_MAP_ARTIFACT_CONVERTER" in script
     assert "octoplanner3d_pcd_to_octomap" in script
@@ -687,6 +782,10 @@ def test_backend_searches_default_headless_build_output():
 
     rendered = [str(path).replace("\\", "/") for path in candidates]
     rendered_wsl = [str(path).replace("\\", "/") for path in wsl_candidates]
+    repo_root = runtime_module.OctoPlanner3DRuntime.repo_root()
+    assert repo_root == REPO_ROOT
+    assert all(str(path).startswith(str(REPO_ROOT)) for path in candidates)
+    assert all(str(path).startswith(str(REPO_ROOT)) for path in wsl_candidates)
     assert any("build/octoplanner3d_headless" in path for path in rendered)
     assert any(path.endswith("octoplanner3d_headless") for path in rendered)
     assert any(path.endswith("octoplanner3d_headless.exe") for path in rendered)
