@@ -1102,6 +1102,8 @@ export interface RuntimeSwitchRequest {
   map_name?: string | null
   relocalize?: boolean
   initial_pose?: [number, number, number] | null
+  strategy?: 'auto' | 'hot' | 'warm' | 'cold'
+  execute?: boolean
   allow_restart?: boolean
   client_id?: string
   request_id?: string | null
@@ -1117,11 +1119,14 @@ export interface RuntimeSwitchResponse {
   dry_run: boolean
   motion: boolean
   lifecycle: string
+  strategy: string
   current_profile?: string | null
   target_profile: string
   map_name?: string | null
   relocalize: boolean
   plan: Record<string, unknown>
+  product_mode_switch?: Record<string, unknown> | null
+  effects: string[]
   command: string[]
   command_id?: string | null
   pid?: number | null

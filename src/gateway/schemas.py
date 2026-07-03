@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from runtime.runtime_interface import body_frame_id, map_frame_id
 
-
 GATEWAY_MAP_FRAME_ID = map_frame_id()
 GATEWAY_BODY_FRAME_ID = body_frame_id()
 MapFrameId = Literal["map"]
@@ -746,6 +745,7 @@ class RuntimeSwitchPlanResponse(GatewayResponseModel):
     changed: list[str] = Field(default_factory=list)
     current_validation: RuntimeSwitchValidationSummary
     target_validation: RuntimeSwitchValidationSummary
+    product_mode_switch: dict[str, Any] | None = None
     blockers: list[str] = Field(default_factory=list)
     links: dict[str, str] = Field(default_factory=dict)
     error: str | None = None
@@ -770,6 +770,8 @@ class RuntimeSwitchRequest(GatewayResponseModel):
     map_name: str | None = None
     relocalize: bool = True
     initial_pose: list[float] | None = None
+    strategy: Literal["auto", "hot", "warm", "cold"] = "auto"
+    execute: bool = False
     allow_restart: bool = False
     client_id: str = "app"
     request_id: str | None = None
@@ -796,11 +798,14 @@ class RuntimeSwitchResponse(GatewayResponseModel):
     dry_run: bool = True
     motion: bool = False
     lifecycle: str = "cold_restart"
+    strategy: str = "auto"
     current_profile: str | None = None
     target_profile: str
     map_name: str | None = None
     relocalize: bool = True
     plan: dict[str, Any] = Field(default_factory=dict)
+    product_mode_switch: dict[str, Any] | None = None
+    effects: list[str] = Field(default_factory=list)
     command: list[str] = Field(default_factory=list)
     command_id: str | None = None
     pid: int | None = None

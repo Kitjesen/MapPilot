@@ -43,6 +43,11 @@ _TELEOP_CHAIN = frozenset({
     "TeleopModule.cmd_vel->nav.velocity_mux.teleop_cmd_vel",
 }) | _COMMAND_OUTPUT_CHAIN
 
+_TELEOP_AVOID_CHAIN = frozenset({
+    "SlamAdapterModule.odometry->nav.velocity_mux.collision_odometry@/slam/odometry",
+    "TraversabilityCostModule.fused_cost->nav.velocity_mux.collision_costmap",
+})
+
 _MAP_CHAIN = frozenset({
     "SlamAdapterModule.map_cloud->OccupancyGridModule.map_cloud@/slam/map_cloud",
     "SlamAdapterModule.map_cloud->VoxelGridModule.map_cloud@/slam/map_cloud",
@@ -128,7 +133,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "nav.path_follower",
             "SemanticPlannerModule",
         }),
-        required_wires=_TELEOP_CHAIN | _MAP_CHAIN,
+        required_wires=_TELEOP_CHAIN | _MAP_CHAIN | _TELEOP_AVOID_CHAIN,
         switch_policy="cold_restart",
     ),
     "map": ProductModeContract(
@@ -170,6 +175,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         required_wires=_SAFETY_CHAIN | _NAV_EXECUTION_CHAIN,
         switch_policy="same_graph_candidate",
         hot_switch_candidates=_NAV_HOT_CANDIDATES,
+        online_hot_switch_supported=True,
     ),
     "nav": ProductModeContract(
         profile="nav",
@@ -188,6 +194,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         required_wires=_SAFETY_CHAIN | _NAV_EXECUTION_CHAIN,
         switch_policy="same_graph_candidate",
         hot_switch_candidates=_NAV_HOT_CANDIDATES,
+        online_hot_switch_supported=True,
     ),
     "inspection": ProductModeContract(
         profile="inspection",
@@ -207,6 +214,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         required_wires=_SAFETY_CHAIN | _NAV_EXECUTION_CHAIN | _GOAL_SERVICE_CHAIN,
         switch_policy="same_graph_candidate",
         hot_switch_candidates=_NAV_HOT_CANDIDATES,
+        online_hot_switch_supported=True,
     ),
 }
 

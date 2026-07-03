@@ -40,8 +40,20 @@ def test_thunder_field_navigation_resolves_octoplanner3d_without_fallback_profil
     assert config["planner_profile"]["fallback_planners"] == []
     assert config["planner_profile"]["plan_safety_policy"] == "reject"
     assert config["planner_profile"]["latency_budget_ms"] == 800
-    assert config["octoplanner3d_robot_radius"] == 0.60
+    assert config["preview_timeout"] == 30.0
+    assert config["octoplanner3d_timeout_s"] == 30.0
+    assert config["waypoint_threshold"] == 0.20
+    assert config["final_waypoint_threshold"] == 0.10
+    assert "local_planner_allow_direct_track_fallback" not in config
+    assert config["local_planner_direct_track_fallback_min_distance_m"] == 0.05
+    assert config["local_planner_min_trackable_local_path_m"] == 0.05
+    assert config["path_follower_goal_tolerance"] == 0.05
+    assert config["path_follower_lookahead"] == 0.35
+    assert config["path_follower_max_speed"] == 0.20
+    assert config["path_follower_min_speed"] == 0.08
+    assert config["octoplanner3d_robot_radius"] == 0.40
     assert config["octoplanner3d_require_ground_support"] is True
+    assert config["octoplanner3d_ground_support_depth_cells"] == 6
 
 
 def test_simulation_profile_uses_octoplanner3d_without_fallback_chain() -> None:

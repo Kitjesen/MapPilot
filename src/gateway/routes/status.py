@@ -721,7 +721,7 @@ def register_status_routes(app, gw) -> None:
     async def post_runtime_switch(
         request: RuntimeSwitchRequest,
     ):
-        return build_runtime_switch_response(request)
+        return build_runtime_switch_response(gw, request)
 
     @app.get(
         "/api/v1/navigation",

@@ -366,6 +366,8 @@ export async function runRuntimeSwitch(
     apiPath('runtime_switch', '/api/v1/runtime/switch'),
     {
       relocalize: true,
+      strategy: 'auto',
+      execute: false,
       allow_restart: false,
       client_id: WEB_CLIENT_ID,
       ...request,

@@ -928,7 +928,11 @@ def test_runtime_switch_endpoint_defaults_to_plan_only_for_app_clients():
     assert model.dry_run is True
     assert model.motion is False
     assert model.status == "planned"
-    assert model.lifecycle == "cold_restart"
+    assert model.lifecycle == "hot_switch"
+    assert model.strategy == "auto"
+    assert model.product_mode_switch is not None
+    assert model.product_mode_switch["required_lifecycle"] == "hot_switch"
+    assert model.effects == []
     assert model.target_profile == "inspection"
     assert model.command[:3] == ["bash", model.command[1], "mode"]
     assert model.command[3:5] == ["switch", "inspection"]
@@ -938,6 +942,108 @@ def test_runtime_switch_endpoint_defaults_to_plan_only_for_app_clients():
     assert gateway.cmd_vel.msg_count == 0
     assert gateway.stop_cmd.msg_count == 0
     assert gateway.instruction.msg_count == 0
+
+
+def test_runtime_switch_endpoint_hot_executes_same_graph_without_subprocess(
+    monkeypatch,
+):
+    import gateway.services.runtime_switch_execute as switch_execute
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    def fail_popen(*_args, **_kwargs):
+        raise AssertionError("hot switch must not launch scripts/lingtu")
+
+    monkeypatch.setattr(switch_execute.subprocess, "Popen", fail_popen)
+
+    class FakeMux:
+        def __init__(self):
+            self.calls = []
+
+        def freeze(self):
+            self.calls.append("freeze")
+
+        def unfreeze(self):
+            self.calls.append("unfreeze")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._session_mode = "navigating"
+    gateway._session_map = "field_map"
+    gateway._cmd_vel_mux = FakeMux()
+    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
+
+    result = asyncio.run(
+        post_runtime_switch(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="inspection",
+                execute=True,
+                strategy="hot",
+                request_id="hot-switch-test",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.accepted is True
+    assert model.read_only is False
+    assert model.dry_run is False
+    assert model.status == "hot_switched"
+    assert model.lifecycle == "hot_switch"
+    assert model.strategy == "hot"
+    assert model.map_name == "field_map"
+    assert model.product_mode_switch is not None
+    assert model.product_mode_switch["required_lifecycle"] == "hot_switch"
+    assert model.effects == [
+        "velocity_mux.freeze",
+        "navigation.cancel",
+        "safety.soft_stop",
+        "cmd_vel.zero",
+        "mode.autonomous",
+        "velocity_mux.unfreeze",
+    ]
+    assert model.command == []
+    assert gateway.cancel.msg_count == 1
+    assert gateway.stop_cmd.msg_count == 1
+    assert gateway.cmd_vel.msg_count == 1
+    assert gateway.mode_cmd.msg_count == 1
+    assert getattr(gateway, "_runtime_product_profile") == "inspection"
+    assert gateway._cmd_vel_mux.calls == ["freeze", "unfreeze"]
+    assert gateway._mode == "autonomous"
+
+
+def test_runtime_switch_endpoint_rejects_hot_when_graph_requires_restart():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._session_mode = "navigating"
+    gateway._session_map = "field_map"
+    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
+
+    result = asyncio.run(
+        post_runtime_switch(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="map",
+                execute=True,
+                strategy="hot",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.ok is False
+    assert model.accepted is False
+    assert model.status == "rejected"
+    assert model.lifecycle == "cold_restart"
+    assert model.command
+    assert gateway.cancel.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
 
 
 def test_runtime_switch_endpoint_can_launch_robot_side_mode_switch(

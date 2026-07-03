@@ -11,11 +11,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from gateway.services.runtime_switch_plan import build_runtime_switch_plan
+from runtime.msgs.geometry import Twist
 from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
 from runtime.profiles.resolver import canonical_profile_name
-
-from gateway.services.runtime_switch_plan import build_runtime_switch_plan
-
 
 RUNTIME_SWITCH_SCHEMA_VERSION = "lingtu.runtime_switch.v1"
 _MAP_REQUIRED_PROFILES = frozenset({
@@ -44,6 +43,8 @@ def _request_mapping(request: Any) -> dict[str, Any]:
             "map_name",
             "relocalize",
             "initial_pose",
+            "strategy",
+            "execute",
             "allow_restart",
             "client_id",
             "request_id",
@@ -68,6 +69,21 @@ def _script_path() -> Path:
     if override:
         return Path(override).expanduser()
     return _repo_root() / "scripts" / "lingtu"
+
+
+def _resolve_active_map_name(gw: Any) -> str | None:
+    if gw is None:
+        return None
+    session_map = _clean_text(getattr(gw, "_session_map", None))
+    if session_map:
+        return session_map
+    active_map = getattr(gw, "_session_active_map_name", None)
+    if callable(active_map):
+        try:
+            return _clean_text(active_map())
+        except Exception:
+            return None
+    return None
 
 
 def _log_path(command_id: str) -> Path:
@@ -123,9 +139,11 @@ def _base_response(
     command_id: str | None = None,
     pid: int | None = None,
     log_path: str | None = None,
+    effects: list[str] | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
     target_profile = canonical_profile_name(str(raw.get("target_profile") or "nav"))
+    strategy = str(raw.get("strategy") or "auto").strip().lower() or "auto"
     lifecycle = "cold_restart"
     product_switch = plan.get("product_mode_switch")
     if isinstance(product_switch, Mapping):
@@ -144,11 +162,16 @@ def _base_response(
         "dry_run": not accepted,
         "motion": False,
         "lifecycle": lifecycle,
+        "strategy": strategy,
         "current_profile": current_profile,
         "target_profile": target_profile,
         "map_name": _clean_text(raw.get("map_name")),
         "relocalize": bool(raw.get("relocalize", True)),
         "plan": dict(plan),
+        "product_mode_switch": (
+            dict(product_switch) if isinstance(product_switch, Mapping) else None
+        ),
+        "effects": list(effects or []),
         "command": list(command or []),
         "command_id": command_id,
         "pid": pid,
@@ -164,10 +187,84 @@ def _base_response(
     }
 
 
-def build_runtime_switch_response(request: Any) -> dict[str, Any]:
-    """Validate and optionally launch the robot-side cold-restart mode switch."""
+def _hot_switch_blockers(gw: Any) -> list[str]:
+    blockers: list[str] = []
+    if gw is None:
+        blockers.append("gateway instance is required for hot switch")
+        return blockers
+    if str(getattr(gw, "_session_mode", "") or "").lower() != "navigating":
+        blockers.append("hot switch requires an active navigating session")
+    if bool(getattr(gw, "_session_pending", False)):
+        blockers.append("session transition already pending")
+    return blockers
 
-    raw = _request_mapping(request)
+
+def _execute_hot_switch(
+    gw: Any,
+    raw: Mapping[str, Any],
+    *,
+    plan: Mapping[str, Any],
+    target_profile: str,
+) -> dict[str, Any]:
+    blockers = _hot_switch_blockers(gw)
+    if blockers:
+        return _base_response(
+            raw,
+            plan=plan,
+            status="rejected",
+            ok=False,
+            blockers=blockers,
+        )
+
+    reason = f"product_mode_switch:{target_profile}"
+    contract = PRODUCT_MODE_CONTRACTS[target_profile]
+    mux = getattr(gw, "_cmd_vel_mux", None)
+    freeze = getattr(mux, "freeze", None)
+    unfreeze = getattr(mux, "unfreeze", None)
+    effects: list[str] = []
+    if callable(freeze):
+        freeze()
+        effects.append("velocity_mux.freeze")
+    try:
+        gw.cancel.publish(reason)
+        effects.append("navigation.cancel")
+        gw.stop_cmd.publish(1)
+        effects.append("safety.soft_stop")
+        gw.cmd_vel.publish(Twist())
+        effects.append("cmd_vel.zero")
+        gw.mode_cmd.publish("autonomous")
+        effects.append("mode.autonomous")
+        with gw._state_lock:
+            gw._mode = "autonomous"
+            gw._runtime_product_profile = target_profile
+            gw._runtime_product_mode = contract.product_mode
+            gw._runtime_switch_ts = time.time()
+    finally:
+        if callable(unfreeze):
+            unfreeze()
+            effects.append("velocity_mux.unfreeze")
+
+    response = _base_response(
+        raw,
+        plan=plan,
+        status="hot_switched",
+        ok=True,
+        accepted=True,
+        effects=effects,
+    )
+    if hasattr(gw, "push_event"):
+        gw.push_event({"type": "runtime_switch", "data": response})
+    return response
+
+
+def build_runtime_switch_response(
+    gw_or_request: Any,
+    request: Any | None = None,
+) -> dict[str, Any]:
+    """Validate and optionally execute a product-mode switch."""
+
+    gw = None if request is None else gw_or_request
+    raw = _request_mapping(gw_or_request if request is None else request)
     target_profile = canonical_profile_name(str(raw.get("target_profile") or "nav"))
     raw["target_profile"] = target_profile
     raw["target_endpoint"] = (
@@ -176,12 +273,24 @@ def build_runtime_switch_response(request: Any) -> dict[str, Any]:
         or "thunder_field"
     )
     raw["endpoint"] = raw["target_endpoint"]
+    raw["strategy"] = str(raw.get("strategy") or "auto").strip().lower() or "auto"
+    raw["execute"] = bool(raw.get("execute", False))
+    active_map = _resolve_active_map_name(gw)
+    if (
+        target_profile in _MAP_REQUIRED_PROFILES
+        and not _clean_text(raw.get("map_name"))
+    ):
+        if active_map:
+            raw["map_name"] = active_map
 
     plan = build_runtime_switch_plan(raw)
     blockers = list(plan.get("blockers") or [])
     if target_profile not in PRODUCT_MODE_CONTRACTS:
         blockers.append(f"unsupported product mode: {target_profile}")
-    if target_profile in _MAP_REQUIRED_PROFILES and not _clean_text(raw.get("map_name")):
+    if (
+        target_profile in _MAP_REQUIRED_PROFILES
+        and not _clean_text(raw.get("map_name"))
+    ):
         blockers.append(f"{target_profile} requires map_name")
     if not bool(plan.get("ok")):
         blockers.extend(str(item) for item in plan.get("blockers") or [])
@@ -195,7 +304,50 @@ def build_runtime_switch_response(request: Any) -> dict[str, Any]:
         )
 
     command = _build_command(raw, target_profile)
-    if not bool(raw.get("allow_restart", False)):
+    product_switch = plan.get("product_mode_switch")
+    lifecycle = ""
+    if isinstance(product_switch, Mapping):
+        lifecycle = str(product_switch.get("required_lifecycle") or "")
+    strategy = str(raw.get("strategy") or "auto").lower()
+    execute = bool(raw.get("execute", False))
+    allow_restart = bool(raw.get("allow_restart", False))
+
+    if strategy == "warm":
+        return _base_response(
+            raw,
+            plan=plan,
+            status="rejected",
+            ok=False,
+            command=command,
+            blockers=["warm switch is not implemented; use hot or cold"],
+        )
+    if execute and strategy in {"auto", "hot"} and lifecycle == "hot_switch":
+        return _execute_hot_switch(
+            gw,
+            raw,
+            plan=plan,
+            target_profile=target_profile,
+        )
+    if strategy == "hot" and lifecycle != "hot_switch":
+        return _base_response(
+            raw,
+            plan=plan,
+            status="rejected",
+            ok=False,
+            command=command,
+            blockers=[f"hot switch is not supported for {target_profile}"],
+        )
+    if execute and not allow_restart:
+        return _base_response(
+            raw,
+            plan=plan,
+            status="rejected",
+            ok=False,
+            command=command,
+            blockers=["execution requires hot switch support or allow_restart=true"],
+        )
+
+    if not allow_restart:
         return _base_response(
             raw,
             plan=plan,

@@ -159,17 +159,91 @@ def test_product_modes_start_and_forbid_expected_module_groups():
         assert contract.forbidden_modules.isdisjoint(modules), profile
 
 
+def test_runtime_product_modes_start_and_forbid_expected_module_groups():
+    from lingtu.plugin_seed import install_builtin_plugin_catalog
+
+    install_builtin_plugin_catalog()
+    for profile, contract in PRODUCT_MODE_CONTRACTS.items():
+        graph = graph_for_profile(
+            profile,
+            mode="runtime",
+            run_startup_checks=False,
+            manage_external_services=False,
+        )
+        modules = set(graph.modules)
+        assert contract.required_modules <= modules, profile
+        assert contract.forbidden_modules.isdisjoint(modules), profile
+
+
 def test_product_modes_required_wires_are_contract_locked():
     for profile, contract in PRODUCT_MODE_CONTRACTS.items():
         wires = _wire_set(graph_for_profile(profile))
         assert contract.required_wires <= wires, profile
 
 
-def test_product_mode_switch_contracts_do_not_claim_online_hot_switch():
+def test_teleop_avoid_wires_cmd_vel_collision_monitor_without_autonomy_stack():
+    from lingtu.plugin_seed import install_builtin_plugin_catalog
+
+    install_builtin_plugin_catalog()
+    for mode in ("static", "runtime"):
+        kwargs = (
+            {
+                "mode": "runtime",
+                "run_startup_checks": False,
+                "manage_external_services": False,
+            }
+            if mode == "runtime"
+            else {}
+        )
+        teleop_avoid = graph_for_profile("teleop_avoid", **kwargs)
+        wires = _wire_set(teleop_avoid)
+        modules = set(teleop_avoid.modules)
+
+        assert "nav.local_planner" not in modules
+        assert "nav.path_follower" not in modules
+        assert (
+            f"SlamAdapterModule.odometry->nav.velocity_mux.collision_odometry"
+            f"@{TOPICS.odometry}"
+            in wires
+        )
+        assert "TraversabilityCostModule.fused_cost->nav.velocity_mux.collision_costmap" in wires
+        assert "TraversabilityCostModule.fused_cost->nav.mission.costmap" not in wires
+
+    for profile in ("map", "nav"):
+        profile_wires = _wire_set(graph_for_profile(profile))
+        assert (
+            "TraversabilityCostModule.fused_cost->nav.velocity_mux.collision_costmap"
+            not in profile_wires
+        )
+
+    teleop_avoid_bp = blueprint_for_profile(
+        "teleop_avoid",
+        run_startup_checks=False,
+        manage_external_services=False,
+    )
+    teleop_avoid_mux = next(
+        entry.config
+        for entry in teleop_avoid_bp._entries
+        if entry.name == "nav.velocity_mux"
+    )
+    assert teleop_avoid_mux["enable_collision_monitor"] is True
+
+    map_bp = blueprint_for_profile(
+        "map",
+        run_startup_checks=False,
+        manage_external_services=False,
+    )
+    map_mux = next(
+        entry.config for entry in map_bp._entries if entry.name == "nav.velocity_mux"
+    )
+    assert map_mux["enable_collision_monitor"] is False
+
+
+def test_product_mode_switch_contracts_allow_same_nav_graph_hot_switch():
     plan = product_mode_switch_plan("tracking", "inspection")
     assert plan["same_graph_candidate"] is True
-    assert plan["online_hot_switch_supported"] is False
-    assert plan["required_lifecycle"] == "cold_restart"
+    assert plan["online_hot_switch_supported"] is True
+    assert plan["required_lifecycle"] == "hot_switch"
 
     teleop_to_nav = product_mode_switch_plan("teleop", "nav")
     assert teleop_to_nav["same_graph_candidate"] is False
@@ -533,6 +607,9 @@ def test_nav_profile_uses_slam_adapter_localization_health_edges():
     )
     assert f"SlamAdapterModule.localization_status->GatewayModule.localization_status@{health}" in wires
     assert f"SlamAdapterModule.localization_quality->GatewayModule.localization_quality@{quality}" in wires
+    assert "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf" in wires
+    assert "SlamAdapterModule.map_odom_tf->nav.local_planner.map_odom_tf" in wires
+    assert "SlamAdapterModule.map_odom_tf->nav.path_follower.map_odom_tf" in wires
     assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
     assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
     assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
@@ -1177,6 +1254,9 @@ def test_super_lio_profiles_wire_adapter_localization_status_to_gateway():
             f"@{TOPICS.localization_health}"
             in wires
         )
+        assert "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf" in wires
+        assert "SlamAdapterModule.map_odom_tf->nav.local_planner.map_odom_tf" in wires
+        assert "SlamAdapterModule.map_odom_tf->nav.path_follower.map_odom_tf" in wires
         assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
         assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
         assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
@@ -1535,9 +1615,11 @@ def test_navigation_forwards_path_follower_drive_mode():
     config = autonomy_stack_config(
         False,
         path_follower_two_way_drive=False,
+        path_follower_native_max_accel=8.0,
     )
 
     assert config["path_follower_config"]["two_way_drive"] is False
+    assert config["path_follower_config"]["native_max_accel"] == 8.0
 
 
 def test_navigation_forwards_path_follower_safety_guard_config():
@@ -1603,4 +1685,3 @@ def test_autonomy_stack_config_matches_runtime_backend_policy_selection():
         == backend_selection["path_follower_backend"]
     )
     assert stack_config["path_follower_config"]["two_way_drive"] is False
-

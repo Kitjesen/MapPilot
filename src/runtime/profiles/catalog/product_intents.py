@@ -18,17 +18,27 @@ from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
 
 _ACTIVE_OCTOPLANNER3D_MAP = _resolve_octoplanner3d_map()
 _THUNDER_OCTOPLANNER3D_CONSTRAINTS = dict(
-    octoplanner3d_robot_radius=0.60,
+    preview_timeout=30.0,
+    octoplanner3d_timeout_s=30.0,
+    octoplanner3d_robot_radius=0.40,
     octoplanner3d_max_iterations=800000,
     octoplanner3d_snap_search_radius_cells=12,
     octoplanner3d_require_ground_support=True,
     octoplanner3d_strict_direct_ground_support=False,
-    octoplanner3d_ground_support_xy_radius_cells=1,
-    octoplanner3d_ground_support_depth_cells=1,
+    octoplanner3d_ground_support_xy_radius_cells=2,
+    octoplanner3d_ground_support_depth_cells=6,
     octoplanner3d_enable_preblocked_costmap=True,
-    octoplanner3d_preblocked_costmap_radius_cells=3,
-    octoplanner3d_preblocked_costmap_weight=2.5,
+    octoplanner3d_preblocked_costmap_radius_cells=2,
+    octoplanner3d_preblocked_costmap_weight=1.5,
     octoplanner3d_lowest_traversable_only=False,
+    octoplanner3d_floor_change_penalty=6.0,
+    octoplanner3d_max_step_height=0.35,
+    octoplanner3d_max_slope=0.0,
+    octoplanner3d_same_floor_preference=True,
+    octoplanner3d_same_floor_z_tolerance=0.75,
+    octoplanner3d_max_same_floor_z_excursion=2.0,
+    octoplanner3d_obstacle_clearance_radius_cells=2,
+    octoplanner3d_obstacle_clearance_weight=1.5,
 )
 PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     "teleop": dict(
@@ -64,6 +74,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         enable_gateway=True,
         enable_teleop=True,
         enable_map_modules=True,
+        cmd_vel_mux_collision_monitor=True,
         enable_goals=False,
         enable_patrol_routes=False,
         enable_scheduler=False,
@@ -140,6 +151,14 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         # rejects the route.
         plan_safety_policy="reject",
         fallback_planner_name="",
+        waypoint_threshold=0.20,
+        final_waypoint_threshold=0.10,
+        local_planner_direct_track_fallback_min_distance_m=0.05,
+        local_planner_min_trackable_local_path_m=0.05,
+        path_follower_goal_tolerance=0.05,
+        path_follower_lookahead=0.35,
+        path_follower_max_speed=0.20,
+        path_follower_min_speed=0.08,
         **_THUNDER_OCTOPLANNER3D_CONSTRAINTS,
         # Keep autonomy inside the Module graph. The default local planner and
         # path follower are ROS-free nanobind/nav_kernel backends; legacy ROS2
