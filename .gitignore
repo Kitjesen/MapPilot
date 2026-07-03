@@ -64,6 +64,7 @@ src/nav/core/build_nb*/
 src/slam/fastlio2/portable/build/
 src/nav/kernel/build_py/
 src/nav/kernel/build_nb*/
+src/localization/slam/cpp/build*/
 src/nav/services/plan/**/build/
 src/nav/services/plan/**/CMakeFiles/
 src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/

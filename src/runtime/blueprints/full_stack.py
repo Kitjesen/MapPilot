@@ -62,6 +62,7 @@ def full_stack_blueprint(
     run_startup_checks: bool = True,
     manage_external_services: bool = True,
     namespace: str | None = None,
+    profile: str = "",
     # Legacy alias
     planner: str = "",
     **config: Any,
@@ -71,6 +72,15 @@ def full_stack_blueprint(
     Each stack is a factory function returning a Blueprint.
     autoconnect() merges them and auto-wires by (port_name, msg_type).
     """
+    if profile:
+        from runtime.profiles.resolver import resolve_profile_config
+
+        profile_config = resolve_profile_config(profile, overrides=config)
+        return full_stack_blueprint(
+            **profile_config,
+            run_startup_checks=run_startup_checks,
+        )
+
     planner_backend = planner or planner_backend
     slam_profile = normalize_slam_profile(slam_profile)
     semantic_save_dir = config.get("semantic_save_dir", DEFAULT_SEMANTIC_DIR)
