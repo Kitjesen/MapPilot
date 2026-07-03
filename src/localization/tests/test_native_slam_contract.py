@@ -261,6 +261,8 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
         "src/localization/adapters/ros2/cpp/ros2_dds_runtime.cpp"
     ).read_text(encoding="utf-8")
     cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(encoding="utf-8")
+    fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+    sdk2_stream = Path("src/drivers/real/lidar/sdk2_stream/main.cpp").read_text(encoding="utf-8")
     build_script = Path("scripts/build/build_slam_core.sh").read_text(encoding="utf-8")
 
     assert "LINGTU_SLAM_BUILD_PYTHON_BINDINGS" in cmake
@@ -277,6 +279,8 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "add_executable(lingtu_slam_cyclone_runtime ALIAS lingtu_slam_dds_runtime)" in cmake
     assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in build_script
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" in build_script
+    assert "CPU_BBS3D_ROOT" in build_script
+    assert "LINGTU_REQUIRE_BBS3D" in build_script
     assert "localization.slam._native" in module
     assert "NATIVE_SLAM_BINDING_SCHEMA" in module
     assert "NB_MODULE(_native, m)" in binding
@@ -297,6 +301,11 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "lingtu::message::kTfStatic.dds_topic.data()" in cyclone_runtime
     assert "dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL)" in cyclone_runtime
     assert "dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT" in cyclone_runtime
+    assert "ReaderQos::SensorStream" in cyclone_runtime
+    assert "dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 256)" in cyclone_runtime
+    assert "dds_qset_history(qos.get(), DDS_HISTORY_KEEP_LAST, 256)" in sdk2_stream
+    assert "resetTrackingCoreAtPose(result.map_body)" in fastlio
+    assert "map_odom_pose_ = Pose3d{}" in fastlio
     assert "dds.writeTf(msg.msg)" in cyclone_runtime
     assert "backend->feedLidar" in cyclone_runtime
     assert "backend->feedImu" in cyclone_runtime

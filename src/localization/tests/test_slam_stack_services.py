@@ -55,27 +55,45 @@ def test_slam_stack_factory_does_not_touch_service_manager(monkeypatch):
 def test_super_lio_profile_starts_experimental_service(monkeypatch):
     fake_calls = _run_external_service_plan(monkeypatch, "super_lio")
 
-    assert ("stop", ("slam", "slam_pgo", "localizer", "super_lio_relocation")) in (
-        fake_calls
-    )
-    assert ("ensure", ("lidar", "super_lio")) in fake_calls
-    assert ("wait_ready", ("lidar", "super_lio")) in fake_calls
+    assert (
+        "stop",
+        ("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio_relocation"),
+    ) in fake_calls
+    assert ("ensure", ("legacy_lidar", "super_lio")) in fake_calls
+    assert ("wait_ready", ("legacy_lidar", "super_lio")) in fake_calls
 
 
 def test_super_lio_relocation_profile_starts_experimental_service(monkeypatch):
     fake_calls = _run_external_service_plan(monkeypatch, "super_lio_relocation")
 
-    assert ("stop", ("slam", "slam_pgo", "localizer", "super_lio")) in fake_calls
-    assert ("ensure", ("lidar", "super_lio_relocation")) in fake_calls
-    assert ("wait_ready", ("lidar", "super_lio_relocation")) in fake_calls
+    assert (
+        "stop",
+        ("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio"),
+    ) in fake_calls
+    assert ("ensure", ("legacy_lidar", "super_lio_relocation")) in fake_calls
+    assert ("wait_ready", ("legacy_lidar", "super_lio_relocation")) in fake_calls
+
+
+def test_genz_icp_profile_starts_experimental_odometry_service(monkeypatch):
+    fake_calls = _run_external_service_plan(monkeypatch, "genz-icp")
+
+    assert (
+        "stop",
+        ("slam", "slam_pgo", "localizer", "hba", "super_lio", "super_lio_relocation"),
+    ) in fake_calls
+    assert ("ensure", ("legacy_lidar", "genz_icp")) in fake_calls
+    assert ("wait_ready", ("legacy_lidar", "genz_icp")) in fake_calls
 
 
 def test_fastlio2_profile_stops_super_lio_before_mapping(monkeypatch):
     fake_calls = _run_external_service_plan(monkeypatch, "fastlio2")
 
-    assert ("stop", ("localizer", "super_lio", "super_lio_relocation")) in fake_calls
-    assert ("ensure", ("slam", "slam_pgo")) in fake_calls
-    assert ("wait_ready", ("slam", "slam_pgo")) in fake_calls
+    assert (
+        "stop",
+        ("slam_pgo", "localizer", "hba", "genz_icp", "super_lio", "super_lio_relocation"),
+    ) in fake_calls
+    assert ("ensure", ("slam",)) in fake_calls
+    assert ("wait_ready", ("slam",)) in fake_calls
 
 
 def test_full_stack_treats_explicit_super_lio_relocation_as_external_lidar_owner():

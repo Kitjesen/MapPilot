@@ -13,6 +13,14 @@ set(CPU_BBS3D_ROOT "" CACHE PATH "Optional local install prefix for cpu_bbs3d")
 if(NOT CPU_BBS3D_ROOT AND DEFINED ENV{CPU_BBS3D_ROOT})
   set(CPU_BBS3D_ROOT "$ENV{CPU_BBS3D_ROOT}")
 endif()
+if(NOT CPU_BBS3D_ROOT)
+  get_filename_component(_LINGTU_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+  set(_LINGTU_DEFAULT_BBS3D_ROOT "${_LINGTU_REPO_ROOT}/third_party/3d_bbs/install")
+  if(EXISTS "${_LINGTU_DEFAULT_BBS3D_ROOT}")
+    set(CPU_BBS3D_ROOT "${_LINGTU_DEFAULT_BBS3D_ROOT}" CACHE PATH
+      "Optional local install prefix for cpu_bbs3d" FORCE)
+  endif()
+endif()
 
 find_library(CPU_BBS3D_LIBRARY
   NAMES cpu_bbs3d libcpu_bbs3d.so

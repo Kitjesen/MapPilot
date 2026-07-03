@@ -1,4 +1,4 @@
-"""Registry tokens for external SLAM runtime profiles.
+"""Registry tokens for SLAM runtime profiles.
 
 These entries describe selectable SLAM profiles for catalogs and validation.
 Actual runtime IO is provided by explicit localization adapters, so importing
@@ -13,47 +13,47 @@ from runtime.registry import register
 
 
 @dataclass(frozen=True)
-class ExternalSlamProfile:
+class SlamRuntimeProfile:
     name: str
     mode: str
     description: str
 
 
-@register("slam", "fastlio2", description="External Fast-LIO2 mapping profile")
-class FastLio2Profile(ExternalSlamProfile):
+@register("slam", "fastlio2", description="Fast-LIO2 mapping runtime profile")
+class FastLio2Profile(SlamRuntimeProfile):
     def __init__(self) -> None:
         super().__init__(
             name="fastlio2",
             mode="mapping",
-            description="External Fast-LIO2 mapping profile",
+            description="Fast-LIO2 mapping runtime profile",
         )
 
 
-@register("slam", "pointlio", description="External Point-LIO mapping profile")
-class PointLioProfile(ExternalSlamProfile):
+@register("slam", "pointlio", description="Point-LIO mapping runtime profile")
+class PointLioProfile(SlamRuntimeProfile):
     def __init__(self) -> None:
         super().__init__(
             name="pointlio",
             mode="mapping",
-            description="External Point-LIO mapping profile",
+            description="Point-LIO mapping runtime profile",
         )
 
 
-@register("slam", "localizer", description="External saved-map localization profile")
-class LocalizerProfile(ExternalSlamProfile):
+@register("slam", "localizer", description="Saved-map localization runtime profile")
+class LocalizerProfile(SlamRuntimeProfile):
     def __init__(self) -> None:
         super().__init__(
             name="localizer",
             mode="localization",
-            description="External saved-map localization profile",
+            description="Saved-map localization runtime profile",
         )
 
 
-@register("slam", "genz", description="External GenZ-ICP localization profile")
-class GenZProfile(ExternalSlamProfile):
+@register("slam", "genz", description="GenZ-ICP localization runtime profile")
+class GenZProfile(SlamRuntimeProfile):
     def __init__(self) -> None:
         super().__init__(
             name="genz",
             mode="localization",
-            description="External GenZ-ICP localization profile",
+            description="GenZ-ICP localization runtime profile",
         )

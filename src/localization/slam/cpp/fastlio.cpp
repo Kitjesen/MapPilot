@@ -3,6 +3,7 @@
 #if defined(LINGTU_HAS_FASTLIO2_BACKEND) && LINGTU_HAS_FASTLIO2_BACKEND
 
 #include "map_builder/map_builder.h"
+#include "native_relocalizer.hpp"
 
 #include <pcl/io/pcd_io.h>
 #include <yaml-cpp/yaml.h>
@@ -436,19 +437,74 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   Status relocalize(const std::optional<Pose3d>& guess) override {
-    if (guess.has_value()) {
-      const Status status = setInitialPose(*guess);
-      if (!status.ok) {
-        return status;
+    if (mode_ != SlamMode::Localization) {
+      if (guess.has_value()) {
+        const Status status = setInitialPose(*guess);
+        if (!status.ok) {
+          return status;
+        }
       }
+      state_ = SlamState::Tracking;
+      relocalization_state_ = "tracking";
+      last_relocalization_message_ = "tracking";
+      reason_ = "tracking";
+      return Status::Ok(reason_);
     }
-    if (mode_ == SlamMode::Localization) {
+
+    relocalization_state_ = "requested";
+    if (!map_loaded_ || !relocalizer_ || !relocalizer_->hasMap()) {
       state_ = SlamState::Lost;
-      reason_ = "fastlio2_relocalization_not_implemented";
+      reason_ = "map_not_loaded";
+      relocalization_state_ = "map_not_loaded";
+      last_relocalization_message_ = reason_;
       return Status::Error(reason_);
     }
+    if (!guess.has_value() && !relocalizer_->supportsGlobalRelocalization()) {
+      state_ = SlamState::Lost;
+      reason_ = "initial_pose_required";
+      relocalization_state_ = "initial_pose_required";
+      last_relocalization_message_ = reason_;
+      return Status::Error(reason_);
+    }
+    if (!registered_cloud_body_.has_value() || registered_cloud_body_->points.empty()) {
+      state_ = SlamState::Lost;
+      reason_ = "registered_cloud_unavailable";
+      relocalization_state_ = "waiting_for_scan";
+      last_relocalization_message_ = reason_;
+      return Status::Error(reason_);
+    }
+    if (!odometry_odom_body_.has_value()) {
+      state_ = SlamState::Lost;
+      reason_ = "odometry_unavailable";
+      relocalization_state_ = "waiting_for_odometry";
+      last_relocalization_message_ = reason_;
+      return Status::Error(reason_);
+    }
+
+    const NativeRelocalizationResult result = guess.has_value()
+        ? relocalizer_->relocalize(*registered_cloud_body_, *guess, *odometry_odom_body_)
+        : relocalizer_->globalRelocalize(*registered_cloud_body_, *odometry_odom_body_);
+    relocalization_quality_ = result.quality;
+    last_relocalization_message_ = result.message;
+    if (!result.success) {
+      state_ = SlamState::Lost;
+      relocalization_state_ = "failed";
+      reason_ = result.message;
+      return Status::Error(reason_);
+    }
+
+    resetTrackingCoreAtPose(result.map_body);
+    map_odom_pose_ = Pose3d{};
+    map_body_pose_at_relocalization_ = result.map_body;
+    has_map_odom_pose_ = true;
+    map_frame_jump_ = true;
+    confidence_ = result.quality >= 0.0
+        ? std::max(0.0, std::min(1.0, 1.0 - result.quality))
+        : confidence_;
+    localization_quality_ = confidence_;
     state_ = SlamState::Tracking;
-    reason_ = "tracking";
+    relocalization_state_ = "completed";
+    reason_ = "relocalized";
     return Status::Ok(reason_);
   }
 
@@ -492,6 +548,7 @@ class FastLioBackend final : public ISlamBackend {
 
     state_ = SlamState::Tracking;
     confidence_ = std::max(0.0, std::min(1.0, kf_->degeneracy().effective_ratio));
+    localization_quality_ = confidence_;
     reason_ = "tracking";
     return Status::Ok(reason_);
   }
@@ -528,8 +585,18 @@ class FastLioBackend final : public ISlamBackend {
       return patch_status;
     }
     saved_map_cloud_map_ = map_cloud_map_;
+    saved_map_points_ = saved_map_cloud_map_.has_value()
+        ? static_cast<int>(saved_map_cloud_map_->points.size())
+        : 0;
     map_loaded_ = true;
     last_map_path_ = pcd.string();
+    if (!relocalizer_) {
+      relocalizer_ = std::make_unique<NativeRelocalizer>();
+    }
+    std::string relocalizer_message;
+    relocalizer_->loadMap(pcd.string(), &relocalizer_message);
+    last_relocalization_message_ = relocalizer_message;
+    relocalization_state_ = relocalizer_->hasMap() ? "idle" : "map_load_failed";
     reason_ = "map_saved";
     return Status::Ok(reason_);
   }
@@ -543,10 +610,21 @@ class FastLioBackend final : public ISlamBackend {
     if (pcl::io::loadPCDFile<PointType>(pcd.string(), cloud) < 0) {
       return Status::Error("map_pcd_load_failed");
     }
-    saved_map_cloud_map_ = toContractCloud(
-        std::make_shared<CloudType>(cloud), last_stamp_s_, config_.map_frame);
+    if (!relocalizer_) {
+      relocalizer_ = std::make_unique<NativeRelocalizer>();
+    }
+    std::string relocalizer_message;
+    if (!relocalizer_->loadMap(pcd.string(), &relocalizer_message)) {
+      relocalization_state_ = "map_load_failed";
+      last_relocalization_message_ = relocalizer_message;
+      return Status::Error(relocalizer_message);
+    }
+    saved_map_cloud_map_.reset();
+    saved_map_points_ = static_cast<int>(cloud.size());
     map_loaded_ = true;
     last_map_path_ = pcd.string();
+    relocalization_state_ = "idle";
+    last_relocalization_message_ = relocalizer_message;
     reason_ = "map_loaded";
     return Status::Ok(reason_);
   }
@@ -562,11 +640,23 @@ class FastLioBackend final : public ISlamBackend {
     out.registered_cloud_body = registered_cloud_body_;
     out.map_cloud_map = map_cloud_map_;
     out.saved_map_cloud_map = saved_map_cloud_map_;
-    out.map_odom_tf = Transform3d{config_.map_frame, config_.odom_frame, Pose3d{}};
+    out.map_odom_tf = Transform3d{
+        config_.map_frame,
+        config_.odom_frame,
+        has_map_odom_pose_ ? map_odom_pose_ : Pose3d{}};
+    out.saved_map_points = saved_map_points_;
     out.alive = alive_;
     out.map_loaded = map_loaded_;
     out.map_frame_jump = map_frame_jump_;
-    out.localization_quality = confidence_;
+    out.relocalization_supported = relocalizer_ &&
+        (relocalizer_->supportsSeededRelocalization() ||
+         relocalizer_->supportsGlobalRelocalization());
+    out.saved_map_relocalization_supported =
+        out.relocalization_supported && map_loaded_ && relocalizer_ && relocalizer_->hasMap();
+    out.relocalization_state = relocalization_state_;
+    out.last_relocalization_message = last_relocalization_message_;
+    out.relocalization_quality = relocalization_quality_;
+    out.localization_quality = localization_quality_;
     out.gnss_fusion_health = gnss_health_;
     out.scene_mode = scene_mode_;
     out.scan_start_s = scan_start_s_;
@@ -588,7 +678,15 @@ class FastLioBackend final : public ISlamBackend {
     alive_ = true;
     map_loaded_ = false;
     map_frame_jump_ = false;
+    has_map_odom_pose_ = false;
+    map_odom_pose_ = Pose3d{};
+    map_body_pose_at_relocalization_.reset();
+    saved_map_points_ = 0;
     confidence_ = 0.0;
+    localization_quality_ = 0.0;
+    relocalization_quality_ = -1.0;
+    relocalization_state_ = "idle";
+    last_relocalization_message_ = "reset";
     reason_ = "reset";
     state_ = SlamState::Initializing;
     return Status::Ok(reason_);
@@ -598,6 +696,7 @@ class FastLioBackend final : public ISlamBackend {
   void resetCore() {
     kf_ = std::make_shared<IESKF>();
     builder_ = std::make_unique<MapBuilder>(builder_config_, kf_);
+    relocalizer_ = std::make_unique<NativeRelocalizer>();
     imu_buffer_.clear();
     lidar_buffer_.clear();
     lidar_pushed_ = false;
@@ -619,6 +718,32 @@ class FastLioBackend final : public ISlamBackend {
     map_cloud_map_.reset();
     saved_map_cloud_map_.reset();
     pose_history_.clear();
+    patch_history_.clear();
+    patch_sequence_ = 0;
+    last_patch_stamp_s_ = 0.0;
+    has_last_patch_pose_ = false;
+  }
+
+  void resetTrackingCoreAtPose(const Pose3d& pose) {
+    kf_ = std::make_shared<IESKF>();
+    builder_ = std::make_unique<MapBuilder>(builder_config_, kf_);
+    applyPose(kf_->x(), pose);
+    imu_buffer_.clear();
+    lidar_buffer_.clear();
+    lidar_pushed_ = false;
+    package_ = SyncPackage{};
+    last_lidar_time_ = -1.0;
+    last_imu_time_ = -1.0;
+    scan_start_s_ = 0.0;
+    scan_end_s_ = 0.0;
+    imu_batch_ = 0;
+    sync_wait_count_ = 0;
+    odometry_odom_body_ = pose;
+    state_estimation_at_scan_ = pose;
+    registered_cloud_body_.reset();
+    map_cloud_map_.reset();
+    pose_history_.clear();
+    pose_history_.push_back(OdomSample{last_stamp_s_, pose});
     patch_history_.clear();
     patch_sequence_ = 0;
     last_patch_stamp_s_ = 0.0;
@@ -738,14 +863,17 @@ class FastLioBackend final : public ISlamBackend {
     if (builder_->status() == BuilderStatus::IMU_INIT) {
       state_ = SlamState::Initializing;
       confidence_ = 0.0;
+      localization_quality_ = confidence_;
       reason_ = reason_.empty() ? "imu_initializing" : reason_;
     } else if (builder_->status() == BuilderStatus::MAP_INIT) {
       state_ = SlamState::Mapping;
       confidence_ = 0.2;
+      localization_quality_ = confidence_;
       reason_ = "map_initializing";
     } else {
       state_ = SlamState::Tracking;
       confidence_ = std::max(0.0, std::min(1.0, kf_->degeneracy().effective_ratio));
+      localization_quality_ = confidence_;
     }
   }
 
@@ -760,6 +888,7 @@ class FastLioBackend final : public ISlamBackend {
   std::string last_map_path_;
   std::shared_ptr<IESKF> kf_;
   std::unique_ptr<MapBuilder> builder_;
+  std::unique_ptr<NativeRelocalizer> relocalizer_;
   std::deque<IMUData> imu_buffer_;
   std::deque<LidarFrame> lidar_buffer_;
   bool lidar_pushed_ = false;
@@ -772,7 +901,14 @@ class FastLioBackend final : public ISlamBackend {
   bool alive_ = false;
   bool map_loaded_ = false;
   bool map_frame_jump_ = false;
+  bool has_map_odom_pose_ = false;
+  Pose3d map_odom_pose_;
+  std::optional<Pose3d> map_body_pose_at_relocalization_;
   double confidence_ = 0.0;
+  double localization_quality_ = 0.0;
+  double relocalization_quality_ = -1.0;
+  std::string relocalization_state_ = "idle";
+  std::string last_relocalization_message_;
   int imu_batch_ = 0;
   int sync_wait_count_ = 0;
   int imu_rollback_count_ = 0;
@@ -784,6 +920,7 @@ class FastLioBackend final : public ISlamBackend {
   std::optional<Cloud> registered_cloud_body_;
   std::optional<Cloud> map_cloud_map_;
   std::optional<Cloud> saved_map_cloud_map_;
+  int saved_map_points_ = 0;
   GnssFusionHealth gnss_health_;
   std::vector<OdomSample> pose_history_;
   std::deque<PatchSnapshot> patch_history_;

@@ -110,25 +110,54 @@ dds_entity_t checked(dds_entity_t entity, const char* what) {
 struct CliConfig {
   std::string command = "save-map";
   std::string path;
+  std::optional<double> x;
+  std::optional<double> y;
+  std::optional<double> z;
+  std::optional<double> yaw;
   int domain_id = 0;
   double timeout_s = 30.0;
 };
+
+std::string normalizedCommand(std::string command) {
+  if (command == "save" || command == "save-map") {
+    return "save_map";
+  }
+  if (command == "load" || command == "load-map") {
+    return "load_map";
+  }
+  if (command == "relocalize-saved-map" || command == "relocalize_saved_map") {
+    return "relocalize";
+  }
+  if (command == "global-relocalize" || command == "global_relocalize") {
+    return "global_relocalize";
+  }
+  return command;
+}
 
 CliConfig parseArgs(int argc, char** argv) {
   CliConfig cfg;
   if (argc < 2 || std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") {
     throw std::runtime_error(
-        "usage: lingtu_slam_control save-map PATH [--domain-id N] [--timeout-s SECONDS]");
+        "usage: lingtu_slam_control save-map PATH [--domain-id N] [--timeout-s SECONDS]\n"
+        "       lingtu_slam_control load-map PATH [--domain-id N] [--timeout-s SECONDS]\n"
+        "       lingtu_slam_control relocalize [PATH] --x X --y Y [--z Z] [--yaw YAW] "
+        "[--domain-id N] [--timeout-s SECONDS]\n"
+        "       lingtu_slam_control global-relocalize [PATH] [--domain-id N] "
+        "[--timeout-s SECONDS]");
   }
-  cfg.command = argv[1];
-  if (cfg.command != "save-map" && cfg.command != "save_map") {
+  cfg.command = normalizedCommand(argv[1]);
+  if (cfg.command != "save_map" && cfg.command != "load_map" &&
+      cfg.command != "relocalize" && cfg.command != "global_relocalize") {
     throw std::runtime_error("unsupported command: " + cfg.command);
   }
-  if (argc < 3) {
-    throw std::runtime_error("missing map output path");
+  int i = 2;
+  if (i < argc && std::string(argv[i]).rfind("--", 0) != 0) {
+    cfg.path = argv[i++];
   }
-  cfg.path = argv[2];
-  for (int i = 3; i < argc; ++i) {
+  if ((cfg.command == "save_map" || cfg.command == "load_map") && cfg.path.empty()) {
+    throw std::runtime_error("missing map path");
+  }
+  for (; i < argc; ++i) {
     const std::string arg = argv[i];
     auto next = [&]() -> std::string {
       if (i + 1 >= argc) {
@@ -140,6 +169,14 @@ CliConfig parseArgs(int argc, char** argv) {
       cfg.domain_id = std::stoi(next());
     } else if (arg == "--timeout-s") {
       cfg.timeout_s = std::stod(next());
+    } else if (arg == "--x") {
+      cfg.x = std::stod(next());
+    } else if (arg == "--y") {
+      cfg.y = std::stod(next());
+    } else if (arg == "--z") {
+      cfg.z = std::stod(next());
+    } else if (arg == "--yaw") {
+      cfg.yaw = std::stod(next());
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -154,11 +191,26 @@ int main(int argc, char** argv) {
     const CliConfig cfg = parseArgs(argc, argv);
     const std::string request_id =
         "slamctl-" + std::to_string(static_cast<std::uint64_t>(nowSeconds() * 1000000.0));
-    const std::string payload =
+    std::string payload =
         "{\"schema_version\":\"lingtu.slam.map_command.v1\","
         "\"request_id\":\"" + jsonEscape(request_id) + "\","
-        "\"action\":\"save_map\","
-        "\"path\":\"" + jsonEscape(cfg.path) + "\"}";
+        "\"action\":\"" + jsonEscape(cfg.command) + "\"";
+    if (!cfg.path.empty()) {
+      payload += ",\"path\":\"" + jsonEscape(cfg.path) + "\"";
+    }
+    if (cfg.x.has_value()) {
+      payload += ",\"x\":" + std::to_string(*cfg.x);
+    }
+    if (cfg.y.has_value()) {
+      payload += ",\"y\":" + std::to_string(*cfg.y);
+    }
+    if (cfg.z.has_value()) {
+      payload += ",\"z\":" + std::to_string(*cfg.z);
+    }
+    if (cfg.yaw.has_value()) {
+      payload += ",\"yaw\":" + std::to_string(*cfg.yaw);
+    }
+    payload += "}";
 
     const dds_entity_t participant = checked(
         dds_create_participant(static_cast<dds_domainid_t>(cfg.domain_id), nullptr, nullptr),

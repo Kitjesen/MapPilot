@@ -325,6 +325,7 @@ class ContractBackend final : public ISlamBackend {
     }
 
     saved_map_cloud_map_ = cloud;
+    saved_map_points_ = static_cast<int>(cloud.points.size());
     map_loaded_ = true;
     last_map_path_ = pcd.string();
     reason_ = "map_saved";
@@ -340,6 +341,7 @@ class ContractBackend final : public ISlamBackend {
     cloud.stamp_s = nowSeconds();
     cloud.frame_id = config_.map_frame;
     saved_map_cloud_map_ = cloud;
+    saved_map_points_ = static_cast<int>(cloud.points.size());
     map_loaded_ = true;
     last_map_path_ = pcd.string();
     reason_ = "map_loaded";
@@ -358,9 +360,15 @@ class ContractBackend final : public ISlamBackend {
     out.map_cloud_map = map_cloud_map_;
     out.saved_map_cloud_map = saved_map_cloud_map_;
     out.map_odom_tf = Transform3d{config_.map_frame, config_.odom_frame, Pose3d{}};
+    out.saved_map_points = saved_map_points_;
     out.alive = alive_;
     out.map_loaded = map_loaded_;
     out.map_frame_jump = map_frame_jump_;
+    out.relocalization_supported = true;
+    out.saved_map_relocalization_supported = true;
+    out.relocalization_state = map_loaded_ ? "idle" : "map_not_loaded";
+    out.last_relocalization_message = reason_;
+    out.relocalization_quality = confidence_;
     out.localization_quality = confidence_;
     out.gnss_fusion_health = gnss_health_;
     out.scene_mode = scene_mode_;
@@ -414,6 +422,7 @@ class ContractBackend final : public ISlamBackend {
   std::optional<Cloud> registered_cloud_body_;
   std::optional<Cloud> map_cloud_map_;
   std::optional<Cloud> saved_map_cloud_map_;
+  int saved_map_points_ = 0;
   GnssFusionHealth gnss_health_;
   std::vector<OdomSample> pose_history_;
 };

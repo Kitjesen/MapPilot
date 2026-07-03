@@ -608,6 +608,7 @@ class SlamRunner {
     result["alive"_s] = out.alive;
     result["map_loaded"_s] = out.map_loaded;
     result["map_frame_jump"_s] = out.map_frame_jump;
+    result["saved_map_points"_s] = out.saved_map_points;
     result["localization_quality"_s] = out.localization_quality;
     result["gnss_fusion_health"_s] = gnssHealthDict(out.gnss_fusion_health);
     result["scene_mode"_s] = out.scene_mode;
@@ -622,7 +623,12 @@ class SlamRunner {
     result["lidar_buffer"_s] = out.lidar_buffer;
     result["dropped_lidar_frames"_s] = out.dropped_lidar_frames;
     result["dropped_imu_frames"_s] = out.dropped_imu_frames;
-    result["saved_map_relocalization_supported"_s] = true;
+    result["relocalization_supported"_s] = out.relocalization_supported;
+    result["saved_map_relocalization_supported"_s] =
+        out.saved_map_relocalization_supported;
+    result["relocalization_state"_s] = out.relocalization_state;
+    result["last_relocalization_message"_s] = out.last_relocalization_message;
+    result["relocalization_quality"_s] = out.relocalization_quality;
     return result;
   }
 

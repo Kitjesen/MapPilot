@@ -195,13 +195,16 @@ class DdsPublisher {
             nullptr,
             nullptr),
         "dds_create_topic(imu)");
-    lidar_writer_ = checked(dds_create_writer(publisher_, lidar_topic_, nullptr, nullptr),
-                            "dds_create_writer(lidar)");
+    auto sensor_qos = sensor_qos_profile();
+    lidar_writer_ = checked(
+        dds_create_writer(publisher_, lidar_topic_, sensor_qos.get(), nullptr),
+        "dds_create_writer(lidar)");
     raw_packet_writer_ = checked(
-        dds_create_writer(publisher_, raw_packet_topic_, nullptr, nullptr),
+        dds_create_writer(publisher_, raw_packet_topic_, sensor_qos.get(), nullptr),
         "dds_create_writer(raw_packet)");
-    imu_writer_ = checked(dds_create_writer(publisher_, imu_topic_, nullptr, nullptr),
-                          "dds_create_writer(imu)");
+    imu_writer_ = checked(
+        dds_create_writer(publisher_, imu_topic_, sensor_qos.get(), nullptr),
+        "dds_create_writer(imu)");
   }
 
   ~DdsPublisher() {
@@ -285,6 +288,17 @@ class DdsPublisher {
     header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / 1000000000ULL);
     header.stamp.nanosec = static_cast<std::uint32_t>(timestamp_ns % 1000000000ULL);
     header.frame_id = const_cast<char*>(frame_id.c_str());
+  }
+
+  static std::unique_ptr<dds_qos_t, decltype(&dds_delete_qos)> sensor_qos_profile() {
+    std::unique_ptr<dds_qos_t, decltype(&dds_delete_qos)> qos(
+        dds_create_qos(), dds_delete_qos);
+    if (!qos) {
+      throw std::runtime_error("dds_create_qos failed");
+    }
+    dds_qset_reliability(qos.get(), DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
+    dds_qset_history(qos.get(), DDS_HISTORY_KEEP_LAST, 256);
+    return qos;
   }
 
   std::string lidar_frame_;

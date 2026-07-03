@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from runtime.relocalization import RelocalizationResult
+from runtime.adapters.native.relocalization import NativeSlamRelocalizationService
 from localization import relocalization
 
 
@@ -300,3 +301,100 @@ def test_relocalize_saved_map_with_env_keeps_path_out_of_shell_command(
     assert env["LINGTU_RELOC_X"] == "1.0"
     assert env["LINGTU_RELOC_Y"] == "2.0"
     assert env["LINGTU_RELOC_YAW"] == "0.3"
+
+
+def test_native_relocalization_uses_control_binary_without_shell(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+    binary = str(tmp_path / "lingtu_slam_control")
+    pcd_path = tmp_path / "map with spaces" / "map.pcd"
+    monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
+    monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        stdout = (
+            '{"success":true,"message":"relocalized",'
+            '"relocalization_quality":0.123}\n'
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(
+        "runtime.adapters.native.relocalization.subprocess.run",
+        fake_run,
+    )
+
+    result = NativeSlamRelocalizationService().relocalize_saved_map(
+        pcd_path,
+        1.0,
+        2.0,
+        0.3,
+        timeout_s=12.0,
+    )
+
+    assert result.success is True
+    assert result.quality == 0.123
+    args, kwargs = calls[0]
+    assert args == [
+        binary,
+        "relocalize",
+        str(pcd_path),
+        "--x",
+        "1",
+        "--y",
+        "2",
+        "--yaw",
+        "0.3",
+        "--domain-id",
+        "7",
+        "--timeout-s",
+        "12",
+    ]
+    assert kwargs["timeout"] == 17.0
+    assert kwargs["check"] is False
+    assert kwargs["env"]["LINGTU_DDS_DOMAIN_ID"] == "7"
+
+
+def test_native_global_relocalization_uses_control_binary(monkeypatch, tmp_path):
+    calls = []
+    binary = str(tmp_path / "lingtu_slam_control")
+    monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
+    monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=(
+                '{"success":true,"message":"relocalized",'
+                '"last_relocalization_message":"native_global_relocalized",'
+                '"quality":0.05}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "runtime.adapters.native.relocalization.subprocess.run",
+        fake_run,
+    )
+
+    result = NativeSlamRelocalizationService().trigger_global_relocalize(
+        timeout_s=9.0,
+    )
+
+    assert result.success is True
+    assert result.message == "native_global_relocalized"
+    assert result.quality == 0.05
+    args, kwargs = calls[0]
+    assert args == [
+        binary,
+        "global-relocalize",
+        "--domain-id",
+        "7",
+        "--timeout-s",
+        "9",
+    ]
+    assert kwargs["timeout"] == 14.0

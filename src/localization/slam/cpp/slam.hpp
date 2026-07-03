@@ -141,9 +141,15 @@ struct SlamOutputs {
   std::optional<Cloud> saved_map_cloud_map;
   std::optional<Transform3d> map_odom_tf;
 
+  int saved_map_points = 0;
   bool alive = false;
   bool map_loaded = false;
   bool map_frame_jump = false;
+  bool relocalization_supported = false;
+  bool saved_map_relocalization_supported = false;
+  std::string relocalization_state = "unsupported";
+  std::string last_relocalization_message;
+  double relocalization_quality = -1.0;
 
   double localization_quality = 0.0;
   GnssFusionHealth gnss_fusion_health;
