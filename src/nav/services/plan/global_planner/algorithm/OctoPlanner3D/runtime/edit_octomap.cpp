@@ -114,6 +114,13 @@ std::unique_ptr<octomap::OcTree> loadTree(const std::string & path)
   }
 
   std::unique_ptr<octomap::AbstractOcTree> raw(octomap::AbstractOcTree::read(path));
+  if (!raw) {
+    auto tree = std::make_unique<octomap::OcTree>(0.2);
+    if (tree->readBinary(path)) {
+      return tree;
+    }
+    return nullptr;
+  }
   auto * tree = dynamic_cast<octomap::OcTree *>(raw.get());
   if (tree == nullptr) {
     return nullptr;

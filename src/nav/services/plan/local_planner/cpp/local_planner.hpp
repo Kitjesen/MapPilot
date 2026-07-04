@@ -175,18 +175,18 @@ public:
     double relGoalDis = std::hypot(relGoalX, relGoalY);
     double joyDir = std::atan2(relGoalY, relGoalX) * 180.0 / M_PI;
 
-    // Freeze logic: goal behind robot
-    if (std::fabs(joyDir) > p_.freezeAng && relGoalDis < p_.goalBehindRange) {
-      relGoalDis = 0; joyDir = 0;
-    }
-    updateFreezeState(joyDir);
-    if (freezeStatus_ == 1) { relGoalDis = 0; joyDir = 0; }
-
-    // Clamp direction for single-direction drive
     if (!p_.twoWayDrive) {
+      // Single-direction drive should not immediately reverse into a close
+      // behind-body goal. Two-way drive must keep that target trackable.
+      if (std::fabs(joyDir) > p_.freezeAng && relGoalDis < p_.goalBehindRange) {
+        relGoalDis = 0; joyDir = 0;
+      }
+      updateFreezeState(joyDir);
+      if (freezeStatus_ == 1) { relGoalDis = 0; joyDir = 0; }
       joyDir = std::clamp(joyDir, -95.0, 95.0);
+    } else {
+      freezeStatus_ = 0;
     }
-
     // Near-field stop check covers explicit obstacle points and native
     // traversability risk cells in front of the body.
     result.nearFieldStop =
@@ -213,13 +213,14 @@ public:
 
       if (selectedGroupID >= 0) {
         buildOutputPath(selectedGroupID, curPathScale, pathRange, relGoalDis, result);
-        pathFound = true;
-        recoveryState_ = 0;
-        blockedStartTime_ = -1.0;
-        recoveryCycleCount_ = 0;
+        if (result.pathFound) {
+          pathFound = true;
+          recoveryState_ = 0;
+          blockedStartTime_ = -1.0;
+          recoveryCycleCount_ = 0;
+        }
         break;
       }
-
       if (curPathScale >= p_.minPathScale + p_.pathScaleStep) {
         curPathScale -= p_.pathScaleStep;
         pathRange = p_.adjacentRange * curPathScale / defPathScale;

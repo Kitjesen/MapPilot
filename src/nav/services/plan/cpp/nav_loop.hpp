@@ -27,9 +27,11 @@ struct NavLoopOutput {
   bool goal_reached{false};
   bool path_found{false};
   bool near_field_stop{false};
+  std::string reason{"not_configured"};
   int slow_down{0};
   int recovery_state{0};
   std::size_t target_index{0};
+  double target_distance_m{0.0};
   nav_kernel::Vec3 target{};
   std::vector<nav_kernel::Vec3> local_path_body;
   std::vector<nav_kernel::Vec3> local_path_map;

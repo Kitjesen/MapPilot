@@ -66,6 +66,10 @@ lingtu_dds_Quaternion quaternionFromYaw(double yaw) {
   return q;
 }
 
+std::string headerFrameId(const lingtu_dds_Header& header) {
+  return header.frame_id == nullptr ? std::string{} : std::string(header.frame_id);
+}
+
 dds_entity_t checked(dds_return_t value, const char* what) {
   if (value < 0) {
     throw std::runtime_error(std::string(what) + ": " + dds_strretcode(-value));
@@ -113,6 +117,98 @@ struct FieldOffsets {
   int height{-1};
 };
 
+struct RigidTransform {
+  nav_kernel::Vec3 translation{};
+  lingtu_dds_Quaternion rotation{};
+  double yaw{0.0};
+  double stamp_s{0.0};
+  bool valid{false};
+};
+
+lingtu_dds_Quaternion normalized(lingtu_dds_Quaternion q) {
+  const double norm = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (!std::isfinite(norm) || norm <= 1e-12) {
+    q = {};
+    q.w = 1.0;
+    return q;
+  }
+  q.x /= norm;
+  q.y /= norm;
+  q.z /= norm;
+  q.w /= norm;
+  return q;
+}
+
+nav_kernel::Vec3 rotateVector(const lingtu_dds_Quaternion& raw_q, const nav_kernel::Vec3& v) {
+  const auto q = normalized(raw_q);
+  const double tx = 2.0 * (q.y * v.z - q.z * v.y);
+  const double ty = 2.0 * (q.z * v.x - q.x * v.z);
+  const double tz = 2.0 * (q.x * v.y - q.y * v.x);
+  return {
+      v.x + q.w * tx + (q.y * tz - q.z * ty),
+      v.y + q.w * ty + (q.z * tx - q.x * tz),
+      v.z + q.w * tz + (q.x * ty - q.y * tx),
+  };
+}
+
+nav_kernel::Vec3 transformPoint(const RigidTransform& tf, const nav_kernel::Vec3& p) {
+  const auto rotated = rotateVector(tf.rotation, p);
+  return {
+      tf.translation.x + rotated.x,
+      tf.translation.y + rotated.y,
+      tf.translation.z + rotated.z,
+  };
+}
+
+nav_kernel::Pose transformPose(const RigidTransform& tf, const nav_kernel::Pose& pose) {
+  nav_kernel::Pose out;
+  out.position = transformPoint(tf, pose.position);
+  out.yaw = tf.yaw + pose.yaw;
+  return out;
+}
+
+RigidTransform inverseTransform(const RigidTransform& tf) {
+  RigidTransform inv;
+  inv.rotation = normalized(tf.rotation);
+  inv.rotation.x = -inv.rotation.x;
+  inv.rotation.y = -inv.rotation.y;
+  inv.rotation.z = -inv.rotation.z;
+  inv.translation = rotateVector(
+      inv.rotation,
+      {-tf.translation.x, -tf.translation.y, -tf.translation.z});
+  inv.yaw = -tf.yaw;
+  inv.stamp_s = tf.stamp_s;
+  inv.valid = tf.valid;
+  return inv;
+}
+
+std::optional<RigidTransform> mapOdomTransformFromTf(const lingtu_dds_TFMessage& msg) {
+  for (std::uint32_t i = 0; i < msg.transforms._length; ++i) {
+    const auto& item = msg.transforms._buffer[i];
+    const std::string parent = headerFrameId(item.header);
+    const std::string child = item.child_frame_id == nullptr
+        ? std::string{}
+        : std::string(item.child_frame_id);
+    RigidTransform tf;
+    tf.translation = {
+        item.transform.translation.x,
+        item.transform.translation.y,
+        item.transform.translation.z,
+    };
+    tf.rotation = normalized(item.transform.rotation);
+    tf.yaw = yawFromQuaternion(tf.rotation);
+    tf.stamp_s = stampSeconds(item.header.stamp);
+    tf.valid = true;
+    if (parent == "map" && child == "odom") {
+      return tf;
+    }
+    if (parent == "odom" && child == "map") {
+      return inverseTransform(tf);
+    }
+  }
+  return std::nullopt;
+}
+
 FieldOffsets fieldOffsets(const lingtu_dds_PointCloud2& msg) {
   FieldOffsets offsets;
   for (std::uint32_t i = 0; i < msg.fields._length; ++i) {
@@ -140,7 +236,8 @@ float readFloat(const std::uint8_t* data) {
 std::vector<float> cloudToXyzh(
     const lingtu_dds_PointCloud2& msg,
     const std::size_t max_points,
-    const std::optional<nav_kernel::Pose>& odom_map_body) {
+    const std::optional<nav_kernel::Pose>& map_body,
+    const std::optional<RigidTransform>& map_odom) {
   std::vector<float> out;
   const FieldOffsets offsets = fieldOffsets(msg);
   if (offsets.x < 0 || offsets.y < 0 || offsets.z < 0 ||
@@ -156,13 +253,17 @@ std::vector<float> cloudToXyzh(
   const std::size_t stride = max_points > 0 && count > max_points
       ? static_cast<std::size_t>(std::ceil(static_cast<double>(count) / max_points))
       : 1;
-  const std::string frame_id = msg.header.frame_id ? msg.header.frame_id : "";
-  const bool fixed_frame = frame_id == "map" || frame_id == "odom";
-  if (!fixed_frame && !odom_map_body) {
+  const std::string frame_id = headerFrameId(msg.header);
+  const bool map_frame = frame_id == "map";
+  const bool odom_frame = frame_id == "odom";
+  if (!map_frame && !odom_frame && !map_body) {
     return out;
   }
-  const double c = odom_map_body ? std::cos(odom_map_body->yaw) : 1.0;
-  const double s = odom_map_body ? std::sin(odom_map_body->yaw) : 0.0;
+  if (odom_frame && !map_odom) {
+    return out;
+  }
+  const double c = map_body ? std::cos(map_body->yaw) : 1.0;
+  const double s = map_body ? std::sin(map_body->yaw) : 0.0;
   out.reserve((count / stride + 1) * 4);
   for (std::size_t i = 0; i < count; i += stride) {
     const auto* base = msg.data._buffer + i * msg.point_step;
@@ -173,16 +274,21 @@ std::vector<float> cloudToXyzh(
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
       continue;
     }
-    if (fixed_frame) {
+    if (map_frame) {
       out.push_back(x);
       out.push_back(y);
       out.push_back(z);
+    } else if (odom_frame && map_odom) {
+      const auto p = transformPoint(*map_odom, {x, y, z});
+      out.push_back(static_cast<float>(p.x));
+      out.push_back(static_cast<float>(p.y));
+      out.push_back(static_cast<float>(p.z));
     } else {
       out.push_back(static_cast<float>(
-          odom_map_body->position.x + c * x - s * y));
+          map_body->position.x + c * x - s * y));
       out.push_back(static_cast<float>(
-          odom_map_body->position.y + s * x + c * y));
-      out.push_back(static_cast<float>(odom_map_body->position.z + z));
+          map_body->position.y + s * x + c * y));
+      out.push_back(static_cast<float>(map_body->position.z + z));
     }
     out.push_back(std::isfinite(h) ? h : z);
   }
@@ -325,9 +431,11 @@ struct LocalDiagnostics {
   bool goal_reached{false};
   bool path_found{false};
   bool near_field_stop{false};
+  std::string reason{"not_seen"};
   int slow_down{0};
   int recovery_state{0};
   std::size_t target_index{0};
+  double target_distance_m{0.0};
   std::size_t local_path_points{0};
   nav_kernel::Vec3 target{};
   nav_kernel::Twist cmd_vel{};
@@ -388,6 +496,13 @@ void writeVec3Json(std::ostream& out, const nav_kernel::Vec3& point) {
   out << "[" << point.x << ", " << point.y << ", " << point.z << "]";
 }
 
+double vecDistance(const nav_kernel::Vec3& a, const nav_kernel::Vec3& b) {
+  const double dx = a.x - b.x;
+  const double dy = a.y - b.y;
+  const double dz = a.z - b.z;
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 void writePathJson(std::ostream& out, const std::vector<nav_kernel::Vec3>& path) {
   out << "[";
   const std::size_t count = std::min(path.size(), kStatusPathPointLimit);
@@ -404,9 +519,11 @@ void writeStatusSnapshot(
     const CliConfig& cfg,
     double stamp_s,
     bool has_odom,
+    bool has_map_odom_tf,
     bool has_path,
     bool has_traversability,
     std::uint64_t odom_count,
+    std::uint64_t tf_count,
     std::uint64_t goal_count,
     std::uint64_t cancel_count,
     std::uint64_t instruction_count,
@@ -449,6 +566,9 @@ void writeStatusSnapshot(
       << "  \"active_octomap\": \"" << jsonEscape(cfg.map_path) << "\",\n"
       << "  \"path_library\": \"" << jsonEscape(cfg.path_library_dir) << "\",\n"
       << "  \"has_odom\": " << (has_odom ? "true" : "false") << ",\n"
+      << "  \"has_map_odom_tf\": " << (has_map_odom_tf ? "true" : "false") << ",\n"
+      << "  \"planning_frame_id\": \"map\",\n"
+      << "  \"odom_frame_id\": \"odom\",\n"
       << "  \"active_path\": " << (has_path ? "true" : "false") << ",\n"
       << "  \"has_traversability\": " << (has_traversability ? "true" : "false") << ",\n"
       << "  \"obstacle_points\": " << obstacle_points << ",\n"
@@ -481,9 +601,11 @@ void writeStatusSnapshot(
       << "    \"goal_reached\": " << (local.goal_reached ? "true" : "false") << ",\n"
       << "    \"path_found\": " << (local.path_found ? "true" : "false") << ",\n"
       << "    \"near_field_stop\": " << (local.near_field_stop ? "true" : "false") << ",\n"
+      << "    \"reason\": \"" << jsonEscape(local.reason) << "\",\n"
       << "    \"slow_down\": " << local.slow_down << ",\n"
       << "    \"recovery_state\": " << local.recovery_state << ",\n"
       << "    \"target_index\": " << local.target_index << ",\n"
+      << "    \"target_distance_m\": " << local.target_distance_m << ",\n"
       << "    \"local_path_points\": " << local.local_path_points << ",\n"
       << "    \"target\": ";
   writeVec3Json(out, local.target);
@@ -495,6 +617,7 @@ void writeStatusSnapshot(
       << "  },\n"
       << "  \"counters\": {\n"
       << "    \"odom\": " << odom_count << ",\n"
+      << "    \"tf\": " << tf_count << ",\n"
       << "    \"goals\": " << goal_count << ",\n"
       << "    \"cancels\": " << cancel_count << ",\n"
       << "    \"semantic_instructions\": " << instruction_count << ",\n"
@@ -600,6 +723,8 @@ class DdsRuntime {
 
     odom_reader_ = reader(
         lingtu::message::kSlamOdometry.dds_topic.data(), &lingtu_dds_Odometry_desc, "odom");
+    tf_reader_ = reader(
+        lingtu::message::kTf.dds_topic.data(), &lingtu_dds_TFMessage_desc, "tf");
     goal_reader_ = reader(
         lingtu::message::kNavGoalPose.dds_topic.data(), &lingtu_dds_PoseStamped_desc, "goal_pose");
     cloud_reader_ = reader(
@@ -638,6 +763,12 @@ class DdsRuntime {
   void drainOdometry(Handler&& handler) {
     drainReader<lingtu_dds_Odometry>(
         odom_reader_, lingtu_dds_Odometry_desc, std::forward<Handler>(handler));
+  }
+
+  template <typename Handler>
+  void drainTf(Handler&& handler) {
+    drainReader<lingtu_dds_TFMessage>(
+        tf_reader_, lingtu_dds_TFMessage_desc, std::forward<Handler>(handler));
   }
 
   template <typename Handler>
@@ -725,6 +856,7 @@ class DdsRuntime {
   dds_entity_t subscriber_{0};
   dds_entity_t publisher_{0};
   dds_entity_t odom_reader_{0};
+  dds_entity_t tf_reader_{0};
   dds_entity_t goal_reader_{0};
   dds_entity_t cloud_reader_{0};
   dds_entity_t global_path_reader_{0};
@@ -760,7 +892,9 @@ int main(int argc, char** argv) {
       throw std::runtime_error("failed to load local planner path library: " + cfg.path_library_dir);
     }
 
-    std::optional<nav_kernel::Pose> odom;
+    std::optional<nav_kernel::Pose> odom_body;
+    std::optional<nav_kernel::Pose> map_body;
+    std::optional<RigidTransform> map_odom_tf;
     std::vector<float> obstacle_xyzh;
     TraversabilityGrid traversability_grid;
     PlanDiagnostics last_plan;
@@ -771,6 +905,7 @@ int main(int argc, char** argv) {
     bool has_path = false;
     bool suppress_next_global_path_echo = false;
     std::uint64_t odom_count = 0;
+    std::uint64_t tf_count = 0;
     std::uint64_t goal_count = 0;
     std::uint64_t cancel_count = 0;
     std::uint64_t instruction_count = 0;
@@ -803,8 +938,25 @@ int main(int argc, char** argv) {
     }
 
     while (g_running) {
+      dds.drainTf([&](const lingtu_dds_TFMessage& msg) {
+        const auto tf = mapOdomTransformFromTf(msg);
+        if (tf) {
+          map_odom_tf = *tf;
+          if (odom_body) {
+            map_body = transformPose(*map_odom_tf, *odom_body);
+          }
+        }
+        ++tf_count;
+      });
       dds.drainOdometry([&](const lingtu_dds_Odometry& msg) {
-        odom = toPose(msg);
+        odom_body = toPose(msg);
+        if (headerFrameId(msg.header) == "map") {
+          map_body = *odom_body;
+        } else if (map_odom_tf) {
+          map_body = transformPose(*map_odom_tf, *odom_body);
+        } else {
+          map_body.reset();
+        }
         ++odom_count;
       });
       dds.drainGoals([&](const lingtu_dds_PoseStamped& msg) {
@@ -812,13 +964,16 @@ int main(int argc, char** argv) {
         last_plan = PlanDiagnostics{};
         last_plan.seen = true;
         last_plan.goal = toGoalPoint(msg);
-        if (!odom) {
-          last_plan.reason = "odometry_not_ready";
+        if (!map_body) {
+          last_plan.reason = odom_body ? "map_odom_tf_not_ready" : "odometry_not_ready";
           ++plan_fail_count;
-          std::fprintf(stderr, "nav_native: reject goal, odometry is not ready\n");
+          std::fprintf(
+              stderr,
+              "nav_native: reject goal, %s\n",
+              odom_body ? "map->odom tf is not ready" : "odometry is not ready");
           return;
         }
-        last_plan.start = odom->position;
+        last_plan.start = map_body->position;
         if (cfg.map_path.empty()) {
           last_plan.reason = "active_octomap_not_configured";
           ++plan_fail_count;
@@ -828,24 +983,22 @@ int main(int argc, char** argv) {
         octoplanner3d::runtime::PlanRequest request;
         request.map_path = cfg.map_path;
         request.start = {
-            odom->position.x,
-            odom->position.y,
-            odom->position.z,
+            map_body->position.x,
+            map_body->position.y,
+            map_body->position.z,
         };
         request.goal = {last_plan.goal.x, last_plan.goal.y, last_plan.goal.z};
         const auto result = octoplanner3d::runtime::runPlan(request);
-        last_plan.waypoints = result.path.size();
         last_plan.reached_goal = result.reached_goal;
         last_plan.goal_error_m = result.goal_error_m;
         last_plan.elapsed_ms = result.elapsed_ms;
-        if (!result.ok || result.path.size() < 2 || !result.reached_goal) {
+        if (!result.ok || !result.reached_goal) {
           if (!result.ok) {
             last_plan.reason = "octoplanner3d_failed";
-          } else if (result.path.size() < 2) {
-            last_plan.reason = "insufficient_waypoints";
           } else {
             last_plan.reason = "goal_not_reached";
           }
+          last_plan.waypoints = result.path.size();
           ++plan_fail_count;
           std::fprintf(
               stderr,
@@ -858,7 +1011,21 @@ int main(int argc, char** argv) {
               result.elapsed_ms);
           return;
         }
-        const auto global_path = toNavPath(result.path);
+        auto global_path = toNavPath(result.path);
+        if (global_path.empty()) {
+          last_plan.reason = "empty_path";
+          last_plan.waypoints = 0;
+          ++plan_fail_count;
+          return;
+        }
+        if (global_path.size() == 1) {
+          if (vecDistance(map_body->position, global_path.front()) > 0.02) {
+            global_path.insert(global_path.begin(), map_body->position);
+          } else {
+            global_path.push_back(last_plan.goal);
+          }
+        }
+        last_plan.waypoints = global_path.size();
         nav.setGlobalPath(global_path);
         dds.writeGlobalPath(global_path);
         last_global_path = global_path;
@@ -872,12 +1039,12 @@ int main(int argc, char** argv) {
         std::fprintf(
             stderr,
             "nav_native: OctoPlanner3D path accepted waypoints=%zu elapsed_ms=%.1f reached=%d\n",
-            global_path.size(),
+            last_plan.waypoints,
             result.elapsed_ms,
             result.reached_goal ? 1 : 0);
       });
       dds.drainCloud([&](const lingtu_dds_PointCloud2& msg) {
-        obstacle_xyzh = cloudToXyzh(msg, cfg.max_obstacle_points, odom);
+        obstacle_xyzh = cloudToXyzh(msg, cfg.max_obstacle_points, map_body, map_odom_tf);
         ++cloud_count;
       });
       dds.drainGlobalPath([&](const lingtu_dds_Path& msg) {
@@ -898,8 +1065,8 @@ int main(int argc, char** argv) {
           last_plan.reached_goal = true;
           last_plan.reason = "external_global_path";
           last_plan.waypoints = path.size();
-          if (odom) {
-            last_plan.start = odom->position;
+          if (map_body) {
+            last_plan.start = map_body->position;
           }
           last_plan.goal = path.back();
           last_local = LocalDiagnostics{};
@@ -939,9 +1106,9 @@ int main(int argc, char** argv) {
             last_instruction.c_str());
       });
 
-      if (odom && has_path) {
+      if (map_body && has_path) {
         const auto out = nav.tick(
-            *odom,
+            *map_body,
             obstacle_xyzh.empty() ? nullptr : obstacle_xyzh.data(),
             static_cast<int>(obstacle_xyzh.size() / 4),
             nowSeconds(),
@@ -953,9 +1120,11 @@ int main(int argc, char** argv) {
         last_local.goal_reached = out.goal_reached;
         last_local.path_found = out.path_found;
         last_local.near_field_stop = out.near_field_stop;
+        last_local.reason = out.reason;
         last_local.slow_down = out.slow_down;
         last_local.recovery_state = out.recovery_state;
         last_local.target_index = out.target_index;
+        last_local.target_distance_m = out.target_distance_m;
         last_local.target = out.target;
         last_local.local_path_points = out.local_path_map.size();
         last_local.cmd_vel = out.cmd_vel;
@@ -991,10 +1160,12 @@ int main(int argc, char** argv) {
         writeStatusSnapshot(
             cfg,
             now,
-            odom.has_value(),
+            map_body.has_value(),
+            map_odom_tf.has_value(),
             has_path,
             !traversability_grid.values.empty(),
             odom_count,
+            tf_count,
             goal_count,
             cancel_count,
             instruction_count,

@@ -144,6 +144,46 @@ traversable graph. Do not enable velocity output from this standing pose. The
 next field action is physical placement or map editing/regeneration around the
 start cell, then rerun the same no-motion preview.
 
+## 2026-07-05 Native Endpoint Closure
+
+The active map was repaired with explicit voxel edits around the start cell.
+`octoplanner3d_edit_octomap` now reads binary OctoMap data even when the file is
+named `octomap.ot`; the board smoke test
+`octoplanner3d_edit_octomap_binary_ot_smoke` passed.
+
+The C++ nav endpoint now applies `map -> odom` before planning. The old behavior
+used raw odometry as map-frame pose, which made OctoPlanner3D reject valid
+goals. It also reports `last_local.reason` and `target_distance_m`, so field
+debugging no longer has to infer why local planning stopped.
+
+Board validation on `sunrise`:
+
+| Check | Result |
+| --- | --- |
+| `lingtu-nav-dds.service` | active |
+| `has_odom` / `has_map_odom_tf` / `has_traversability` | true / true / true |
+| `publish_cmd_vel` | false |
+| OctoPlanner3D goal `0.8, 0.0, 0.001` | accepted |
+| `global_path_points` | 4 |
+| `last_local.reason` | `control_ready` |
+| `local_path_points` | 69 |
+| `cmd_vel_published` | 0 |
+
+Cancel cleared `active_path`, `global_path_points`, and `local_path_points`.
+This proves the no-motion chain:
+
+```text
+Livox/Fast-LIO2 -> odometry + registered_cloud
+-> C++ traversability
+-> C++ native nav endpoint
+-> OctoPlanner3D global path
+-> C++ LocalPlanner local path
+-> PathFollower pre-command output
+```
+
+Velocity output remains disabled. Real motion still needs a separate controlled
+test with `publish_cmd_vel=true`.
+
 ## Local Verification
 
 Local tests run for this change set:

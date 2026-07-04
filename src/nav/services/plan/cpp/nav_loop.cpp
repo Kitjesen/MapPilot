@@ -64,7 +64,12 @@ NavLoopOutput NavLoop::tick(
     double timestamp_s,
     TraversabilityGridView traversability) {
   NavLoopOutput output;
-  if (!configured_ || global_path_.empty()) {
+  if (!configured_) {
+    output.reason = "not_configured";
+    return output;
+  }
+  if (global_path_.empty()) {
+    output.reason = "no_global_path";
     return output;
   }
 
@@ -72,6 +77,7 @@ NavLoopOutput NavLoop::tick(
   if (atGoal(odom_map_body)) {
     output.goal_reached = true;
     output.active = false;
+    output.reason = "goal_reached";
     follower_state_ = nav_kernel::PathFollowerState{};
     return output;
   }
@@ -80,6 +86,7 @@ NavLoopOutput NavLoop::tick(
   cursor_ = target_index;
   output.target_index = target_index;
   output.target = global_path_[target_index];
+  output.target_distance_m = nav_kernel::distance2D(output.target, odom_map_body.position);
 
   nav_kernel::LocalPlanResult plan = local_planner_.planFrame(
       odom_map_body.position.x,
@@ -115,7 +122,13 @@ NavLoopOutput NavLoop::tick(
   }
   output.local_path_map = bodyPathToMap(odom_map_body, output.local_path_body);
 
-  if (plan.nearFieldStop || output.local_path_body.size() < 2) {
+  if (plan.nearFieldStop) {
+    output.reason = "near_field_stop";
+    follower_state_.vehicleSpeed = 0.0;
+    return output;
+  }
+  if (output.local_path_body.size() < 2) {
+    output.reason = plan.pathFound ? "untrackable_local_path" : "no_local_path";
     follower_state_.vehicleSpeed = 0.0;
     return output;
   }
@@ -132,6 +145,7 @@ NavLoopOutput NavLoop::tick(
       config_.path_follower,
       follower_state_);
   output.cmd_vel = control.cmd;
+  output.reason = plan.pathFound ? "control_ready" : "recovery_path";
   return output;
 }
 

@@ -146,6 +146,14 @@ if(BUILD_TESTING)
     COMMAND octoplanner3d_make_test_octomap
       --output "${CMAKE_CURRENT_BINARY_DIR}/octoplanner3d_test_gap.bt")
 
+  add_test(
+    NAME octoplanner3d_edit_octomap_binary_ot_smoke
+    COMMAND "${CMAKE_COMMAND}"
+      -DMAKE_TEST=$<TARGET_FILE:octoplanner3d_make_test_octomap>
+      -DEDITOR=$<TARGET_FILE:octoplanner3d_edit_octomap>
+      -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/edit_octomap_smoke
+      -P "${CMAKE_CURRENT_LIST_DIR}/edit_octomap_smoke.cmake")
+
   add_executable(octoplanner3d_no_air_climb_smoke no_air_climb_smoke.cpp)
   target_link_libraries(octoplanner3d_no_air_climb_smoke
     PRIVATE

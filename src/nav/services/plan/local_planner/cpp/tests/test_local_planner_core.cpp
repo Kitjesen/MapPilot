@@ -40,6 +40,39 @@ static std::filesystem::path writeMinimalPlannerPaths(const std::string& name) {
   return dir;
 }
 
+static std::filesystem::path writePlannerPathsWithStartPoint(
+    const std::string& name,
+    double start_x) {
+  auto dir = std::filesystem::temp_directory_path() / name;
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  {
+    std::ofstream f(dir / "startPaths.ply");
+    f << "ply\nformat ascii 1.0\nelement vertex " << kGroupNum << "\nend_header\n";
+    for (int g = 0; g < kGroupNum; g++) {
+      f << start_x << " 0 0 " << g << "\n";
+    }
+  }
+
+  {
+    std::ofstream f(dir / "pathList.ply");
+    f << "ply\nformat ascii 1.0\nelement vertex " << kPathNum << "\nend_header\n";
+    for (int i = 0; i < kPathNum; i++) {
+      f << "1 0 0 " << i << " 3\n";
+    }
+  }
+
+  {
+    std::ofstream f(dir / "correspondences.txt");
+    for (int i = 0; i < 161 * 451; i++) {
+      f << i << " -1\n";
+    }
+  }
+
+  return dir;
+}
+
 // 閳光偓閳光偓 RotLUT 閳光偓閳光偓
 
 TEST(RotLUT, TablesCorrect) {
@@ -295,6 +328,52 @@ TEST(LocalPlannerCore, CheckRotObstacleFiltersPlanSelection) {
   ASSERT_FALSE(result.path.empty());
   EXPECT_GT(result.path.front().y, 0.1);
   EXPECT_GT(result.path.front().x, 0.9);
+}
+
+TEST(LocalPlannerCore, TwoWayDriveKeepsCloseBehindGoalTrackable) {
+  auto pathsDir = writePlannerPathsWithStartPoint(
+      "nav_kernel_two_way_close_behind_fixture", 0.4);
+
+  LocalPlannerParams p;
+  p.twoWayDrive = true;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = false;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.goalBehindRange = 0.8;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(-0.6, 0);
+
+  auto result = planner.plan(nullptr, 0, 1.0);
+
+  ASSERT_TRUE(result.pathFound);
+  ASSERT_FALSE(result.path.empty());
+  EXPECT_LT(result.path.front().x, -0.1);
+}
+
+TEST(LocalPlannerCore, SingleDirectionDriveFreezesCloseBehindGoal) {
+  auto pathsDir = writePlannerPathsWithStartPoint(
+      "nav_kernel_single_direction_close_behind_fixture", 0.4);
+
+  LocalPlannerParams p;
+  p.twoWayDrive = false;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = false;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.goalBehindRange = 0.8;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(-0.6, 0);
+
+  auto result = planner.plan(nullptr, 0, 1.0);
+
+  EXPECT_FALSE(result.pathFound);
 }
 
 // 閳光偓閳光偓 RotLUT precomputed weights 閳光偓閳光偓
