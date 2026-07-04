@@ -181,6 +181,7 @@ class GlobalPlanner(
             raise RuntimeError(f"GlobalPlanner: {reason}")
 
         # --- Phase 2: Goal safety adjustment (BFS nearest free cell) ---
+        requested_start = np.asarray(start[:3], dtype=float).copy()
         requested_goal = np.asarray(goal[:3], dtype=float).copy()
 
         # Goal safety: if backend exposes a costmap, verify goal is in free space
@@ -210,6 +211,7 @@ class GlobalPlanner(
                     {
                         "planner": self._planner_name,
                         "reason": reason,
+                        "start": requested_start.tolist(),
                         "goal": requested_goal.tolist(),
                     }
                 ],
@@ -512,11 +514,23 @@ class GlobalPlanner(
             if path
             else np.asarray(downsample_goal[:3], dtype=float).copy()
         )
+        accepted_start = (
+            np.asarray(selected_path[0][:3], dtype=float).copy()
+            if selected_path
+            else requested_start.copy()
+        )
+        adjusted_start = (
+            accepted_start.tolist()
+            if not np.allclose(accepted_start, requested_start, atol=0.05)
+            else None
+        )
         adjusted_goal = (
             accepted_goal.tolist()
             if not np.allclose(accepted_goal, requested_goal, atol=0.05)
             else None
         )
+        requested_start_payload = requested_start.tolist()
+        accepted_start_payload = accepted_start.tolist()
         requested_goal_payload = requested_goal.tolist()
         accepted_goal_payload = accepted_goal.tolist()
         logger.info(
@@ -524,6 +538,9 @@ class GlobalPlanner(
             len(path), selected_plan_ms, selected_planner,
         )
         self._last_plan_report.update({
+            "requested_start": requested_start_payload,
+            "accepted_start": accepted_start_payload,
+            "adjusted_start": adjusted_start,
             "requested_goal": requested_goal_payload,
             "accepted_goal": accepted_goal_payload,
             "adjusted_goal": adjusted_goal,
@@ -604,6 +621,7 @@ class GlobalPlanner(
             configure_backend(self._backend, self._planner_name, self._octoplanner3d_constraints)
 
         try:
+            requested_start = np.asarray(start[:3], dtype=float).copy()
             requested_goal = np.asarray(goal[:3], dtype=float).copy()
             raw_path, plan_ms = self._plan_with_backend(self._backend, start, goal)
         finally:
@@ -629,6 +647,8 @@ class GlobalPlanner(
                 "policy": "map_only",
                 "reached_goal": False,
                 "planner_diagnostics": planner_diagnostics,
+                "requested_start": requested_start.tolist(),
+                "requested_goal": requested_goal.tolist(),
             }
             raise RuntimeError(f"GlobalPlanner: {reason}")
 
@@ -640,6 +660,16 @@ class GlobalPlanner(
             np.asarray(path[-1][:3], dtype=float).copy()
             if path
             else np.asarray(downsample_goal[:3], dtype=float).copy()
+        )
+        accepted_start = (
+            np.asarray(raw_path[0][:3], dtype=float).copy()
+            if raw_path
+            else requested_start.copy()
+        )
+        adjusted_start = (
+            accepted_start.tolist()
+            if not np.allclose(accepted_start, requested_start, atol=0.05)
+            else None
         )
         adjusted_goal = (
             accepted_goal.tolist()
@@ -655,6 +685,9 @@ class GlobalPlanner(
             "policy": "map_only",
             "reached_goal": reached_goal,
             "planner_diagnostics": planner_diagnostics,
+            "requested_start": requested_start.tolist(),
+            "accepted_start": accepted_start.tolist(),
+            "adjusted_start": adjusted_start,
             "requested_goal": requested_goal.tolist(),
             "accepted_goal": accepted_goal.tolist(),
             "adjusted_goal": adjusted_goal,

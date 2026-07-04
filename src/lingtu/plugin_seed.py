@@ -82,13 +82,6 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "nav.exploration.frontier_explorer_module",
         "nav.exploration.traversable_frontier_module",
     ),
-    "navigation_lcm": (
-        "runtime.adapters.lcm.nav_input",
-        "runtime.adapters.lcm.nav_output",
-    ),
-    "navigation_dds": (
-        "runtime.adapters.dds.nav",
-    ),
     "map_dds": (
         "runtime.adapters.dds.map_output",
     ),

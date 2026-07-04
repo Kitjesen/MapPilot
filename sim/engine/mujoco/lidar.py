@@ -293,6 +293,11 @@ class MuJoCoLidar:
         indices = (np.arange(samples, dtype=np.int64) + start) % n_angles
         angles = self._ray_angles[indices]
         self._ray_cursor = (start + samples) % n_angles
+        angle_noise = float(getattr(self._config, "angle_noise_std_rad", 0.0) or 0.0)
+        if bool(getattr(self._config, "add_noise", False)) and angle_noise > 0.0:
+            angles = angles.copy()
+            angles += self._rng.normal(0.0, angle_noise, angles.shape).astype(np.float32)
+            angles[:, 0] = np.mod(angles[:, 0], np.float32(2.0 * np.pi))
         return (
             angles[:, 0].astype(np.float32, copy=False),
             angles[:, 1].astype(np.float32, copy=False),
@@ -309,14 +314,68 @@ class MuJoCoLidar:
         """Perform one LiDAR scan.
 
         Returns:
-            (N, 4) float32 XYZI point cloud in world frame, intensity=100.
+            (N, 4) float32 XYZI point cloud in world frame.
         """
 
         pts_xyz = self.scan_xyz()
         if len(pts_xyz) == 0:
             return np.zeros((0, 4), dtype=np.float32)
-        intensity = np.full((len(pts_xyz), 1), 100.0, dtype=np.float32)
-        return np.hstack([pts_xyz.astype(np.float32), intensity])
+        return self._points_with_return_model(pts_xyz)
+
+    def _sensor_origin(self) -> np.ndarray:
+        if self._mujoco_lidar is not None:
+            return np.asarray(self._mujoco_lidar.sensor_position, dtype=np.float32)
+        try:
+            import mujoco
+
+            site_id = mujoco.mj_name2id(
+                self._model, mujoco.mjtObj.mjOBJ_SITE, self._config.site_name
+            )
+            if site_id >= 0:
+                return np.asarray(self._data.site_xpos[site_id], dtype=np.float32)
+        except Exception:
+            pass
+        try:
+            return np.asarray(self._data.xpos[getattr(self, "_body_id", 0)], dtype=np.float32)
+        except Exception:
+            return np.zeros(3, dtype=np.float32)
+
+    def _points_with_return_model(self, pts_xyz: np.ndarray) -> np.ndarray:
+        pts = np.asarray(pts_xyz, dtype=np.float32)
+        origin = self._sensor_origin()
+        ranges = np.linalg.norm(pts - origin, axis=1).astype(np.float32)
+        valid = (
+            np.isfinite(pts).all(axis=1)
+            & np.isfinite(ranges)
+            & (ranges >= float(self._config.range_min))
+            & (ranges <= float(self._config.range_max))
+        )
+        dropout = float(getattr(self._config, "pixel_dropout_prob", 0.0) or 0.0)
+        if dropout > 0.0:
+            valid &= self._rng.random(len(pts)) >= min(max(dropout, 0.0), 1.0)
+        max_dropout = float(getattr(self._config, "distance_dropout_prob_at_max", 0.0) or 0.0)
+        if max_dropout > 0.0:
+            span = max(float(self._config.range_max) - float(self._config.range_min), 1e-3)
+            extra = np.clip((ranges - float(self._config.range_min)) / span, 0.0, 1.0)
+            valid &= self._rng.random(len(pts)) >= extra * min(max(max_dropout, 0.0), 1.0)
+        if not np.any(valid):
+            return np.zeros((0, 4), dtype=np.float32)
+
+        pts = pts[valid]
+        ranges = ranges[valid]
+        scale = max(float(getattr(self._config, "intensity_range_scale_m", 25.0) or 25.0), 1e-3)
+        intensity = float(getattr(self._config, "intensity_base", 180.0) or 180.0) / (
+            1.0 + (ranges / scale) ** 2
+        )
+        noise = float(getattr(self._config, "intensity_noise_std", 0.0) or 0.0)
+        if bool(getattr(self._config, "add_noise", False)) and noise > 0.0:
+            intensity += self._rng.normal(0.0, noise, len(intensity)).astype(np.float32)
+        intensity = np.clip(
+            intensity,
+            float(getattr(self._config, "intensity_min", 1.0) or 1.0),
+            float(getattr(self._config, "intensity_max", 255.0) or 255.0),
+        ).astype(np.float32)
+        return np.column_stack([pts, intensity]).astype(np.float32, copy=False)
 
     def scan_xyz(self) -> np.ndarray:
         """Return XYZ-only point cloud in world frame."""
@@ -456,6 +515,16 @@ class MuJoCoLidar:
             "range_min_m": float(self._config.range_min),
             "range_max_m": float(self._config.range_max),
             "noise_std_m": float(self._config.noise_std if self._config.add_noise else 0.0),
+            "angle_noise_std_rad": float(
+                getattr(self._config, "angle_noise_std_rad", 0.0)
+                if self._config.add_noise
+                else 0.0
+            ),
+            "pixel_dropout_prob": float(getattr(self._config, "pixel_dropout_prob", 0.0)),
+            "distance_dropout_prob_at_max": float(
+                getattr(self._config, "distance_dropout_prob_at_max", 0.0)
+            ),
+            "self_occlusion_mode": "scene_geoms_with_sensor_body_excluded",
             "fields": ["x", "y", "z", "intensity"],
             "error": self._backend_error,
         }

@@ -135,6 +135,31 @@ def test_fake_converter_success_builds_octomap_and_metadata(tmp_path: Path) -> N
     assert (map_dir / "metadata.json").is_file()
 
 
+def test_relative_map_dir_passes_absolute_converter_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    map_dir = repo / "artifacts" / "run" / "same_source_map"
+    _write_minimal_pcd(map_dir)
+    monkeypatch.chdir(repo)
+
+    report = build_for_saved_map(
+        Path("artifacts/run/same_source_map"),
+        converter_command=_fake_converter_command(tmp_path),
+        use_env_converter=False,
+        resolution=0.2,
+        frame_id="map",
+    )
+
+    assert report.ok is True, report.to_dict()
+    input_arg = report.converter["argv"][report.converter["argv"].index("--input") + 1]
+    output_arg = report.converter["argv"][report.converter["argv"].index("--output") + 1]
+    assert Path(input_arg).is_absolute()
+    assert Path(output_arg).is_absolute()
+    assert (map_dir / "octomap.ot").is_file()
+
+
 def test_octoplanner3d_converter_env_alias_is_supported(monkeypatch) -> None:
     monkeypatch.delenv("LINGTU_MAP_ARTIFACT_CONVERTER", raising=False)
     monkeypatch.delenv("LINGTU_OCTOMAP_CONVERTER", raising=False)

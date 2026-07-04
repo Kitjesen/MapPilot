@@ -13,6 +13,11 @@ struct NativeRelocalizationResult {
   Pose3d map_body;
   Pose3d map_odom;
   double quality = -1.0;
+  std::string refine_backend;
+  int refine_iterations = -1;
+  int refine_inliers = -1;
+  bool refine_converged = false;
+  double refine_pos_cov_trace = -1.0;
 };
 
 class NativeRelocalizer {

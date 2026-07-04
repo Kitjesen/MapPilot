@@ -153,7 +153,6 @@ def test_product_composition_does_not_import_runtime_bootstrap_surfaces() -> Non
         "cli.runtime_audit",
         "lingtu.ros2_plugin_seed",
         "lingtu.ros2_shutdown",
-        "runtime.blueprints.full_stack",
     }
     violations: list[str] = []
 

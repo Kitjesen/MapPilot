@@ -286,6 +286,24 @@ class InstructionRequest(BaseModel):
     client_id: str = Field(default="unknown", max_length=128)
 
 
+class VisualServoRequest(BaseModel):
+    mode: str = Field(default="find", max_length=16)
+    target: str | None = Field(default=None, max_length=256)
+    request_id: str | None = Field(default=None, max_length=128)
+    client_id: str = Field(default="unknown", max_length=128)
+
+    @model_validator(mode="after")
+    def validate_command(self) -> "VisualServoRequest":
+        self.mode = self.mode.strip().lower()
+        if self.mode not in {"find", "follow", "stop"}:
+            raise ValueError("mode must be find|follow|stop")
+        if self.target is not None:
+            self.target = self.target.strip()
+        if self.mode != "stop" and not self.target:
+            raise ValueError("target is required for find/follow")
+        return self
+
+
 class StopRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
@@ -1148,6 +1166,8 @@ class NavigationDdsSnapshotResponse(GatewayResponseModel):
     global_path: PathResponse
     local_path: PathResponse
     cmd_vel: DdsTwistSnapshot | None = None
+    nav_endpoint: dict[str, Any] | None = None
+    traversability_endpoint: dict[str, Any] | None = None
     navigation: dict[str, Any] = Field(default_factory=dict)
     ts: float
     source: str = "gateway_navigation_cache"
@@ -1171,6 +1191,7 @@ class PlanPreviewResponse(GatewayResponseModel):
     path_safety: dict[str, Any] | None = None
     fallback_reason: str = ""
     rejected_plans: list[dict[str, Any]] = Field(default_factory=list)
+    snap_diagnostics: dict[str, Any] | None = None
     source: str = "navigation_preview"
     reasons: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -1698,6 +1719,7 @@ class SlamOperationResponse(GatewayResponseModel):
     profile: str | None = None
     message: str | None = None
     quality: float | None = None
+    details: dict[str, Any] | None = None
     ts: float = Field(default_factory=time.time)
 
 
@@ -1802,6 +1824,7 @@ class ClientLinks(GatewayResponseModel):
     slam_switch: str | None = None
     slam_auto_relocalize: str | None = None
     slam_relocalize: str | None = None
+    slam_track_against_map: str | None = None
     bag_start: str | None = None
     bag_stop: str | None = None
     bag_status: str | None = None

@@ -35,9 +35,23 @@ include_directories(
 )
 
 option(LINGTU_REQUIRE_BBS3D "Fail configure if cpu_bbs3d is not available" OFF)
+option(LINGTU_ENABLE_SMALL_GICP "Use small_gicp for relocalization refine when available" ON)
 set(CPU_BBS3D_ROOT "" CACHE PATH "Optional local install prefix for cpu_bbs3d")
+set(SMALL_GICP_ROOT "" CACHE PATH "Optional small_gicp source or install prefix")
 if(NOT CPU_BBS3D_ROOT AND DEFINED ENV{CPU_BBS3D_ROOT})
   set(CPU_BBS3D_ROOT "$ENV{CPU_BBS3D_ROOT}")
+endif()
+if(NOT SMALL_GICP_ROOT AND DEFINED ENV{SMALL_GICP_ROOT})
+  set(SMALL_GICP_ROOT "$ENV{SMALL_GICP_ROOT}")
+endif()
+if(NOT SMALL_GICP_ROOT)
+  get_filename_component(_LINGTU_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+  set(_LINGTU_DEFAULT_SMALL_GICP_ROOT
+    "${_LINGTU_REPO_ROOT}/third_party/research_localization/small_gicp")
+  if(EXISTS "${_LINGTU_DEFAULT_SMALL_GICP_ROOT}/include/small_gicp")
+    set(SMALL_GICP_ROOT "${_LINGTU_DEFAULT_SMALL_GICP_ROOT}" CACHE PATH
+      "Optional small_gicp source or install prefix" FORCE)
+  endif()
 endif()
 
 find_library(CPU_BBS3D_LIBRARY
@@ -67,6 +81,17 @@ else()
   message(WARNING "BBS3D not found; building ICP-only localizer without global_relocalize")
   set(CPU_BBS3D_LINK "")
 endif()
+find_path(SMALL_GICP_INCLUDE_DIR
+  NAMES small_gicp/pcl/pcl_registration.hpp
+  HINTS ${SMALL_GICP_ROOT}
+  PATH_SUFFIXES include
+  PATHS /usr/local)
+if(LINGTU_ENABLE_SMALL_GICP AND SMALL_GICP_INCLUDE_DIR AND OpenMP_CXX_FOUND)
+  message(STATUS "small_gicp relocalization refine enabled: ${SMALL_GICP_INCLUDE_DIR}")
+else()
+  message(STATUS "small_gicp not found, disabled, or OpenMP unavailable; using PCL GICP refine")
+  set(SMALL_GICP_INCLUDE_DIR "")
+endif()
 
 set(SRC_LIST
   src/localizers/commons.cpp
@@ -95,6 +120,10 @@ target_link_libraries(
   ${CPU_BBS3D_LINK}
   OpenMP::OpenMP_CXX
 )
+target_include_directories(localizer_node PRIVATE ${SMALL_GICP_INCLUDE_DIR})
+if(SMALL_GICP_INCLUDE_DIR)
+  target_compile_definitions(localizer_node PRIVATE LINGTU_ENABLE_SMALL_GICP=1)
+endif()
 
 install(TARGETS localizer_node DESTINATION lib/${PROJECT_NAME})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../launch/localizer_launch.py DESTINATION share/${PROJECT_NAME})

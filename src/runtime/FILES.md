@@ -17,7 +17,7 @@ Use this file as a human index. It answers two questions:
 | product data-flow wiring | `blueprints/wires/` |
 | product-specific assembly | `blueprints/products/` |
 | profile-to-blueprint build path | `blueprints/profile_builder.py` |
-| runtime profile catalog | `runtime/catalog/` |
+| runtime profile catalog | `profiles/catalog/` |
 | topics, frames, runtime names | `runtime_interface.py` |
 | shared message dataclasses | `msgs/` |
 | shared runtime contract dataclasses | `contracts/` |
@@ -41,9 +41,9 @@ These define common language between modules. They should stay ROS-free.
 | Path | Role |
 | --- | --- |
 | `msgs/` | Shared message dataclasses |
-| `contracts/` | Runtime contract dataclasses |
+| `contracts/` | Runtime contract dataclasses, including simulation contracts |
 | `runtime_interface.py` | Canonical topics, frames, remappings, runtime manifest |
-| `runtime/` | Runtime resolver, catalog, endpoint config, binding policy |
+| `profiles/` | Runtime resolver, catalog, endpoint config, binding policy |
 
 ## Product Assembly
 
@@ -55,11 +55,10 @@ should describe structure, not implement algorithms.
 | `blueprints/stacks/` | Reusable stack factories such as driver, maps, navigation, gateway |
 | `blueprints/wires/` | Explicit product data-flow definitions |
 | `blueprints/products/` | Product-specific stack composition |
-| `blueprints/full_stack.py` | Compatibility full-stack entry |
 | `blueprints/full_stack_wiring.py` | Applies wire specs to the built module graph |
 | `blueprints/profile_builder.py` | Profile-to-blueprint entry |
-| `blueprints/profile_graph.py` | Graph inspection helpers |
-| `blueprints/catalog/` | Compatibility facade for `runtime/catalog/` |
+| `introspection/profile_graph.py` | Profile graph inspection helpers |
+| `introspection/module_graph.py` | Blueprint-exported module graph manifest |
 
 ## Platform-Neutral Helpers
 

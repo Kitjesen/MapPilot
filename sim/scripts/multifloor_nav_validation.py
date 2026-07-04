@@ -1297,6 +1297,21 @@ def _bridge_segment_motion_ok(report: dict[str, Any]) -> bool:
     return True
 
 
+def _sample_xyz_trace(points: list[list[float]], max_points: int = 240) -> list[list[float]]:
+    if not points:
+        return []
+    limit = max(2, int(max_points))
+    if len(points) <= limit:
+        selected = points
+    else:
+        indices = np.linspace(0, len(points) - 1, limit, dtype=int)
+        selected = [points[int(index)] for index in np.unique(indices)]
+    return [
+        [round(float(point[0]), 4), round(float(point[1]), 4), round(float(point[2]), 4)]
+        for point in selected
+    ]
+
+
 def _run_mujoco_bridge_segment(
     segment: list[list[float]],
     *,
@@ -1308,8 +1323,8 @@ def _run_mujoco_bridge_segment(
     from nav.services.plan.local_planner.service import LocalPlanner
     from nav.local.path_follower import PathFollower
     from drivers.sim.mujoco.driver import MujocoDriverModule
-    from nav.safety.velocity_mux import VelocityMux
-    from nav.mission.waypoint_tracker import EV_PATH_COMPLETE, WaypointTracker
+    from nav.services.safety.velocity_mux import VelocityMux
+    from nav.mission.tracking.waypoint_tracker import EV_PATH_COMPLETE, WaypointTracker
 
     start = segment[0]
     goal = segment[-1]
@@ -1525,6 +1540,7 @@ def _run_mujoco_bridge_segment(
             "goal": [float(v) for v in goal],
             "first_odom": odom_samples[0] if odom_samples else None,
             "final_odom": final_odom,
+            "odom_trace": _sample_xyz_trace(odom_samples),
             "moved_m": round(float(moved), 4),
             "start_dist_m": round(float(start_dist), 4),
             "best_dist_m": round(float(best_dist), 4),
@@ -1613,7 +1629,7 @@ def run_command_flow(
 ) -> dict[str, Any]:
     from nav.services.plan.local_planner.service import LocalPlanner
     from nav.local.path_follower import PathFollower
-    from nav.safety.velocity_mux import VelocityMux
+    from nav.services.safety.velocity_mux import VelocityMux
 
     path_follower_backend = "pid"
     local_planner = LocalPlanner(backend=local_planner_backend, corridor_lookahead_m=2.5)

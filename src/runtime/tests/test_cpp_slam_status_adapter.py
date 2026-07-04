@@ -45,6 +45,7 @@ def test_cpp_slam_status_adapter_reads_cpp_status_snapshot(tmp_path) -> None:
     assert odometry_seen[-1].ts == 123.0
     assert status_seen[-1]["health_source"] == STATUS_SNAPSHOT_HEALTH_SOURCE
     assert status_seen[-1]["backend"] == "fastlio2"
+    assert status_seen[-1]["mode"] == "mapping"
     assert status_seen[-1]["status_target_hz"] == 10.0
     assert status_seen[-1]["imu_input_hz"] == 196.0
     assert status_seen[-1]["lidar_input_hz"] == 10.0
@@ -149,8 +150,9 @@ def test_thunder_field_product_blueprints_use_cpp_slam_status_adapter() -> None:
         assert config["_runtime_endpoint"] == "thunder_field"
         assert config["_endpoint_transport"] == "dds"
         assert config["localization_adapter"] == "cpp_slam_status"
-        assert config["nav_in_adapter"] == "dds_nav_input"
-        assert config["nav_out_adapter"] == "dds_nav_output"
+        assert "nav_in_adapter" not in config
+        assert "nav_out_adapter" not in config
+        assert config["native_navigation_endpoint"] == "lingtu-nav-dds"
         assert slam_entry.module_cls is CppSlamStatusAdapterModule
 
 

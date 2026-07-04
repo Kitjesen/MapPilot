@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from runtime.blueprint import Blueprint
-from runtime.profiles.catalog.products import PRODUCT_PROFILES
 
 from .thunder import (
     thunder_basic_blueprint,
@@ -23,14 +22,12 @@ from .thunder import (
 
 
 def product_blueprint_for_profile(
-    profile: str,
+    _profile: str,
     config: Mapping[str, Any],
-) -> Blueprint | None:
-    """Return the product-level blueprint for a canonical profile, if any."""
+) -> Blueprint:
+    """Return the standard product blueprint for any resolved profile."""
 
-    if profile in PRODUCT_PROFILES:
-        return thunder_blueprint(config)
-    return None
+    return thunder_blueprint(config)
 
 
 __all__ = [

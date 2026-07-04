@@ -2,7 +2,7 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 
 
 def test_sim_blueprint_wires_real_semantic_pipeline():
@@ -16,7 +16,7 @@ def test_sim_blueprint_wires_real_semantic_pipeline():
     driver_name = "MujocoDriverModule"
     camera_source = "MujocoDriverModule"
 
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot=robot,
         slam_profile="none",
         enable_native=False,
@@ -54,7 +54,7 @@ def test_sim_blueprint_wires_real_semantic_pipeline():
 
 
 def test_sim_mujoco_blueprint_enables_camera_for_semantics():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         slam_profile="none",
         enable_native=False,
@@ -68,7 +68,7 @@ def test_sim_mujoco_blueprint_enables_camera_for_semantics():
 
 
 def test_semantic_blueprint_can_opt_into_standalone_encoder():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         enable_native=False,

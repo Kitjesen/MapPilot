@@ -38,12 +38,8 @@ from runtime.profiles.binding_policy import (
     map_output_uses_dds,
     map_output_uses_ros2,
     navigation_input_adapter_enabled,
-    navigation_input_uses_dds,
-    navigation_input_uses_lcm,
     navigation_input_uses_ros2,
     navigation_output_adapter_enabled,
-    navigation_output_uses_dds,
-    navigation_output_uses_lcm,
     navigation_output_uses_ros2,
 )
 from runtime.profiles.resolver import resolve_profile_config
@@ -58,7 +54,6 @@ __all__ = [
     "WireEdge",
     "blueprint_for_profile",
     "graph_for_profile",
-    "resolve_profile_config",
 ]
 
 
@@ -196,7 +191,7 @@ def _static_gnss_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     """Mirror stacks.system.gnss from config data only.
 
     Static profile graphs must not import SLAM/GNSS runtime modules, but they
-    should still include the module names that full_stack_blueprint() adds when
+    should still include the module names that the product blueprint adds when
     a profile allows GNSS and config/robot_config.yaml enables it. This keeps
     runtime parity checks from reporting expected hardware support modules as
     graph drift while letting lightweight profiles explicitly opt out.
@@ -303,11 +298,7 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
 
     if (
         navigation_output_adapter_enabled(config)
-        and (
-            navigation_output_uses_dds(config)
-            or navigation_output_uses_lcm(config)
-            or navigation_output_uses_ros2(config)
-        )
+        and navigation_output_uses_ros2(config)
     ):
         modules.append(NAV_OUT)
 
@@ -315,18 +306,15 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
         modules.append("nav.mission")
         if (
             navigation_input_adapter_enabled(config)
-            and (
-                navigation_input_uses_dds(config)
-                or navigation_input_uses_lcm(config)
-                or navigation_input_uses_ros2(config)
-            )
+            and navigation_input_uses_ros2(config)
         ):
             modules.append(NAV_IN)
         if bool(config.get("enable_frontier", False)):
             modules.append("WavefrontFrontierExplorer")
         if bool(config.get("enable_traversable_frontier", False)):
             modules.append("TraversableFrontierModule")
-        modules.extend(["nav.terrain", "nav.local_planner", "nav.path_follower"])
+        if not config.get("native_navigation_endpoint"):
+            modules.extend(["nav.terrain", "nav.local_planner", "nav.path_follower"])
 
     exploration_backend = str(config.get("exploration_backend", "none") or "none")
     if exploration_backend in {"tare", "tare_external"}:

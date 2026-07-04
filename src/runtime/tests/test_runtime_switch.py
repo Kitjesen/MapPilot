@@ -5,7 +5,7 @@ import pytest
 pytestmark = [pytest.mark.sim]
 
 from runtime.runtime_profiles import PROFILES
-from runtime.blueprints.profile_graph import resolve_profile_config
+from runtime.profiles.resolver import resolve_profile_config
 from runtime.profiles.endpoints import (
     RUNTIME_ENDPOINTS,
     RuntimeEndpointError,

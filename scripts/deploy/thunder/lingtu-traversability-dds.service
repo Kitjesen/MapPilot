@@ -1,0 +1,25 @@
+[Unit]
+Description=LingTu native traversability DDS producer
+After=network-online.target lingtu-slam-dds.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_TRAVERSABILITY_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds
+Environment=LINGTU_DDS_DOMAIN_ID=0
+Environment=LINGTU_TRAVERSABILITY_PUBLISH_HZ=2
+Environment=LINGTU_TRAVERSABILITY_RESOLUTION=0.20
+Environment=LINGTU_TRAVERSABILITY_RADIUS=15
+Environment=LINGTU_TRAVERSABILITY_MAX_POINTS=20000
+Environment=LINGTU_TRAVERSABILITY_STATUS_FILE=/dev/shm/lingtu/traversability_status.json
+Environment=LINGTU_CYCLONEDDS_PREFIX=
+ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh; if [ -n "${LINGTU_CYCLONEDDS_PREFIX}" ] && [ -d "${LINGTU_CYCLONEDDS_PREFIX}/lib" ]; then export LD_LIBRARY_PATH="${LINGTU_CYCLONEDDS_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; fi; if [ ! -x "${LINGTU_TRAVERSABILITY_DDS_BIN}" ]; then echo "ERROR: native traversability DDS producer is missing or not executable: ${LINGTU_TRAVERSABILITY_DDS_BIN}" >&2; echo "Build it with: bash scripts/build/build_nav_endpoint.sh" >&2; exit 2; fi; exec "${LINGTU_TRAVERSABILITY_DDS_BIN}" --domain-id "${LINGTU_DDS_DOMAIN_ID}" --publish-hz "${LINGTU_TRAVERSABILITY_PUBLISH_HZ}" --resolution "${LINGTU_TRAVERSABILITY_RESOLUTION}" --radius "${LINGTU_TRAVERSABILITY_RADIUS}" --max-points "${LINGTU_TRAVERSABILITY_MAX_POINTS}" --status-file "${LINGTU_TRAVERSABILITY_STATUS_FILE}"'
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

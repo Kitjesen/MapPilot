@@ -64,6 +64,7 @@ class WaypointTracker:
         stuck_timeout: float = 10.0,
         stuck_dist: float = 0.15,
         stuck_yaw_rad: float = 0.35,  # ~20 deg - yaw drift below this counts as "stuck"
+        search_window: int = 5,
     ) -> None:
         self._threshold = threshold
         self._final_threshold = threshold if final_threshold is None else final_threshold
@@ -71,6 +72,7 @@ class WaypointTracker:
         self._stuck_timeout = stuck_timeout
         self._stuck_dist = stuck_dist
         self._stuck_yaw = stuck_yaw_rad
+        self._search_window = max(1, int(search_window))
 
         self._path: list[np.ndarray] = []
         self._wp_index: int = 0
@@ -141,12 +143,21 @@ class WaypointTracker:
         if not self._path or self._wp_index >= len(self._path):
             return TrackerStatus(self._wp_index, len(self._path))
 
+        # ponytail: short forward prune; full path-handler belongs in LocalPlanner.
+        pruned = self._advance_to_nearest_forward(robot_pos_arr)
+
         # -- Arrival check ---------------------------------------------------
-        wp = self._path[self._wp_index]
-        is_final_wp = self._wp_index >= len(self._path) - 1
-        threshold = self._final_threshold if is_final_wp else self._threshold
-        if self._is_waypoint_reached(robot_pos_arr, wp, threshold):
+        reached_any = False
+        while self._wp_index < len(self._path):
+            wp = self._path[self._wp_index]
+            is_final_wp = self._wp_index >= len(self._path) - 1
+            threshold = self._final_threshold if is_final_wp else self._threshold
+            if not self._is_waypoint_reached(robot_pos_arr, wp, threshold):
+                break
             self._wp_index += 1
+            reached_any = True
+
+        if reached_any:
             self._last_progress_time = time.time()
             self._last_progress_pos = robot_pos_arr.copy()
             self._last_progress_yaw = robot_yaw
@@ -158,6 +169,12 @@ class WaypointTracker:
                                      event=EV_PATH_COMPLETE)
             return TrackerStatus(self._wp_index, len(self._path),
                                  event=EV_WAYPOINT_REACHED)
+        if pruned:
+            self._last_progress_time = time.time()
+            self._last_progress_pos = robot_pos_arr.copy()
+            self._last_progress_yaw = robot_yaw
+            self._stuck_warn_sent = False
+            self._stuck_sent = False
 
         # -- Stuck detection -------------------------------------------------
         now = time.time()
@@ -198,6 +215,22 @@ class WaypointTracker:
                                  event=EV_STUCK)
 
         return TrackerStatus(self._wp_index, len(self._path))
+
+    def _advance_to_nearest_forward(self, robot_pos: np.ndarray) -> bool:
+        if self._wp_index >= len(self._path) - 1:
+            return False
+        end = min(len(self._path), self._wp_index + self._search_window)
+        best_idx = self._wp_index
+        best_dist = float("inf")
+        for idx in range(self._wp_index, end):
+            dist = self._progress_distance(robot_pos, self._path[idx])
+            if dist < best_dist:
+                best_idx = idx
+                best_dist = dist
+        if best_idx <= self._wp_index:
+            return False
+        self._wp_index = best_idx
+        return True
 
     @staticmethod
     def _normalise_z_threshold(value: float | None) -> float | None:

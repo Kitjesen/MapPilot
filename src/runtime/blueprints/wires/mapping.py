@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .context import MAP_OUT, TOPIC_MAP_EXPLORATION_GRID
+from .context import MAP_OUT, TOPIC_MAP_EXPLORATION_GRID, TOPIC_NAV_TRAVERSABILITY
 from .types import WireSpec
 
 
@@ -14,6 +14,13 @@ def map_output_specs() -> tuple[WireSpec, ...]:
             MAP_OUT,
             "exploration_grid",
             topic=TOPIC_MAP_EXPLORATION_GRID,
+        ),
+        WireSpec(
+            "TraversabilityCostModule",
+            "fused_cost",
+            MAP_OUT,
+            "traversability",
+            topic=TOPIC_NAV_TRAVERSABILITY,
         ),
     )
 

@@ -13,7 +13,7 @@ struct Point {
 
 struct PlannerOptions {
   double robot_radius{0.25};
-  int max_iterations{800000};
+  int max_iterations{500000};
   int snap_search_radius_cells{12};
   bool require_ground_support{true};
   bool strict_direct_ground_support{false};

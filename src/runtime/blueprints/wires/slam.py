@@ -101,11 +101,18 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 
 
 def sensor_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
-    if ctx.slam_module != "SlamModule" or "LidarModule" not in ctx.names:
+    if ctx.slam_module != "SlamModule":
+        return ()
+    source = ""
+    if "LidarModule" in ctx.names:
+        source = "LidarModule"
+    elif ctx.driver_module == "MujocoDriverModule" and "MujocoDriverModule" in ctx.names:
+        source = "MujocoDriverModule"
+    if not source:
         return ()
     return (
         WireSpec(
-            "LidarModule",
+            source,
             "raw_scan",
             "SlamModule",
             "lidar_raw_scan",
@@ -113,7 +120,7 @@ def sensor_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             topic=TOPICS.raw_lidar_points,
         ),
         WireSpec(
-            "LidarModule",
+            source,
             "imu",
             "SlamModule",
             "lidar_imu",

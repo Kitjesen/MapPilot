@@ -6,6 +6,7 @@ Extracted content: PolicyRunner class + all related constants
 Logic preserved exactly as-is.
 """
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -28,6 +29,22 @@ ACTION_SCALE = np.array([
     0.125, 0.25, 0.25,  # RR
     0.125, 0.25, 0.25,  # RL
     5.0, 5.0, 5.0, 5.0  # foot
+], dtype=np.float64)
+
+THUNDERV4_STANDING_POSE = np.array([
+    -0.1, -0.8, 1.8,
+     0.1,  0.8, -1.8,
+     0.1,  0.8, -1.8,
+    -0.1, -0.8, 1.8,
+     0.0,  0.0, 0.0, 0.0,
+], dtype=np.float64)
+
+THUNDERV4_ACTION_SCALE = np.array([
+    0.15, 0.25, 0.25,
+    0.15, 0.25, 0.25,
+    0.15, 0.25, 0.25,
+    0.15, 0.25, 0.25,
+    5.0, 5.0, 5.0, 5.0,
 ], dtype=np.float64)
 
 JOINT_VEL_SCALE = np.array([0.05, 0.05, 0.05, 0.05], dtype=np.float64)
@@ -180,3 +197,110 @@ class PolicyRunner:
         """Reset history buffer (call on simulation reset)."""
         self.history.clear()
         self.last_action = STANDING_POSE.copy()
+
+
+class TorchScriptPolicyRunner:
+    """TorchScript gait policy matching the imported Thunder v4 demo script."""
+
+    def __init__(self, policy_path: str):
+        import torch
+
+        self._torch = torch
+        self.model = torch.jit.load(policy_path, map_location="cpu")
+        self.model.eval()
+        self.last_action = np.zeros(16, dtype=np.float64)
+        self._startup_hold_steps = 6
+        self._startup_hold_remaining = self._startup_hold_steps
+        print(f"[Policy] Loaded TorchScript {policy_path}")
+
+    def warm_up(self, gyroscope: np.ndarray, projected_gravity: np.ndarray,
+                joint_pos_16: np.ndarray, joint_vel_16: np.ndarray) -> None:
+        del gyroscope, projected_gravity, joint_pos_16, joint_vel_16
+        self.last_action = np.zeros(16, dtype=np.float64)
+        self._startup_hold_remaining = self._startup_hold_steps
+
+    @staticmethod
+    def clamp_action(action: np.ndarray) -> np.ndarray:
+        return np.asarray(action, dtype=np.float64).copy()
+
+    def build_obs(self, gyroscope: np.ndarray, projected_gravity: np.ndarray,
+                  direction: np.ndarray, joint_pos_16: np.ndarray,
+                  joint_vel_16: np.ndarray) -> np.ndarray:
+        jp_dart = joint_pos_16[MJ_TO_DART]
+        jv_dart = joint_vel_16[MJ_TO_DART]
+        q = jp_dart - THUNDERV4_STANDING_POSE
+        # ponytail: match sim/robots/thunderv4/mujoco_him_keyboard.py:get_obs().
+        q += np.random.uniform(-0.01, 0.01, q.shape)
+        q[12:] = 0.0
+        dq = jv_dart * 0.05
+        return np.concatenate([
+            gyroscope * IMU_GYRO_SCALE,
+            projected_gravity,
+            direction,
+            q,
+            dq,
+            self.last_action,
+        ]).astype(np.float32)
+
+    def infer(self, obs: np.ndarray) -> np.ndarray:
+        obs = np.asarray(obs, dtype=np.float32).reshape(1, -1)
+        if obs.shape[1] != OBS_DIM:
+            raise ValueError(f"TorchScriptPolicyRunner expected {OBS_DIM}-D obs, got {obs.shape[1]}")
+        with self._torch.inference_mode():
+            tensor = self._torch.from_numpy(obs).to(dtype=self._torch.float32)
+            raw_action = self.model(tensor).detach().cpu().numpy().reshape(-1)
+        if raw_action.size != 16:
+            raise ValueError(f"TorchScriptPolicyRunner expected 16-D action, got {raw_action.size}")
+        self.last_action = raw_action.astype(np.float64, copy=True)
+        if self._startup_hold_remaining > 0:
+            self._startup_hold_remaining -= 1
+            return THUNDERV4_STANDING_POSE.copy()
+        real_action = raw_action * THUNDERV4_ACTION_SCALE + THUNDERV4_STANDING_POSE
+        return self.clamp_action(real_action)
+
+    def reset(self) -> None:
+        self.last_action = np.zeros(16, dtype=np.float64)
+        self._startup_hold_remaining = self._startup_hold_steps
+
+
+class ThunderV4OnnxPolicyRunner(TorchScriptPolicyRunner):
+    """ONNX runtime for the converted ThunderV4 TorchScript policy."""
+
+    def __init__(self, policy_path: str):
+        import onnxruntime as ort
+
+        self.session = ort.InferenceSession(policy_path, providers=["CPUExecutionProvider"])
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_name = self.session.get_outputs()[0].name
+        self.last_action = np.zeros(16, dtype=np.float64)
+        self._startup_hold_steps = 6
+        self._startup_hold_remaining = self._startup_hold_steps
+        print(f"[Policy] Loaded ThunderV4 ONNX {policy_path}")
+
+    def infer(self, obs: np.ndarray) -> np.ndarray:
+        obs = np.asarray(obs, dtype=np.float32).reshape(1, -1)
+        if obs.shape[1] != OBS_DIM:
+            raise ValueError(f"ThunderV4OnnxPolicyRunner expected {OBS_DIM}-D obs, got {obs.shape[1]}")
+        raw_action = self.session.run([self.output_name], {self.input_name: obs})[0].reshape(-1)
+        if raw_action.size != 16:
+            raise ValueError(f"ThunderV4OnnxPolicyRunner expected 16-D action, got {raw_action.size}")
+        self.last_action = raw_action.astype(np.float64, copy=True)
+        if self._startup_hold_remaining > 0:
+            self._startup_hold_remaining -= 1
+            return THUNDERV4_STANDING_POSE.copy()
+        real_action = raw_action * THUNDERV4_ACTION_SCALE + THUNDERV4_STANDING_POSE
+        return self.clamp_action(real_action)
+
+
+def _is_thunderv4_policy(path: Path) -> bool:
+    normalized = path.as_posix().lower()
+    return "thunderv4/policy" in normalized or path.name.startswith("pose_flat_low_kpkd")
+
+
+def load_policy_runner(policy_path: str):
+    path = Path(policy_path)
+    if path.suffix.lower() in {".pt", ".pth", ".jit"}:
+        return TorchScriptPolicyRunner(policy_path)
+    if path.suffix.lower() == ".onnx" and _is_thunderv4_policy(path):
+        return ThunderV4OnnxPolicyRunner(policy_path)
+    return PolicyRunner(policy_path)

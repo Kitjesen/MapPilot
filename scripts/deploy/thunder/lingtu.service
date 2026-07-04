@@ -22,6 +22,8 @@ Environment=LINGTU_HARDWARE_CONTROL_BOUNDARY=dds_endpoint_source
 Environment=LINGTU_MANAGE_SESSION_SERVICES=0
 Environment=LINGTU_OCTOPLANNER3D_EXECUTABLE=/opt/lingtu/current/build/octoplanner3d_headless/octoplanner3d_headless
 Environment=LINGTU_OCTOPLANNER3D_MAP=/home/sunrise/data/nova/maps/active/octomap.ot
+Environment=LINGTU_NAV_CONTROL_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control
+Environment=LINGTU_DDS_DOMAIN_ID=0
 ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh && exec "${LINGTU_PYTHON}" lingtu.py "${LINGTU_PROFILE}" --no-repl'
 Restart=on-failure
 RestartSec=5

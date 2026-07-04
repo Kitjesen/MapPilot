@@ -2,7 +2,7 @@ import pytest
 
 pytestmark = [pytest.mark.ros2]
 
-"""Full integration verification é—‚?36 tests across all new modules.
+"""Full integration verification é—?36 tests across all new modules.
 
 TODO: Replace time.sleep with threading.Event for module output
       synchronization. Many sleeps wait for module threads to produce
@@ -165,14 +165,14 @@ except Exception:
 print("\n=== 21-30: Cross-Module (dev profile) ===")
 # ============================================================
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 
 buf = io.StringIO()
 h = logging.StreamHandler(buf)
 h.setLevel(logging.WARNING)
 logging.getLogger("runtime.blueprint").addHandler(h)
 
-bp = full_stack_blueprint(robot="stub", slam_profile="none",
+bp = thunder_blueprint(robot="stub", slam_profile="none",
                           enable_native=False, enable_semantic=True, enable_gateway=True)
 system = bp.build()
 system.start()
@@ -244,7 +244,7 @@ for pname, kw in [
     ("sim", dict(robot="sim_mujoco", slam_profile="bridge",
                  enable_native=True, enable_semantic=True, enable_gateway=True))]:
     try:
-        full_stack_blueprint(**kw).build()
+        thunder_blueprint(**kw).build()
         T(f"30.Profile {pname}", True)
     except Exception:
         T(f"30.Profile {pname}", False)

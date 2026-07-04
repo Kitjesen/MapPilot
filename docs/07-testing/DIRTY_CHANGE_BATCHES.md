@@ -54,7 +54,6 @@ git add \
   src/runtime/adapters/lcm/endpoint_runner.py \
   src/runtime/adapters/lcm/sources/__init__.py \
   src/runtime/adapters/lcm/sources/brainstem.py \
-  src/runtime/blueprints/full_stack.py \
   src/runtime/blueprints/full_stack_wiring.py \
   src/runtime/blueprints/products/thunder.py \
   src/runtime/blueprints/profile_graph.py \

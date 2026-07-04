@@ -56,6 +56,95 @@ class _PreviewPlanner:
         )
 
 
+class _SnappingPreviewPlanner:
+    is_ready = True
+    has_map = True
+    planner_name = "octoplanner3d"
+    plan_safety_policy = "map_only"
+
+    def __init__(self):
+        self._last_plan_report = {}
+
+    @property
+    def last_plan_report(self):
+        return dict(self._last_plan_report)
+
+    def plan_request(self, request: GlobalPlanRequest) -> GlobalPlanResult:
+        path = [
+            np.asarray([0.1, 0.0, 0.0], dtype=float),
+            np.asarray([0.8, 0.0, 0.0], dtype=float),
+        ]
+        self._last_plan_report = {
+            "selected_planner": "octoplanner3d",
+            "policy": "map_only",
+            "reached_goal": False,
+            "requested_start": request.start.tolist(),
+            "accepted_start": path[0].tolist(),
+            "adjusted_start": path[0].tolist(),
+            "requested_goal": request.goal.tolist(),
+            "accepted_goal": path[-1].tolist(),
+            "adjusted_goal": path[-1].tolist(),
+            "planner_diagnostics": {"stage": "cxx_plan_success"},
+        }
+        return GlobalPlanResult(
+            path=path,
+            plan_ms=5.0,
+            reached_goal=False,
+            adjusted_goal=path[-1],
+            frame_id=request.frame_id,
+            report=self._last_plan_report,
+        )
+
+
+class _FailingSnappingPreviewPlanner:
+    is_ready = True
+    has_map = True
+    planner_name = "octoplanner3d"
+    plan_safety_policy = "map_only"
+
+    def __init__(self):
+        self._last_plan_report = {}
+
+    @property
+    def last_plan_report(self):
+        return dict(self._last_plan_report)
+
+    def plan_request(self, request: GlobalPlanRequest) -> GlobalPlanResult:
+        diagnostics = {
+            "stage": "cxx_plan_failed",
+            "start_xyz": request.start.tolist(),
+            "goal_xyz": request.goal.tolist(),
+            "stderr": (
+                "GlobalPlanner::startPlan() Start snapped to free cell: "
+                "[0.30, -0.50, 0.50]\n"
+                "GlobalPlanner::startPlan() Goal snapped to free cell: "
+                "[0.50, 0.30, 0.30]\n"
+                "GlobalPlanner::tryPlan() A* planning failed."
+            ),
+        }
+        self._last_plan_report = {
+            "selected_planner": "octoplanner3d",
+            "policy": "map_only",
+            "reached_goal": False,
+            "fallback_reason": "empty path",
+            "planner_diagnostics": diagnostics,
+            "rejected_plans": [
+                {
+                    "planner": "octoplanner3d",
+                    "reason": "empty path",
+                    "planner_diagnostics": diagnostics,
+                }
+            ],
+        }
+        return GlobalPlanResult(
+            error="empty path",
+            reached_goal=False,
+            frame_id=request.frame_id,
+            diagnostics=diagnostics,
+            report=self._last_plan_report,
+        )
+
+
 def test_global_planner_contracts_keep_old_names_and_shape_map():
     assert PlanRequest is GlobalPlanRequest
     assert PlanResult is GlobalPlanResult
@@ -155,6 +244,51 @@ def test_plan_preview_exposes_global_plan_wire_payload():
     assert result["feasible"] is True
     assert result["global_plan"]["schema_version"] == GLOBAL_PLAN_SCHEMA_VERSION
     assert result["global_plan"]["path"] == [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+
+
+def test_plan_preview_exposes_start_and_goal_snap_diagnostics():
+    preview = PlanPreviewService(timeout_s=1.0)
+    try:
+        result = preview.preview(
+            planner=_SnappingPreviewPlanner(),
+            start=[0.0, 0.0, 0.0],
+            goal=[1.0, 0.0, 0.0],
+            frame_id="map",
+            frame_blocker=None,
+        )
+    finally:
+        preview.shutdown()
+
+    snap = result["snap_diagnostics"]
+    assert result["feasible"] is True
+    assert result["reached_goal"] is False
+    assert snap["requested_start"] == [0.0, 0.0, 0.0]
+    assert snap["snapped_start"] == [0.1, 0.0, 0.0]
+    assert snap["requested_goal"] == [1.0, 0.0, 0.0]
+    assert snap["snapped_goal"] == [0.8, 0.0, 0.0]
+    assert snap["goal_snap_accepted"] is False
+
+
+def test_plan_preview_parses_snap_diagnostics_from_failed_octoplanner_logs():
+    preview = PlanPreviewService(timeout_s=1.0)
+    try:
+        result = preview.preview(
+            planner=_FailingSnappingPreviewPlanner(),
+            start=[0.0, 0.0, 0.0],
+            goal=[1.0, 0.0, 0.0],
+            frame_id="map",
+            frame_blocker=None,
+        )
+    finally:
+        preview.shutdown()
+
+    snap = result["snap_diagnostics"]
+    assert result["feasible"] is False
+    assert result["reasons"] == ["planning_failed"]
+    assert snap["snapped_start"] == [0.3, -0.5, 0.5]
+    assert snap["snapped_goal"] == [0.5, 0.3, 0.3]
+    assert snap["start_snap_distance_m"] > 0.7
+    assert snap["goal_snap_accepted"] is False
 
 
 def test_plan_safety_ignores_start_footprint_but_blocks_later_obstacle():

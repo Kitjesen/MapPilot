@@ -1,13 +1,34 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+_THUNDER_SERVICE_DIR = ROOT / "scripts" / "deploy" / "thunder"
+
+# Bash-only constructs that systemd mangles before handing ExecStart to the shell.
+# Field evidence (2026-07-04): ${VAR:-default} and ${args[@]} produced an empty
+# positional arg and crash-looped lingtu-thunder-dds-endpoint for 29h.
+_BASH_ONLY_EXECSTART_PATTERNS = (
+    re.compile(r"\$\{[^}]*:-"),  # ${VAR:-default} / ${VAR:-${OTHER:-}}
+    re.compile(r"\$\{args\[@\]\}"),
+    re.compile(r"args=\("),
+)
 
 
 def _read(rel_path: str) -> str:
     return (ROOT / rel_path).read_text(encoding="utf-8-sig")
+
+
+def _exec_start_lines(unit_text: str) -> list[str]:
+    return [
+        line
+        for line in unit_text.splitlines()
+        if line.startswith("ExecStart=")
+        or line.startswith("ExecStartPre=")
+        or line.startswith("ExecStartPost=")
+    ]
 
 
 def test_canonical_thunder_deploy_script_uses_product_profile() -> None:
@@ -45,14 +66,16 @@ def test_thunder_service_installer_defaults_to_native_field_cpp_stack() -> None:
     assert 'MODE="${1:-field-cpp}"' in text
     assert "install_dds_endpoint_service.sh" in text
     assert "install_slam_dds_service.sh" in text
+    assert "install_traversability_dds_service.sh" in text
     assert "slam-dds|cpp-slam" in text
+    assert "traversability-dds|terrain-dds" in text
     assert "field|thunder-nav|field-cpp|dds-cpp" in text
-    assert "install_lcm_endpoint_service.sh" in text
+    assert "install_lcm_endpoint_service.sh" not in text
     assert "install_lite_service.sh" in text
-    assert "Usage: $0 [field-cpp|dds-endpoint|slam-dds|nav-dds|lingtu|lcm-endpoint|lite|ros-compat]" in text
+    assert "Usage: $0 [field-cpp|dds-endpoint|slam-dds|traversability-dds|nav-dds|lingtu|lite|ros-compat]" in text
     assert "../s100p/install_services.sh" in text
     assert "ros2-env.sh" in text
-    assert 'exec "${LEGACY_INSTALLER}" "${SCRIPT_DIR}/../s100p"' in text
+    assert 'exec bash "${LEGACY_INSTALLER}" "${SCRIPT_DIR}/../s100p"' in text
     assert "ros-compat|legacy" in text
 
 
@@ -77,6 +100,10 @@ def test_thunder_lite_runtime_env_has_no_ros_setup() -> None:
     assert "LINGTU_ENABLE_ROBOT_DRIVER:=1" in text
     assert "LINGTU_COMMAND_OUTPUT_MODE:=local_driver" in text
     assert "LINGTU_HARDWARE_CONTROL_BOUNDARY:=module_graph_driver" in text
+    assert (
+        "LINGTU_MAP_ARTIFACT_CONVERTER:=${LINGTU_REPO}/build/octoplanner3d_headless/"
+        "octoplanner3d_pcd_to_octomap"
+    ) in text
     assert "/opt/ros" not in text
     assert "ROS_DOMAIN_ID" not in text
     assert "RMW_IMPLEMENTATION" not in text
@@ -145,12 +172,44 @@ def test_thunder_dds_endpoint_service_is_standalone_product_entrypoint() -> None
     assert "LINGTU_ENABLE_ROBOT_DRIVER=0" in text
     assert "LINGTU_COMMAND_OUTPUT_MODE=endpoint_only" in text
     assert "LINGTU_HARDWARE_CONTROL_BOUNDARY=dds_endpoint_source" in text
-    assert 'sources="${LINGTU_ENDPOINT_SOURCES:-${LINGTU_ENDPOINT_SOURCE:-}}"' in text
     assert "run_dds_endpoint_service.py" in text
-    assert "--source" in text
-    assert "--contract" in text
+    assert '--source "${LINGTU_ENDPOINT_SOURCES}"' in text
+    assert '--contract "${LINGTU_ENDPOINT_CONTRACT}"' in text
+    assert "--fail-closed-on-missing-python-dds" in text
+    assert "bash -c " in text
+    assert "bash -lc " not in text
     assert "ros2-env.sh" not in text
     assert "/opt/ros" not in text
+
+
+def test_thunder_service_units_avoid_bash_only_execstart_constructs() -> None:
+    """systemd expands ${VAR} before bash; bash-only syntax crash-loops the unit."""
+    unit_paths = sorted(_THUNDER_SERVICE_DIR.glob("*.service"))
+    assert unit_paths, "expected thunder service unit files"
+
+    offenders: list[str] = []
+    for path in unit_paths:
+        text = path.read_text(encoding="utf-8-sig")
+        for line in _exec_start_lines(text):
+            for pattern in _BASH_ONLY_EXECSTART_PATTERNS:
+                if pattern.search(line):
+                    offenders.append(f"{path.name}: {pattern.pattern}")
+
+    assert not offenders, (
+        "ExecStart uses bash-only constructs that systemd mangles "
+        f"(use direct flags from Environment= instead): {offenders}"
+    )
+
+    # Guard: the old buggy dds-endpoint form must stay rejected.
+    buggy = (
+        'args=(--contract "${LINGTU_ENDPOINT_CONTRACT}"); '
+        'sources="${LINGTU_ENDPOINT_SOURCES:-${LINGTU_ENDPOINT_SOURCE:-}}"; '
+        'if [ -n "${sources}" ]; then args+=(--source "${sources}"); fi; '
+        'exec "${LINGTU_PYTHON}" scripts/deploy/thunder/run_dds_endpoint_service.py '
+        '"${args[@]}"'
+    )
+    for pattern in _BASH_ONLY_EXECSTART_PATTERNS:
+        assert pattern.search(buggy), pattern.pattern
 
 
 def test_thunder_dds_endpoint_service_installer_is_no_ros() -> None:
@@ -191,28 +250,65 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "rclcpp" not in text
 
 
+def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
+    text = _read("scripts/deploy/thunder/lingtu-traversability-dds.service")
+    installer = _read("scripts/deploy/thunder/install_traversability_dds_service.sh")
+
+    assert "Description=LingTu native traversability DDS producer" in text
+    assert "lingtu-slam-dds.service" in text
+    assert "LINGTU_TRAVERSABILITY_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds" in text
+    assert "LINGTU_TRAVERSABILITY_STATUS_FILE=/dev/shm/lingtu/traversability_status.json" in text
+    assert "--publish-hz" in text
+    assert "--resolution" in text
+    assert "--radius" in text
+    assert "--max-points" in text
+    assert "native traversability DDS producer is missing or not executable" in text
+    assert "build_nav_endpoint.sh" in text
+    assert "ros2-env.sh" not in text
+    assert "python" not in text.lower()
+    assert "lingtu-traversability-dds.service" in installer
+
+
 def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
     text = _read("scripts/deploy/thunder/lingtu-livox-dds.service")
+    runner = _read("scripts/deploy/thunder/run_livox_dds.sh")
 
     assert "Description=LingTu native Livox SDK2 DDS publisher" in text
     assert "LINGTU_LIVOX_BIN=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream" in text
-    assert "Livox-SDK2/samples/livox_lidar_quick_start/mid360_config.json" in text
-    assert "native Livox DDS publisher is missing or not executable" in text
-    assert "build_livox_sdk2_stream.sh" in text
-    assert "--dds" in text
-    assert "--domain-id" in text
-    assert "--lidar-frame" in text
-    assert "--imu-frame" in text
-    assert "source /opt/lingtu/config/thunder-runtime-env.sh" in text
+    assert "LINGTU_LIVOX_CONFIG_DIR=/opt/lingtu/config/livox" in text
+    assert "LINGTU_LIVOX_NET_IFACE=eth1" in text
+    assert "run_livox_dds.sh" in text
+    assert "native Livox DDS publisher is missing or not executable" in runner
+    assert "build_livox_sdk2_stream.sh" in runner
+    assert "Livox-SDK2/samples/livox_lidar_quick_start/mid360_config.json" not in text
+    assert "ensure_mid360_config_file" in runner
+    assert "LINGTU_LIVOX_HOST_IP" in runner
+    assert "--dds" in runner
+    assert "--domain-id" in runner
+    assert "--lidar-frame" in runner
+    assert "--imu-frame" in runner
+    assert "source /opt/lingtu/config/thunder-runtime-env.sh" in runner
     assert "ros2-env.sh" not in text
+    assert "ros2-env.sh" not in runner
     assert "livox_ros_driver2" not in text
+    assert "livox_ros_driver2" not in runner
 
 
 def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     text = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
 
     assert "Description=LingTu native navigation DDS endpoint" in text
-    assert "LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_cyclone_endpoint" in text
+    assert "LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint" in text
+    assert "LINGTU_LOCAL_PLANNER_PATHS=/opt/lingtu/current/src/nav/services/plan/local_planner/paths" in text
+    assert "LINGTU_ACTIVE_OCTOMAP=" in text
+    assert "LINGTU_NAV_PUBLISH_CMD_VEL=0" in text
+    assert "LINGTU_NAV_STATUS_FILE=/dev/shm/lingtu/nav_endpoint_status.json" in text
+    assert "--path-library" in text
+    assert "--max-obstacle-points" in text
+    assert "--publish-cmd-vel" in text
+    assert "--status-file" in text
+    assert "--gateway-host" not in text
+    assert "--gateway-port" not in text
     assert "native navigation DDS endpoint is missing or not executable" in text
     assert "build_nav_endpoint.sh" in text
     assert "ros2-env.sh" not in text
@@ -323,7 +419,8 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON" in livox
     assert "livox_sdk2_stream" in livox
 
-    assert "lingtu_nav_cyclone_endpoint" in nav
+    assert "lingtu_nav_native_endpoint" in nav
+    assert "lingtu_traversability_dds" in nav
     assert "native navigation DDS endpoint is missing" in nav
 
 
@@ -408,7 +505,6 @@ def test_doctor_uses_compat_ros_and_profile_builder() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.add(node.module)
 
-    assert "runtime.blueprints.full_stack" not in imports
     assert "runtime.ros2_context" not in imports
     assert "runtime.adapters.ros2.context" in imports
     assert "run_gateway_dataflow_checks" in text

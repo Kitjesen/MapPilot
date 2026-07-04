@@ -20,6 +20,7 @@ args=(
   --status-json-hz "${LINGTU_SLAM_STATUS_JSON_HZ:-10}"
   --cloud-snapshot-dir "${LINGTU_SLAM_CLOUD_SNAPSHOT_DIR:-/dev/shm/lingtu_slam}"
   --cloud-snapshot-hz "${LINGTU_SLAM_CLOUD_SNAPSHOT_HZ:-5}"
+  --track-against-map-period-s "${LINGTU_SLAM_TRACK_AGAINST_MAP_PERIOD_S:-5}"
 )
 
 if [ -n "${LINGTU_SLAM_MAP:-}" ]; then

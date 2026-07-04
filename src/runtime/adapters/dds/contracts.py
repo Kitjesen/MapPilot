@@ -181,6 +181,13 @@ THUNDER_FIELD_DDS_CONTRACT = DDSEndpointContract(
             note="Natural-language navigation instruction entering semantic planning.",
         ),
         _binding(
+            TOPICS.traversability,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.OccupancyGrid",
+            required=False,
+            note="Live terrain traversability risk grid for the native C++ local planner.",
+        ),
+        _binding(
             TOPICS.global_path,
             direction="lingtu_to_endpoint",
             schema="nav_msgs/msg/Path",

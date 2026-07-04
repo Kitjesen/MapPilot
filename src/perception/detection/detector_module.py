@@ -6,7 +6,7 @@ a one-line Blueprint change.
 
 Usage::
 
-    from runtime.blueprints import Blueprint
+    from runtime.blueprint import Blueprint
     from perception.detection.detector_module import DetectorModule
 
     # YOLO-World on GPU

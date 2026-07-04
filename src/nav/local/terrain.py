@@ -74,6 +74,7 @@ class Terrain(Module, layer=2):
         terrain_ext_radius_m: float = 42.0,
         terrain_ext_voxel_size: float = 0.2,
         terrain_ext_max_points: int = 60000,
+        strict_native: bool = False,
         **kw,
     ):
         super().__init__(**kw)
@@ -84,6 +85,7 @@ class Terrain(Module, layer=2):
         self._terrain_ext_radius_m = max(0.0, float(terrain_ext_radius_m))
         self._terrain_ext_voxel_size = max(0.0, float(terrain_ext_voxel_size))
         self._terrain_ext_max_points = max(0, int(terrain_ext_max_points))
+        self._strict_native = bool(strict_native)
         self._core = None       # nanobind: TerrainAnalysisCore
         self._native_kernel = None
         self._odom_x = 0.0
@@ -109,6 +111,12 @@ class Terrain(Module, layer=2):
             backend = create_nanobind_terrain_backend()
         except RuntimeError as exc:
             reason = str(exc).splitlines()[0] or "nanobind terrain backend unavailable"
+            if self._strict_native:
+                raise RuntimeError(
+                    "Terrain [nanobind]: "
+                    f"{reason}. Rebuild the native kernel or explicitly choose "
+                    "backend='simple' for passthrough testing."
+                ) from exc
             logger.warning(
                 "Terrain [nanobind]: %s; falling back to simple passthrough",
                 exc,

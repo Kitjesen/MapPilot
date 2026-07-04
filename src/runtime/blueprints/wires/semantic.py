@@ -70,6 +70,7 @@ def recorder_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 
 def visual_servo_specs() -> tuple[WireSpec, ...]:
     return (
+        WireSpec("GatewayModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("SemanticPlannerModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("VisualServoModule", "goal_pose", "nav.mission", "goal_pose"),
         WireSpec("VisualServoModule", "nav_stop", "nav.mission", "stop_signal"),

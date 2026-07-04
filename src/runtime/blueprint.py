@@ -38,7 +38,7 @@ from .transport.local import LocalTransport, Transport
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from runtime.blueprints.module_graph import ModuleGraph
+    from runtime.introspection.module_graph import ModuleGraph
 
 ConnectionKey = tuple[str, str, str, str]
 ConnectionMetadata = dict[ConnectionKey, dict[str, Any]]
@@ -113,7 +113,7 @@ class Blueprint:
         self._wires: list[_WireSpec] = []
         self._auto_wired: bool = False
         self._global_cfg: dict[str, Any] = {}
-        self._swap_config: dict[str, Any] | None = None  # set by full_stack_blueprint
+        self._swap_config: dict[str, Any] | None = None  # set by product blueprints
 
     # -- registration -------------------------------------------------------
 
@@ -212,7 +212,7 @@ class Blueprint:
     def export_graph(self, *, profile: str | None = None) -> "ModuleGraph":
         """Return a serializable declaration graph without instantiating modules."""
 
-        from runtime.blueprints.module_graph import ModuleGraph
+        from runtime.introspection.module_graph import ModuleGraph
 
         return ModuleGraph.from_blueprint(self, profile=profile)
 
@@ -352,7 +352,7 @@ class Blueprint:
             startup_order=startup_order,
         )
 
-        # 8. Post-build swap setup (opt-in, set by full_stack_blueprint)
+        # 8. Post-build swap setup (opt-in, set by product blueprints)
         if self._swap_config:
             handle.enable_swap(**self._swap_config)
             # Propagate swap manager to modules that can accept it

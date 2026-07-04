@@ -70,12 +70,17 @@ Completed:
   service for that C++ runtime. `scripts/deploy/thunder/install_services.sh`
   exposes `slam-dds` for the SLAM sidecar and `field-cpp` for DDS endpoint plus
   C++ SLAM runtime installation.
-- `src/nav/services/endpoint/cpp/nav_cyclone_endpoint.cpp` provides the
-  process-split C++ CycloneDDS navigation endpoint. It subscribes to
-  `rt/nav/goal_pose`, `rt/nav/cancel`, and `rt/nav/semantic/instruction`,
-  forwards those commands into Gateway's canonical REST command APIs, and
-  republishes Gateway's cached `global_path`, `local_path`, and muxed
-  `cmd_vel` as typed DDS outputs.
+- `src/nav/services/endpoint/cpp/nav_native_endpoint.cpp` is the product
+  C++ CycloneDDS navigation endpoint. It subscribes to SLAM odometry,
+  SLAM registered cloud, `rt/nav/goal_pose`, `rt/nav/global_path`, and
+  `rt/nav/cancel`. When `LINGTU_ACTIVE_OCTOMAP` is set, goals call
+  OctoPlanner3D in-process, then the C++ `NavLoop`
+  (`LocalPlannerCore -> PathFollowerCore`) publishes typed
+  `rt/nav/global_path`, `rt/nav/local_path`, and `rt/nav/cmd_vel` without
+  Gateway HTTP polling.
+- The old Gateway-polling `nav_cyclone_endpoint.cpp` bridge was removed.
+  Command/API testing should use `lingtu_nav_native_endpoint` with command
+  publishing disabled.
 - `scripts/deploy/thunder/lingtu-nav-dds.service` is the explicit field service
   for the C++ navigation endpoint. `install_slam_dds_service.sh` installs it
   together with the Livox DDS and SLAM DDS services.
@@ -89,21 +94,20 @@ Completed:
 Not complete:
 
 - The in-process Python `SlamModule` can still load the contract
-  `_PythonSlamRunner`; the product field path should instead use
-  `localization_adapter=dds_endpoint` plus the C++ DDS runtime sidecar.
-- The endpoint `thunder_field` path now uses
-  `localization_adapter=dds_endpoint`, `nav_in_adapter=dds_nav_input`,
-  `nav_out_adapter=dds_nav_output`, and `enable_lidar=false`, so endpoint
-  operation consumes typed DDS raw LiDAR/IMU and SLAM outputs instead of the
-  internal `LidarModule -> SlamModule` native path.
-- `localization_adapter=dds_endpoint` still contains a Python DDS compatibility
-  reader for development machines. On the robot, if Python DDS is unavailable,
-  it must fall back to the C++ SLAM status snapshot and report
-  `transport=status_file` instead of failing Gateway setup.
-- The Python `nav_in_adapter` / `nav_out_adapter` DDS modules now fail open as
-  `transport=disabled` when `cyclonedds-python` is absent. They are compatibility
-  and development adapters only; the product field navigation DDS boundary is
-  `lingtu_nav_cyclone_endpoint`.
+  `_PythonSlamRunner`; the product field path should instead use the C++ DDS
+  SLAM runtime plus the C++ status snapshot adapter.
+- The endpoint `thunder_field` path uses `localization_adapter=cpp_slam_status`,
+  `native_navigation_endpoint=lingtu-nav-dds`, `enable_nav_in=false`,
+  `enable_nav_out=false`, and `enable_lidar=false`. The old Python DDS
+  nav.in/nav.out adapters have been removed.
+- `cyclonedds-python` is not a robot main-path dependency. The remaining Python
+  DDS endpoint service is only the temporary Thunder Brainstem command sink; if
+  Python DDS is unavailable, it must fail closed instead of crash-looping. A
+  robot that needs real motor commands without `cyclonedds-python` must run a
+  dedicated C++ Thunder control sink that subscribes `rt/nav/cmd_vel` and calls
+  the hardware control service; that sink is separate from `lingtu-nav-dds`.
+- The C++ nav endpoint now consumes `rt/nav/traversability` as a typed
+  `lingtu.dds.OccupancyGrid` risk grid and passes it into LocalPlannerCore.
 - The older `dds_runtime.cpp` path has been compile- and startup-smoke-tested
   with the contract backend on a ROS2/Livox-equipped Ubuntu host. The native
   CycloneDDS runtime has been compile-, startup-, and native pub/sub-tested

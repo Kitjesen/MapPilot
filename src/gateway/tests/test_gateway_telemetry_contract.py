@@ -227,6 +227,55 @@ def test_navigation_dds_snapshot_exposes_paths_and_muxed_cmd_vel():
     assert snapshot.cmd_vel.active_source == "path_follower"
 
 
+def test_navigation_dds_snapshot_reads_native_endpoint_status(monkeypatch, tmp_path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import NavigationDdsSnapshotResponse
+
+    nav_status = tmp_path / "nav_endpoint_status.json"
+    trav_status = tmp_path / "traversability_status.json"
+    nav_status.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.nav.endpoint.status.v1",
+                "stamp_s": 789.0,
+                "global_path": [[1.0, 2.0, 0.3], [3.0, 4.0, 0.1]],
+                "local_path": [[0.2, 0.1, 0.0]],
+                "last_local": {"cmd_vel": {"vx": 0.3, "vy": 0.0, "wz": -0.2}},
+                "counters": {"odom": 3, "goals": 1, "outputs": 2},
+                "has_odom": True,
+                "has_traversability": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    trav_status.write_text(
+        '{"schema_version":"lingtu.traversability.status.v1",'
+        '"counters":{"odom":3,"registered_clouds":4,"published":2}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(nav_status))
+    monkeypatch.setenv("LINGTU_TRAVERSABILITY_STATUS_FILE", str(trav_status))
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/navigation/dds_snapshot")())
+    snapshot = NavigationDdsSnapshotResponse.model_validate(payload)
+
+    assert snapshot.nav_endpoint is not None
+    assert snapshot.nav_endpoint["counters"]["goals"] == 1
+    assert snapshot.global_path.count == 2
+    assert snapshot.global_path.path[0].frame_id == "map"
+    assert snapshot.local_path.count == 1
+    assert snapshot.cmd_vel is not None
+    assert snapshot.cmd_vel.linear["x"] == 0.3
+    assert snapshot.cmd_vel.angular["z"] == -0.2
+    assert snapshot.cmd_vel.active_source == "native_nav_endpoint_preview"
+    assert snapshot.traversability_endpoint is not None
+    assert snapshot.traversability_endpoint["counters"]["published"] == 2
+    assert snapshot.source == "gateway_navigation_cache+native_status"
+
+
 def test_velocity_mux_health_includes_latest_driver_command():
     from runtime.msgs.geometry import Twist, Vector3
     from nav.services.safety.velocity_mux import VelocityMux

@@ -76,9 +76,9 @@ def test_empty_and_too_short_paths_fail_ground_feasibility():
     assert single_point_report.reasons == ["too_few_points"]
 
 
-def test_official_like_building2_9_z_excursion_fails_ground_feasibility():
-    # Official OctoPlanner3D building2_9 sample behavior: planner may reach the
-    # goal, but a 0.3m -> 13.9m -> 0.3m excursion is not ground-executable.
+def test_large_z_excursion_fails_ground_feasibility():
+    # This is a standalone execution gate: a global 3D path can be valid only
+    # if the robot has support and acceptable local geometry along the route.
     path = [
         (0.0, 0.0, 0.3),
         (10.0, 0.0, 13.9),

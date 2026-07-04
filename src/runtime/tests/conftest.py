@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import warnings
+from inspect import signature
 from pathlib import Path
 
 _repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -46,13 +47,13 @@ asyncio.set_event_loop_policy(_CompatEventLoopPolicy())
 # in `if __name__ == "__main__":`, so pytest can collect them safely.
 
 
-def pytest_ignore_collect(collection_path, config):
+def _pytest_ignore_collect_impl(candidate):
     try:
         from runtime.tests.numpy_guard import numpy_import_is_safe
     except Exception:
         return False
 
-    candidate = Path(str(collection_path))
+    candidate = Path(str(candidate))
     if candidate.suffix != ".py" or candidate.name == "conftest.py":
         return False
     if not str(candidate).startswith(os.path.dirname(__file__)):
@@ -64,6 +65,24 @@ def pytest_ignore_collect(collection_path, config):
     except OSError:
         return False
     return "import numpy as np" in source or "from numpy" in source
+
+
+try:
+    from _pytest import hookspec as _pytest_hookspec
+
+    _ignore_collect_params = signature(_pytest_hookspec.pytest_ignore_collect).parameters
+except Exception:
+    _ignore_collect_params = {}
+
+if "collection_path" in _ignore_collect_params:
+
+    def pytest_ignore_collect(collection_path, config):
+        return _pytest_ignore_collect_impl(collection_path)
+
+else:
+
+    def pytest_ignore_collect(path, config):
+        return _pytest_ignore_collect_impl(path)
 
 
 def pytest_sessionfinish(session, exitstatus):

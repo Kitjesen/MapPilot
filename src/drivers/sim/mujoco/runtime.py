@@ -132,6 +132,7 @@ def build_engine(
     mujoco_lidar_backend: str = "cpu",
     require_mature_lidar_backend: bool = True,
     allow_legacy_lidar_fallback: bool = False,
+    policy_path: Path | str | None = None,
 ):
     """Build the canonical in-process MuJoCo engine for live LingTu gates."""
 
@@ -148,6 +149,11 @@ def build_engine(
     robot_cfg.lidar_body_name = str(lidar_body_name)
     if leg_joint_names is not None:
         robot_cfg.leg_joint_names = list(leg_joint_names)
+    if policy_path is not None and str(policy_path).strip():
+        candidate = Path(policy_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = (ROOT / candidate).resolve()
+        robot_cfg.policy_onnx = str(candidate)
     start = start or scene_start(world)
     if start is not None:
         robot_cfg.init_position = [float(v) for v in start[:3]]
@@ -161,7 +167,7 @@ def build_engine(
             body_name=robot_cfg.lidar_body_name,
             n_rays=int(n_rays),
             geom_group=0,
-            add_noise=False,
+            add_noise=True,
             backend=str(lidar_backend),
             mujoco_lidar_backend=str(mujoco_lidar_backend),
             require_mature_backend=bool(require_mature_lidar_backend),

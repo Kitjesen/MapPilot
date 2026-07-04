@@ -97,9 +97,9 @@ def test_fastlio2_profile_stops_super_lio_before_mapping(monkeypatch):
 
 
 def test_full_stack_treats_explicit_super_lio_relocation_as_external_lidar_owner():
-    from runtime.blueprints.full_stack import full_stack_blueprint
+    from runtime.blueprints.products.thunder import thunder_blueprint
 
-    bp = full_stack_blueprint(
+    bp = thunder_blueprint(
         robot="stub",
         slam_profile="super-lio-reloc",
         enable_semantic=False,

@@ -51,6 +51,7 @@ _PROFILE_META = {
     "lite":    ("L", "Lightweight Thunder runtime",                  T.green),
     "tracking": ("K", "Track supplied path or waypoint", T.green),
     "inspection": ("I", "Saved-map patrol and semantic inspection", T.green),
+    "tare_explore": ("E", "TARE exploration", T.cyan),
     "nav":     ("◉", "Navigate using a saved map",                  T.green),
     "explore": ("◎", "Explore unknown area",                         T.cyan),
     "map":     ("⊕", "Build a new map",                              T.yellow),
@@ -72,8 +73,9 @@ _PRODUCT_PROFILE_NAMES = (
     "tracking",
     "nav",
     "inspection",
+    "tare_explore",
 )
-_ADVANCED_PROFILE_NAMES = ("explore", "tare_explore")
+_ADVANCED_PROFILE_NAMES = ("explore",)
 _EXPERIMENTAL_PROFILE_NAMES = ("super_lio", "super_lio_relocation")
 _PROFILE_ALIASES_BY_CANONICAL: dict[str, tuple[str, ...]] = {}
 for _alias, _canonical in PROFILE_ALIASES.items():

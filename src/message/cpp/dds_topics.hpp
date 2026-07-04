@@ -54,6 +54,12 @@ inline constexpr TopicContract kSlamMapCommand{
 inline constexpr TopicContract kSlamMapEvent{
     "/slam/map_event", "rt/slam/map_event",
     "lingtu.dds.Text", "lingtu::dds::Text"};
+inline constexpr TopicContract kSlamRelocalizationRequest{
+    "/slam/relocalization/request", "rt/slam/relocalization/request",
+    "lingtu.dds.RelocalizationRequest", "lingtu::dds::RelocalizationRequest"};
+inline constexpr TopicContract kSlamRelocalizationResponse{
+    "/slam/relocalization/response", "rt/slam/relocalization/response",
+    "lingtu.dds.RelocalizationResponse", "lingtu::dds::RelocalizationResponse"};
 inline constexpr TopicContract kSlamLocalizationQuality{
     "/slam/localization_quality", "rt/slam/localization_quality",
     "lingtu.dds.Float32", "lingtu::dds::Float32"};
@@ -77,6 +83,9 @@ inline constexpr TopicContract kNavCancel{
 inline constexpr TopicContract kNavSemanticInstruction{
     "/nav/semantic/instruction", "rt/nav/semantic/instruction",
     "lingtu.dds.Text", "lingtu::dds::Text"};
+inline constexpr TopicContract kNavTraversability{
+    "/nav/traversability", "rt/nav/traversability",
+    "lingtu.dds.OccupancyGrid", "lingtu::dds::OccupancyGrid"};
 inline constexpr TopicContract kNavCmdVel{
     "/nav/cmd_vel", "rt/nav/cmd_vel",
     "lingtu.dds.TwistStamped", "lingtu::dds::TwistStamped"};
@@ -98,6 +107,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kSlamSavedMapCloud,
     kSlamMapCommand,
     kSlamMapEvent,
+    kSlamRelocalizationRequest,
+    kSlamRelocalizationResponse,
     kSlamLocalizationQuality,
     kSlamLocalizationHealth,
     kNavGlobalPath,
@@ -106,6 +117,7 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavGoalPose,
     kNavCancel,
     kNavSemanticInstruction,
+    kNavTraversability,
     kNavCmdVel,
     kNavExplorationGrid,
 };

@@ -63,6 +63,15 @@ LocalizerCloud::Ptr toLocalizerCloud(const Cloud& cloud) {
   return out;
 }
 
+void fillIcpDiagnostics(NativeRelocalizationResult& result, const ICPLocalizer& icp) {
+  result.quality = icp.getLastFitnessScore();
+  result.refine_backend = icp.getBackendName();
+  result.refine_iterations = icp.getLastIterations();
+  result.refine_inliers = icp.getLastInliers();
+  result.refine_converged = icp.getLastConverged();
+  result.refine_pos_cov_trace = icp.getLastPosCovTrace();
+}
+
 }  // namespace
 
 struct NativeRelocalizer::Impl {
@@ -128,7 +137,7 @@ NativeRelocalizationResult NativeRelocalizer::relocalize(
   M4F map_body = poseToMatrix(map_body_guess);
   impl_->icp.setInput(scan);
   if (!impl_->icp.align(map_body)) {
-    result.quality = impl_->icp.getLastFitnessScore();
+    fillIcpDiagnostics(result, impl_->icp);
     result.message = "native_relocalizer_icp_failed";
     return result;
   }
@@ -139,7 +148,7 @@ NativeRelocalizationResult NativeRelocalizer::relocalize(
   result.message = "native_relocalized";
   result.map_body = matrixToPose(map_body);
   result.map_odom = matrixToPose(map_odom);
-  result.quality = impl_->icp.getLastFitnessScore();
+  fillIcpDiagnostics(result, impl_->icp);
   return result;
 }
 
@@ -174,7 +183,7 @@ NativeRelocalizationResult NativeRelocalizer::globalRelocalize(
   Eigen::Matrix4f map_body = coarse.pose;
   impl_->icp.setInput(scan);
   if (!impl_->icp.align(map_body)) {
-    result.quality = impl_->icp.getLastFitnessScore();
+    fillIcpDiagnostics(result, impl_->icp);
     result.message = "native_global_relocalizer_icp_refine_failed";
     return result;
   }
@@ -185,7 +194,7 @@ NativeRelocalizationResult NativeRelocalizer::globalRelocalize(
   result.message = "native_global_relocalized";
   result.map_body = matrixToPose(map_body);
   result.map_odom = matrixToPose(map_odom);
-  result.quality = impl_->icp.getLastFitnessScore();
+  fillIcpDiagnostics(result, impl_->icp);
   return result;
 }
 

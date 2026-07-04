@@ -91,6 +91,7 @@ char g_enable_imu_command[] = "enable_imu";
 
 struct CliConfig {
   bool dds = false;
+  bool stdin_records = false;
   int domain_id = 0;
   double scan_window_s = 0.1;
   std::string lidar_frame = "livox_frame";
@@ -157,6 +158,19 @@ bool write_record(uint8_t record_type,
     return false;
   }
   std::fflush(stdout);
+  return true;
+}
+
+bool read_exact(void* dst, std::size_t bytes) {
+  auto* out = static_cast<std::uint8_t*>(dst);
+  std::size_t total = 0;
+  while (total < bytes) {
+    const std::size_t got = std::fread(out + total, 1, bytes - total, stdin);
+    if (got == 0) {
+      return false;
+    }
+    total += got;
+  }
   return true;
 }
 
@@ -469,6 +483,50 @@ void emit_lidar_packet(uint8_t lidar_id,
   }
 }
 
+int run_stdin_records() {
+  while (!g_quit.load(std::memory_order_relaxed)) {
+    RecordHeader header{};
+    if (!read_exact(&header, sizeof(header))) {
+      return std::feof(stdin) ? 0 : 1;
+    }
+    if (std::memcmp(header.magic, kMagic, sizeof(header.magic)) != 0) {
+      std::fprintf(stderr, "stdin record has bad magic\n");
+      return 2;
+    }
+    if (header.record_type == kRecordCloud) {
+      if (header.payload_bytes != header.count * sizeof(WirePoint)) {
+        std::fprintf(stderr, "stdin cloud payload size mismatch\n");
+        return 2;
+      }
+      std::vector<WirePoint> points(header.count);
+      if (!read_exact(points.data(), header.payload_bytes)) {
+        std::fprintf(stderr, "stdin cloud payload truncated\n");
+        return 1;
+      }
+      if (!emit_cloud(0, header.timestamp_ns, points)) {
+        return 1;
+      }
+    } else if (header.record_type == kRecordImu) {
+      if (header.count != 1 || header.payload_bytes != sizeof(WireImu)) {
+        std::fprintf(stderr, "stdin imu payload size mismatch\n");
+        return 2;
+      }
+      WireImu imu{};
+      if (!read_exact(&imu, sizeof(imu))) {
+        std::fprintf(stderr, "stdin imu payload truncated\n");
+        return 1;
+      }
+      if (!emit_imu(header.timestamp_ns, imu)) {
+        return 1;
+      }
+    } else {
+      std::fprintf(stderr, "stdin record has unknown type: %u\n", header.record_type);
+      return 2;
+    }
+  }
+  return 0;
+}
+
 void handle_high_points(uint8_t dev_type,
                         const LivoxLidarEthernetPacket* data,
                         uint64_t base_time_ns) {
@@ -642,6 +700,8 @@ CliConfig parse_args(int argc, const char* argv[]) {
     };
     if (arg == "--dds") {
       config.dds = true;
+    } else if (arg == "--stdin-records") {
+      config.stdin_records = true;
     } else if (arg == "--domain-id") {
       config.domain_id = std::stoi(next());
     } else if (arg == "--scan-window") {
@@ -658,20 +718,23 @@ CliConfig parse_args(int argc, const char* argv[]) {
       config.imu_frame = next();
     } else if (arg == "--help" || arg == "-h") {
       throw std::runtime_error(
-          "usage: livox_sdk2_stream [--dds] [--domain-id N] "
+          "usage: livox_sdk2_stream [--dds] [--stdin-records] [--domain-id N] "
           "[--publish-freq HZ|--scan-window SEC] "
-          "[--lidar-frame FRAME] [--imu-frame FRAME] <MID360_config.json>");
+          "[--lidar-frame FRAME] [--imu-frame FRAME] [<MID360_config.json>]");
     } else if (config.config_path.empty()) {
       config.config_path = arg;
     } else {
       throw std::runtime_error("unexpected argument: " + arg);
     }
   }
-  if (config.config_path.empty()) {
+  if (config.stdin_records && !config.dds) {
+    throw std::runtime_error("--stdin-records requires --dds");
+  }
+  if (!config.stdin_records && config.config_path.empty()) {
     throw std::runtime_error(
-        "usage: livox_sdk2_stream [--dds] [--domain-id N] "
+        "usage: livox_sdk2_stream [--dds] [--stdin-records] [--domain-id N] "
         "[--publish-freq HZ|--scan-window SEC] "
-        "[--lidar-frame FRAME] [--imu-frame FRAME] <MID360_config.json>");
+        "[--lidar-frame FRAME] [--imu-frame FRAME] [<MID360_config.json>]");
   }
   return config;
 }
@@ -689,6 +752,7 @@ int main(int argc, const char* argv[]) {
 
 #ifdef _WIN32
   _setmode(_fileno(stdout), _O_BINARY);
+  _setmode(_fileno(stdin), _O_BINARY);
 #endif
 
 #if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
@@ -711,6 +775,10 @@ int main(int argc, const char* argv[]) {
 
   std::signal(SIGINT, signal_stop);
   std::signal(SIGTERM, signal_stop);
+
+  if (cli.stdin_records) {
+    return run_stdin_records();
+  }
 
   DisableLivoxSdkConsoleLogger();
   if (!LivoxLidarSdkInit(cli.config_path.c_str())) {

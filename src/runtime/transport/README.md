@@ -20,7 +20,7 @@ DDS is suitable for sensor streams when the topic schema and QoS are explicit.
 Do not use the generic DDS transport adapter as the product sensor or navigation
 wire; it rejects registered product topics and only remains for unregistered
 test/debug topics. Use typed IDL adapters such as the Livox, IMU, and
-navigation DDS adapters instead.
+native C++ navigation endpoint instead.
 
 Protobuf is a wire-format option, not a transport. Add it only when a real
 external boundary needs generated language bindings. For point clouds, prefer a
@@ -49,14 +49,14 @@ The default field graph uses:
 
 - `DDSLocalizationAdapterModule` for `/lidar/raw_frame`, `/imu/raw`, and
   `/slam/*` localization/map streams.
-- `DDSNavInModule` for goals, cancels, and semantic instructions.
-- `DDSNavOutModule` for global paths, local paths, waypoints, and final
-  `cmd_vel`.
+- C++ `lingtu-nav-dds` for navigation goal/path/cmd_vel DDS. The old Python
+  nav DDS Module adapters were removed to prevent field double writers.
 
 External Thunder endpoint processes should use
 `src/runtime/adapters/dds/endpoint_service.py` through the runnable
-`scripts/deploy/thunder/run_dds_endpoint_service.py` entrypoint. Deployment uses
-`lingtu-thunder-dds-endpoint.service` by default.
+`scripts/deploy/thunder/run_dds_endpoint_service.py` entrypoint only for the
+temporary Python Brainstem command sink. Product navigation planning uses the
+C++ `lingtu-nav-dds` service for goal/path/cmd_vel DDS.
 
 For the default endpoint process, use the product source group. It always
 includes the Brainstem command sink and adds JSONL sensor/localization input
@@ -104,6 +104,12 @@ and semantic instructions from the endpoint contract.
 For `thunder_field`, the command output mode is `endpoint_only`: LingTu does
 not include an in-process `ThunderDriver` in the default field graph, and the
 endpoint source owns translation from DDS command velocity to robot hardware.
+This Python command sink currently needs `cyclonedds-python` if enabled, but it
+is not a main-path algorithm dependency; missing Python DDS must fail closed
+rather than restart-loop the robot services. Removing `cyclonedds-python` from
+real motor actuation requires a dedicated C++ Thunder control sink that
+subscribes `rt/nav/cmd_vel`; do not fold that hardware role into the planner
+endpoint.
 
 Source plugins implement `src/runtime/adapters/lcm/source.py`. Deployment-specific
 motion command sinks are passed as `module:factory` sources outside the LingTu

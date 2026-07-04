@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -11,19 +12,79 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
 
 using octoplanner3d::runtime::PlanRequest;
 using octoplanner3d::runtime::PlannerOptions;
 using octoplanner3d::runtime::Point;
 
-class RedirectCoutToCerr {
+class RedirectStdoutToStderr {
 public:
-  RedirectCoutToCerr() : original_(std::cout.rdbuf(std::cerr.rdbuf())) {}
-  ~RedirectCoutToCerr() { std::cout.rdbuf(original_); }
+  RedirectStdoutToStderr()
+  : original_cout_(std::cout.rdbuf(std::cerr.rdbuf())),
+    original_stdout_fd_(duplicateFd(fileNo(stdout)))
+  {
+    std::fflush(stdout);
+    if (original_stdout_fd_ >= 0) {
+      duplicateTo(fileNo(stderr), fileNo(stdout));
+    }
+  }
+
+  ~RedirectStdoutToStderr()
+  {
+    std::fflush(stdout);
+    if (original_stdout_fd_ >= 0) {
+      duplicateTo(original_stdout_fd_, fileNo(stdout));
+      closeFd(original_stdout_fd_);
+    }
+    std::cout.rdbuf(original_cout_);
+  }
 
 private:
-  std::streambuf * original_;
+  static int fileNo(FILE * file)
+  {
+#ifdef _WIN32
+    return _fileno(file);
+#else
+    return fileno(file);
+#endif
+  }
+
+  static int duplicateFd(int fd)
+  {
+#ifdef _WIN32
+    return _dup(fd);
+#else
+    return dup(fd);
+#endif
+  }
+
+  static void duplicateTo(int from, int to)
+  {
+#ifdef _WIN32
+    (void)_dup2(from, to);
+#else
+    (void)dup2(from, to);
+#endif
+  }
+
+  static void closeFd(int fd)
+  {
+#ifdef _WIN32
+    (void)_close(fd);
+#else
+    (void)close(fd);
+#endif
+  }
+
+  std::streambuf * original_cout_;
+  int original_stdout_fd_;
 };
 
 std::string readStdin()
@@ -450,7 +511,7 @@ int main()
     const PlanRequest request = parseRequest(readStdin());
     octoplanner3d::runtime::PlanResult result;
     {
-      RedirectCoutToCerr redirect_logs;
+      RedirectStdoutToStderr redirect_logs;
       result = octoplanner3d::runtime::runPlan(request);
     }
 

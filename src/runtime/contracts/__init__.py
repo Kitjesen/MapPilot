@@ -1,4 +1,4 @@
-"""Message contract helpers for dict-based module ports."""
+"""Message, topic, and runtime contract helpers."""
 
 from .messages import (
     ContractError,

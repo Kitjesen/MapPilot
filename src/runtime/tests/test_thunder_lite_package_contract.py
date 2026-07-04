@@ -361,7 +361,6 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
     assert "src/runtime/runtime_evidence.py" not in copied_files
     assert "src/runtime/runtime_validation_gates.py" not in copied_files
     assert "src/runtime/same_source_map_artifacts.py" not in copied_files
-    assert "src/runtime/blueprints/full_stack.py" not in copied_files
     assert "src/runtime/blueprints/full_stack_wiring.py" not in copied_files
     assert "src/runtime/blueprints/adapters/driver_ros2_runtime.py" not in copied_files
     assert "src/runtime/blueprints/adapters/mapping_slam.py" not in copied_files
@@ -534,7 +533,6 @@ def test_thunder_lite_packager_builds_filtered_package(tmp_path: Path) -> None:
     ).is_file()
     assert (output_dir / "src" / "nav" / "services" / "safety" / "safety_ring.py").is_file()
     assert (output_dir / "src" / "nav" / "services" / "safety" / "velocity_mux.py").is_file()
-    assert not (output_dir / "src" / "core" / "blueprints" / "full_stack.py").exists()
     assert not (output_dir / "src" / "core" / "blueprints" / "full_stack_wiring.py").exists()
     assert not (
         output_dir / "src" / "core" / "blueprints" / "adapters" / "driver_ros2_runtime.py"

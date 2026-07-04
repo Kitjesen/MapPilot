@@ -17,6 +17,7 @@ COMMAND_RATE_POLICY_HZ: dict[str, float] = {
     "cmd_vel": 20.0,
     "stop": 5.0,
     "instruction": 1.0,
+    "visual_servo": 2.0,
     "mode": 1.0,
     "lease": 1.0,
 }

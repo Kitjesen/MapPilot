@@ -34,6 +34,7 @@ from sim.engine.mujoco.robot_controller import (
     MJ_TO_DART,
     STANDING_POSE,
     PolicyRunner,
+    load_policy_runner,
 )
 
 
@@ -95,7 +96,7 @@ class MuJoCoEngine(SimEngine):
         self._cameras: Dict[str, MuJoCoCamera] = {}
 
         # Policy controller
-        self._policy: Optional[PolicyRunner] = None
+        self._policy: Optional[Any] = None
         self._policy_idle_hold = False
         self._policy_idle_cmd_eps = 1e-4
 
@@ -105,6 +106,8 @@ class MuJoCoEngine(SimEngine):
         self._base_body_id: int = 0
         self._lidar_body_id: int = 0
         self._leg_actuator_offset: int = 0
+        self._leg_control_mode: str = "position"
+        self._last_leg_targets_mj: Optional[np.ndarray] = None
         self._root_qposadr: int = 0
         self._root_dofadr: int = 0
 
@@ -170,6 +173,7 @@ class MuJoCoEngine(SimEngine):
                     scene_asset = scene_root.find("asset")
                     robot_asset = robot_root.find("asset")
                     scene_size = scene_root.find("size")
+                    scene_visual = scene_root.find("visual")
                     if scene_size is not None and robot_root.find("size") is None:
                         insert_at = 0
                         for idx, child in enumerate(list(robot_root)):
@@ -192,6 +196,23 @@ class MuJoCoEngine(SimEngine):
                                 continue
                             robot_asset.append(copy.deepcopy(child))
                             existing_asset_keys.add(asset_key)
+
+                    if scene_visual is not None:
+                        robot_visual = robot_root.find("visual")
+                        if robot_visual is not None:
+                            visual_index = list(robot_root).index(robot_visual)
+                            robot_root.remove(robot_visual)
+                            robot_root.insert(visual_index, copy.deepcopy(scene_visual))
+                        else:
+                            robot_root.insert(0, copy.deepcopy(scene_visual))
+
+                    for child in list(robot_worldbody):
+                        if child.tag != "geom":
+                            continue
+                        geom_name = child.attrib.get("name", "")
+                        geom_type = child.attrib.get("type", "")
+                        if geom_name in {"ground", "floor"} or geom_type == "plane":
+                            robot_worldbody.remove(child)
 
                     for child in list(scene_worldbody):
                         if (
@@ -267,6 +288,7 @@ class MuJoCoEngine(SimEngine):
             self._leg_actuator_offset = max(0, int(self._model.nu) - valid_leg_joints)
         else:
             self._leg_actuator_offset = self._robot_cfg.leg_act_offset
+        self._leg_control_mode = self._resolve_leg_control_mode()
 
         # Initialize LiDAR
         self._lidar = MuJoCoLidar(self._model, self._data, self._lidar_cfg)
@@ -286,7 +308,7 @@ class MuJoCoEngine(SimEngine):
             self._policy = None
         elif policy_path:
             if Path(policy_path).exists():
-                self._policy = PolicyRunner(policy_path)
+                self._policy = load_policy_runner(policy_path)
             else:
                 print(f'[MuJoCoEngine] Policy not found at {policy_path}, '
                       f'running PD-only mode')
@@ -299,6 +321,7 @@ class MuJoCoEngine(SimEngine):
         print(f'[MuJoCoEngine] Loaded. dt={self._physics_dt:.4f}s, '
               f'joints={valid_leg_joints}, '
               f'ctrl_offset={self._leg_actuator_offset}, '
+              f'leg_ctrl={self._leg_control_mode}, '
               f'drive_mode={self._drive_mode}, '
               f'cameras={list(self._cameras.keys())}')
 
@@ -434,6 +457,27 @@ class MuJoCoEngine(SimEngine):
             actuator_ids.append(actuator_id)
         return actuator_ids
 
+    def _resolve_leg_control_mode(self) -> str:
+        requested = getattr(self._robot_cfg, "leg_control_mode", "auto")
+        requested = (requested or "auto").strip().lower()
+        if requested in {"position", "torque"}:
+            return requested
+        if requested != "auto":
+            raise ValueError(f"Unsupported leg_control_mode: {requested}")
+
+        valid_actuators = [idx for idx in self._leg_actuator_ids if idx >= 0]
+        if not valid_actuators or self._model is None:
+            return "position"
+
+        # MuJoCo <motor> actuators have direct gain and no position/velocity
+        # bias term; position actuators have non-zero bias parameters.
+        for actuator_id in valid_actuators:
+            gain = float(self._model.actuator_gainprm[actuator_id, 0])
+            bias = np.asarray(self._model.actuator_biasprm[actuator_id, :3], dtype=np.float64)
+            if not np.isclose(gain, 1.0) or not np.allclose(bias, 0.0):
+                return "position"
+        return "torque"
+
     def reset(self) -> RobotState:
         """Reset simulation to initial state."""
         import mujoco
@@ -460,11 +504,15 @@ class MuJoCoEngine(SimEngine):
 
         mujoco.mj_forward(self._model, self._data)
 
-        # Stabilization phase: run 1000 steps (2s) with PD control, no policy
+        # Stabilization phase: hold the standing pose before enabling policy.
         # (policy outputs bad actions from initial state and would fling the robot)
         _policy_backup = self._policy
         self._policy = None  # temporarily disable policy
-        for _ in range(1000):
+        warmup_seconds = 0.1 if self._leg_control_mode == "torque" else 2.0
+        warmup_steps = max(1, round(warmup_seconds / max(self._physics_dt, 1e-6)))
+        standing_mj = self._robot_cfg.standing_pose_array[DART_TO_MJ]
+        for _ in range(warmup_steps):
+            self._write_leg_ctrl(standing_mj)
             mujoco.mj_step(self._model, self._data)
         self._policy = _policy_backup  # restore policy
 
@@ -549,6 +597,7 @@ class MuJoCoEngine(SimEngine):
                     mj_forward(self._model, self._data)
         else:
             for _ in range(n_sub):
+                self._refresh_leg_torque_ctrl()
                 mujoco.mj_step(self._model, self._data)
         self._sim_time += self._control_dt
 
@@ -658,21 +707,61 @@ class MuJoCoEngine(SimEngine):
         ))
 
     def _write_leg_ctrl(self, targets_mj: np.ndarray) -> None:
-        """Write joint targets in MuJoCo joint order, independent of XML actuator order."""
+        """Write joint command in MuJoCo joint order, independent of XML actuator order."""
+        ctrl_values = np.asarray(targets_mj, dtype=np.float64)
+        if self._leg_control_mode == "torque":
+            self._last_leg_targets_mj = ctrl_values.copy()
+            ctrl_values = self._compute_leg_torques(ctrl_values)
+
         wrote_by_actuator = False
         for i, actuator_id in enumerate(self._leg_actuator_ids):
-            if actuator_id < 0 or i >= len(targets_mj):
+            if actuator_id < 0 or i >= len(ctrl_values):
                 continue
             if actuator_id < len(self._data.ctrl):
-                self._data.ctrl[actuator_id] = targets_mj[i]
+                self._data.ctrl[actuator_id] = ctrl_values[i]
                 wrote_by_actuator = True
 
         if wrote_by_actuator:
             return
 
         offset = self._leg_actuator_offset
-        ctrl_span = min(len(targets_mj), max(0, len(self._data.ctrl) - offset))
-        self._data.ctrl[offset:offset + ctrl_span] = targets_mj[:ctrl_span]
+        ctrl_span = min(len(ctrl_values), max(0, len(self._data.ctrl) - offset))
+        self._data.ctrl[offset:offset + ctrl_span] = ctrl_values[:ctrl_span]
+
+    def _refresh_leg_torque_ctrl(self) -> None:
+        if self._leg_control_mode != "torque" or self._last_leg_targets_mj is None:
+            return
+        ctrl_values = self._compute_leg_torques(self._last_leg_targets_mj)
+        wrote_by_actuator = False
+        for i, actuator_id in enumerate(self._leg_actuator_ids):
+            if actuator_id < 0 or i >= len(ctrl_values):
+                continue
+            if actuator_id < len(self._data.ctrl):
+                self._data.ctrl[actuator_id] = ctrl_values[i]
+                wrote_by_actuator = True
+        if wrote_by_actuator:
+            return
+        offset = self._leg_actuator_offset
+        ctrl_span = min(len(ctrl_values), max(0, len(self._data.ctrl) - offset))
+        self._data.ctrl[offset:offset + ctrl_span] = ctrl_values[:ctrl_span]
+
+    def _compute_leg_torques(self, targets_mj: np.ndarray) -> np.ndarray:
+        joint_pos_mj, joint_vel_mj = self._get_joint_state()
+        kp_mj = self._robot_cfg.torque_kp_array[DART_TO_MJ]
+        kd_mj = self._robot_cfg.torque_kd_array[DART_TO_MJ]
+        limit_mj = self._robot_cfg.torque_limit_array[DART_TO_MJ]
+
+        torques = np.zeros(16, dtype=np.float64)
+        position_mask = kp_mj > 0.0
+        velocity_mask = ~position_mask
+        torques[position_mask] = (
+            kp_mj[position_mask] * (targets_mj[position_mask] - joint_pos_mj[position_mask])
+            - kd_mj[position_mask] * joint_vel_mj[position_mask]
+        )
+        torques[velocity_mask] = (
+            kd_mj[velocity_mask] * (targets_mj[velocity_mask] - joint_vel_mj[velocity_mask])
+        )
+        return np.clip(torques, -limit_mj, limit_mj)
 
     # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     # State reading
@@ -691,6 +780,7 @@ class MuJoCoEngine(SimEngine):
 
         jp, jv = self._get_joint_state()
         gyro, pg = self._get_imu()
+        linear_acceleration = self._get_imu_linear_acceleration(pg)
 
         return RobotState(
             position=pos,
@@ -701,12 +791,17 @@ class MuJoCoEngine(SimEngine):
             joint_velocities=jv,
             imu_gyro=gyro,
             imu_projected_gravity=pg,
+            imu_linear_acceleration=linear_acceleration,
         )
 
     def _get_imu(self):
         """Extract IMU data (gyroscope + projected gravity).
         # Extracted from src/drivers/sim/nova_nav_bridge.py get_imu()
         """
+        sensor_imu = self._get_sensor_imu()
+        if sensor_imu is not None:
+            return sensor_imu
+
         body_id = self._base_body_id
         R = self._data.xmat[body_id].reshape(3, 3)  # body-to-world
         dadr = self._root_dofadr
@@ -717,6 +812,53 @@ class MuJoCoEngine(SimEngine):
         projected_gravity = R.T @ gravity_world
 
         return gyroscope.astype(np.float64), projected_gravity.astype(np.float64)
+
+    def _get_sensor_imu(self) -> Optional[tuple[np.ndarray, np.ndarray]]:
+        try:
+            imu_quat = np.asarray(self._data.sensor("orientation").data, dtype=np.float64)
+            gyro_local = np.asarray(self._data.sensor("angular-velocity").data, dtype=np.float64)
+        except Exception:
+            return None
+        if imu_quat.size != 4 or gyro_local.size != 3:
+            return None
+        if not np.isfinite(imu_quat).all() or np.linalg.norm(imu_quat) <= 1e-9:
+            return None
+
+        imu_R = self._quat_wxyz_to_mat(imu_quat)
+        gravity_world = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+        projected_gravity = imu_R.T @ gravity_world
+
+        qadr = self._root_qposadr
+        base_quat = np.asarray(self._data.qpos[qadr + 3:qadr + 7], dtype=np.float64)
+        if base_quat.size != 4 or np.linalg.norm(base_quat) <= 1e-9:
+            base_R = imu_R
+        else:
+            base_R = self._quat_wxyz_to_mat(base_quat)
+        gyro_world = imu_R @ gyro_local
+        gyroscope = base_R.T @ gyro_world
+        return gyroscope.astype(np.float64), projected_gravity.astype(np.float64)
+
+    def _get_imu_linear_acceleration(self, projected_gravity: np.ndarray) -> np.ndarray:
+        try:
+            accel = np.asarray(self._data.sensor("linear-acceleration").data, dtype=np.float64)
+        except Exception:
+            accel = -np.asarray(projected_gravity, dtype=np.float64) * 9.80665
+        if accel.size != 3 or not np.isfinite(accel).all():
+            return np.zeros(3, dtype=np.float64)
+        return accel.astype(np.float64)
+
+    @staticmethod
+    def _quat_wxyz_to_mat(quat_wxyz: np.ndarray) -> np.ndarray:
+        q = np.asarray(quat_wxyz, dtype=np.float64)
+        norm = np.linalg.norm(q)
+        if norm <= 1e-12:
+            return np.eye(3, dtype=np.float64)
+        w, x, y, z = q / norm
+        return np.array([
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+        ], dtype=np.float64)
 
     def _get_joint_state(self):
         """Read position and velocity of 16 leg joints.

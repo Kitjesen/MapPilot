@@ -33,7 +33,6 @@ class ProductModeContract:
 
 
 _COMMAND_OUTPUT_CHAIN = frozenset({
-    "nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel@/nav/cmd_vel",
     "nav.velocity_mux.driver_cmd_vel->nav.safety.cmd_vel",
 })
 
@@ -49,6 +48,9 @@ _TELEOP_AVOID_CHAIN = frozenset({
 })
 
 _MAP_CHAIN = frozenset({
+    "SlamAdapterModule.odometry->OccupancyGridModule.odometry@/slam/odometry",
+    "SlamAdapterModule.odometry->VoxelGridModule.odometry@/slam/odometry",
+    "SlamAdapterModule.odometry->ElevationMapModule.odometry@/slam/odometry",
     "SlamAdapterModule.map_cloud->OccupancyGridModule.map_cloud@/slam/map_cloud",
     "SlamAdapterModule.map_cloud->VoxelGridModule.map_cloud@/slam/map_cloud",
     "SlamAdapterModule.map_cloud->ElevationMapModule.map_cloud@/slam/map_cloud",
@@ -66,6 +68,8 @@ _SAFETY_CHAIN = frozenset({
 }) | _COMMAND_OUTPUT_CHAIN
 
 _NAV_EXECUTION_CHAIN = frozenset({
+    "SlamAdapterModule.odometry->nav.terrain.odometry@/slam/odometry",
+    "SlamAdapterModule.map_cloud->nav.terrain.map_cloud@/slam/map_cloud",
     "TraversabilityCostModule.fused_cost->nav.mission.costmap",
     "nav.terrain.traversability->nav.mission.traversability",
     "nav.mission.global_path->nav.local_planner.global_path",
@@ -75,9 +79,6 @@ _NAV_EXECUTION_CHAIN = frozenset({
     "nav.terrain.traversability->nav.local_planner.traversability",
     "nav.local_planner.local_path->nav.path_follower.local_path",
     "nav.local_planner.control_hint->nav.path_follower.control_hint",
-    "nav.mission.global_path->nav.out.global_path@/nav/global_path",
-    "nav.mission.waypoint->nav.out.waypoint@/nav/way_point",
-    "nav.local_planner.local_path->nav.out.local_path@/nav/local_path",
     "nav.path_follower.cmd_vel->nav.velocity_mux.path_follower_cmd_vel",
 })
 
@@ -86,6 +87,14 @@ _GOAL_SERVICE_CHAIN = frozenset({
     "GatewayModule.cancel->nav.goals.cancel_request",
     "nav.goals.goal_pose->nav.mission.goal_pose",
     "nav.goals.cancel->nav.mission.cancel",
+})
+
+_TARE_EXPLORATION_CHAIN = frozenset({
+    "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid",
+    "SlamAdapterModule.odometry->TAREExplorerModule.odometry",
+    "TAREExplorerModule.exploration_goal->nav.mission.goal_pose",
+    "TAREExplorerModule.exploration_path->nav.mission.patrol_goals",
+    "nav.mission.mission_status->TAREExplorerModule.navigation_status",
 })
 
 _NAV_HOT_CANDIDATES = frozenset({"tracking", "nav", "inspection"})
@@ -98,7 +107,6 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         required_modules=frozenset({
             "GatewayModule",
             "TeleopModule",
-            "nav.out",
             "nav.safety",
             "nav.velocity_mux",
         }),
@@ -120,7 +128,6 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         required_modules=frozenset({
             "GatewayModule",
             "TeleopModule",
-            "nav.out",
             "nav.safety",
             "nav.velocity_mux",
             "SlamAdapterModule",
@@ -147,7 +154,6 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "OccupancyGridModule",
             "TraversabilityCostModule",
             "nav.maps",
-            "nav.out",
         }),
         forbidden_modules=frozenset({
             "nav.mission",
@@ -167,7 +173,6 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "SlamAdapterModule",
             "nav.mission",
             "nav.local_planner",
-            "nav.out",
             "nav.path_follower",
             "nav.velocity_mux",
         }),
@@ -186,7 +191,6 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "SlamAdapterModule",
             "nav.mission",
             "nav.local_planner",
-            "nav.out",
             "nav.path_follower",
             "SemanticPlannerModule",
         }),
@@ -205,7 +209,6 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "SlamAdapterModule",
             "nav.mission",
             "nav.local_planner",
-            "nav.out",
             "nav.path_follower",
             "SemanticPlannerModule",
             "TaskSchedulerModule",
@@ -215,6 +218,36 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         switch_policy="same_graph_candidate",
         hot_switch_candidates=_NAV_HOT_CANDIDATES,
         online_hot_switch_supported=True,
+    ),
+    "tare_explore": ProductModeContract(
+        profile="tare_explore",
+        label="TARE exploration",
+        product_mode="exploration",
+        required_modules=frozenset({
+            "GatewayModule",
+            "SlamAdapterModule",
+            "OccupancyGridModule",
+            "VoxelGridModule",
+            "ESDFModule",
+            "ElevationMapModule",
+            "TraversabilityCostModule",
+            "TAREExplorerModule",
+            "nav.maps",
+            "nav.mission",
+            "nav.terrain",
+            "nav.local_planner",
+            "nav.path_follower",
+            "nav.velocity_mux",
+        }),
+        forbidden_modules=frozenset({"WavefrontFrontierExplorer"}),
+        required_wires=(
+            _SAFETY_CHAIN
+            | _MAP_CHAIN
+            | _NAV_EXECUTION_CHAIN
+            | _GOAL_SERVICE_CHAIN
+            | _TARE_EXPLORATION_CHAIN
+        ),
+        switch_policy="cold_restart",
     ),
 }
 

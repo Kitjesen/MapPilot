@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from runtime.blueprints.profile_graph import resolve_profile_config as graph_resolve_config
+import runtime.introspection.profile_graph as profile_graph
 from runtime.profiles.catalog.endpoints import RUNTIME_ENDPOINTS, RuntimeEndpointError
 from runtime.profiles.catalog.runtime_paths import (
     DEFAULT_PLANNING_FRAME_ID,
@@ -34,22 +34,26 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert resolved.robot_runtime_config["encoder"] == "mobileclip"
     assert "slam_profile" not in resolved.endpoint_config
     assert resolved.endpoint_config["localization_adapter"] == "cpp_slam_status"
-    assert resolved.endpoint_config["nav_in_adapter"] == "dds_nav_input"
-    assert resolved.endpoint_config["nav_out_adapter"] == "dds_nav_output"
+    assert "nav_in_adapter" not in resolved.endpoint_config
+    assert "nav_out_adapter" not in resolved.endpoint_config
+    assert resolved.endpoint_config["native_navigation_endpoint"] == "lingtu-nav-dds"
     assert resolved.endpoint_config["enable_robot_driver"] is False
     assert resolved.endpoint_config["command_output_mode"] == "endpoint_only"
     assert resolved.endpoint_config["hardware_control_boundary"] == "dds_endpoint_source"
-    assert resolved.endpoint_config["enable_nav_in"] is True
-    assert resolved.endpoint_config["enable_nav_out"] is True
+    assert resolved.endpoint_config["enable_nav_in"] is False
+    assert resolved.endpoint_config["enable_nav_out"] is False
+    assert resolved.endpoint_config["enable_map_out"] is False
     assert resolved.config["slam_profile"] == "localizer"
     assert resolved.config["localization_adapter"] == "cpp_slam_status"
-    assert resolved.config["nav_in_adapter"] == "dds_nav_input"
-    assert resolved.config["nav_out_adapter"] == "dds_nav_output"
+    assert "nav_in_adapter" not in resolved.config
+    assert "nav_out_adapter" not in resolved.config
+    assert resolved.config["native_navigation_endpoint"] == "lingtu-nav-dds"
     assert resolved.config["enable_robot_driver"] is False
     assert resolved.config["command_output_mode"] == "endpoint_only"
     assert resolved.config["hardware_control_boundary"] == "dds_endpoint_source"
-    assert resolved.config["enable_nav_in"] is True
-    assert resolved.config["enable_nav_out"] is True
+    assert resolved.config["enable_nav_in"] is False
+    assert resolved.config["enable_nav_out"] is False
+    assert resolved.config["enable_map_out"] is False
     assert resolved.config["_runtime_endpoint"] == "thunder_field"
     assert resolved.config["robot"] == "thunder"
     assert resolved.config["detector"] == "bpu"
@@ -59,8 +63,8 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert spec.endpoint_transport == "dds"
     assert spec.endpoint_contract == "thunder_field_dds_v1"
     assert spec.localization_adapter == "cpp_slam_status"
-    assert spec.nav_in_adapter == "dds_nav_input"
-    assert spec.nav_out_adapter == "dds_nav_output"
+    assert spec.nav_in_adapter is None
+    assert spec.nav_out_adapter is None
     assert spec.global_planner == "octoplanner3d"
     assert spec.fallback_global_planners == ()
     assert spec.planner_latency_budget_ms == 800
@@ -74,8 +78,8 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert spec.env["LINGTU_ENDPOINT_CONTRACT"] == "thunder_field_dds_v1"
     assert spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "cpp_slam_status"
-    assert spec.env["LINGTU_NAV_IN_ADAPTER"] == "dds_nav_input"
-    assert spec.env["LINGTU_NAV_OUT_ADAPTER"] == "dds_nav_output"
+    assert "LINGTU_NAV_IN_ADAPTER" not in spec.env
+    assert "LINGTU_NAV_OUT_ADAPTER" not in spec.env
     assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"
     assert spec.env["LINGTU_COMMAND_OUTPUT_MODE"] == "endpoint_only"
     assert spec.env["LINGTU_HARDWARE_CONTROL_BOUNDARY"] == "dds_endpoint_source"
@@ -112,11 +116,13 @@ def test_resolver_layers_expose_endpoint_adapter_boundary() -> None:
     assert resolved.robot_config["dog_host"] == "127.0.0.1"
     assert "nav_out_adapter" not in resolved.robot_config
     assert resolved.endpoint_config["_endpoint_transport"] == "dds"
-    assert resolved.endpoint_config["nav_out_adapter"] == "dds_nav_output"
+    assert "nav_out_adapter" not in resolved.endpoint_config
+    assert resolved.endpoint_config["native_navigation_endpoint"] == "lingtu-nav-dds"
     assert "slam_profile" not in resolved.endpoint_config
     assert resolved.config["planner"] == "octoplanner3d"
     assert resolved.config["dog_host"] == "127.0.0.1"
-    assert resolved.config["nav_out_adapter"] == "dds_nav_output"
+    assert "nav_out_adapter" not in resolved.config
+    assert resolved.config["native_navigation_endpoint"] == "lingtu-nav-dds"
 
 
 def test_resolver_canonicalizes_thunder_field_endpoint_alias() -> None:
@@ -135,8 +141,8 @@ def test_resolver_canonicalizes_thunder_field_endpoint_alias() -> None:
     assert spec.endpoint_transport == "dds"
     assert spec.endpoint_contract == "thunder_field_dds_v1"
     assert spec.localization_adapter == "cpp_slam_status"
-    assert spec.nav_in_adapter == "dds_nav_input"
-    assert spec.nav_out_adapter == "dds_nav_output"
+    assert spec.nav_in_adapter is None
+    assert spec.nav_out_adapter is None
     assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"
     assert spec.env["LINGTU_COMMAND_OUTPUT_MODE"] == "endpoint_only"
 
@@ -264,7 +270,7 @@ def test_resolver_robot_preset_argument_applies_robot_layer() -> None:
 
 
 def test_profile_graph_uses_runtime_resolver_entrypoint() -> None:
-    assert graph_resolve_config is resolve_profile_config
+    assert profile_graph.resolve_profile_config is resolve_profile_config
 
 
 def test_thunder_product_aliases_resolve_to_canonical_profiles() -> None:
@@ -272,7 +278,7 @@ def test_thunder_product_aliases_resolve_to_canonical_profiles() -> None:
     assert PROFILE_ALIASES["thunder-basic"] == "lite"
     assert PROFILE_ALIASES["thunder-nav"] == "nav"
     assert canonical_profile_name("thunder-lite") == "lite"
-    assert canonical_profile_name("thunder-explore") == "explore"
+    assert canonical_profile_name("thunder-explore") == "tare_explore"
 
     resolved = resolve_runtime_config("thunder-nav")
     alias_config = resolve_profile_config("thunder-nav")

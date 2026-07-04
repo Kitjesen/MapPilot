@@ -14,16 +14,6 @@ from runtime.profiles.planner_backends import (
     planner_fallback_chain,
 )
 
-LCM_NAV_OUTPUT_ADAPTERS = frozenset(
-    # Legacy selector values resolve to lcm_nav_output; do not register modules for them.
-    {"lcm", "lcm_endpoint", "lcm_nav_output", "lcm_path_command_bridge"}
-)
-LCM_NAV_INPUT_ADAPTERS = frozenset(
-    # Legacy selector values resolve to lcm_nav_input; do not register modules for them.
-    {"lcm", "lcm_endpoint", "lcm_nav_input", "lcm_navigation_command_bridge"}
-)
-DDS_NAV_OUTPUT_ADAPTERS = frozenset({"dds", "dds_endpoint", "dds_nav_output"})
-DDS_NAV_INPUT_ADAPTERS = frozenset({"dds", "dds_endpoint", "dds_nav_input"})
 DDS_MAP_OUTPUT_ADAPTERS = frozenset({"dds", "dds_endpoint", "dds_map_output"})
 NAV_IN_ENABLE_KEYS = (
     "enable_nav_in",
@@ -214,28 +204,8 @@ def localization_adapter_for_config(
     return ""
 
 
-def navigation_output_uses_lcm(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *NAV_OUT_ADAPTER_KEYS,
-        *LEGACY_NAV_OUT_ADAPTER_KEYS,
-    ).lower()
-    endpoint_transport = endpoint_transport_for_config(config, default="").lower()
-    return selected in LCM_NAV_OUTPUT_ADAPTERS or (
-        not selected and endpoint_transport == "lcm"
-    )
-
-
 def navigation_output_uses_dds(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *NAV_OUT_ADAPTER_KEYS,
-        *LEGACY_NAV_OUT_ADAPTER_KEYS,
-    ).lower()
-    endpoint_transport = endpoint_transport_for_config(config, default="").lower()
-    return selected in DDS_NAV_OUTPUT_ADAPTERS or (
-        not selected and endpoint_transport == "dds"
-    )
+    return False
 
 
 def navigation_output_uses_ros2(config: Mapping[str, Any]) -> bool:
@@ -251,28 +221,8 @@ def navigation_output_uses_ros2(config: Mapping[str, Any]) -> bool:
     )
 
 
-def navigation_input_uses_lcm(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *NAV_IN_ADAPTER_KEYS,
-        *LEGACY_NAV_IN_ADAPTER_KEYS,
-    ).lower()
-    endpoint_transport = endpoint_transport_for_config(config, default="").lower()
-    return selected in LCM_NAV_INPUT_ADAPTERS or (
-        not selected and endpoint_transport == "lcm"
-    )
-
-
 def navigation_input_uses_dds(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *NAV_IN_ADAPTER_KEYS,
-        *LEGACY_NAV_IN_ADAPTER_KEYS,
-    ).lower()
-    endpoint_transport = endpoint_transport_for_config(config, default="").lower()
-    return selected in DDS_NAV_INPUT_ADAPTERS or (
-        not selected and endpoint_transport == "dds"
-    )
+    return False
 
 
 def navigation_input_uses_ros2(config: Mapping[str, Any]) -> bool:
@@ -313,10 +263,8 @@ def map_output_uses_dds(config: Mapping[str, Any]) -> bool:
     )
 
 
-endpoint_egress_uses_lcm = navigation_output_uses_lcm
 endpoint_egress_uses_dds = navigation_output_uses_dds
 endpoint_egress_uses_ros2 = navigation_output_uses_ros2
-endpoint_ingress_uses_lcm = navigation_input_uses_lcm
 endpoint_ingress_uses_dds = navigation_input_uses_dds
 endpoint_ingress_uses_ros2 = navigation_input_uses_ros2
 
@@ -591,7 +539,6 @@ def ros2_runtime_binding_violations(
     )
     if (
         bool(config.get(nav_in_key, False))
-        and not navigation_input_uses_lcm(config)
         and not navigation_input_uses_dds(config)
         and not navigation_input_uses_ros2(config)
     ):
@@ -605,7 +552,6 @@ def ros2_runtime_binding_violations(
     )
     if (
         bool(config.get(nav_out_key, False))
-        and not navigation_output_uses_lcm(config)
         and not navigation_output_uses_dds(config)
         and not navigation_output_uses_ros2(config)
     ):
@@ -614,7 +560,6 @@ def ros2_runtime_binding_violations(
         )
     if (
         bool(config.get("enable_endpoint_waypoint_bridge", False))
-        and not navigation_output_uses_lcm(config)
         and not navigation_output_uses_dds(config)
         and not navigation_output_uses_ros2(config)
     ):

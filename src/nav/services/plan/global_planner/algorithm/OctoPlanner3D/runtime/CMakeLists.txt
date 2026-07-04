@@ -145,6 +145,21 @@ if(BUILD_TESTING)
     NAME octoplanner3d_make_test_octomap_smoke
     COMMAND octoplanner3d_make_test_octomap
       --output "${CMAKE_CURRENT_BINARY_DIR}/octoplanner3d_test_gap.bt")
+
+  add_executable(octoplanner3d_no_air_climb_smoke no_air_climb_smoke.cpp)
+  target_link_libraries(octoplanner3d_no_air_climb_smoke
+    PRIVATE
+      octoplanner3d_runtime
+      octomap_vendor
+      octomath_vendor
+  )
+  set_target_properties(octoplanner3d_no_air_climb_smoke PROPERTIES
+    BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
+    INSTALL_RPATH "$ORIGIN"
+  )
+  add_test(
+    NAME octoplanner3d_no_air_climb_smoke
+    COMMAND octoplanner3d_no_air_climb_smoke)
 endif()
 
 if(OCTOPLANNER3D_ENABLE_PCD)

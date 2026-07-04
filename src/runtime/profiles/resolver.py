@@ -46,7 +46,7 @@ PROFILE_ALIASES: dict[str, str] = {
     "thunder-nav": "nav",
     "inspect": "inspection",
     "patrol": "inspection",
-    "thunder-explore": "explore",
+    "thunder-explore": "tare_explore",
     "thunder-tare": "tare_explore",
     "thunder-tare-explore": "tare_explore",
 }
@@ -141,7 +141,7 @@ def resolve_profile_config(
     include_profile_metadata: bool = False,
     **inline_overrides: Any,
 ) -> dict[str, Any]:
-    """Return full_stack_blueprint kwargs for a profile."""
+    """Return resolved blueprint kwargs for a profile."""
 
     merged_overrides = dict(overrides or {})
     merged_overrides.update(inline_overrides)
@@ -217,6 +217,13 @@ def _merge_runtime_layers(profile: str, layers: _RuntimeConfigLayers) -> dict[st
     if layers.endpoint_adapter:
         config = merge_runtime_endpoint_config(config, layers.endpoint_adapter)
     config.update(layers.user_overrides)
+    config.setdefault(
+        "cmd_vel_mux_collision_monitor",
+        bool(
+            config.get("enable_teleop", True)
+            and config.get("enable_map_modules", True)
+        ),
+    )
     planner_profile = resolve_planner_runtime_profile(profile, config)
     config["planner"] = planner_profile["primary"]
     config["fallback_planners"] = list(planner_profile["fallback_planners"])

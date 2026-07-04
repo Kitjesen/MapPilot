@@ -104,6 +104,8 @@ class RuntimeTopics:
     saved_map_cloud: str = "/slam/saved_map_cloud"
     slam_map_command: str = "/slam/map_command"
     slam_map_event: str = "/slam/map_event"
+    slam_relocalization_request: str = "/slam/relocalization/request"
+    slam_relocalization_response: str = "/slam/relocalization/response"
     save_map_service: str = "/slam/save_map"
     dog_odometry: str = "/nav/dog_odometry"
     localization_quality: str = "/slam/localization_quality"
@@ -594,7 +596,11 @@ MESSAGE_FORMATS = {
         name="traversability",
         ros_type="application/json",
         frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
-        note="Terrain risk summary/grid consumed by navigation and local planning.",
+        note=(
+            "Terrain risk summary/grid consumed by navigation and local planning. "
+            "Module graph payloads are dicts; native DDS carries the grid form as "
+            "lingtu.dds.OccupancyGrid on the same runtime topic."
+        ),
     ),
     "local_planner_control_hint": MessageFormat(
         name="local_planner_control_hint",
@@ -634,6 +640,8 @@ TOPIC_FORMATS = {
     TOPICS.saved_map_cloud: ("map_cloud",),
     TOPICS.slam_map_command: ("std_msgs/msg/String",),
     TOPICS.slam_map_event: ("std_msgs/msg/String",),
+    TOPICS.slam_relocalization_request: ("lingtu.dds.RelocalizationRequest",),
+    TOPICS.slam_relocalization_response: ("lingtu.dds.RelocalizationResponse",),
     TOPICS.exploration_grid: ("nav_msgs/msg/OccupancyGrid",),
     TOPICS.traversable_frontiers: ("traversable_frontier_candidates",),
     TOPICS.frontier_candidate: ("traversable_frontier_candidates",),
@@ -648,7 +656,7 @@ TOPIC_FORMATS = {
     TOPICS.local_path: ("nav_msgs/msg/Path",),
     TOPICS.terrain_map: ("map_cloud",),
     TOPICS.terrain_map_ext: ("map_cloud",),
-    TOPICS.traversability: ("traversability",),
+    TOPICS.traversability: ("traversability", "nav_msgs/msg/OccupancyGrid"),
     TOPICS.height_rays: ("height_rays",),
     TOPICS.cmd_vel: ("cmd_vel",),
     TOPICS.stop: ("std_msgs/msg/Bool",),

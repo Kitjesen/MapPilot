@@ -1008,11 +1008,11 @@ def main() -> None:
               lite      Lightweight local Thunder runtime without ROS/SLAM
               map       Build a new map
               nav       Navigation with pre-built map
-              explore   Exploration, no pre-built map
+              tare_explore  TARE exploration
               aliases   thunder-lite, thunder-map, thunder-nav, thunder-explore
 
             advanced profiles:
-              tare_explore  LingTu-native traversable frontier exploration
+              explore       Wavefront frontier compatibility profile
               use --list --all for simulation, dev, and experimental profiles
 
             runtime endpoints:
@@ -1025,10 +1025,9 @@ def main() -> None:
               --endpoint cmu_unity    Run TARE bridge task against CMU Unity external runtime
 
             product simulation examples:
-              python lingtu.py explore --endpoint mujoco_live
+              python lingtu.py thunder-explore --endpoint mujoco_live
               python lingtu.py nav --endpoint replay status
-              python lingtu.py switch-plan explore explore --current-endpoint mujoco_live --endpoint thunder-field
-              python lingtu.py tare_explore --endpoint mujoco_live
+              python lingtu.py switch-plan tare_explore tare_explore --current-endpoint mujoco_live --endpoint thunder-field
               python lingtu.py tare_explore --endpoint cmu_unity --record
 
             lifecycle commands:

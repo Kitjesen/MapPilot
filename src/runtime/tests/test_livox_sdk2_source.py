@@ -87,6 +87,9 @@ def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     assert "kLidarRawPacket" in main
     assert "ScanAccumulator" in main
     assert "--publish-freq" in main
+    assert "--stdin-records" in main
+    assert "run_stdin_records" in main
+    assert "--stdin-records requires --dds" in main
     assert "--dds" in main
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in build_script
     assert 'LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON' in build_script

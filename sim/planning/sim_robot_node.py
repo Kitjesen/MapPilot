@@ -77,8 +77,17 @@ MAP_Y_MAX = float(os.environ.get('SIM_MAP_Y_MAX',   '9.0'))
 
 
 # 鈹€鈹€ 寤虹瓚鐐逛簯 PCD 榛樿璺緞 (鎸変紭鍏堢骇鏌ユ壘) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+_OCTOPLANNER3D_BUILDING2_9_PCD = os.path.join(
+    _REPO_ROOT,
+    'src', 'nav', 'services', 'plan', 'global_planner', 'algorithm',
+    'OctoPlanner3D', 'octomap', 'pcd_files', 'building2_9.pcd',
+)
+
 _PCD_CANDIDATES = [
     os.environ.get('SIM_PCD_PATH', ''),
+    _OCTOPLANNER3D_BUILDING2_9_PCD,
+    '/home/sunrise/data/SLAM/navigation/src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/octomap/pcd_files/building2_9.pcd',
     '/home/sunrise/data/SLAM/navigation/install/pct_planner/share/pct_planner/rsc/pcd/building2_9.pcd',
     '/home/sunrise/data/SLAM/navigation/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/pcd/building2_9.pcd',
 ]
@@ -182,8 +191,11 @@ def _make_xyzi_cloud(pts: np.ndarray, frame_id: str, stamp=None) -> PointCloud2:
 
 
 def _flat_cloud(cx: float, cy: float, cz: float = 0.0, stamp=None) -> PointCloud2:
-    """浠?(cx, cy, cz) 涓轰腑蹇冪敓鎴愬悎鎴愬钩鍧?XYZI 鐐逛簯 (odom 鍧愭爣绯?.
-    cz 璺熼殢鏈哄櫒浜哄綋鍓嶆ゼ灞?Z 楂樺害, 闃叉澶氭ゼ灞傚満鏅?localPlanner 灏嗗叾浠栨ゼ灞傚湴闈㈣鍒や负闅滅."""
+    """Build a flat XYZI terrain cloud around the simulated robot.
+
+    The cloud is anchored at the current robot height so localPlanner does not
+    treat other floors in a multi-floor scene as immediate obstacles.
+    """
     r = int(TERRAIN_R / TERRAIN_S)
     pts = []
     for ix in range(-r, r + 1):

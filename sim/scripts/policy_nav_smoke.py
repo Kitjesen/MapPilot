@@ -303,10 +303,18 @@ def _load_policy_metadata(policy_path: str) -> dict[str, Any]:
         meta["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     except Exception as exc:
         meta["sha256_error"] = str(exc)
+    suffix = path.suffix.lower()
+    if suffix in {".pt", ".pth", ".jit"}:
+        meta["backend"] = "torchscript"
+        return meta
+    if suffix != ".onnx":
+        meta["backend"] = "unknown"
+        return meta
     try:
         import onnxruntime as ort
 
         sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        meta["backend"] = "onnx"
         meta["input"] = [
             {"name": inp.name, "shape": list(inp.shape), "type": inp.type}
             for inp in sess.get_inputs()
@@ -318,6 +326,17 @@ def _load_policy_metadata(policy_path: str) -> dict[str, Any]:
     except Exception as exc:
         meta["onnx_error"] = str(exc)
     return meta
+
+
+def _policy_backend(policy_path: str, loaded: bool) -> str:
+    if not loaded:
+        return "unloaded"
+    suffix = Path(policy_path).suffix.lower()
+    if suffix in {".pt", ".pth", ".jit"}:
+        return "torchscript"
+    if suffix == ".onnx":
+        return "onnx"
+    return "unknown"
 
 
 def _free_costmap_for_goal(
@@ -499,7 +518,7 @@ def run_direct_policy(
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
-            "policy_backend": "onnx" if engine.has_policy else "unloaded",
+            "policy_backend": _policy_backend(str(driver._policy_path), bool(engine.has_policy)),
             "world": world,
             "duration_s": duration,
             "command_linear_x": float(cmd_linear_x),
@@ -775,8 +794,11 @@ def run_full_stack_nav(
                 float(dist_to_goal - dist_at_success) if dist_at_success is not None else None
             ),
             "policy_loaded": bool(engine.has_policy) if engine is not None else False,
-            "policy_backend": "onnx" if engine is not None and engine.has_policy else "unloaded",
             "policy_path": str(driver._policy_path),
+            "policy_backend": _policy_backend(
+                str(driver._policy_path),
+                bool(engine.has_policy) if engine is not None else False,
+            ),
             "frames": {
                 "goal": "map",
                 "global_path": (

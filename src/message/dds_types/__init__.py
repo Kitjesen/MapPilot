@@ -53,6 +53,12 @@ from .nav import (
 )
 from .pointcloud import DDS_PointCloud2, DDS_PointField, PointCloud2, PointField
 from .scalar import DDS_Float32, DDS_String, Float32, String, Text
+from .slam import (
+    DDS_RelocalizationRequest,
+    DDS_RelocalizationResponse,
+    RelocalizationRequest,
+    RelocalizationResponse,
+)
 
 __all__ = [
     "DDS_Float32",
@@ -69,6 +75,8 @@ __all__ = [
     "DDS_PoseStamped",
     "DDS_PoseWithCovariance",
     "DDS_Quaternion",
+    "DDS_RelocalizationRequest",
+    "DDS_RelocalizationResponse",
     "DDS_String",
     "DDS_TFMessage",
     "DDS_Time",
@@ -95,6 +103,8 @@ __all__ = [
     "PoseStamped",
     "PoseWithCovariance",
     "Quaternion",
+    "RelocalizationRequest",
+    "RelocalizationResponse",
     "String",
     "TFMessage",
     "Text",

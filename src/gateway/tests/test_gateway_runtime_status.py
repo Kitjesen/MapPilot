@@ -2303,6 +2303,58 @@ def test_navigation_status_blocks_goal_when_map_artifact_gate_fails():
     ]
 
 
+def test_navigation_status_blocks_native_saved_map_before_relocalize():
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_navigation_status
+
+    class FakeMux:
+        def health(self):
+            return {"active_source": "none", "sources": {}}
+
+    gateway = GatewayModule()
+    gateway._icp_quality = 0.03
+    gateway._session_snapshot = lambda: {
+        "mode": "navigating",
+        "active_map": "accept_ready",
+        "pending": False,
+        "localizer_ready": True,
+    }
+    with gateway._state_lock:
+        gateway._odom = {"x": 219143.1, "y": 421310.9, "frame_id": "odom"}
+        gateway._mission = {"state": "IDLE"}
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "health_source": "slam_runtime",
+            "backend": "fastlio2",
+            "mode": "localization",
+            "map_loaded": True,
+            "saved_map_relocalization_supported": True,
+            "relocalization_state": "idle",
+            "relocalization_quality": -1.0,
+            "map_odom_tf": {
+                "valid": True,
+                "frame_id": "map",
+                "child_frame_id": "odom",
+                "tx": 0.0,
+                "ty": 0.0,
+                "tz": 0.0,
+                "qx": 0.0,
+                "qy": 0.0,
+                "qz": 0.0,
+                "qw": 1.0,
+            },
+        }
+    gateway._all_modules = {"nav.velocity_mux": FakeMux()}
+
+    payload = build_navigation_status(gateway)
+
+    assert payload["localization"]["ready"] is True
+    assert payload["can_accept_goal"] is False
+    assert "saved_map_relocalization_missing" in payload["readiness"]["blockers"]
+    assert "saved_map_relocalization_missing" in payload["reason_codes"]
+
+
 def test_navigation_status_treats_mild_degeneracy_as_advisory():
     from gateway.gateway_module import GatewayModule
     from gateway.services.runtime_status import build_navigation_status

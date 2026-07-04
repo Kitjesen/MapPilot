@@ -703,6 +703,8 @@ class SlamBridgeModule(Module, layer=1):
                     "slam",
                     "slam_pgo",
                     "localizer",
+                    "hba",
+                    "genz_icp",
                     "super_lio",
                     "super_lio_relocation",
                 )
@@ -713,11 +715,24 @@ class SlamBridgeModule(Module, layer=1):
                     "slam",
                     "slam_pgo",
                     "localizer",
+                    "hba",
+                    "genz_icp",
                     "super_lio",
                     "super_lio_relocation",
                 )
                 self._ensure_recovery_services(svc, "lidar", "super_lio_relocation")
                 svc.wait_ready("lidar", "super_lio_relocation", timeout=15.0)
+            elif backend == "genz":
+                svc.stop(
+                    "slam",
+                    "slam_pgo",
+                    "localizer",
+                    "hba",
+                    "super_lio",
+                    "super_lio_relocation",
+                )
+                self._ensure_recovery_services(svc, "lidar", "genz_icp")
+                svc.wait_ready("lidar", "genz_icp", timeout=15.0)
             elif backend == "localizer":
                 return self._restart_localization_chain_for_recovery()
             elif backend in {"fastlio2", "slam"}:
@@ -738,7 +753,11 @@ class SlamBridgeModule(Module, layer=1):
         service = (
             "robot-super-lio-relocation.service"
             if backend == "super_lio_relocation"
-            else "super_lio" if backend == "super_lio" else "slam"
+            else "robot-genz-icp.service"
+            if backend == "genz"
+            else "super_lio"
+            if backend == "super_lio"
+            else "slam"
         )
         try:
             result = subprocess.run(
@@ -1352,6 +1371,7 @@ class SlamBridgeModule(Module, layer=1):
             services = get_service_manager().status(
                 "super_lio_relocation",
                 "super_lio",
+                "genz_icp",
                 "slam_pgo",
                 "localizer",
                 "slam",
@@ -1362,6 +1382,9 @@ class SlamBridgeModule(Module, layer=1):
             if services.get("super_lio") in ("running", "active"):
                 self._backend_detect_cache = "super_lio"
                 return "super_lio"
+            if services.get("genz_icp") in ("running", "active"):
+                self._backend_detect_cache = "genz"
+                return "genz"
             if services.get("localizer") in ("running", "active"):
                 self._backend_detect_cache = "localizer"
                 return "localizer"

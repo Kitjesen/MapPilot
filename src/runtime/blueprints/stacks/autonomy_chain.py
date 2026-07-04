@@ -65,6 +65,13 @@ def autonomy_stack_config(enable_native: bool = True, **config) -> dict:
         )
         if key in config
     }
+    terrain_config = {
+        param: config[key]
+        for key, param in (
+            ("terrain_strict_native", "strict_native"),
+        )
+        if key in config
+    }
     backend_selection = resolved_autonomy_backend_selection(
         config,
         enable_native=enable_native,
@@ -74,6 +81,7 @@ def autonomy_stack_config(enable_native: bool = True, **config) -> dict:
         "backend": backend_selection["local_planner_backend"],
         "terrain_backend": backend_selection["terrain_backend"],
         "path_follower_backend": backend_selection["path_follower_backend"],
+        "terrain_config": terrain_config,
         "local_planner_config": local_planner_config,
         "path_follower_config": path_follower_config,
     }
@@ -91,8 +99,14 @@ def add_autonomy_chain(
         from nav.local.stack import add_autonomy_stack
 
         autonomy_config = autonomy_stack_config(enable_native, **config)
+        terrain_config = autonomy_config.pop("terrain_config")
         path_follower_config = autonomy_config.pop("path_follower_config")
-        add_autonomy_stack(bp, **autonomy_config, **path_follower_config)
+        add_autonomy_stack(
+            bp,
+            **autonomy_config,
+            terrain_config=terrain_config,
+            **path_follower_config,
+        )
     except ImportError as e:
         logger.warning("Autonomy stack not available: %s", e)
 

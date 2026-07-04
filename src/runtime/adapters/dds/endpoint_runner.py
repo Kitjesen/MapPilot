@@ -47,6 +47,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--describe", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
+        "--fail-closed-on-missing-python-dds",
+        action="store_true",
+        default=_env_bool("LINGTU_FAIL_CLOSED_ON_MISSING_PYTHON_DDS", False),
+        help=(
+            "Exit successfully with an explicit disabled result when "
+            "cyclonedds-python is unavailable. Use only for the temporary "
+            "Python Thunder command-sink service."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
@@ -66,8 +76,26 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         result = {"ok": True, "mode": "interrupted"}
     except Exception as exc:
-        logger.exception("Thunder DDS endpoint service failed")
-        result = {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
+        if (
+            bool(args.fail_closed_on_missing_python_dds)
+            and _is_missing_python_dds(exc)
+        ):
+            logger.error(
+                "Thunder DDS endpoint disabled: cyclonedds-python is not "
+                "available. This Python endpoint is a temporary command sink; "
+                "field algorithms use the C++ CycloneDDS services."
+            )
+            result = {
+                "ok": True,
+                "mode": "disabled_missing_python_dds",
+                "field_ready": False,
+                "transport_strategy": args.transport,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            }
+        else:
+            logger.exception("Thunder DDS endpoint service failed")
+            result = {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
     if args.json:
         print(json.dumps(result, ensure_ascii=True, sort_keys=True))
     return 0 if result.get("ok") else 1
@@ -245,6 +273,18 @@ def _transport_factory(strategy: str) -> Callable[[], Any] | None:
         return create_transport(strategy)
 
     return create
+
+
+def _is_missing_python_dds(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return "cyclonedds-python" in text or "no module named 'cyclonedds" in text
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 if __name__ == "__main__":  # pragma: no cover

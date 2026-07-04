@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import math
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -1331,6 +1332,70 @@ def test_goal_request_yaw_is_published_as_pose_orientation():
     assert result["target"]["source"] == "coordinate"
 
 
+def test_goal_route_uses_native_nav_control_when_configured(monkeypatch, tmp_path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ControlCommandResponse, GoalRequest
+
+    binary = tmp_path / "lingtu_nav_control"
+    binary.write_text("stub", encoding="ascii")
+    monkeypatch.setenv("LINGTU_NAV_CONTROL_BIN", str(binary))
+    monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
+    calls = []
+
+    def fake_run(argv, *, check, timeout):
+        calls.append((argv, check, timeout))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    gateway = GatewayModule()
+    gateway.setup()
+    nav = _FakePlanPreviewNav()
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    post_goal = _endpoint(gateway, "/api/v1/goal")
+
+    result = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                z=0.3,
+                yaw=math.pi / 2,
+                instruction="go",
+                request_id="native-goal",
+                client_id="web",
+            )
+        )
+    )
+    model = ControlCommandResponse.model_validate(result)
+
+    assert model.ok is True
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.instruction.msg_count == 0
+    assert calls == [
+        (
+            [
+                str(binary),
+                "goal",
+                "1",
+                "2",
+                "0.3",
+                "1.57079633",
+                "--domain-id",
+                "7",
+            ],
+            True,
+            5.0,
+        ),
+        (
+            [str(binary), "instruction", "go", "--domain-id", "7"],
+            True,
+            5.0,
+        ),
+    ]
+
+
 def test_goal_route_rejects_infeasible_plan_preview_without_publishing():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import GoalRequest
@@ -1745,6 +1810,103 @@ def test_direct_motion_commands_reject_safety_stop_without_publishing():
     assert instruction_model.command.name == "instruction"
     assert gateway.cmd_vel.msg_count == 0
     assert gateway.instruction.msg_count == 0
+
+
+def test_visual_servo_hot_command_publishes_servo_target():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ControlCommandResponse
+    from gateway.schemas import VisualServoRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {"VisualServoModule": object()}
+    targets = []
+    gateway.servo_target._add_callback(targets.append)
+    post_visual_servo = _endpoint(gateway, "/api/v1/visual_servo")
+
+    result = asyncio.run(
+        post_visual_servo(
+            VisualServoRequest(
+                mode="follow",
+                target="person in red",
+                request_id="visual-servo-follow",
+                client_id="web",
+            )
+        )
+    )
+
+    model = ControlCommandResponse.model_validate(result)
+    assert model.command.name == "visual_servo"
+    assert targets == ["follow:person in red"]
+    assert gateway.servo_target.msg_count == 1
+
+
+def test_visual_servo_stop_allowed_under_safety_stop_but_find_rejected():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import VisualServoRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {"VisualServoModule": object()}
+    targets = []
+    gateway.servo_target._add_callback(targets.append)
+    with gateway._state_lock:
+        gateway._safety = {"level": 2}
+    post_visual_servo = _endpoint(gateway, "/api/v1/visual_servo")
+
+    stop_result = asyncio.run(
+        post_visual_servo(
+            VisualServoRequest(
+                mode="stop",
+                request_id="visual-servo-stop",
+                client_id="web",
+            )
+        )
+    )
+    find_response = asyncio.run(
+        post_visual_servo(
+            VisualServoRequest(
+                mode="find",
+                target="dock",
+                request_id="visual-servo-find",
+                client_id="web",
+            )
+        )
+    )
+
+    find_model = GatewayErrorResponse.model_validate(_payload(find_response))
+    assert stop_result["ok"] is True
+    assert find_response.status_code == 409
+    assert find_model.error == "safety_stop"
+    assert targets == ["stop"]
+    assert gateway.servo_target.msg_count == 1
+
+
+def test_visual_servo_hot_command_rejects_when_module_unavailable():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import VisualServoRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_visual_servo = _endpoint(gateway, "/api/v1/visual_servo")
+
+    response = asyncio.run(
+        post_visual_servo(
+            VisualServoRequest(
+                mode="find",
+                target="dock",
+                request_id="visual-servo-unavailable",
+                client_id="web",
+            )
+        )
+    )
+
+    model = GatewayErrorResponse.model_validate(_payload(response))
+    assert response.status_code == 409
+    assert model.error == "visual_servo_unavailable"
+    assert gateway.servo_target.msg_count == 0
 
 
 def test_cmd_vel_rejects_safety_stop_without_publishing_and_emits_rejected_ack():

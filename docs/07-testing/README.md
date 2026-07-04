@@ -35,7 +35,7 @@ bash docs/07-testing/install_hooks.sh
 
 After install:
 - `git commit` runs `pytest src/runtime/tests/ -q`; the commit aborts on failure.
-- `git push` runs pytest plus a stub `full_stack_blueprint(...).build()` graph smoke and a minimal offline stub `build().start()` lifecycle smoke.
+- `git push` runs pytest plus a stub profile graph smoke and a minimal offline stub lifecycle smoke.
 
 Bypass (emergencies only):
 

@@ -1,4 +1,4 @@
-"""LCM endpoint adapters for smoke, replay, and optional lcm-endpoint deployments."""
+"""LCM endpoint helpers kept for smoke and replay tests."""
 
 from .contracts import (
     LCMEndpointBinding,

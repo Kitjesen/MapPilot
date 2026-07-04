@@ -1,4 +1,4 @@
-import importlib.util
+﻿import importlib.util
 import json
 import math
 import os
@@ -25,7 +25,7 @@ except ImportError:
 
 from sim.engine.core.robot import RobotConfig
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
 from drivers.sim.mujoco.driver import MujocoDriverModule
@@ -692,7 +692,7 @@ def test_launch_mujoco_fastlio2_live_passes_inspection_tracking_controls():
 
 def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
     from drivers.sim.mujoco import stack as mujoco_stack
-    import runtime.blueprints.full_stack as full_stack_module
+    import runtime.blueprints.profile_builder as profile_builder_module
 
     captured = {}
     modules = {
@@ -708,18 +708,16 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
         def get_module(self, name):
             return modules[name]
 
-    class FakeBlueprint:
-        def build(self):
-            return FakeSystem()
-
-    def fake_full_stack_blueprint(**kwargs):
+    def fake_build_system_for_profile(profile, overrides=None, **kwargs):
+        captured["profile"] = profile
+        captured.update(dict(overrides or {}))
         captured.update(kwargs)
-        return FakeBlueprint()
+        return FakeSystem()
 
     monkeypatch.setattr(
-        full_stack_module,
-        "full_stack_blueprint",
-        fake_full_stack_blueprint,
+        profile_builder_module,
+        "build_system_for_profile",
+        fake_build_system_for_profile,
     )
 
     stack = mujoco_stack.build_fastlio2_inspection_stack(
@@ -739,9 +737,9 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
 
     assert stack.navigation is modules["nav.mission"]
     assert stack.driver is modules["SimEndpointDriverModule"]
+    assert captured["profile"] == "sim_mujoco_live"
     assert captured["robot"] == "sim_endpoint"
     assert captured["enable_nav_out"] is False
-    assert captured["enable_endpoint_grid_bridge"] is False
     assert "enable_ros2_path_bridge" not in captured
     assert "enable_ros2_grid_bridge" not in captured
     assert captured["planner_backend"] == "pct"
@@ -2096,12 +2094,9 @@ def test_root_operation_scripts_do_not_point_at_deleted_navigation_launches():
     ota_install = (repo_root / "scripts" / "ota" / "install_nav.sh").read_text(
         encoding="utf-8"
     )
-    pct_profile = (
-        repo_root / "launch" / "profiles" / "planner_pct_py.launch.py"
-    ).read_text(encoding="utf-8")
     scripts_index = (repo_root / "scripts" / "README.md").read_text(encoding="utf-8")
 
-    for source in (shell_entry, ota_start, ota_install, pct_profile):
+    for source in (shell_entry, ota_start, ota_install):
         assert "navigation_run.launch.py" not in source
         assert "navigation_bringup.launch.py" not in source
         assert "launch/subsystems/planning.launch.py" not in source
@@ -2113,8 +2108,8 @@ def test_root_operation_scripts_do_not_point_at_deleted_navigation_launches():
     assert "_run_lingtu status" in shell_entry
     assert '"$NAV_DIR/lingtu.py" nav' in ota_start
     assert "python3 \\$NAV_DIR/lingtu.py nav" in ota_install
-    assert "Shell 鍏煎鍏ュ彛" in scripts_index
-    assert "鏈哄櫒浜虹 `scripts/lingtu`" in scripts_index
+    assert "LingTu Operations Entrypoints" in scripts_index
+    assert "`scripts/lingtu health`" in scripts_index
 
 
 def test_sim_boundary_indexes_document_stable_contracts():
@@ -2710,7 +2705,7 @@ def test_mujoco_policy_idle_command_detection():
 
 
 def test_navigation_stack_passes_path_follower_precision_params():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         slam_profile="none",
         detector="sim_scene",
@@ -2742,7 +2737,7 @@ def test_navigation_stack_passes_path_follower_precision_params():
 
 
 def test_navigation_stack_passes_local_planner_trackable_path_threshold():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         slam_profile="none",
         detector="sim_scene",
@@ -2975,7 +2970,7 @@ def test_mujoco_policy_cmd_vel_produces_stable_motion_when_real_policy_available
 def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
     pytest.importorskip("mujoco")
 
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         world="open_field",
         slam_profile="none",
@@ -3119,10 +3114,10 @@ import json
 import math
 import time
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
-system = full_stack_blueprint(
+system = thunder_blueprint(
     robot="sim_mujoco",
     world="open_field",
     slam_profile="none",
@@ -3285,7 +3280,7 @@ finally:
 def test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux():
     pytest.importorskip("mujoco")
 
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         world="open_field",
         slam_profile="none",
@@ -3435,7 +3430,7 @@ def test_full_stack_required_safety_stop_wire_reports_missing_contract():
 
 
 def test_full_stack_wires_frontier_exploration_goal_to_navigation():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         enable_native=False,
@@ -3463,7 +3458,7 @@ def test_full_stack_wires_frontier_exploration_goal_to_navigation():
 
 
 def test_frontier_exploration_goal_reaches_navigation_planner():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         planner_backend="astar",

@@ -1,5 +1,6 @@
 """Sensor configuration — CameraConfig / LidarConfig / IMUConfig."""
 from dataclasses import dataclass, field
+from math import pi
 from typing import List, Optional, Tuple
 
 from runtime.runtime_interface import LIDAR_EXTRINSICS
@@ -60,7 +61,15 @@ class LidarConfig:
     range_min: float = 0.10         # minimum valid range m
     range_max: float = 70.0         # maximum valid range m
     add_noise: bool = True          # whether to add range noise
-    noise_std: float = 0.02         # range noise standard deviation m
+    noise_std: float = 0.03         # range noise standard deviation m
+    angle_noise_std_rad: float = 0.15 / 180.0 * pi  # OmniPerception-style angle jitter
+    pixel_dropout_prob: float = 0.01                 # random return dropout
+    distance_dropout_prob_at_max: float = 0.08       # extra dropout near range_max
+    intensity_base: float = 180.0                    # near-field reflectivity proxy
+    intensity_range_scale_m: float = 25.0            # distance falloff scale
+    intensity_noise_std: float = 3.0
+    intensity_min: float = 1.0
+    intensity_max: float = 255.0
     fps: float = 10.0               # scan frequency Hz
 
     # Backend selection. Strict/product gates should request `mujoco_lidar` or

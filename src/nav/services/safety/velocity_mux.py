@@ -239,14 +239,18 @@ class VelocityMux(Module, layer=0):
             self._check_timeout()
 
     @staticmethod
-    def _sanitize_twist(twist: Twist) -> Twist:
+    def _is_finite_twist(twist: Twist) -> bool:
         values = (
             twist.linear.x, twist.linear.y, twist.linear.z,
             twist.angular.x, twist.angular.y, twist.angular.z,
         )
-        if all(math.isfinite(float(v)) for v in values):
+        return all(math.isfinite(float(v)) for v in values)
+
+    @classmethod
+    def _sanitize_twist(cls, twist: Twist) -> Twist:
+        if cls._is_finite_twist(twist):
             return twist
-        logger.warning("VelocityMux: dropping non-finite cmd_vel")
+        logger.warning("VelocityMux: sanitizing non-finite cmd_vel")
         return Twist.zero()
 
     @staticmethod
@@ -262,8 +266,9 @@ class VelocityMux(Module, layer=0):
         if self._frozen:
             return
         now = time.time()
+        invalid_source = not self._is_finite_twist(twist)
         twist = self._sanitize_twist(twist)
-        release_source = name != "teleop" and self._is_zero_twist(twist)
+        release_source = invalid_source or (name != "teleop" and self._is_zero_twist(twist))
         active_update: str | None = None
         driver_twist: Twist | None = None
 
@@ -294,6 +299,8 @@ class VelocityMux(Module, layer=0):
             elif name == winner:
                 driver_twist = self._apply_collision_monitor(twist, now)
             elif release_source and previous_active == name:
+                driver_twist = Twist.zero()
+            elif invalid_source and previous_active in ("", name):
                 driver_twist = Twist.zero()
 
             if driver_twist is not None:

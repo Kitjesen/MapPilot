@@ -29,7 +29,10 @@ Environment=LINGTU_ENABLE_ROBOT_DRIVER=0
 Environment=LINGTU_COMMAND_OUTPUT_MODE=endpoint_only
 Environment=LINGTU_HARDWARE_CONTROL_BOUNDARY=dds_endpoint_source
 Environment=LINGTU_PYTHON=python3
-ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh && args=(--contract "${LINGTU_ENDPOINT_CONTRACT}"); sources="${LINGTU_ENDPOINT_SOURCES:-${LINGTU_ENDPOINT_SOURCE:-}}"; if [ -n "${sources}" ]; then args+=(--source "${sources}"); fi; exec "${LINGTU_PYTHON}" scripts/deploy/thunder/run_dds_endpoint_service.py "${args[@]}"'
+Environment=LINGTU_FAIL_CLOSED_ON_MISSING_PYTHON_DDS=1
+# systemd expands ${VAR} from Environment= before bash runs. Do not use bash-only
+# constructs (${VAR:-default}, ${args[@]}); they can become empty and crash-loop.
+ExecStart=/bin/bash -c 'source /opt/lingtu/config/thunder-runtime-env.sh && exec "${LINGTU_PYTHON}" scripts/deploy/thunder/run_dds_endpoint_service.py --contract "${LINGTU_ENDPOINT_CONTRACT}" --source "${LINGTU_ENDPOINT_SOURCES}" --fail-closed-on-missing-python-dds'
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT

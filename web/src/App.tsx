@@ -10,6 +10,7 @@ import { StatusBar } from './components/StatusBar'
 import { MapView } from './components/MapView'
 import { SlamPanel } from './components/SlamPanel'
 import { SceneView } from './components/SceneView'
+import { PlannerTuning } from './components/PlannerTuning'
 
 import { MiniMap } from './components/MiniMap'
 import { FloatingWidget } from './components/FloatingWidget'
@@ -96,6 +97,7 @@ function Dashboard() {
         {activeTab === 'scene' && <SceneView sseState={sseState} showToast={showToast} />}
         {activeTab === 'map' && <MapView showToast={showToast} />}
         {activeTab === 'slam' && <SlamPanel sseState={sseState} showToast={showToast} />}
+        {activeTab === 'planner' && <PlannerTuning showToast={showToast} />}
 
       </main>
 

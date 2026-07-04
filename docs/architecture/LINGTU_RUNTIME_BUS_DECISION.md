@@ -30,7 +30,7 @@ real-hardware validation.
 | UI / SDK / operator | Gateway REST/SSE/WS/MCP JSON | Partly: status, preview, map, and command surfaces exist. | Generated Dart/Rust/TS SDK contracts are not complete. |
 | Map to planner | MapService bundle + artifact path | Yes: `map.bundle`, `map.record`, `octomap.bt`, `occupancy.npz`, `map.pcd`. | Native direct OctoMap/ESDF builders are pending. |
 | Global plan output | `GlobalPlanResult.to_wire()` JSON | Yes for Gateway/UI/replay payloads. | No binary planner protocol needed now. |
-| Endpoint/replay bridge | LCM endpoint contract or local smoke transport | Partly: LCM adapters, JSON envelope, local smoke source, JSONL validator, and deployment validator exist. | LCM remains for smoke/replay and optional `lcm-endpoint` deployments, not the S100P field default. |
+| Endpoint/replay bridge | LCM endpoint contract or local smoke transport | Partly: LCM adapters, JSON envelope, local smoke source, JSONL validator, and deployment validator exist. | LCM remains for smoke/replay tests only; Thunder no longer ships an `lcm-endpoint` installer. |
 | DDS | Typed DDS for selected high-performance boundaries | Yes for `thunder_field`: `thunder_field_dds_v1`, native Livox SDK2 stream, and C++ CycloneDDS SLAM runtime. | Generic pickle DDS is not product-grade; ROS-shaped DDS schemas on command topics remain transitional. |
 | SHM | High-volume same-host IPC | Backend exists. | No stable point-cloud/image schema or performance gate yet. |
 | Native SLAM hot path | Local callbacks first; typed DDS only after split | Ingress contract exists. | Python runtime still uses the contract runner, not the C++ Fast-LIO backend. |
@@ -43,7 +43,7 @@ real-hardware validation.
 - Cross-process or cross-language traffic should use an explicit endpoint
   transport. Thunder field production endpoint (`thunder_field`) uses typed
   CycloneDDS (`thunder_field_dds_v1`); LCM remains for smoke/replay bridges
-  and optional `lcm-endpoint` operator installs.
+  and smoke/replay LCM tests.
 - ROS 2 remains a compatibility adapter only. It belongs under `runtime.adapters.ros2`,
   legacy native launch surfaces, simulator bridges, or field adapter code.
 - `runtime.msgs` is the canonical in-process message model.
@@ -108,7 +108,7 @@ Thunder Endpoint/Nav:
 - Uses typed DDS endpoint adapters (`dds_endpoint`, `thunder_field_dds_v1`) for
   the production field boundary (native Livox SDK2 ingest + C++ CycloneDDS SLAM).
 - Uses LCM endpoint adapters for smoke/replay bridges and optional
-  `lcm-endpoint` deployments that do not require the native DDS sensor stack.
+  smoke/replay checks that do not require the native DDS sensor stack.
 - Uses ROS 2 only when integrating legacy SLAM, simulator, TARE, or existing
   external services.
 

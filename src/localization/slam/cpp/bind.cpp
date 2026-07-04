@@ -629,6 +629,13 @@ class SlamRunner {
     result["relocalization_state"_s] = out.relocalization_state;
     result["last_relocalization_message"_s] = out.last_relocalization_message;
     result["relocalization_quality"_s] = out.relocalization_quality;
+    result["relocalization_map_body"_s] =
+        out.relocalization_map_body.has_value() ? nb::cast(poseDict(*out.relocalization_map_body)) : nb::none();
+    result["relocalization_refine_backend"_s] = out.relocalization_refine_backend;
+    result["relocalization_refine_iterations"_s] = out.relocalization_refine_iterations;
+    result["relocalization_refine_inliers"_s] = out.relocalization_refine_inliers;
+    result["relocalization_refine_converged"_s] = out.relocalization_refine_converged;
+    result["relocalization_refine_pos_cov_trace"_s] = out.relocalization_refine_pos_cov_trace;
     return result;
   }
 

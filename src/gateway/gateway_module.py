@@ -271,7 +271,7 @@ class GatewayModule(Module, layer=6):
 
     In:  odometry, scene_graph, safety_state, mission_status,
          execution_eval, dialogue_state, map_event
-    Out: goal_pose, cmd_vel, stop_cmd, cancel, instruction, mode_cmd
+    Out: goal_pose, cmd_vel, stop_cmd, cancel, instruction, servo_target, mode_cmd
     """
 
     _run_in_main: bool = True
@@ -307,6 +307,7 @@ class GatewayModule(Module, layer=6):
     stop_cmd:    Out[int]    # 0=clear, 1=soft, 2=hard
     cancel:      Out[str]
     instruction: Out[str]
+    servo_target: Out[str]
     mode_cmd:    Out[str]
 
     def __init__(self, port: int = 5050, host: str = "0.0.0.0", **kw):

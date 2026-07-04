@@ -43,7 +43,6 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
                 "planner_backend",
                 "navigation",
                 "navigation_ros2",
-                "navigation_lcm",
                 "autonomy",
                 "slam",
                 "slam_ros2",
@@ -67,7 +66,6 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "planner_backend",
             "navigation",
             "navigation_ros2",
-            "navigation_lcm",
             "autonomy",
             "slam",
             "slam_ros2",
@@ -124,8 +122,6 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "traversable_frontier",
             "ros2_nav_input",
             "ros2_nav_output",
-            "lcm_nav_input",
-            "lcm_nav_output",
         } <= set(list_plugins("navigation"))
         assert {"wavefront_frontier"} <= set(list_plugins("exploration"))
         assert {"scene"} <= set(list_plugins("perception"))

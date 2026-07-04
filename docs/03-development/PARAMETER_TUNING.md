@@ -200,8 +200,8 @@ Off-road -> raise `w_traversability`. Smoother paths -> raise `w_smoothness`.
 The `_nav_kernel` C++ modules don't expose ROS2 parameters. Inspect via the Gateway:
 
 ```bash
-curl http://192.168.66.190:5050/api/v1/config | jq '.local_planner'
-curl http://192.168.66.190:5050/api/v1/config | jq '.path_follower'
+curl http://192.168.66.13:5050/api/v1/config | jq '.local_planner'
+curl http://192.168.66.13:5050/api/v1/config | jq '.path_follower'
 ```
 
 For framework-side modules, REPL:

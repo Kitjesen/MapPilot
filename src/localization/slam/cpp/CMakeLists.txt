@@ -9,9 +9,14 @@ option(LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME "Deprecated alias for LINGTU_SLAM_BUILD
 option(LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME "Deprecated alias for LINGTU_SLAM_BUILD_DDS_RUNTIME" OFF)
 option(LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME "Build legacy ROS2/rclcpp DDS compatibility runtime" OFF)
 option(LINGTU_REQUIRE_BBS3D "Fail configure if cpu_bbs3d is not available" OFF)
+option(LINGTU_ENABLE_SMALL_GICP "Use small_gicp for native relocalization refine when available" ON)
 set(CPU_BBS3D_ROOT "" CACHE PATH "Optional local install prefix for cpu_bbs3d")
+set(SMALL_GICP_ROOT "" CACHE PATH "Optional small_gicp source or install prefix")
 if(NOT CPU_BBS3D_ROOT AND DEFINED ENV{CPU_BBS3D_ROOT})
   set(CPU_BBS3D_ROOT "$ENV{CPU_BBS3D_ROOT}")
+endif()
+if(NOT SMALL_GICP_ROOT AND DEFINED ENV{SMALL_GICP_ROOT})
+  set(SMALL_GICP_ROOT "$ENV{SMALL_GICP_ROOT}")
 endif()
 if(NOT CPU_BBS3D_ROOT)
   get_filename_component(_LINGTU_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
@@ -19,6 +24,15 @@ if(NOT CPU_BBS3D_ROOT)
   if(EXISTS "${_LINGTU_DEFAULT_BBS3D_ROOT}")
     set(CPU_BBS3D_ROOT "${_LINGTU_DEFAULT_BBS3D_ROOT}" CACHE PATH
       "Optional local install prefix for cpu_bbs3d" FORCE)
+  endif()
+endif()
+if(NOT SMALL_GICP_ROOT)
+  get_filename_component(_LINGTU_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+  set(_LINGTU_DEFAULT_SMALL_GICP_ROOT
+    "${_LINGTU_REPO_ROOT}/third_party/research_localization/small_gicp")
+  if(EXISTS "${_LINGTU_DEFAULT_SMALL_GICP_ROOT}/include/small_gicp")
+    set(SMALL_GICP_ROOT "${_LINGTU_DEFAULT_SMALL_GICP_ROOT}" CACHE PATH
+      "Optional small_gicp source or install prefix" FORCE)
   endif()
 endif()
 
@@ -67,6 +81,17 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   else()
     message(STATUS "BBS3D enabled: ${CPU_BBS3D_LIBRARY}")
   endif()
+  find_path(SMALL_GICP_INCLUDE_DIR
+    NAMES small_gicp/pcl/pcl_registration.hpp
+    HINTS ${SMALL_GICP_ROOT}
+    PATH_SUFFIXES include
+    PATHS /usr/local)
+  if(LINGTU_ENABLE_SMALL_GICP AND SMALL_GICP_INCLUDE_DIR AND OpenMP_CXX_FOUND)
+    message(STATUS "small_gicp relocalization refine enabled: ${SMALL_GICP_INCLUDE_DIR}")
+  else()
+    message(STATUS "small_gicp not found, disabled, or OpenMP unavailable; using PCL GICP refine")
+    set(SMALL_GICP_INCLUDE_DIR "")
+  endif()
 
   target_sources(lingtu_slam_contract PRIVATE
     native_relocalizer.cpp
@@ -86,6 +111,7 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
     "${FASTLIO2_DIR}/src"
     "${FASTLIO2_DIR}/src/map_builder"
     "${LOCALIZER_DIR}/src/localizers"
+    ${SMALL_GICP_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS})
   target_link_libraries(lingtu_slam_contract PUBLIC
     Eigen3::Eigen
@@ -95,6 +121,9 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
     target_compile_definitions(lingtu_slam_contract PRIVATE LINGTU_ENABLE_BBS3D=1)
     target_include_directories(lingtu_slam_contract PRIVATE ${CPU_BBS3D_INCLUDE_DIR})
     target_link_libraries(lingtu_slam_contract PUBLIC ${CPU_BBS3D_LIBRARY})
+  endif()
+  if(SMALL_GICP_INCLUDE_DIR)
+    target_compile_definitions(lingtu_slam_contract PRIVATE LINGTU_ENABLE_SMALL_GICP=1)
   endif()
   if(OpenMP_CXX_FOUND)
     target_compile_definitions(lingtu_slam_contract PRIVATE MP_EN MP_PROC_NUM=4)

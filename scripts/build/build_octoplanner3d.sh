@@ -28,7 +28,7 @@ Usage:
   bash scripts/build/build_octoplanner3d.sh [--require-pcl] [--diagnose]
 
 Options:
-  --require-pcl           Require the PCL-backed .pcd -> OctoMap converter path.
+  --require-pcl           Require the real PCL-backed octoplanner3d_pcd_to_octomap target.
   --diagnose              Print PCL/CMake/ldd diagnostics for the configured build dir and exit.
 
 Environment:
@@ -61,10 +61,22 @@ candidate_exe() {
   printf '%s\n' "$exe"
 }
 
+candidate_converter() {
+  local exe
+  exe="$build_dir/octoplanner3d_pcd_to_octomap"
+  if [[ ! -x "$exe" && -x "$build_dir/Release/octoplanner3d_pcd_to_octomap.exe" ]]; then
+    exe="$build_dir/Release/octoplanner3d_pcd_to_octomap.exe"
+  elif [[ ! -x "$exe" && -x "$build_dir/Debug/octoplanner3d_pcd_to_octomap.exe" ]]; then
+    exe="$build_dir/Debug/octoplanner3d_pcd_to_octomap.exe"
+  fi
+  printf '%s\n' "$exe"
+}
+
 print_dependency_diagnostics() {
-  local cache exe
+  local cache exe converter
   cache="$build_dir/CMakeCache.txt"
   exe="$(candidate_exe)"
+  converter="$(candidate_converter)"
 
   cat <<EOF
 
@@ -93,6 +105,11 @@ EOF
     fi
   else
     echo "  executable not found yet: $exe"
+  fi
+  if [[ -x "$converter" ]]; then
+    echo "  converter: $converter"
+  else
+    echo "  converter not found yet: $converter"
   fi
 }
 
@@ -174,6 +191,11 @@ cmake_args=(
   -DOCTOPLANNER3D_SOURCE_DIR="$source_dir"
   -DCMAKE_BUILD_TYPE="$build_type"
 )
+if pcl_required; then
+  cmake_args+=("-DOCTOPLANNER3D_REQUIRE_PCL=ON")
+else
+  cmake_args+=("-DOCTOPLANNER3D_REQUIRE_PCL=OFF")
+fi
 if [[ -n "${PCL_DIR:-}" ]]; then
   cmake_args+=("-DPCL_DIR=$PCL_DIR")
 fi
@@ -183,7 +205,24 @@ require_pcl_cache
 
 cmake --build "$build_dir" --target octoplanner3d_headless -j "$jobs"
 cmake --build "$build_dir" --target octoplanner3d_edit_octomap -j "$jobs"
-if ! cmake --build "$build_dir" --target octoplanner3d_pcd_to_octomap -j "$jobs"; then
+if cmake --build "$build_dir" --target octoplanner3d_pcd_to_octomap -j "$jobs"; then
+  :
+elif pcl_required; then
+  echo "OctoPlanner3D PCL converter requested, but CMake could not build octoplanner3d_pcd_to_octomap." >&2
+  print_dependency_diagnostics >&2
+  exit 5
+else
+  echo "OctoPlanner3D PCD converter target not generated; rerun with --require-pcl to make this fatal." >&2
+fi
+converter="$(candidate_converter)"
+if pcl_required && [[ ! -x "$converter" ]]; then
+  echo "OctoPlanner3D PCL converter requested, but executable is missing: $converter" >&2
+  print_dependency_diagnostics >&2
+  exit 5
+fi
+if [[ -x "$converter" ]]; then
+  :
+else
   if pcl_required; then
     exit 5
   fi
@@ -201,18 +240,19 @@ if [[ ! -x "$editor" && -x "$build_dir/Release/octoplanner3d_edit_octomap.exe" ]
 elif [[ ! -x "$editor" && -x "$build_dir/Debug/octoplanner3d_edit_octomap.exe" ]]; then
   editor="$build_dir/Debug/octoplanner3d_edit_octomap.exe"
 fi
-converter="$build_dir/octoplanner3d_pcd_to_octomap"
+converter="$(candidate_converter)"
 
 cat <<EOF
 Built OctoPlanner3D headless executable:
   $exe
 Built OctoMap voxel editor:
   $editor
+$(if [[ -x "$converter" ]]; then printf 'Built OctoMap PCD converter:\n  %s\n' "$converter"; else printf 'OctoMap PCD converter: not built (PCL path unavailable)\n'; fi)
 
 Use it with LingTu:
   export LINGTU_OCTOPLANNER3D_EXECUTABLE="$exe"
   export LINGTU_OCTOMAP_EDITOR="$editor"
-  [ -x "$converter" ] && export LINGTU_MAP_ARTIFACT_CONVERTER="$converter"
+$(if [[ -x "$converter" ]]; then printf '  export LINGTU_MAP_ARTIFACT_CONVERTER="%s"\n' "$converter"; else printf '  # no LINGTU_MAP_ARTIFACT_CONVERTER export; build again with --require-pcl\n'; fi)
   python lingtu.py nav --planner octoplanner3d
 EOF
 

@@ -38,6 +38,7 @@ from runtime.same_source_map_artifacts import (
 )
 
 logger = logging.getLogger(__name__)
+MAX_EXECUTABLE_START_SNAP_M = 0.5
 
 
 def _apply_dynamic_filter_step1half(*args: Any, **kwargs: Any) -> Any:
@@ -146,6 +147,67 @@ def _mark_preview_target_unreached(preview: dict[str, Any]) -> None:
     )
 
 
+def _append_preview_reason(preview: dict[str, Any], reason: str) -> None:
+    reasons = [str(item) for item in (preview.get("reasons") or [])]
+    if reason not in reasons:
+        reasons.append(reason)
+    preview["reasons"] = reasons
+
+
+def _preview_start_snap_too_large(preview: dict[str, Any]) -> bool:
+    snap = preview.get("snap_diagnostics")
+    if not isinstance(snap, dict):
+        return False
+    try:
+        distance = float(
+            snap.get("start_snap_xy_distance_m")
+            if snap.get("start_snap_xy_distance_m") is not None
+            else snap.get("start_snap_distance_m")
+        )
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(distance) and distance > MAX_EXECUTABLE_START_SNAP_M
+
+
+def _point_xyz(value: Any) -> tuple[float, float, float] | None:
+    if isinstance(value, dict):
+        raw = (value.get("x"), value.get("y"), value.get("z", 0.0))
+    else:
+        raw = value
+    try:
+        xyz = (float(raw[0]), float(raw[1]), float(raw[2]))
+    except (TypeError, ValueError, IndexError):
+        return None
+    if all(math.isfinite(item) for item in xyz):
+        return xyz
+    return None
+
+
+def _pose_map_mismatch_hint(preview: dict[str, Any]) -> dict[str, Any]:
+    start = _point_xyz(preview.get("start"))
+    goal = _point_xyz(preview.get("goal"))
+    if start is None or goal is None:
+        return {}
+    dx = start[0] - goal[0]
+    dy = start[1] - goal[1]
+    delta_xy = math.hypot(dx, dy)
+    max_abs = max(
+        abs(start[0]),
+        abs(start[1]),
+        abs(start[2]),
+        abs(goal[0]),
+        abs(goal[1]),
+        abs(goal[2]),
+    )
+    if delta_xy < 1000.0 and max_abs < 1000.0:
+        return {}
+    return {
+        "diagnostic_codes": ["pose_map_mismatch"],
+        "likely_cause": "live pose or requested goal is not in the active saved-map frame",
+        "start_goal_xy_delta_m": round(delta_xy, 3),
+    }
+
+
 def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
     rejected = preview.get("rejected_plans") or []
     first_rejected = rejected[0] if rejected and isinstance(rejected[0], dict) else {}
@@ -167,22 +229,55 @@ def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
     lowered = text.lower()
     reason = ""
     message = ""
-    if "start is occupied/out of map" in lowered:
+    endpoint = ""
+    reasons = {str(item) for item in (preview.get("reasons") or [])}
+    path_safety = preview.get("path_safety")
+    if "start_snap_too_large" in reasons:
+        reason = "start_snap_too_large"
+        message = "planner start snapped too far from the live robot pose"
+        endpoint = "start"
+        mismatch_hint = {}
+    elif (
+        "path_safety_failed" in reasons
+        or "live path_safety failed" in lowered
+        or (
+            isinstance(path_safety, dict)
+            and path_safety.get("ok") is False
+        )
+    ):
+        reason = "live_path_safety_failed"
+        message = "live path safety rejected the map-only path"
+        endpoint = "path"
+        mismatch_hint = {}
+    elif "start is occupied/out of map" in lowered:
         reason = "start_occupied_or_out_of_map"
         message = "start is occupied/out of map and no nearby free cell"
+        endpoint = "start"
+        mismatch_hint = _pose_map_mismatch_hint(preview)
     elif "goal is occupied/out of map" in lowered:
         reason = "goal_occupied_or_out_of_map"
         message = "goal is occupied/out of map and no nearby free cell"
+        endpoint = "goal"
+        mismatch_hint = {}
     elif "a* planning failed" in lowered:
         reason = "astar_failed"
         message = "octoplanner3d a_star planning failed"
+        endpoint = "path"
+        mismatch_hint = {
+            "diagnostic_codes": ["no_traversable_path"],
+            "likely_cause": (
+                "start and goal were accepted by OctoPlanner3D, but no "
+                "traversable occupancy path connected them"
+            ),
+        }
     elif preview.get("fallback_reason") or preview.get("error"):
         reason = "planner_failed"
         message = str(preview.get("fallback_reason") or preview.get("error") or "")
+        mismatch_hint = {}
     else:
         return None
 
-    return {
+    summary = {
         "reason": reason,
         "message": message,
         "planner": preview.get("selected_planner") or preview.get("planner"),
@@ -194,7 +289,15 @@ def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
         "returncode": diagnostics.get("returncode"),
         "start": preview.get("start"),
         "goal": preview.get("goal"),
+        "endpoint": endpoint or None,
     }
+    snap = preview.get("snap_diagnostics")
+    if isinstance(snap, dict):
+        summary["snap_diagnostics"] = snap
+    if isinstance(path_safety, dict):
+        summary["path_safety"] = path_safety
+    summary.update(mismatch_hint)
+    return summary
 
 
 def map_lifecycle_payload(success: bool, **fields: Any) -> dict[str, Any]:
@@ -605,6 +708,13 @@ def register_map_routes(app, gw) -> None:
         if bool(preview.get("feasible", False)):
             if not target_reached:
                 _mark_preview_target_unreached(executable_preview)
+            if _preview_start_snap_too_large(preview):
+                executable_preview["feasible"] = False
+                _append_preview_reason(executable_preview, "start_snap_too_large")
+                executable_preview["fallback_reason"] = (
+                    executable_preview.get("fallback_reason")
+                    or "planner start snapped too far from live pose"
+                )
             executable_path_safety = _evaluate_preview_live_safety(gw, preview)
             executable_preview["path_safety"] = executable_path_safety
             if (
@@ -612,8 +722,11 @@ def register_map_routes(app, gw) -> None:
                 and executable_path_safety.get("ok") is False
             ):
                 executable_preview["feasible"] = False
-                executable_preview["reasons"] = ["path_safety_failed"]
-                executable_preview["fallback_reason"] = "live path_safety failed"
+                _append_preview_reason(executable_preview, "path_safety_failed")
+                executable_preview["fallback_reason"] = (
+                    executable_preview.get("fallback_reason")
+                    or "live path_safety failed"
+                )
         else:
             executable_preview["path_safety"] = None
         executable_ok = bool(executable_preview.get("feasible", False))
@@ -624,10 +737,14 @@ def register_map_routes(app, gw) -> None:
             failure_reason = str(planner_failure.get("reason") or "")
             if failure_reason and failure_reason not in no_motion_blockers:
                 no_motion_blockers.append(failure_reason)
+            for diagnostic_code in planner_failure.get("diagnostic_codes") or []:
+                code = str(diagnostic_code)
+                if code and code not in no_motion_blockers:
+                    no_motion_blockers.append(code)
         return {
             "schema_version": 1,
-            "ok": map_plan_ok,
-            "success": map_plan_ok,
+            "ok": executable_ok,
+            "success": executable_ok,
             "map_id": name,
             "active": active,
             "artifact_gate": gate,
@@ -640,13 +757,14 @@ def register_map_routes(app, gw) -> None:
                 "name": "saved_map_validate_plan",
                 "map_only": True,
                 "motion_published": False,
-                "blocked": not map_plan_ok,
+                "blocked": not executable_ok,
                 "blockers": no_motion_blockers,
                 "ignored_readiness_blockers": sorted(ignored_blockers),
                 "required_artifacts": ["map_pcd", "octomap"],
                 "selected_planner": preview.get("selected_planner"),
                 "fallback_reason": executable_preview.get("fallback_reason", ""),
                 "planner_failure": planner_failure,
+                "snap_diagnostics": preview.get("snap_diagnostics"),
                 "preview_feasible": bool(preview.get("feasible", False)),
                 "target_reached": target_reached,
                 "live_safety_blocked": map_plan_ok and not executable_ok,

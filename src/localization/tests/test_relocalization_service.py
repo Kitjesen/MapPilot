@@ -398,3 +398,102 @@ def test_native_global_relocalization_uses_control_binary(monkeypatch, tmp_path)
         "9",
     ]
     assert kwargs["timeout"] == 14.0
+
+
+def test_native_global_relocalization_status_uses_typed_control_binary(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+    binary = str(tmp_path / "lingtu_slam_control")
+    monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
+    monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=(
+                '{"success":true,"message":"status",'
+                '"relocalization_quality":0.91,'
+                '"relocalization_state":"TRACKING"}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "runtime.adapters.native.relocalization.subprocess.run",
+        fake_run,
+    )
+
+    result = NativeSlamRelocalizationService().query_global_relocalize_status(
+        timeout_s=4.0,
+    )
+
+    assert result.success is True
+    assert result.message == "status"
+    assert result.quality == 0.91
+    args, kwargs = calls[0]
+    assert args == [
+        binary,
+        "status",
+        "--domain-id",
+        "7",
+        "--timeout-s",
+        "4",
+    ]
+    assert kwargs["timeout"] == 9.0
+
+
+def test_native_track_against_map_uses_typed_control_binary(monkeypatch, tmp_path):
+    calls = []
+    binary = str(tmp_path / "lingtu_slam_control")
+    pcd_path = tmp_path / "map" / "map.pcd"
+    monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
+    monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=(
+                '{"success":true,"message":"track_against_map_started",'
+                '"track_against_map_enabled":true}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "runtime.adapters.native.relocalization.subprocess.run",
+        fake_run,
+    )
+
+    result = NativeSlamRelocalizationService().track_against_map(
+        pcd_path,
+        1.0,
+        2.0,
+        0.3,
+        timeout_s=6.0,
+    )
+
+    assert result.success is True
+    assert result.message == "track_against_map_started"
+    args, kwargs = calls[0]
+    assert args == [
+        binary,
+        "track-against-map",
+        str(pcd_path),
+        "--x",
+        "1",
+        "--y",
+        "2",
+        "--yaw",
+        "0.3",
+        "--domain-id",
+        "7",
+        "--timeout-s",
+        "6",
+    ]
+    assert kwargs["timeout"] == 11.0

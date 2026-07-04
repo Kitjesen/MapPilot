@@ -533,6 +533,9 @@ def test_app_capabilities_enriches_specs_from_openapi():
     map_save = capabilities["endpoints"]["map"]["map_save"]
     slam_switch = capabilities["endpoints"]["ops"]["slam_switch"]
     slam_relocalize = capabilities["endpoints"]["ops"]["slam_relocalize"]
+    slam_track_against_map = capabilities["endpoints"]["ops"][
+        "slam_track_against_map"
+    ]
     bag_start = capabilities["endpoints"]["ops"]["bag_start"]
     memory_semantic = capabilities["endpoints"]["ops"]["memory_temporal_semantic"]
     field_check = capabilities["endpoints"]["ops"]["field_check"]
@@ -598,6 +601,8 @@ def test_app_capabilities_enriches_specs_from_openapi():
     assert map_save["response_schema"] == "MapLifecycleResponse"
     assert slam_switch["request_schema"] == "SlamSwitchRequest"
     assert slam_relocalize["request_schema"] == "SlamRelocalizeRequest"
+    assert slam_track_against_map["request_schema"] == "SlamRelocalizeRequest"
+    assert slam_track_against_map["response_schema"] == "SlamOperationResponse"
     assert bag_start["request_schema"] == "BagStartRequest"
     assert memory_semantic["request_schema"] == "TemporalSemanticRequest"
     assert field_check["request_schema"] == "ProductFieldCheckRequest"

@@ -39,8 +39,11 @@ def driver_stack_config(
     enable_semantic: bool,
 ) -> dict[str, Any]:
     driver_config = dict(config)
-    if slam_profile in ("", "none") and driver_module in {"StubDogModule", "MujocoDriverModule"}:
+    if slam_profile in ("", "none") and driver_module == "StubDogModule":
         driver_config.setdefault("odom_frame_id", "map")
+    if slam_profile in ("", "none") and driver_module == "MujocoDriverModule":
+        frame_id = driver_config.setdefault("odom_frame_id", "map")
+        driver_config.setdefault("map_cloud_frame_id", frame_id)
     if enable_semantic and driver_module == "MujocoDriverModule":
         driver_config.setdefault("enable_camera", True)
     return driver_config

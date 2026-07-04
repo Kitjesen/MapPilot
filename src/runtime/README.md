@@ -13,8 +13,8 @@ node logic.
 | --- | --- |
 | write or inspect a module | `module.py`, `stream.py` |
 | connect modules together | `blueprint.py`, `blueprints/wires/` |
-| understand product data flow | `blueprints/wires/`, then `blueprints/full_stack_wiring.py` |
-| change profile defaults | `runtime/catalog/` |
+| understand product data flow | `blueprints/products/thunder.py`, then `blueprints/full_stack_wiring.py` |
+| change profile defaults | `profiles/catalog/` |
 | find shared messages | `msgs/`, `contracts/` |
 | find topic, frame, or runtime contract names | `runtime_interface.py` |
 | register or resolve a backend | `registry.py` |
@@ -77,7 +77,7 @@ bp.wire("SourceModule", "doubled", "SinkModule", "value")
 | --- | --- |
 | runtime unit model | `module.py`, `stream.py`, `blueprint.py` |
 | shared contracts | `msgs/`, `contracts/`, `runtime_interface.py` |
-| graph assembly | `blueprints/`, `runtime/catalog/` |
+| graph assembly | `blueprints/`, `profiles/catalog/`, `introspection/` |
 | backend lookup | `registry.py`, `plugin_seed.py` |
 | shared transports and frames | `transport/`, `portable/`, `tf/` |
 | small cross-cutting utilities | `utils/`, config helpers, device registry |
@@ -105,7 +105,6 @@ bp.wire("SourceModule", "doubled", "SinkModule", "value")
 
 Known compatibility or cleanup candidates include:
 
-- `blueprints/catalog/`: compatibility facade over `runtime/catalog/`
 - `native_module.py`, `native_install.py`: legacy native/ROS process helpers
 - `dimos_*.py`, `runtime_evidence.py`, `gateway_runtime_acceptance.py`,
   `inspection_acceptance.py`, `product_field_check.py`: audit and evidence

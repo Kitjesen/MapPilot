@@ -42,9 +42,9 @@ _gw_mod.GatewayModule.start = lambda self: None
 _tp_mod.TeleopModule.start = lambda self: None
 _mcp_mod.MCPServerModule.start = lambda self: None
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 
-bp = full_stack_blueprint(
+bp = thunder_blueprint(
     robot="stub", slam_profile="none",
     enable_native=False, enable_semantic=True, enable_gateway=True,
 )
@@ -77,8 +77,8 @@ try:
                   if c[0] == "nav.local_planner" and c[1] == "local_path"
                      and c[2] == "nav.path_follower" and c[3] == "local_path"]
     # cmd_vel now goes through VelocityMux for priority arbitration:
-    #   nav.path_follower.cmd_vel ÈóÅ?VelocityMux.path_follower_cmd_vel
-    #   nav.velocity_mux.driver_cmd_vel   ÈóÅ?StubDogModule.cmd_vel
+    #   nav.path_follower.cmd_vel Èó?VelocityMux.path_follower_cmd_vel
+    #   nav.velocity_mux.driver_cmd_vel   Èó?StubDogModule.cmd_vel
     cmd_conns_to_mux = [c for c in system.connections
                         if c[0] == "nav.path_follower" and c[1] == "cmd_vel"
                            and c[2] == "nav.velocity_mux"]

@@ -61,13 +61,13 @@ def run_gate() -> dict[str, Any]:
 
     contracts = {
         name: slam_backend_contract(name)
-        for name in ("localizer", "fastlio2", "super_lio", "super_lio_relocation")
+        for name in ("native_dds", "localizer", "fastlio2", "super_lio", "super_lio_relocation")
     }
     capability_defaults = {
         name: backend_capability_defaults(name)
-        for name in ("localizer", "fastlio2", "super_lio", "super_lio_relocation")
+        for name in ("native_dds", "localizer", "fastlio2", "super_lio", "super_lio_relocation")
     }
-    navigating_plan = session_transition_plan("navigating", "fastlio2")
+    navigating_plan = session_transition_plan("navigating", "native_dds")
     localizer_switch = slam_switch_plan("localizer")
 
     localizer_status = _collect_bridge_status("localizer")
@@ -103,10 +103,10 @@ def run_gate() -> dict[str, Any]:
         and super_lio_status.get("relocalization_state") == "unsupported"
     )
     nav_mode_ok = (
-        default_slam_profile_for_mode("navigating") == "localizer"
-        and navigating_plan.ensure == ("slam", "localizer")
+        default_slam_profile_for_mode("navigating") == "native_dds"
+        and navigating_plan.ensure == ("slam",)
         and "slam_pgo" in navigating_plan.stop
-        and localizer_switch.ensure == ("slam", "localizer")
+        and localizer_switch.ensure == ("slam",)
         and "super_lio" in localizer_switch.stop
         and "super_lio_relocation" in localizer_switch.stop
     )
@@ -120,7 +120,7 @@ def run_gate() -> dict[str, Any]:
         missing = [name for name, present in launch_services.items() if not present]
         blockers.append(f"localizer launch remaps missing: {', '.join(missing)}")
     if not nav_mode_ok:
-        blockers.append("navigation mode does not force localizer service chain")
+        blockers.append("navigation mode does not force native DDS service chain")
     if not status_ok:
         blockers.append("SlamBridge status does not expose localizer relocalize readiness correctly")
 
@@ -155,7 +155,7 @@ def run_gate() -> dict[str, Any]:
         "contracts": contracts,
         "capability_defaults": capability_defaults,
         "plans": {
-            "session_navigating_fastlio2": {
+            "session_navigating_native_dds": {
                 "stop": navigating_plan.stop,
                 "ensure": navigating_plan.ensure,
                 "wait_ready": navigating_plan.wait_ready,

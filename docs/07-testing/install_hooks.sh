@@ -37,33 +37,29 @@ echo "[L2 pre-push] running stub blueprint smoke ..."
 PYTHONIOENCODING=utf-8 python -c "
 import sys
 sys.path.insert(0, 'src')
-from runtime.blueprints.full_stack import full_stack_blueprint
-# full_stack_blueprint() has no 'profile' kwarg - that arg used to be silently
-# absorbed by **config (so we got a full hardware stack instead of a stub).
+from runtime.blueprints.profile_builder import build_system_for_profile
 # Build a real lightweight stub: stub driver, no SLAM, no native C++ nodes,
 # no semantic stack - purely the framework wire-up smoke check.
-bp = full_stack_blueprint(
-    robot='stub',
-    slam_profile='none',
-    enable_native=False,
-    enable_semantic=False,
-)
-system = bp.build()
+system = build_system_for_profile('stub', overrides={
+    'robot': 'stub',
+    'slam_profile': 'none',
+    'enable_native': False,
+    'enable_semantic': False,
+})
 print('[L2] stub profile build OK - %d modules' % len(system._modules))
 
 # Start a tighter offline runtime graph as the lifecycle smoke.  Gateway and
 # map services are covered by the build above; keeping them out of this start
 # avoids local port conflicts and filesystem side effects in a push hook.
-runtime_bp = full_stack_blueprint(
-    robot='stub',
-    slam_profile='none',
-    enable_native=False,
-    enable_semantic=False,
-    enable_gateway=False,
-    enable_map_modules=False,
-    run_startup_checks=False,
-)
-runtime = runtime_bp.build()
+runtime = build_system_for_profile('stub', overrides={
+    'robot': 'stub',
+    'slam_profile': 'none',
+    'enable_native': False,
+    'enable_semantic': False,
+    'enable_gateway': False,
+    'enable_map_modules': False,
+    'run_startup_checks': False,
+})
 try:
     runtime.start()
     failed = runtime.health().get('failed_modules') or {}

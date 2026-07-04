@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 
-def test_full_stack_blueprint_construction_does_not_touch_service_manager(monkeypatch):
+def test_product_blueprint_construction_does_not_touch_service_manager(monkeypatch):
     import runtime.service_manager as service_manager
-    from runtime.blueprints.full_stack import full_stack_blueprint
+    from runtime.blueprints.products.thunder import thunder_blueprint
 
     def fail_get_service_manager():
         raise AssertionError("service manager should not be touched while building Blueprint")
 
     monkeypatch.setattr(service_manager, "get_service_manager", fail_get_service_manager)
 
-    bp = full_stack_blueprint(
+    bp = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         enable_native=False,
@@ -46,12 +46,12 @@ class _FakeServiceManager:
 
 def test_external_service_plan_runs_during_module_setup(monkeypatch):
     import runtime.service_manager as service_manager
-    from runtime.blueprints.full_stack import _external_services_blueprint
+    from runtime.blueprints.stacks.system import external_services
 
     fake = _FakeServiceManager()
     monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake)
 
-    bp = _external_services_blueprint(
+    bp = external_services(
         enabled=True,
         driver_module="ThunderDriver",
         slam_profile="fastlio2",

@@ -565,6 +565,10 @@ def build_localization_status_from_parts(
         "restart_recovery_supported": restart_recovery_supported,
         "recovery_method": recovery_method,
         "relocalization_state": diagnostics.get("relocalization_state"),
+        "relocalization_quality": _as_float(
+            diagnostics.get("relocalization_quality")
+        ),
+        "relocalization_map_body": diagnostics.get("relocalization_map_body"),
         "recovery_signal": diagnostics.get("recovery_signal"),
         "recovery_action": diagnostics.get("recovery_action"),
         "localizer_health": diagnostics.get("localizer_health"),
@@ -955,6 +959,8 @@ def _navigation_reason_codes(
         and bool(localization.get("algorithm_healthy", False))
     ):
         codes.append("pose_stale")
+    if _saved_map_relocalization_missing(localization):
+        codes.append("saved_map_relocalization_missing")
 
     if state == "RECOVERING":
         codes.append("mission_recovering")
@@ -988,6 +994,29 @@ def _navigation_reason_codes(
     return list(dict.fromkeys(codes))
 
 
+def _saved_map_relocalization_missing(localization: Mapping[str, Any]) -> bool:
+    if not localization.get("active_map"):
+        return False
+    if str(localization.get("backend") or "").lower() != "native_dds":
+        return False
+    if str(localization.get("native_mode") or "").lower() != "localization":
+        return False
+    if localization.get("map_loaded") is not True:
+        return False
+    if localization.get("saved_map_relocalization_supported") is not True:
+        return False
+
+    state = str(localization.get("relocalization_state") or "").strip().lower()
+    if state in {"completed", "relocalized"}:
+        return False
+    quality = _as_float(localization.get("relocalization_quality"))
+    if quality is not None and quality >= 0.0:
+        return False
+    if isinstance(localization.get("relocalization_map_body"), Mapping):
+        return False
+    return True
+
+
 _NAVIGATION_BLOCKER_CODES = {
     "odometry_missing",
     "frame_mismatch_odometry",
@@ -1001,6 +1030,7 @@ _NAVIGATION_BLOCKER_CODES = {
     "localization_relocalizing",
     "localization_initializing",
     "localization_recovery_active",
+    "saved_map_relocalization_missing",
     "pose_stale",
     "map_artifact_gate_failed",
     "real_runtime_evidence_missing_or_stale",

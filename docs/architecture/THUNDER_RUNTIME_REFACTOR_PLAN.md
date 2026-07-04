@@ -1,5 +1,10 @@
 # Thunder Runtime Refactor Plan
 
+Superseded for field deployment: Thunder now uses the typed DDS C++ services
+(`lingtu-livox-dds`, `lingtu-slam-dds`, `lingtu-traversability-dds`,
+`lingtu-nav-dds`). Historical LCM nav adapter notes below are kept as context
+only; LCM nav modules and Thunder LCM installer were removed.
+
 ## Why This Refactor Exists
 
 The current repository has the right foundation: Module-First runtime units,

@@ -1,9 +1,19 @@
 #pragma once
 #include "commons.h"
 #include <filesystem>
+#include <string>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/registration/icp.h>
+
+#ifdef LINGTU_ENABLE_SMALL_GICP
+#include <small_gicp/pcl/pcl_registration.hpp>
+template <typename SourceT, typename TargetT>
+using LingTuIcpBackend = small_gicp::RegistrationPCL<SourceT, TargetT>;
+#else
+#include <pcl/registration/gicp.h>
+template <typename SourceT, typename TargetT>
+using LingTuIcpBackend = pcl::GeneralizedIterativeClosestPoint<SourceT, TargetT>;
+#endif
 
 struct ICPConfig
 {
@@ -47,24 +57,34 @@ public:
     /// pre-step whose iteration count is uninformative.
     int    getLastIterations()  const { return m_last_iterations; }
     bool   getLastConverged()   const { return m_last_converged; }
+    int    getLastInliers()     const { return m_last_inliers; }
+    const std::string &getBackendName() const { return m_backend_name; }
 
     /// Trace of the position covariance estimated from the registration
-    /// Hessian (top-left 3x3 block of H^-1). Larger = more uncertain
+    /// Hessian. Larger = more uncertain
     /// translation. Returns -1 when no align() has succeeded yet.
     double getLastPosCovTrace() const { return m_last_pos_cov_trace; }
 
 private:
     ICPConfig m_config;
     pcl::VoxelGrid<PointType> m_voxel_filter;
-    pcl::IterativeClosestPoint<PointType, PointType> m_refine_icp;
-    pcl::IterativeClosestPoint<PointType, PointType> m_rough_icp;
+    LingTuIcpBackend<PointType, PointType> m_refine_icp;
+    LingTuIcpBackend<PointType, PointType> m_rough_icp;
     CloudType::Ptr m_refine_inp;
     CloudType::Ptr m_rough_inp;
     CloudType::Ptr m_refine_tgt;
     CloudType::Ptr m_rough_tgt;
     std::string m_pcd_path;
+    std::string m_backend_name{
+#ifdef LINGTU_ENABLE_SMALL_GICP
+        "small_gicp"
+#else
+        "pcl_gicp"
+#endif
+    };
     double m_last_fitness_score{-1.0};   // -1 = not yet computed
     int    m_last_iterations{-1};
+    int    m_last_inliers{-1};
     bool   m_last_converged{false};
     double m_last_pos_cov_trace{-1.0};   // -1 = not yet computed
 };

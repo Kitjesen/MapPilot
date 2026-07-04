@@ -138,6 +138,39 @@ struct Text {
   string data;
 };
 
+struct RelocalizationRequest {
+  string request_id;
+  string action;
+  string engine;
+  string map_path;
+  boolean has_initial_pose;
+  Pose initial_pose;
+  double timeout_s;
+};
+
+struct RelocalizationResponse {
+  string request_id;
+  string action;
+  string engine;
+  boolean success;
+  string message;
+  double quality;
+  boolean map_loaded;
+  boolean has_map_body;
+  Pose map_body;
+  boolean has_map_odom;
+  Pose map_odom;
+  string state;
+  string refine_backend;
+  long refine_iterations;
+  long refine_inliers;
+  boolean refine_converged;
+  double refine_pos_cov_trace;
+  boolean track_against_map_supported;
+  boolean track_against_map_enabled;
+  long track_against_map_failures;
+};
+
 struct Path {
   Header header;
   sequence<PoseStamped> poses;

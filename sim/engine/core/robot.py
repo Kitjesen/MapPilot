@@ -36,6 +36,22 @@ class RobotConfig:
     # Physical parameters (from global CLAUDE.md memory)
     pd_kp: float = 65.0           # position gain (hip)
     pd_kv: float = 5.0            # velocity gain (damping)
+    leg_control_mode: str = "auto"  # auto, position, or torque
+    torque_kp: List[float] = field(default_factory=lambda: [
+        50.0, 50.0, 50.0, 50.0, 50.0, 50.0,
+        50.0, 50.0, 50.0, 50.0, 50.0, 50.0,
+        0.0, 0.0, 0.0, 0.0,
+    ])
+    torque_kd: List[float] = field(default_factory=lambda: [
+        7.5, 7.5, 7.5, 7.5, 7.5, 7.5,
+        7.5, 7.5, 7.5, 7.5, 7.5, 7.5,
+        1.0, 1.0, 1.0, 1.0,
+    ])
+    torque_limit: List[float] = field(default_factory=lambda: [
+        120.0, 120.0, 120.0, 120.0, 120.0, 120.0,
+        120.0, 120.0, 120.0, 120.0, 120.0, 120.0,
+        60.0, 60.0, 60.0, 60.0,
+    ])
 
     # Policy parameters (consistent with brainstem StandardObservationBuilder)
     # Extracted from src/drivers/sim/nova_nav_bridge.py
@@ -113,6 +129,18 @@ class RobotConfig:
         return np.array(self.action_scale, dtype=np.float64)
 
     @property
+    def torque_kp_array(self) -> np.ndarray:
+        return np.array(self.torque_kp, dtype=np.float64)
+
+    @property
+    def torque_kd_array(self) -> np.ndarray:
+        return np.array(self.torque_kd, dtype=np.float64)
+
+    @property
+    def torque_limit_array(self) -> np.ndarray:
+        return np.array(self.torque_limit, dtype=np.float64)
+
+    @property
     def mj_to_dart_array(self) -> np.ndarray:
         return np.array(self.mj_to_dart, dtype=np.int32)
 
@@ -122,12 +150,10 @@ class RobotConfig:
 
     @classmethod
     def default_thunder_v3(cls) -> "RobotConfig":
-        """Return default Thunder v3 config (paths must be resolved at runtime)."""
+        """Return current Thunder simulation config (paths resolved at runtime)."""
         cfg = cls()
-        cfg.robot_xml = "assets/mjcf/thunder_v3_lingtu.xml"
-        # Policy is optional; callers can inject a concrete checkpoint when one
-        # is available in the target environment.
-        cfg.policy_onnx = ""
+        cfg.robot_xml = "robots/thunderv4/mjcf/thunderv4.xml"
+        cfg.policy_onnx = "robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.pt"
         return cfg
 
     @classmethod

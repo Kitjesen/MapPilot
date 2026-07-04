@@ -74,6 +74,7 @@ table and the mirror tests.
 | `/nav/frontier_candidate` | `map` | `map`, `odom` | no | `map` |
 | `/nav/terrain_map` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/terrain_map_ext` | `map` | `map`, `odom` | no | `map`, `odom` |
+| `/nav/traversability` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/height_rays` | `body` | `body` | no | `body` |
 | `/nav/global_path` | `map` | `map`, `odom` | yes | `map` |
 | `/nav/local_path` | `map` | `map`, `odom`, `body` | yes | `map`, `odom`, `body` |

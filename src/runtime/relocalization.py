@@ -7,8 +7,8 @@ behind compatibility adapters.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from typing import Mapping, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Protocol
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,7 @@ class RelocalizationResult:
     stderr: str = ""
     returncode: int | None = None
     timed_out: bool = False
+    details: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -61,5 +62,16 @@ class RelocalizationService(Protocol):
         *,
         timeout_s: float = 20.0,
         base_env: Mapping[str, str] | None = None,
+    ) -> RelocalizationResult:
+        ...
+
+    def track_against_map(
+        self,
+        pcd_path: str | os.PathLike[str],
+        x: float,
+        y: float,
+        yaw: float,
+        *,
+        timeout_s: float = 10.0,
     ) -> RelocalizationResult:
         ...

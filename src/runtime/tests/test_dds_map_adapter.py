@@ -99,6 +99,7 @@ def _install_fake_dds_types(monkeypatch) -> None:
 
 def test_dds_topic_registry_covers_exploration_grid() -> None:
     assert dds_type_for_topic(TOPICS.exploration_grid).__name__ == "OccupancyGrid"
+    assert dds_type_for_topic(TOPICS.traversability).__name__ == "OccupancyGrid"
 
 
 def test_dds_map_out_publishes_typed_occupancy_grid(monkeypatch) -> None:
@@ -128,3 +129,29 @@ def test_dds_map_out_publishes_typed_occupancy_grid(monkeypatch) -> None:
     assert msg.info.origin.position.y == -2.0
     assert msg.data == [0, 100, -1, 42]
     assert map_out.health()["publish_counts"] == {TOPICS.exploration_grid: 1}
+
+
+def test_dds_map_out_publishes_traversability_grid(monkeypatch) -> None:
+    _install_fake_dds_types(monkeypatch)
+    transport = _FakeDDSTransport()
+    map_out = DDSMapOutModule(transport=transport, default_frame_id="map")
+    map_out.setup()
+
+    map_out.traversability._deliver(
+        {
+            "grid": [[0, 90], [100, 20]],
+            "resolution": 0.5,
+            "origin": [1.0, 2.0],
+            "frame_id": "map",
+            "ts": 20.25,
+        }
+    )
+
+    msg = transport.publishers[TOPICS.traversability].messages[-1]
+    assert isinstance(msg, DDS_OccupancyGrid)
+    assert msg.header.frame_id == "map"
+    assert msg.info.width == 2
+    assert msg.info.height == 2
+    assert msg.info.resolution == 0.5
+    assert msg.data == [0, 90, 100, 20]
+    assert map_out.health()["publish_counts"] == {TOPICS.traversability: 1}

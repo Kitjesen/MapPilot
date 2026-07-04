@@ -1,0 +1,36 @@
+<mujoco model="flat_showcase">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
+
+  <visual>
+    <global offwidth="1920" offheight="1080"/>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.7 0.7 0.7" specular="0.25 0.25 0.25"/>
+    <quality shadowsize="4096"/>
+    <map znear="0.01" zfar="120"/>
+    <rgba haze="0.76 0.86 0.96 1"/>
+  </visual>
+
+  <asset>
+    <material name="floor_mat" rgba="0.55 0.58 0.60 1" reflectance="0.04"/>
+    <material name="reference_mat" rgba="0.10 0.10 0.10 1"/>
+  </asset>
+
+  <worldbody>
+    <light name="key" pos="-3 -5 7" dir="0.3 0.5 -1"
+           directional="true" diffuse="0.95 0.92 0.86" specular="0.25 0.25 0.25"/>
+    <light name="fill" pos="4 3 4" dir="-0.6 -0.4 -1"
+           directional="true" diffuse="0.35 0.40 0.45" specular="0.05 0.05 0.05"/>
+    <geom name="floor" type="plane" size="40 40 0.1"
+          material="floor_mat" conaffinity="1" condim="3"/>
+
+    <geom name="x_reference" type="box" size="3.0 0.015 0.006"
+          pos="1.5 -0.85 0.006" material="reference_mat"
+          contype="0" conaffinity="0"/>
+    <geom name="start_marker" type="cylinder" size="0.08 0.01"
+          pos="0 -0.85 0.012" rgba="0.2 0.8 0.35 1"
+          contype="0" conaffinity="0"/>
+    <geom name="end_marker" type="cylinder" size="0.08 0.01"
+          pos="3 -0.85 0.012" rgba="0.9 0.35 0.25 1"
+          contype="0" conaffinity="0"/>
+  </worldbody>
+</mujoco>

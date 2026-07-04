@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.introspection.profile_graph import resolve_profile_config
+from runtime.profiles.resolver import resolve_profile_config
 from runtime.profiles.endpoints import resolve_runtime_run_spec
 from runtime.profiles.product_mode_contracts import (
     PRODUCT_MODE_CONTRACTS,

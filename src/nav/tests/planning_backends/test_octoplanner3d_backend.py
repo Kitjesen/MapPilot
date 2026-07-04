@@ -310,13 +310,13 @@ def test_plan_uses_headless_executable_json_protocol(tmp_path, monkeypatch):
     assert backend._last_plan_reached_goal is True
 
     assert calls
-    assert calls[-1]["cmd"] == [str(exe)]
-    assert calls[-1]["text"] is True
-    assert calls[-1]["encoding"] == "utf-8"
-    assert calls[-1]["errors"] == "replace"
-    assert calls[-1]["capture_output"] is True
+    planner_call = next(call for call in calls if call["cmd"] == [str(exe)])
+    assert planner_call["text"] is True
+    assert planner_call["encoding"] == "utf-8"
+    assert planner_call["errors"] == "replace"
+    assert planner_call["capture_output"] is True
 
-    payload = json.loads(calls[-1]["input"])
+    payload = json.loads(planner_call["input"])
     assert set(payload) == {
         "planner",
         "protocol_version",
@@ -341,6 +341,11 @@ def test_plan_uses_headless_executable_json_protocol(tmp_path, monkeypatch):
     assert payload["options"]["constraint_model"] == "quadruped_bounding_cylinder_ground_support"
     assert payload["options"]["robot_radius"] == pytest.approx(0.25)
     assert payload["options"]["require_ground_support"] is True
+    assert payload["options"]["strict_direct_ground_support"] is False
+    assert payload["options"]["ground_support_xy_radius_cells"] == 1
+    assert payload["options"]["ground_support_depth_cells"] == 1
+    assert payload["options"]["max_step_height"] == pytest.approx(0.45)
+    assert payload["options"]["max_slope"] == pytest.approx(0.0)
     assert payload["start"] == [0.0, 0.0, 0.0]
     assert payload["goal"] == [1.0, 2.0, 0.5]
     assert payload["obstacle_thr"] == pytest.approx(49.9)
@@ -641,7 +646,15 @@ def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
     source = (OCTO_NATIVE_DIR / "octoplanner3d_headless.cpp").read_text(encoding="utf-8")
     core = (OCTO_NATIVE_DIR / "octoplanner3d_core.cpp").read_text(encoding="utf-8")
     cmake = (OCTO_NATIVE_DIR / "CMakeLists.txt").read_text(encoding="utf-8")
-    combined = source + "\n" + core + "\n" + cmake
+    planner_header = (
+        REPO_ROOT
+        / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/include/global_planner.h"
+    ).read_text(encoding="utf-8")
+    planner_core = (
+        REPO_ROOT
+        / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/src/global_planner.cpp"
+    ).read_text(encoding="utf-8")
+    runtime_combined = source + "\n" + core + "\n" + cmake
 
     assert '#include "octoplanner3d_core.hpp"' in source
     assert "octoplanner3d::runtime::runPlan(request)" in source
@@ -657,6 +670,7 @@ def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
     assert "applyPlannerOptions(planner, request.options)" in core
     assert "planner.robot_radius_ = options.robot_radius" in core
     assert "planner.require_ground_support_ = options.require_ground_support" in core
+    assert "planner.strict_direct_ground_support_ = options.strict_direct_ground_support" in core
     assert "product code does not patch imported source" in core
     assert "planner.setOctomap(map)" in core
     assert "planner.makePlan(start, goal)" in core
@@ -665,9 +679,15 @@ def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
     assert 'extractNumberArray(json, "start")' in source
     assert 'extractNumberArray(json, "goal")' in source
     assert 'applyOptionsFromJson(request.options, json)' in source
+    assert "RedirectStdoutToStderr redirect_logs" in source
+    assert "duplicateTo(fileNo(stderr), fileNo(stdout))" in source
     assert '"max_same_floor_z_excursion"' in source
     assert 'emitConstraints(result.options)' in source
     assert '\\"path\\"' in source
+    assert "bool hasDirectGroundSupport(" not in planner_header
+    assert "GridIndex below{idx.x, idx.y, idx.z - 1}" in planner_core
+    assert "if (!isCellTraversable(" in planner_core
+    assert "max_slope_ = 0.0" in planner_header
 
     forbidden_ros2_terms = (
         "rclcpp",
@@ -678,7 +698,7 @@ def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
         "ament_package",
     )
     for term in forbidden_ros2_terms:
-        assert term not in combined
+        assert term not in runtime_combined
 
 
 def test_headless_cmake_builds_dedicated_executable_against_upstream_core():

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import time
 from typing import Any
 
@@ -24,6 +26,7 @@ from gateway.schemas import (
     PlanPreviewRequest,
     PlanPreviewResponse,
     StopRequest,
+    VisualServoRequest,
 )
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.goal_builder import construct_goal_from_request
@@ -37,6 +40,37 @@ LEASE_ERROR_RESPONSES = {
     403: {"model": GatewayErrorResponse},
     409: {"model": GatewayErrorResponse},
 }
+
+
+def _native_nav_control_bin() -> str:
+    return os.environ.get("LINGTU_NAV_CONTROL_BIN", "").strip()
+
+
+def _publish_native_nav_control(command: str, *args: str) -> bool:
+    binary = _native_nav_control_bin()
+    if not binary:
+        return False
+    if not os.path.isfile(binary):
+        raise RuntimeError(f"native nav control binary missing: {binary}")
+    domain_id = os.environ.get("LINGTU_DDS_DOMAIN_ID", "0").strip() or "0"
+    subprocess.run(
+        [binary, command, *args, "--domain-id", domain_id],
+        check=True,
+        timeout=5.0,
+    )
+    return True
+
+
+def _publish_goal(gw: Any, goal: Any, *, ts: float) -> None:
+    if _publish_native_nav_control(
+        "goal",
+        f"{goal.x:.9g}",
+        f"{goal.y:.9g}",
+        f"{goal.z:.9g}",
+        f"{goal.yaw:.9g}",
+    ):
+        return
+    gw.goal_pose.publish(goal.pose_stamped(ts=ts))
 
 
 def register_command_routes(app, gw) -> None:
@@ -117,9 +151,10 @@ def register_command_routes(app, gw) -> None:
 
         def _publish() -> dict[str, Any]:
             ts = time.time()
-            gw.goal_pose.publish(goal.pose_stamped(ts=ts))
+            _publish_goal(gw, goal, ts=ts)
             if body.instruction:
-                gw.instruction.publish(body.instruction)
+                if not _publish_native_nav_control("instruction", body.instruction):
+                    gw.instruction.publish(body.instruction)
             return goal.command_payload(
                 status="ok",
                 instruction=body.instruction,
@@ -144,7 +179,7 @@ def register_command_routes(app, gw) -> None:
 
         def _publish() -> dict[str, Any]:
             ts = time.time()
-            gw.goal_pose.publish(goal.pose_stamped(ts=ts))
+            _publish_goal(gw, goal, ts=ts)
             return goal.command_payload(status="ok", ts=ts)
 
         return command_service.run_planned_goal_command(
@@ -193,7 +228,8 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_navigation_cancel(body: CancelRequest):
         def _publish() -> dict[str, Any]:
-            gw.cancel.publish(body.reason)
+            if not _publish_native_nav_control("cancel", body.reason):
+                gw.cancel.publish(body.reason)
             return {"status": "cancelled", "reason": body.reason}
 
         return gw._run_control_command("navigation_cancel", body, _publish)
@@ -206,11 +242,58 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_instruction(body: InstructionRequest):
         def _publish() -> dict[str, Any]:
-            gw.instruction.publish(body.text)
+            if not _publish_native_nav_control("instruction", body.text):
+                gw.instruction.publish(body.text)
             return {"status": "ok", "instruction": body.text}
 
         return command_service.run_motion_guarded_command(
             "instruction",
+            body,
+            _publish,
+        )
+
+    @app.post(
+        "/api/v1/visual_servo",
+        summary="Hot-switch visual servo target",
+        response_model=ControlCommandResponse,
+        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+    )
+    async def post_visual_servo(body: VisualServoRequest):
+        modules = getattr(gw, "_all_modules", {}) or {}
+        if modules.get("VisualServoModule") is None:
+            return command_service.rejected_response(
+                "visual_servo",
+                body,
+                error="visual_servo_unavailable",
+                message="VisualServoModule is not loaded in the current runtime profile.",
+                detail=command_service.command_error_detail(
+                    reason_code="visual_servo_unavailable",
+                    reason="VisualServoModule is not loaded in the current runtime profile.",
+                    source="gateway_modules",
+                    path="/api/v1/runtime/switch-plan",
+                    blockers=["visual_servo_unavailable"],
+                ),
+            )
+
+        servo_target = (
+            "stop"
+            if body.mode == "stop"
+            else f"{body.mode}:{body.target}"
+        )
+
+        def _publish() -> dict[str, Any]:
+            gw.servo_target.publish(servo_target)
+            return {
+                "status": "ok",
+                "mode": body.mode,
+                "visual_target": body.target,
+                "servo_target": servo_target,
+            }
+
+        if body.mode == "stop":
+            return gw._run_control_command("visual_servo", body, _publish)
+        return command_service.run_motion_guarded_command(
+            "visual_servo",
             body,
             _publish,
         )

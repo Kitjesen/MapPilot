@@ -2282,6 +2282,12 @@ def test_openapi_exposes_client_response_models():
         openapi, "/api/v1/slam/relocalize"
     ).endswith("/SlamRelocalizeRequest")
     assert _schema_ref_for(
+        openapi, "/api/v1/slam/track_against_map", method="post"
+    ).endswith("/SlamOperationResponse")
+    assert _request_schema_ref_for(
+        openapi, "/api/v1/slam/track_against_map"
+    ).endswith("/SlamRelocalizeRequest")
+    assert _schema_ref_for(
         openapi, "/api/v1/bag/start", method="post"
     ).endswith("/BagOperationResponse")
     assert _request_schema_ref_for(

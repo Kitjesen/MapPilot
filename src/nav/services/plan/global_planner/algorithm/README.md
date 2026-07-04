@@ -104,7 +104,10 @@ runtime sends both the legacy `map_path` field and the newer generic
 
 ## Executable protocol
 
-The executable protocol is JSON over stdin/stdout. Inputs:
+The executable protocol is JSON over stdin/stdout. JSON is not the map format;
+it is the request/response envelope used to call the headless binary. The map
+inside the request can be a saved OctoMap file (`.bt`, `.ot`, `.octomap`) or a
+saved point-cloud map (`.pcd`) when the binary was built with PCL. Inputs:
 
 ```json
 {
@@ -125,8 +128,8 @@ The executable protocol is JSON over stdin/stdout. Inputs:
     "planner_family": "octoplanner3d_constrained_global_planner",
     "search_algorithm": "octomap_3d_astar",
     "constraint_model": "quadruped_bounding_cylinder_ground_support",
-    "robot_radius": 0.6,
-    "max_iterations": 800000,
+    "robot_radius": 0.25,
+    "max_iterations": 500000,
     "snap_search_radius_cells": 12,
     "require_ground_support": true,
     "strict_direct_ground_support": false,
@@ -137,7 +140,7 @@ The executable protocol is JSON over stdin/stdout. Inputs:
     "preblocked_costmap_weight": 2.5,
     "lowest_traversable_only": false,
     "floor_change_penalty": 6.0,
-    "max_step_height": 0.35,
+    "max_step_height": 0.45,
     "max_slope": 0.0,
     "same_floor_preference": true,
     "same_floor_z_tolerance": 0.75,
@@ -189,6 +192,10 @@ Output:
   }
 }
 ```
+
+The downstream global trajectory is the `path` field. It is an ordered list of
+`[x, y, z]` waypoints in the planning/map frame; the rest of the JSON is
+diagnostics and provenance.
 
 Output fields:
 

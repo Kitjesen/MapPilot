@@ -83,9 +83,18 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert nav["path_follower_max_speed"] == pytest.approx(0.20)
     assert nav["path_follower_min_speed"] == pytest.approx(0.08)
     assert nav["path_follower_native_max_accel"] == pytest.approx(10.0)
-    assert nav["octoplanner3d_robot_radius"] == pytest.approx(0.40)
+    assert nav["enable_native"] is True
+    assert nav["terrain_backend"] == "nanobind"
+    assert nav["terrain_strict_native"] is True
+    assert nav["local_planner_backend"] == "nanobind"
+    assert nav["path_follower_backend"] == "nav_kernel"
+    assert nav["octoplanner3d_robot_radius"] == pytest.approx(0.25)
     assert nav["octoplanner3d_require_ground_support"] is True
-    assert nav["octoplanner3d_ground_support_depth_cells"] == 6
+    assert nav["octoplanner3d_strict_direct_ground_support"] is False
+    assert nav["octoplanner3d_ground_support_xy_radius_cells"] == 1
+    assert nav["octoplanner3d_ground_support_depth_cells"] == 1
+    assert nav["octoplanner3d_max_step_height"] == pytest.approx(0.45)
+    assert nav["octoplanner3d_max_slope"] == pytest.approx(0.0)
     assert nav["enable_semantic"] is True
     assert "lidar_transport" not in nav
     assert "lidar_endpoint_host" not in nav
@@ -97,7 +106,13 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert mapping["tomogram"] == _resolve_octoplanner3d_map()
     assert mapping["plan_safety_policy"] == "reject"
     assert mapping["fallback_planner_name"] == ""
-    assert mapping["octoplanner3d_robot_radius"] == pytest.approx(0.40)
+    assert mapping["octoplanner3d_robot_radius"] == pytest.approx(0.25)
+    assert mapping["octoplanner3d_max_slope"] == pytest.approx(0.0)
+    assert mapping["enable_native"] is True
+    assert mapping["terrain_backend"] == "nanobind"
+    assert mapping["terrain_strict_native"] is True
+    assert mapping["local_planner_backend"] == "nanobind"
+    assert mapping["path_follower_backend"] == "nav_kernel"
     assert mapping["enable_semantic"] is False
     assert "lidar_transport" not in mapping
 
@@ -107,8 +122,14 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert explore["tomogram"] == _resolve_octoplanner3d_map()
     assert explore["plan_safety_policy"] == "reject"
     assert explore["fallback_planner_name"] == ""
-    assert explore["octoplanner3d_robot_radius"] == pytest.approx(0.40)
+    assert explore["octoplanner3d_robot_radius"] == pytest.approx(0.25)
     assert explore["octoplanner3d_require_ground_support"] is True
+    assert explore["octoplanner3d_max_slope"] == pytest.approx(0.0)
+    assert explore["enable_native"] is True
+    assert explore["terrain_backend"] == "nanobind"
+    assert explore["terrain_strict_native"] is True
+    assert explore["local_planner_backend"] == "nanobind"
+    assert explore["path_follower_backend"] == "nav_kernel"
     assert explore["enable_frontier"] is True
     assert explore["enable_traversable_frontier"] is True
     assert explore["exploration_backend"] == "none"
@@ -138,7 +159,7 @@ def test_thunder_blueprint_accepts_resolved_config() -> None:
     assert "GatewayModule" not in names
 
 
-def test_thunder_product_blueprints_do_not_import_full_stack_compat_entry() -> None:
+def test_thunder_product_blueprint_uses_stack_composition_directly() -> None:
     path = ROOT / "src" / "runtime" / "blueprints" / "products" / "thunder.py"
     tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     imports: set[str] = set()
@@ -148,7 +169,7 @@ def test_thunder_product_blueprints_do_not_import_full_stack_compat_entry() -> N
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.add(node.module)
 
-    assert "runtime.blueprints.full_stack" not in imports
+    assert "runtime.blueprints.stacks.composition" in imports
 
 
 def test_thunder_basic_blueprint_builds_from_product_entrypoint() -> None:
@@ -221,7 +242,7 @@ def test_thunder_lite_runtime_rejects_legacy_endpoint_flags() -> None:
         {"run_startup_checks": True},
     ),
 )
-def test_thunder_lite_runtime_rejects_full_stack_overrides(override) -> None:
+def test_thunder_lite_runtime_rejects_field_runtime_overrides(override) -> None:
     config = thunder_lite_config(**override)
 
     with pytest.raises(ValueError, match="Thunder Lite runtime"):
@@ -238,8 +259,6 @@ def test_manual_smoke_entrypoints_use_profile_builder() -> None:
     ):
         text = (ROOT / rel_path).read_text(encoding="utf-8-sig")
 
-        assert "runtime.blueprints.full_stack" not in text
-        assert "full_stack_blueprint(" not in text
         assert "blueprint_for_resolved_profile" in text
 
 

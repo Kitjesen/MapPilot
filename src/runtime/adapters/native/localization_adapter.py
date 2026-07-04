@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -105,6 +106,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self._decode_errors: Counter[str] = Counter()
         self._last_message_ts = 0.0
         self._last_status_ts = 0.0
+        self._last_map_odom_tf: dict[str, Any] | None = None
         self._frame_tree = kw.get("frame_tree") or FrameTree.from_robot_config()
         self._backend_status = BackendStatus.configured_as("cpp_slam_status")
 
@@ -183,6 +185,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             "confidence": _float(payload.get("confidence"), quality),
             "quality": quality,
             "backend": str(payload.get("backend") or "cpp_cyclone_slam"),
+            "mode": str(payload.get("mode") or ""),
             "backend_profile": self._backend_profile,
             "health_source": STATUS_SNAPSHOT_HEALTH_SOURCE,
             "source": str(payload.get("source") or "cpp_cyclone_slam"),
@@ -225,8 +228,37 @@ class CppSlamStatusAdapterModule(Module, layer=1):
                 "imu_rollback_count": _int(payload.get("imu_rollback_count")),
                 "lidar_rollback_count": _int(payload.get("lidar_rollback_count")),
             },
-            "relocalization_supported": False,
-            "saved_map_relocalization_supported": False,
+            "relocalization_supported": bool(
+                payload.get("relocalization_supported", False)
+            ),
+            "saved_map_relocalization_supported": bool(
+                payload.get("saved_map_relocalization_supported", False)
+            ),
+            "relocalization_state": str(
+                payload.get("relocalization_state") or "unsupported"
+            ),
+            "last_relocalization_message": str(
+                payload.get("last_relocalization_message") or ""
+            ),
+            "relocalization_quality": _float(
+                payload.get("relocalization_quality"), -1.0
+            ),
+            "relocalization_map_body": payload.get("relocalization_map_body"),
+            "relocalization_refine_backend": str(
+                payload.get("relocalization_refine_backend") or ""
+            ),
+            "relocalization_refine_iterations": _int(
+                payload.get("relocalization_refine_iterations")
+            ),
+            "relocalization_refine_inliers": _int(
+                payload.get("relocalization_refine_inliers")
+            ),
+            "relocalization_refine_converged": bool(
+                payload.get("relocalization_refine_converged", False)
+            ),
+            "relocalization_refine_pos_cov_trace": _float(
+                payload.get("relocalization_refine_pos_cov_trace"), -1.0
+            ),
             "restart_recovery_supported": False,
             "map_save_supported": True,
             "map_save_source": "native_slam_dds_control",
@@ -236,11 +268,9 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         if isinstance(payload.get("gnss_fusion_health"), Mapping):
             status["gnss_fusion_health"] = dict(payload["gnss_fusion_health"])
         if status["map_frame_jump"]:
-            status["map_frame_jump_event"] = {
-                "source": status["source"],
-                "ts": stamp_s,
-                "reason": status["reason"],
-            }
+            jump_event = self._map_frame_jump_event(status, stamp_s)
+            if jump_event:
+                status["map_frame_jump_event"] = jump_event
 
         odom = _odometry_from_status_snapshot(payload)
         if odom is not None:
@@ -263,6 +293,53 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self._record_message(TOPICS.localization_health)
         self._status_snapshot_stale = False
         self._stale_status_published = False
+
+    def _map_frame_jump_event(
+        self, status: Mapping[str, Any], stamp_s: float
+    ) -> dict[str, Any] | None:
+        tf = status.get("map_odom_tf")
+        if not isinstance(tf, Mapping) or tf.get("valid") is False:
+            return {
+                "type": "map_frame_jump",
+                "source": status["source"],
+                "ts": stamp_s,
+                "reason": status["reason"],
+            }
+
+        current = dict(tf)
+        previous = self._last_map_odom_tf
+        event: dict[str, Any] = {
+            "type": "map_frame_jump",
+            "source": status["source"],
+            "ts": stamp_s,
+            "reason": status["reason"],
+            "new_xyz": [
+                _float(current.get("tx"), 0.0),
+                _float(current.get("ty"), 0.0),
+                _float(current.get("tz"), 0.0),
+            ],
+        }
+        if isinstance(previous, Mapping):
+            prev_xyz, prev_yaw = _tf_xyz_yaw(previous)
+            next_xyz, next_yaw = _tf_xyz_yaw(current)
+            event.update(
+                {
+                    "dt_m": round(_xyz_distance(prev_xyz, next_xyz), 4),
+                    "dyaw_deg": round(_yaw_delta_deg(prev_yaw, next_yaw), 2),
+                    "old_xyz": [round(v, 4) for v in prev_xyz],
+                    "new_xyz": [round(v, 4) for v in next_xyz],
+                }
+            )
+        else:
+            event.update(
+                {
+                    "dt_m": 0.0,
+                    "dyaw_deg": 0.0,
+                    "old_xyz": None,
+                    "baseline_missing": True,
+                }
+            )
+        return event
 
     def _poll_cloud_snapshots(self) -> None:
         base = Path(self._cloud_snapshot_dir)
@@ -341,6 +418,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             ),
             authority="cpp_slam_status",
         )
+        self._last_map_odom_tf = dict(tf)
 
 
 def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | None:
@@ -368,6 +446,36 @@ def _odometry_from_status_snapshot(payload: Mapping[str, Any]) -> Odometry | Non
         frame_id=str(raw_odom.get("frame_id") or topic_default_frame_id(TOPICS.odometry)),
         child_frame_id=str(raw_odom.get("child_frame_id") or body_frame_id()),
     )
+
+
+def _tf_xyz_yaw(tf: Mapping[str, Any]) -> tuple[tuple[float, float, float], float]:
+    xyz = (
+        _float(tf.get("tx"), 0.0),
+        _float(tf.get("ty"), 0.0),
+        _float(tf.get("tz"), 0.0),
+    )
+    qx = _float(tf.get("qx"), 0.0)
+    qy = _float(tf.get("qy"), 0.0)
+    qz = _float(tf.get("qz"), 0.0)
+    qw = _float(tf.get("qw"), 1.0)
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    return xyz, math.degrees(math.atan2(siny_cosp, cosy_cosp))
+
+
+def _xyz_distance(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> float:
+    return math.sqrt(
+        (a[0] - b[0]) * (a[0] - b[0])
+        + (a[1] - b[1]) * (a[1] - b[1])
+        + (a[2] - b[2]) * (a[2] - b[2])
+    )
+
+
+def _yaw_delta_deg(a: float, b: float) -> float:
+    delta = (b - a + 180.0) % 360.0 - 180.0
+    return abs(delta)
 
 
 def _float(value: Any, default: float) -> float:

@@ -1,29 +1,65 @@
-# Blueprints - Module Composition & Stack Factories
+# Runtime Blueprints
 
-This package provides the composition layer that assembles individual Modules into running systems. A Blueprint is the only orchestration unit; stack factories bundle related modules into reusable, testable stacks.
+Blueprints are the orchestration layer. They answer only three questions:
 
-## Files
+1. Which Modules start for a profile or product mode?
+2. Which ports are wired explicitly?
+3. Which external adapters are allowed at the runtime boundary?
 
-- **`full_stack.py`** - Top-level system blueprint; wires 9 stack factories into a single composable system.
-- **`full_stack_wiring.py`** - Explicit cross-stack wire definitions (Safety -> Driver, SLAM -> Nav, VisualServo dual channel, VelocityMux arbitration).
-- **`stub.py`** - Stub blueprint for framework testing; creates a minimal module graph with no hardware dependencies.
-- **`multi_robot.py`** - Multi-robot orchestration: profile swapping, dual-driver wiring, and StubRobot for testing.
-- **`profile_graph.py`** - Directed acyclic graph of named profiles and robot presets; resolves dependency order for `lingtu.py <profile>`.
-- **`runtime_endpoint.py`** - Runtime profile discovery; exposes available profiles and their config via the REPL.
-- **`simulation_contract.py`** - Simulation backend contract; defines the interface for MuJoCo/Gazebo/ROS2 sim backends.
+Do not put algorithms, drivers, map building, SLAM logic, planner logic, or
+transport implementations here.
 
-### `stacks/` Directory
+## Main Path
 
-- **`_registry.py`** - Central registry of all stack factory functions; maps factory names to callables.
-- **`driver.py`** - `driver(robot)` factory: returns Driver + CameraBridge blueprint (auto-detect Thunder/stub/sim).
-- **`localization.py`** - `slam(profile)` factory: returns a localization adapter aliased as SlamBridgeModule; SLAM processes are external runtime services.
-- **`maps.py`** - `maps()` factory: returns OccupancyGrid + ESDF + ElevationMap stack.
-- **`perception.py`** - `perception(det, enc)` factory: returns Detector + Encoder + Reconstruction stack.
-- **`memory.py`** - `memory(save_dir)` factory: returns SemanticMapper + Episodic + Tagged + VectorMemory stack.
-- **`planner.py`** - `planner(llm)` factory: returns SemanticPlanner + LLM + VisualServo stack.
-- **`navigation.py`** - `navigation(planner)` factory: returns Navigation + autonomy chain (OctoPlanner3D/A*/PCT).
-- **`safety.py`** - `safety()` factory: returns SafetyRing + Geofence stack.
-- **`gateway.py`** - `gateway(port)` factory: returns Gateway (HTTP/WS/SSE) + MCP + Teleop stack.
-- **`exploration.py`** - `exploration(backend)` factory: returns TARE exploration stack.
-- **`lidar.py`** - `lidar(ip, enabled)` factory: returns Livox MID-360 hardware driver (decoupled from SLAM).
-- **`sim_lidar.py`** - `sim_lidar(scene_xml)` factory: returns simulated PointCloud2 provider from MuJoCo scene geometry.
+```text
+profile_builder.py
+  -> products/
+  -> stacks/
+  -> wires/
+```
+
+`profile_builder.py` is the only profile-to-Blueprint entrypoint used by the
+CLI, SDK, smoke tests, and robot-side startup.
+
+`products/` owns product-level assembly. Product profiles should route through
+`products/thunder.py`. There is no generic compatibility Blueprint builder in
+the product path.
+
+`stacks/` owns small Module groups such as hardware, SLAM, maps, navigation,
+safety, and gateway. A stack factory returns Modules and config only; it does
+not decide mission behavior.
+
+`wires/` owns explicit cross-stack connections. Critical robot behavior should
+be visible here, not hidden in Module constructors.
+
+`adapters/` owns Module choices at external boundaries: driver runtime,
+mapping/SLAM bridge, navigation IO, and perception/gateway IO.
+
+## Product Modes
+
+Each product mode is a profile-level graph, not a separate runtime framework.
+
+| Mode | Graph intent |
+| --- | --- |
+| `teleop` | Gateway/teleop commands through `CmdVelMux` to the driver boundary. |
+| `teleop_avoid` | Teleop plus localization, map layers, and velocity collision guard. |
+| `map` | Sensor/localization data into map layers and map save/build services. |
+| `tracking` | Localization plus local goal tracking and path following. |
+| `nav` | Saved map plus OctoPlanner3D, local planner, path follower, safety, and command mux. |
+| `inspection` | Navigation plus perception, semantic planner, memory, and task outputs. |
+
+## Compatibility
+
+`stub.py` remains the no-hardware framework test Blueprint.
+
+`full_stack_wiring.py` remains the shared wire collector used by
+`products/thunder.py`. It is not a standalone runtime entrypoint.
+
+## Moved Out
+
+Profile and Module graph inspection live in `runtime.introspection`.
+
+Simulation runtime contracts live in `runtime.contracts`.
+
+Profile catalogs live in `runtime.profiles.catalog`. There is no
+`runtime.blueprints.catalog` source of truth.

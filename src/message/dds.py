@@ -130,6 +130,22 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "lingtu::dds::Text",
         ros_compatible=False,
     ),
+    TOPICS.slam_relocalization_request: TopicSpec(
+        TOPICS.slam_relocalization_request,
+        "RelocalizationRequest",
+        "message.dds_types.slam.RelocalizationRequest",
+        "lingtu.dds.RelocalizationRequest",
+        "lingtu::dds::RelocalizationRequest",
+        ros_compatible=False,
+    ),
+    TOPICS.slam_relocalization_response: TopicSpec(
+        TOPICS.slam_relocalization_response,
+        "RelocalizationResponse",
+        "message.dds_types.slam.RelocalizationResponse",
+        "lingtu.dds.RelocalizationResponse",
+        "lingtu::dds::RelocalizationResponse",
+        ros_compatible=False,
+    ),
     TOPICS.localization_quality: TopicSpec(
         TOPICS.localization_quality,
         "Float32",
@@ -192,6 +208,14 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "message.dds_types.scalar.Text",
         "lingtu.dds.Text",
         "lingtu::dds::Text",
+        ros_compatible=False,
+    ),
+    TOPICS.traversability: TopicSpec(
+        TOPICS.traversability,
+        "OccupancyGrid",
+        "message.dds_types.nav.OccupancyGrid",
+        "lingtu.dds.OccupancyGrid",
+        "lingtu::dds::OccupancyGrid",
         ros_compatible=False,
     ),
     TOPICS.cmd_vel: TopicSpec(

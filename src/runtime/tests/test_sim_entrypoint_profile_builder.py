@@ -12,19 +12,17 @@ def test_sim_runtime_entrypoints_use_profile_builder() -> None:
         "sim/scripts/run_semantic_full_stack.py",
         "sim/scripts/policy_nav_smoke.py",
         "sim/scripts/record_policy_nav_video.py",
-        "sim/scripts/cmu_unity_lingtu_stack.py",
         "sim/validation/full_system.py",
     ):
         text = (ROOT / rel_path).read_text(encoding="utf-8-sig")
 
-        assert "runtime.blueprints.full_stack" not in text
-        assert "full_stack_blueprint(" not in text
         assert "build_system_for_profile" in text
 
 
-def test_multi_robot_blueprint_uses_profile_selector() -> None:
-    text = (ROOT / "src/runtime/blueprints/multi_robot.py").read_text(encoding="utf-8-sig")
+def test_cmu_unity_stack_entrypoint_is_deprecated_shim() -> None:
+    text = (ROOT / "sim/scripts/cmu_unity_lingtu_stack.py").read_text(
+        encoding="utf-8-sig"
+    )
 
-    assert "runtime.blueprints.full_stack" not in text
-    assert "full_stack_blueprint(" not in text
-    assert "blueprint_for_resolved_profile" in text
+    assert "runtime was removed" in text.lower()
+    assert "native simulation stack" in text.lower()

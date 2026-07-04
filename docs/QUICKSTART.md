@@ -163,7 +163,7 @@ lingtu nav --no-semantic           # geometric only
 ## MCP
 
 ```bash
-codex mcp add --transport http lingtu http://192.168.66.190:8090/mcp
+codex mcp add --transport http lingtu http://192.168.66.13:8090/mcp
 ```
 
 `MCPServerModule` auto-discovers `@skill` methods from every module in

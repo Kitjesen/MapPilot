@@ -76,6 +76,13 @@ def test_fastlio_live_gate_defaults_to_mature_mujoco_lidar_backend() -> None:
     assert args.localization_backend == ""
 
 
+def test_product_mujoco_runtime_enables_realistic_lidar_returns() -> None:
+    text = Path("src/drivers/sim/mujoco/runtime.py").read_text(encoding="utf-8")
+
+    assert "add_noise=True" in text
+    assert "mid360_npy_path=str(pattern_path)" in text
+
+
 def test_fastlio_live_gate_removes_portable_lio_backend() -> None:
     from sim.scripts.mujoco_live_gate import _build_parser
 
@@ -524,8 +531,6 @@ def test_fastlio_live_gate_does_not_import_unused_stack_builders() -> None:
     assert "build_fastlio2_inspection_stack" not in text
     assert "build_fastlio2_frontier_stack(" not in text
     assert "build_fastlio2_tare_stack(" not in text
-    assert "full_stack_blueprint(" not in text
-    assert "full_stack_blueprint(" not in stack
     assert "build_system_for_profile" in stack
     assert "occupancy_raycast_free_space=True" in stack
     assert 'robot="sim_endpoint"' in stack
@@ -586,3 +591,51 @@ def test_mid360_pattern_sampler_advances_and_wraps() -> None:
     np.testing.assert_allclose(second[1], [0, 0, 1], atol=1e-6)
     np.testing.assert_allclose(second[2], [1, 0, 0], atol=1e-6)
     assert lidar._ray_cursor == 1
+
+
+def test_lidar_return_model_uses_distance_weighted_intensity() -> None:
+    lidar = MuJoCoLidar.__new__(MuJoCoLidar)
+    lidar._config = SimpleNamespace(
+        add_noise=False,
+        range_min=0.1,
+        range_max=70.0,
+        pixel_dropout_prob=0.0,
+        distance_dropout_prob_at_max=0.0,
+        intensity_base=180.0,
+        intensity_range_scale_m=25.0,
+        intensity_noise_std=0.0,
+        intensity_min=1.0,
+        intensity_max=255.0,
+        site_name="lidar_site",
+    )
+    lidar._rng = np.random.default_rng(0)
+    lidar._mujoco_lidar = None
+    lidar._data = None
+    lidar._body_id = 0
+
+    cloud = lidar._points_with_return_model(
+        np.array([[1.0, 0.0, 0.0], [40.0, 0.0, 0.0]], dtype=np.float32)
+    )
+
+    assert cloud.shape == (2, 4)
+    assert cloud[0, 3] > cloud[1, 3]
+    assert not np.allclose(cloud[:, 3], 100.0)
+
+
+def test_mid360_pattern_angle_noise_keeps_theta_wrapped() -> None:
+    lidar = MuJoCoLidar.__new__(MuJoCoLidar)
+    lidar._config = SimpleNamespace(
+        samples_per_frame=4,
+        add_noise=True,
+        angle_noise_std_rad=0.01,
+    )
+    lidar._ray_angles = np.array([[0.0, 0.1], [6.2, 0.2]], dtype=np.float32)
+    lidar._ray_cursor = 0
+    lidar._rng = np.random.default_rng(0)
+
+    theta, phi = lidar._next_pattern_angles()
+
+    assert theta.shape == (4,)
+    assert phi.shape == (4,)
+    assert np.all(theta >= 0.0)
+    assert np.all(theta <= 2.0 * np.pi)

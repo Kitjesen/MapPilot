@@ -35,7 +35,7 @@ Expected S100P paths:
 Build or refresh Super-LIO on the robot:
 
 ```bash
-ssh sunrise@192.168.66.190
+ssh sunrise@192.168.66.13
 mkdir -p /home/sunrise/data/inovxio
 cd /home/sunrise/data/inovxio/super-lio
 git fetch --all --tags
@@ -65,15 +65,15 @@ cd /home/sunrise/data/inovxio/lingtu
 scp scripts/deploy/s100p/super_lio.service \
     scripts/deploy/s100p/super_lio_relocation.service \
     scripts/deploy/s100p/install_services.sh \
-    sunrise@192.168.66.190:/tmp/
-ssh sunrise@192.168.66.190 'bash /tmp/install_services.sh /tmp'
+    sunrise@192.168.66.13:/tmp/
+ssh sunrise@192.168.66.13 'bash /tmp/install_services.sh /tmp'
 ```
 
 There are two installer lanes:
 
 | Installer | Scope | Super-LIO behavior |
 | --- | --- | --- |
-| `docs/04-deployment/services/install.sh` | production immutable service set | does not install Super-LIO yet |
+| `docs/04-deployment/services/install.sh` | legacy ROS2 service set, guarded by `LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1` | does not install Super-LIO |
 | `scripts/deploy/s100p/install_services.sh` | developer and field-evaluation SLAM services | installs `super_lio` and `super_lio_relocation`, plus `robot-super-lio*` aliases |
 
 Do not move Super-LIO into the production installer or `lingtu.target` until the
@@ -363,7 +363,7 @@ route-level drift/recovery validation is still required before promotion.
 
 ## 2026-05-04 Non-Motion Gate Evidence
 
-Robot: `sunrise@192.168.66.190`.
+Robot: `sunrise@192.168.66.13`.
 
 Active map:
 
@@ -737,12 +737,12 @@ For routine status inspection:
 ```bash
 cd ~/data/SLAM/navigation
 bash scripts/lingtu status
-bash scripts/lingtu svc status
+bash scripts/lingtu svc status-legacy
 ```
 
 Expected service-level signs:
 
-- `super_lio` appears in `scripts/lingtu svc status`.
+- `super_lio` appears in `scripts/lingtu svc status-legacy`.
 - Super-LIO mode should not require `robot-localizer` to be the active
   localization source.
 - `scripts/lingtu status` should show live SLAM/localization data instead of

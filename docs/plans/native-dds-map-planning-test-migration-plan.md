@@ -11,7 +11,7 @@ DDS 也还不能说全部完成：
 | Livox -> DDS | C++ `sdk2_stream` 已发布 `LivoxFrame / raw_packet / Imu` | 需要板子上长期跑包率、点数、时间戳验收 |
 | DDS -> SLAM | C++ `cyclone_runtime.cpp` 已订阅 Livox/IMU，发布 odom/cloud/status | 需要真实 Fast-LIO2 live mapping 稳定性验收 |
 | SLAM -> Gateway/Map | Gateway 能读状态和地图点云；MapService 能保存/导入/构建 artifact | 大点云/地图快照仍要做长期压力测试 |
-| Nav DDS endpoint | C++ `lingtu_nav_cyclone_endpoint` 已有 goal/cancel/instruction 输入和 path/cmd_vel 输出桥 | 还没成为现场默认导航 endpoint |
+| Nav DDS endpoint | C++ `lingtu_nav_native_endpoint` is now the field endpoint for `goal/odometry/registered_cloud/traversability -> OctoPlanner3D -> global_path -> local_path -> cmd_vel`; old Gateway-polling `lingtu_nav_cyclone_endpoint` was removed | Needs target-board build and live DDS route validation |
 | Local planner | C++ core + Python Module 包装已存在 | 还不是独立 C++ DDS runtime |
 | Global planner | OctoPlanner3D 是默认主全局规划器 | 还缺真 `octomap.ot` 上的 no-motion preview 验收 |
 

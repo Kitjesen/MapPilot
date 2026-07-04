@@ -3,8 +3,8 @@
 Wraps sim/engine/mujoco/engine.py directly in-process.
 No TCP bridge, no separate process. Data flows through In/Out ports.
 
-Provides: odometry, lidar_cloud, map_cloud, height_rays, camera_image,
-depth_image, imu-state evidence
+Provides: odometry, lidar_cloud, map_cloud, imu, height_rays, camera_image,
+depth_image
 Consumes: cmd_vel, stop_signal
 
 Usage::
@@ -31,21 +31,29 @@ from runtime.module import Module
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
-from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, PointCloud2
+from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, Imu, PointCloud2
 from runtime.registry import register
 from runtime.runtime_interface import FRAMES, TOPICS, topic_default_frame_id
 from runtime.stream import In, Out
+from message.livox_frame import POINT_DTYPE, LivoxPointFrame
 
 logger = logging.getLogger(__name__)
 
 # Resolve sim/ directory relative to this file
 _SIM_ROOT = Path(__file__).resolve().parents[4] / "sim"
 _WORLDS_DIR = _SIM_ROOT / "worlds" / "mujoco"
-_THUNDER_MJCF = _SIM_ROOT / "assets" / "mjcf" / "thunder_v3_lingtu.xml"
+_THUNDER_MJCF = _SIM_ROOT / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
+_THUNDERV4_POLICY = (
+    _SIM_ROOT
+    / "robots"
+    / "thunderv4"
+    / "policy"
+    / "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
+)
 _LEGACY_ROBOTS_DIR = _SIM_ROOT / "robots" / "nova_dog"
 _ROBOT_XML = _THUNDER_MJCF
 _BRAINSTEM_POLICY_NAME = "policy_251119.onnx"
-_POLICY_CANDIDATES = (
+_EXPLICIT_POLICY_CANDIDATES = (
     _LEGACY_ROBOTS_DIR / "model" / _BRAINSTEM_POLICY_NAME,
     _SIM_ROOT.parent / "model" / _BRAINSTEM_POLICY_NAME,
     _SIM_ROOT.parent.parent / "brainstem" / "model" / _BRAINSTEM_POLICY_NAME,
@@ -55,13 +63,16 @@ _POLICY_CANDIDATES = (
     # Legacy 76-D policy kept last: it needs its original observation contract.
     _LEGACY_ROBOTS_DIR / "thunder_policy.onnx",
 )
-_POLICY_ONNX = _POLICY_CANDIDATES[-1]
+_POLICY_CANDIDATES: tuple[Path, ...] = (_THUNDERV4_POLICY,)
+_POLICY_ONNX = _EXPLICIT_POLICY_CANDIDATES[-1]
 _DEFAULT_START_POS = (0.0, 0.0, 0.55)
 MUJOCO_MODULE_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
 MUJOCO_MODULE_BODY_FRAME_ID = topic_default_frame_id(TOPICS.registered_cloud)
 # In-process MuJoCo does not own a map->odom localizer; its live map cloud is odom-frame.
 MUJOCO_MODULE_MAP_CLOUD_FRAME_ID = MUJOCO_MODULE_ODOM_FRAME_ID
 MUJOCO_MODULE_CAMERA_FRAME_ID = FRAMES.camera
+MUJOCO_MODULE_IMU_FRAME_ID = topic_default_frame_id(TOPICS.imu)
+MUJOCO_MODULE_LIDAR_FRAME_ID = topic_default_frame_id(TOPICS.lidar_scan)
 _NUMPY_RUNTIME_AVAILABLE: bool | None = None
 
 
@@ -174,12 +185,65 @@ def _world_points_to_body_frame(
     return cloud
 
 
+def _world_points_to_lidar_frame(
+    points: np.ndarray,
+    engine: Any,
+    position_xyz: np.ndarray,
+    orientation_xyzw: np.ndarray,
+) -> np.ndarray:
+    cloud = np.asarray(points, dtype=np.float32).copy()
+    if cloud.ndim != 2 or cloud.shape[1] < 3:
+        return cloud
+    try:
+        import mujoco
+
+        model = getattr(engine, "_model", None)
+        data = getattr(engine, "_data", None)
+        site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar_site")
+        if site_id >= 0:
+            pos = np.asarray(data.site_xpos[site_id], dtype=float).reshape(3)
+            rot = np.asarray(data.site_xmat[site_id], dtype=float).reshape(3, 3)
+            cloud[:, :3] = ((cloud[:, :3].astype(float) - pos) @ rot).astype(np.float32)
+            return cloud
+    except Exception:
+        pass
+    return _world_points_to_body_frame(cloud, position_xyz, orientation_xyzw)
+
+
+def _xyzi_to_livox_frame(
+    points: np.ndarray,
+    *,
+    timestamp_ns: int,
+    sequence: int,
+    frame_id: str,
+    scan_duration_ns: int,
+) -> LivoxPointFrame:
+    xyzi = np.asarray(points, dtype=np.float32)
+    count = 0 if xyzi.ndim != 2 else int(xyzi.shape[0])
+    raw = np.zeros(count, dtype=POINT_DTYPE)
+    if count:
+        raw["x"] = xyzi[:, 0]
+        raw["y"] = xyzi[:, 1]
+        raw["z"] = xyzi[:, 2]
+        raw["intensity"] = xyzi[:, 3] if xyzi.shape[1] >= 4 else 0.0
+        raw["offset_time_ns"] = np.linspace(
+            0,
+            max(0, int(scan_duration_ns) - 1),
+            count,
+            dtype=np.uint32,
+        )
+    frame = LivoxPointFrame(points=raw, timestamp_ns=int(timestamp_ns), sequence=int(sequence))
+    frame.frame_id = str(frame_id)
+    return frame
+
+
 # Known worlds
 WORLDS = {
     "building": "building_scene.xml",
     "building_scene": "building_scene.xml",
     "factory": "factory_scene.xml",
     "factory_scene": "factory_scene.xml",
+    "flat_showcase": "flat_showcase.xml",
     "industrial_park": "industrial_park_scene.xml",
     "industrial_park_scene": "industrial_park_scene.xml",
     "industrial_demo": "industrial_demo_scene.xml",
@@ -187,6 +251,8 @@ WORLDS = {
     "open_field": "open_field.xml",
     "spiral": "spiral_terrain.xml",
     "spiral_terrain": "spiral_terrain.xml",
+    "stair_showcase": "thunderv4_stair_showcase.xml",
+    "thunderv4_stair_showcase": "thunderv4_stair_showcase.xml",
 }
 
 
@@ -207,6 +273,8 @@ class MujocoDriverModule(Module, layer=1):
     odometry: Out[Odometry]
     lidar_cloud: Out[PointCloud2]
     map_cloud: Out[PointCloud2]
+    raw_scan: Out[Any]
+    imu: Out[Imu]
     camera_image: Out[Image]
     depth_image: Out[Image]
     camera_info: Out[CameraIntrinsics]
@@ -228,6 +296,7 @@ class MujocoDriverModule(Module, layer=1):
         start_pos: tuple = _DEFAULT_START_POS,
         obstacles: list | None = None,
         odom_frame_id: str = MUJOCO_MODULE_ODOM_FRAME_ID,
+        map_cloud_frame_id: str = MUJOCO_MODULE_MAP_CLOUD_FRAME_ID,
         child_frame_id: str = MUJOCO_MODULE_BODY_FRAME_ID,
         lidar_publish_every: int = 5,
         height_ray_publish_every: int = 5,
@@ -256,6 +325,7 @@ class MujocoDriverModule(Module, layer=1):
         self._start_pos = start_pos
         self._obstacles = obstacles or []
         self._odom_frame_id = odom_frame_id
+        self._map_cloud_frame_id = map_cloud_frame_id
         self._child_frame_id = child_frame_id
         self._lidar_publish_every = max(1, int(lidar_publish_every))
         self._height_ray_publish_every = max(1, int(height_ray_publish_every))
@@ -318,7 +388,9 @@ class MujocoDriverModule(Module, layer=1):
                 else list(self._start_pos)
             )
             robot_cfg.init_position = [float(v) for v in start_pos[:3]]
-            if self._drive_mode == "policy" and self._policy_path:
+            if self._drive_mode == "kinematic":
+                robot_cfg.policy_onnx = ""
+            elif self._policy_path:
                 robot_cfg.policy_onnx = self._policy_path
 
             from sim.engine.core.world import ObstacleConfig
@@ -461,6 +533,23 @@ class MujocoDriverModule(Module, layer=1):
                     child_frame_id=self._child_frame_id,
                 ))
 
+                gyro = np.asarray(getattr(state, "imu_gyro", (0.0, 0.0, 0.0)), dtype=float)
+                accel = np.asarray(
+                    getattr(state, "imu_linear_acceleration", (0.0, 0.0, 0.0)),
+                    dtype=float,
+                )
+                self.imu.publish(Imu(
+                    orientation=Quaternion(
+                        float(quat[0]), float(quat[1]),
+                        float(quat[2]), float(quat[3])),
+                    angular_velocity=Vector3(
+                        float(gyro[0]), float(gyro[1]), float(gyro[2])),
+                    linear_acceleration=Vector3(
+                        float(accel[0]), float(accel[1]), float(accel[2])),
+                    ts=ts,
+                    frame_id=MUJOCO_MODULE_IMU_FRAME_ID,
+                ))
+
                 # Publish LiDAR (default every 5th step = ~10 Hz). Nav-only
                 # gates can raise this interval after the first scan so heavy
                 # raycasting does not starve the motion loop.
@@ -474,6 +563,23 @@ class MujocoDriverModule(Module, layer=1):
                                 state.position,
                                 state.orientation,
                             )
+                            pts_lidar = _world_points_to_lidar_frame(
+                                pts_world,
+                                self._engine,
+                                state.position,
+                                state.orientation,
+                            )
+                            scan_duration_s = (
+                                self._lidar_publish_every
+                                / max(float(self._sim_rate), 1e-6)
+                            )
+                            self.raw_scan.publish(_xyzi_to_livox_frame(
+                                pts_lidar,
+                                timestamp_ns=int(max(0.0, ts - scan_duration_s) * 1_000_000_000),
+                                sequence=step_count // self._lidar_publish_every,
+                                frame_id=MUJOCO_MODULE_LIDAR_FRAME_ID,
+                                scan_duration_ns=int(1_000_000_000 * scan_duration_s),
+                            ))
                             self.lidar_cloud.publish(PointCloud2(
                                 points=pts_body,
                                 frame_id=MUJOCO_MODULE_BODY_FRAME_ID,
@@ -481,7 +587,7 @@ class MujocoDriverModule(Module, layer=1):
                             ))
                             world_cloud = PointCloud2(
                                 points=pts_world,
-                                frame_id=MUJOCO_MODULE_MAP_CLOUD_FRAME_ID,
+                                frame_id=self._map_cloud_frame_id,
                                 ts=ts,
                             )
                             self.map_cloud.publish(world_cloud)

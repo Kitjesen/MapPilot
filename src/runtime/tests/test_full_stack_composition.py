@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 from runtime.blueprints.stacks.composition import compose_full_stack_modules
 from runtime.blueprints.stacks.system import gnss
 
@@ -309,8 +309,8 @@ def test_gnss_stack_can_use_device_manager_bridge_explicitly(monkeypatch) -> Non
     assert bridge_config["device_id"] == "wtrtk980_main"
 
 
-def test_full_stack_blueprint_keeps_wiring_outside_stack_composition() -> None:
-    bp = full_stack_blueprint(
+def test_product_blueprint_keeps_wiring_outside_stack_composition() -> None:
+    bp = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         detector="yoloe",

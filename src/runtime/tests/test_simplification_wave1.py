@@ -188,6 +188,23 @@ class TestW1TerrainNoFallback(unittest.TestCase):
         self.assertTrue(terrain._backend_status.degraded)
         self.assertIn("LingTu native navigation kernel", terrain._backend_status.degraded_reason)
 
+    def test_strict_nanobind_backend_fails_when_nav_kernel_missing(self):
+        from nav.local import terrain as mod
+        terrain = mod.Terrain(backend="nanobind", strict_native=True)
+        with mock.patch.object(
+            mod,
+            "create_nanobind_terrain_backend",
+            side_effect=RuntimeError(
+                "Terrain [nanobind]: compatible LingTu native navigation kernel not found"
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Rebuild the native kernel"):
+                terrain._setup_nanobind()
+
+        self.assertEqual(terrain._backend, "nanobind")
+        self.assertIsNone(terrain._core)
+        self.assertFalse(terrain._backend_status.degraded)
+
     def test_nanobind_backend_requires_terrain_symbols(self):
         from nav.local.terrain_backend import (
             create_nanobind_terrain_backend,

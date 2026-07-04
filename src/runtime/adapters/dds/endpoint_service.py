@@ -15,7 +15,7 @@ from runtime.adapters.dds.localization_adapter import (
     _from_dds_odometry,
     _from_dds_pointcloud2,
 )
-from runtime.adapters.dds.nav import _from_dds_pose_stamped, _from_dds_string
+from runtime.adapters.dds.codec import from_dds_pose_stamped, from_dds_string
 from runtime.adapters.dds.contracts import (
     THUNDER_FIELD_DDS_CONTRACT_NAME,
     DDSEndpointBinding,
@@ -23,7 +23,7 @@ from runtime.adapters.dds.contracts import (
     endpoint_contract,
 )
 from runtime.msgs.geometry import PoseStamped, Twist
-from runtime.msgs.nav import Odometry, Path
+from runtime.msgs.nav import OccupancyGrid, Odometry, Path
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
@@ -339,6 +339,51 @@ def _to_dds_pointcloud2(cloud: PointCloud2) -> Any:
     )
 
 
+def _to_dds_occupancy_grid(grid: OccupancyGrid | Mapping[str, Any]) -> Any:
+    dds_mod = _dds()
+    if isinstance(grid, OccupancyGrid):
+        payload = grid.to_dict()
+    elif isinstance(grid, Mapping):
+        payload = dict(grid)
+    else:
+        raise TypeError(
+            f"traversability expects OccupancyGrid or dict, got {type(grid).__name__}"
+        )
+
+    values = np.asarray(payload.get("grid"), dtype=np.int16)
+    if values.ndim != 2:
+        values = np.zeros((0, 0), dtype=np.int16)
+    height, width = values.shape
+    origin = payload.get("origin")
+    if isinstance(origin, Mapping):
+        origin_xy = (
+            float(origin.get("x", 0.0)),
+            float(origin.get("y", 0.0)),
+        )
+    elif origin is not None:
+        origin_xy = (float(origin[0]), float(origin[1]))
+    else:
+        origin_xy = (
+            float(payload.get("origin_x") or 0.0),
+            float(payload.get("origin_y") or 0.0),
+        )
+    ts = float(payload.get("ts") or time.time())
+    return dds_mod.DDS_OccupancyGrid(
+        header=_to_dds_header(str(payload.get("frame_id") or "map"), ts),
+        info=dds_mod.DDS_MapMetaData(
+            map_load_time=_to_dds_time(ts),
+            resolution=float(payload.get("resolution") or 0.0),
+            width=int(width),
+            height=int(height),
+            origin=dds_mod.DDS_Pose(
+                position=dds_mod.DDS_Point(x=origin_xy[0], y=origin_xy[1], z=0.0),
+                orientation=dds_mod.DDS_Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
+        data=np.clip(values, -1, 100).astype(np.int8).reshape(-1).tolist(),
+    )
+
+
 def _to_dds_imu(imu: Imu) -> Any:
     from message import dds_types
 
@@ -358,6 +403,8 @@ def _to_dds_livox_custom_msg(scan: Any) -> Any:
 
     if hasattr(scan, "timebase") and hasattr(scan, "points"):
         return scan
+    if hasattr(scan, "timestamp_ns") and hasattr(scan, "points"):
+        return dds_types.livox_frame_to_msg(scan)
     if not isinstance(scan, PointCloud2):
         raise TypeError(f"lidar_scan expects LivoxCustomMsg or PointCloud2, got {type(scan).__name__}")
 
@@ -434,6 +481,8 @@ def _to_dds_message(topic: str, msg: Any) -> Any:
         return _to_dds_livox_custom_msg(msg)
     if topic in {TOPICS.registered_cloud, TOPICS.map_cloud, TOPICS.saved_map_cloud}:
         return _to_dds_pointcloud2(msg)
+    if topic == TOPICS.traversability:
+        return _to_dds_occupancy_grid(msg)
     if topic == TOPICS.odometry:
         return _to_dds_odometry(msg)
     if topic == TOPICS.imu:
@@ -457,6 +506,36 @@ def _from_dds_twist_stamped(msg: Any) -> Twist:
     )
 
 
+def _from_dds_occupancy_grid(msg: Any) -> dict[str, Any]:
+    width = int(getattr(msg.info, "width", 0))
+    height = int(getattr(msg.info, "height", 0))
+    values = np.asarray(list(getattr(msg, "data", []) or []), dtype=np.int16)
+    if width > 0 and height > 0 and values.size >= width * height:
+        grid = values[: width * height].reshape((height, width)).astype(np.int16)
+    else:
+        grid = np.zeros((0, 0), dtype=np.int16)
+    origin = getattr(msg.info, "origin", None)
+    position = getattr(origin, "position", None)
+    return {
+        "grid": grid.tolist(),
+        "resolution": float(getattr(msg.info, "resolution", 0.0)),
+        "origin": [
+            float(getattr(position, "x", 0.0)),
+            float(getattr(position, "y", 0.0)),
+        ],
+        "frame_id": str(getattr(msg.header, "frame_id", "") or "map"),
+        "ts": _stamp_to_seconds(getattr(msg.header, "stamp", None)),
+        "width": width,
+        "height": height,
+    }
+
+
+def _stamp_to_seconds(stamp: Any) -> float:
+    return float(getattr(stamp, "sec", 0.0)) + float(
+        getattr(stamp, "nanosec", 0.0)
+    ) * 1e-9
+
+
 def _to_vector3(value: Any) -> Any:
     from runtime.msgs.geometry import Vector3
 
@@ -475,15 +554,17 @@ def _from_dds_message(topic: str, msg: Any) -> Any:
     if topic in {TOPICS.global_path, TOPICS.local_path}:
         return msg
     if topic == TOPICS.nav_way_point:
-        return _from_dds_pose_stamped(msg, topic_default_frame_id(TOPICS.nav_way_point))
+        return from_dds_pose_stamped(msg, topic_default_frame_id(TOPICS.nav_way_point))
     if topic == TOPICS.cmd_vel:
         return _from_dds_twist_stamped(msg)
     if topic == TOPICS.goal_pose:
-        return _from_dds_pose_stamped(msg, topic_default_frame_id(TOPICS.goal_pose))
+        return from_dds_pose_stamped(msg, topic_default_frame_id(TOPICS.goal_pose))
     if topic in {TOPICS.cancel, TOPICS.semantic_instruction}:
-        return _from_dds_string(msg)
+        return from_dds_string(msg)
     if topic == TOPICS.odometry:
         return _from_dds_odometry(msg)
     if topic in {TOPICS.registered_cloud, TOPICS.map_cloud, TOPICS.saved_map_cloud}:
         return _from_dds_pointcloud2(msg)
+    if topic == TOPICS.traversability:
+        return _from_dds_occupancy_grid(msg)
     return msg

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from runtime.blueprint import Blueprint
-from runtime.blueprints.profile_graph import WireEdge, blueprint_for_profile, graph_for_profile
+from runtime.introspection.profile_graph import WireEdge, blueprint_for_profile, graph_for_profile
 from runtime.blueprints.wires.types import WireSpec
 from runtime.module import Module
 from runtime.stream import In, Out

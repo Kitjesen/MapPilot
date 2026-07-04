@@ -91,6 +91,7 @@ def add_autonomy_stack(
     backend: str = "nanobind",
     terrain_backend: str | None = None,
     path_follower_backend: str = "nav_kernel",
+    terrain_config: dict[str, Any] | None = None,
     local_planner_config: dict[str, Any] | None = None,
     **kw,
 ) -> Blueprint:
@@ -116,7 +117,12 @@ def add_autonomy_stack(
     LocalPlannerCls = _module_for_backend("local_planner", backend)
     PathFollowerCls = _module_for_backend("path_follower", path_follower_backend)
 
-    bp.add(TerrainCls, alias="nav.terrain", backend=terrain_key)
+    bp.add(
+        TerrainCls,
+        alias="nav.terrain",
+        backend=terrain_key,
+        **(terrain_config or {}),
+    )
     bp.add(
         LocalPlannerCls,
         alias="nav.local_planner",

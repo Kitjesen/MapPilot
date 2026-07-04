@@ -8,13 +8,14 @@ Type=simple
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
 Environment=LINGTU_LIVOX_BIN=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream
-Environment=LINGTU_LIVOX_CONFIG=/opt/lingtu/current/src/drivers/real/lidar/Livox-SDK2/samples/livox_lidar_quick_start/mid360_config.json
+Environment=LINGTU_LIVOX_CONFIG_DIR=/opt/lingtu/config/livox
+Environment=LINGTU_LIVOX_NET_IFACE=eth1
 Environment=LINGTU_LIVOX_LIDAR_FRAME=livox_frame
 Environment=LINGTU_LIVOX_IMU_FRAME=imu_link
 Environment=LINGTU_LIVOX_SCAN_HZ=10
 Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_CYCLONEDDS_PREFIX=
-ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh; if [ -n "${LINGTU_CYCLONEDDS_PREFIX}" ] && [ -d "${LINGTU_CYCLONEDDS_PREFIX}/lib" ]; then export LD_LIBRARY_PATH="${LINGTU_CYCLONEDDS_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; fi; if [ ! -x "${LINGTU_LIVOX_BIN}" ]; then echo "ERROR: native Livox DDS publisher is missing or not executable: ${LINGTU_LIVOX_BIN}" >&2; echo "Build it with: LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON bash scripts/build/build_livox_sdk2_stream.sh" >&2; exit 2; fi; exec "${LINGTU_LIVOX_BIN}" --dds --domain-id "${LINGTU_DDS_DOMAIN_ID}" --publish-freq "${LINGTU_LIVOX_SCAN_HZ}" --lidar-frame "${LINGTU_LIVOX_LIDAR_FRAME}" --imu-frame "${LINGTU_LIVOX_IMU_FRAME}" "${LINGTU_LIVOX_CONFIG}"'
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_livox_dds.sh
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

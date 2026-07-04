@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 
 
 def _has_connection(system, out_mod: str, out_port: str, in_mod: str, in_port: str) -> bool:
@@ -11,7 +11,7 @@ def _has_connection(system, out_mod: str, out_port: str, in_mod: str, in_port: s
 
 
 def test_non_native_navigation_uses_python_autonomy_chain():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         enable_native=False,

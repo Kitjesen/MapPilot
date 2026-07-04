@@ -135,6 +135,30 @@ def test_livox_raw_frame_round_trips_through_registered_dds_payload(monkeypatch)
     assert int(roundtrip.points["offset_time_ns"][0]) == 123
 
 
+def test_dds_endpoint_service_accepts_livox_point_frame() -> None:
+    from runtime.adapters.dds.endpoint_service import _to_dds_livox_custom_msg
+
+    points = np.zeros(1, dtype=POINT_DTYPE)
+    points["x"] = [1.0]
+    points["y"] = [2.0]
+    points["z"] = [3.0]
+    points["intensity"] = [42.0]
+    points["offset_time_ns"] = [123]
+    points["line"] = [2]
+    points["tag"] = [7]
+    frame = LivoxPointFrame(points=points, timestamp_ns=1_000_000_000, sequence=5)
+    frame.frame_id = "lidar_link"
+
+    msg = _to_dds_livox_custom_msg(frame)
+
+    assert msg.header.frame_id == "lidar_link"
+    assert msg.timebase == 1_000_000_000
+    assert msg.point_num == 1
+    assert msg.points[0].offset_time == 123
+    assert msg.points[0].line == 2
+    assert msg.points[0].tag == 7
+
+
 def test_livox_dds_contract_does_not_import_driver_layer() -> None:
     import message.dds_types.livox as livox_contract
 

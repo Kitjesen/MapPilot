@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import ast
-import sys
-import types
 import unittest
 from pathlib import Path
 
@@ -37,19 +35,12 @@ def test_robot_nav_uses_product_profile_builder(monkeypatch):
     captured: dict[str, object] = {}
     fake_system = _FakeSystem()
 
-    fake_full_stack = types.ModuleType("runtime.blueprints.full_stack")
-
-    def fail_full_stack_blueprint(**kwargs):
-        raise AssertionError("Robot SDK should not use full_stack for product profiles")
-
     def fake_thunder_blueprint(config=None, **overrides):
         resolved = dict(config or {})
         resolved.update(overrides)
         captured["config"] = resolved
         return _FakeBuilder(fake_system)
 
-    fake_full_stack.full_stack_blueprint = fail_full_stack_blueprint
-    monkeypatch.setitem(sys.modules, "runtime.blueprints.full_stack", fake_full_stack)
     monkeypatch.setattr(products_mod, "thunder_blueprint", fake_thunder_blueprint)
 
     robot = Robot("nav", llm="mock").start()
@@ -88,7 +79,7 @@ def test_robot_start_uses_local_runtime_boundary(monkeypatch):
     })
 
 
-def test_robot_facade_does_not_import_full_stack_directly():
+def test_robot_facade_uses_lingtu_runtime_boundary():
     case = unittest.TestCase()
     root = Path(__file__).resolve().parents[3]
     path = root / "src" / "lingtu" / "robot.py"
@@ -100,6 +91,5 @@ def test_robot_facade_does_not_import_full_stack_directly():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.add(node.module)
 
-    case.assertNotIn("runtime.blueprints.full_stack", imports)
     case.assertNotIn("runtime.blueprints.profile_builder", imports)
     case.assertNotIn("runtime.profiles.resolver", imports)

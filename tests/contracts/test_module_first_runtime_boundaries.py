@@ -18,7 +18,6 @@ CORE_RUNTIME_BOUNDARY_SOURCES = {
     "runtime_endpoint_config": SRC / "runtime" / "profiles" / "endpoint_config.py",
     "runtime_catalog": SRC / "runtime" / "profiles" / "catalog",
     "runtime_endpoints": SRC / "runtime" / "profiles" / "endpoints.py",
-    "runtime_endpoint_compat_facade": SRC / "runtime" / "blueprints" / "runtime_endpoint.py",
 }
 
 RUNTIME_MODEL_OWNER_SOURCES = {
@@ -79,16 +78,6 @@ LCM_EXTERNAL_ADAPTER_SOURCES = {
     / "adapters"
     / "lcm"
     / "localization_adapter.py",
-    "lcm_nav_input_adapter": SRC
-    / "runtime"
-    / "adapters"
-    / "lcm"
-    / "nav_input.py",
-    "lcm_nav_output_adapter": SRC
-    / "runtime"
-    / "adapters"
-    / "lcm"
-    / "nav_output.py",
 }
 
 BASE_AUTONOMY_BACKEND_ADAPTER_SOURCES = {
@@ -152,17 +141,10 @@ STACK_COMPOSITION_SOURCES_WITH_ADAPTER_BOUNDARY = {
     "maps_stack": SRC / "runtime" / "blueprints" / "stacks" / "maps.py",
     "navigation_stack": SRC / "runtime" / "blueprints" / "stacks" / "navigation.py",
     "perception_stack": SRC / "runtime" / "blueprints" / "stacks" / "perception.py",
-    "slam_stack": SRC / "runtime" / "blueprints" / "stacks" / "localization.py",
+    "slam_stack": SRC / "runtime" / "blueprints" / "stacks" / "slam.py",
 }
 
-EXPLICIT_COMPATIBILITY_FACADES = {
-    SRC / "runtime" / "blueprints" / "runtime_endpoint.py": (
-        "runtime.profiles.endpoints",
-    ),
-    SRC / "runtime" / "blueprints" / "catalog" / "endpoints.py": (
-        "runtime.profiles.catalog.endpoints",
-    ),
-}
+EXPLICIT_COMPATIBILITY_FACADES = {}
 
 CANONICAL_COMPATIBILITY_TARGETS = (
     SRC / "nav" / "adapters" / "ros2" / "tare_bridge.py",
@@ -174,6 +156,8 @@ REMOVED_COMPATIBILITY_FACADE_PATHS = (
     SRC / "semantic" / "reconstruction" / "bag_reader.py",
     SRC / "perception" / "perception_publishers.py",
     SRC / "perception" / "reconstruction" / "bag_reader.py",
+    SRC / "runtime" / "blueprints" / "runtime_endpoint.py",
+    SRC / "runtime" / "blueprints" / "catalog",
 )
 
 

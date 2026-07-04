@@ -115,6 +115,7 @@ set(NAV_KERNEL_SRC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(LOCAL_PLANNER_CPP_SRC "${NAV_KERNEL_SRC}/../services/plan/local_planner/cpp")
 add_subdirectory("${LOCAL_PLANNER_CPP_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/local_planner_cpp")
 set(NAV_KERNEL_BINDING_SOURCES
+  "${NAV_KERNEL_SRC}/src/path_follower_core.cpp"
   "${NAV_KERNEL_SRC}/bindings/bindings.cpp"
   "${NAV_KERNEL_SRC}/bindings/bind_types.cpp"
   "${NAV_KERNEL_SRC}/bindings/bind_map_layers.cpp"

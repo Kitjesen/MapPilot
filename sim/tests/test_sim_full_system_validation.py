@@ -58,7 +58,7 @@ def test_navigation_blueprint_validation_uses_static_profile_graph(monkeypatch):
     real_import = builtins.__import__
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "runtime.blueprints.full_stack":
+        if name == "runtime.blueprints.products.thunder":
             raise AssertionError(f"runtime blueprint import attempted: {name}")
         return real_import(name, globals, locals, fromlist, level)
 

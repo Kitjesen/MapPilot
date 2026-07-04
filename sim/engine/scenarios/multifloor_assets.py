@@ -427,7 +427,7 @@ def build_multifloor_assets(
         frame_id="map",
         artifacts={
             "map_pcd": {
-                "path": str(map_pcd),
+                "path": map_pcd.relative_to(out).as_posix(),
                 "sha256": map_sha,
                 "source_profile": "multifloor_synthetic_assets",
                 "data_source": "synthetic_multifloor_geometry",
@@ -436,7 +436,7 @@ def build_multifloor_assets(
                 "point_count": point_count,
             },
             "tomogram": {
-                "path": str(tomogram_path),
+                "path": tomogram_path.relative_to(out).as_posix(),
                 "sha256": tomogram_sha,
                 "source_map_sha256": map_sha,
                 "source_profile": "multifloor_synthetic_assets",

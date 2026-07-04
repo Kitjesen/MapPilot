@@ -51,9 +51,13 @@ def test_thunder_field_navigation_resolves_octoplanner3d_without_fallback_profil
     assert config["path_follower_lookahead"] == 0.35
     assert config["path_follower_max_speed"] == 0.20
     assert config["path_follower_min_speed"] == 0.08
-    assert config["octoplanner3d_robot_radius"] == 0.40
+    assert config["octoplanner3d_robot_radius"] == 0.25
     assert config["octoplanner3d_require_ground_support"] is True
-    assert config["octoplanner3d_ground_support_depth_cells"] == 6
+    assert config["octoplanner3d_strict_direct_ground_support"] is False
+    assert config["octoplanner3d_ground_support_xy_radius_cells"] == 1
+    assert config["octoplanner3d_ground_support_depth_cells"] == 1
+    assert config["octoplanner3d_max_step_height"] == 0.45
+    assert config["octoplanner3d_max_slope"] == 0.0
 
 
 def test_simulation_profile_uses_octoplanner3d_without_fallback_chain() -> None:

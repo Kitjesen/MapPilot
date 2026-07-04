@@ -217,6 +217,42 @@ class TestWaypointTracker(unittest.TestCase):
 
         self.assertEqual(status.event, EV_PATH_COMPLETE)
 
+    def test_dense_path_skips_all_reached_waypoints(self):
+        tracker = WaypointTracker(threshold=0.5)
+        tracker.reset(
+            [
+                np.array([0.0, 0.0, 0.0]),
+                np.array([0.2, 0.0, 0.0]),
+                np.array([0.4, 0.0, 0.0]),
+                np.array([2.0, 0.0, 0.0]),
+            ],
+            np.array([0.0, 0.0, 0.0]),
+        )
+
+        status = tracker.update(np.array([0.3, 0.0, 0.0]))
+
+        self.assertEqual(status.event, EV_WAYPOINT_REACHED)
+        self.assertEqual(status.wp_index, 3)
+        self.assertTrue(np.allclose(tracker.current_waypoint, [2.0, 0.0, 0.0]))
+
+    def test_tracker_prunes_to_nearest_forward_waypoint_after_jump(self):
+        tracker = WaypointTracker(threshold=0.5, search_window=5)
+        tracker.reset(
+            [
+                np.array([0.0, 0.0, 0.0]),
+                np.array([5.0, 0.0, 0.0]),
+                np.array([10.0, 0.0, 0.0]),
+                np.array([15.0, 0.0, 0.0]),
+            ],
+            np.array([0.0, 0.0, 0.0]),
+        )
+
+        status = tracker.update(np.array([9.8, 0.0, 0.0]))
+
+        self.assertEqual(status.event, EV_WAYPOINT_REACHED)
+        self.assertEqual(status.wp_index, 3)
+        self.assertTrue(np.allclose(tracker.current_waypoint, [15.0, 0.0, 0.0]))
+
 
 # ---------------------------------------------------------------------------
 # 2. GlobalPlanner

@@ -11,6 +11,7 @@ Run commands from the repository root unless a script says otherwise.
 | `build_ros_workspace.sh` | Build the ROS 2 compatibility workspace with `colcon`; skips legacy PCT ROS packages by default. |
 | `build_rust_kernels.py` | Build portable Rust kernels, including PCT, pose-graph, and camera-LiDAR optimizer artifacts. |
 | `build_vendored_pcl.sh` | Build a repo-local PCL install for either the OctoPlanner3D converter subset or the broader SLAM-native profile. |
+| `build_3d_bbs.sh` | Build the CPU-only 3D-BBS global relocalization library under `third_party/3d_bbs/install`. |
 | `build_octoplanner3d.sh` | Build the optional OctoPlanner3D headless global-planner executable. |
 | `clone_orbbec_ros2.sh` | Restore the local OrbbecSDK ROS2 driver source under `src/drivers/real/camera/OrbbecSDK_ROS2`. |
 | `build_orbbec_native.sh` | Build the no-ROS Orbbec SDK RGB-D stream executable used by `OrbbecNativeCameraModule`. |
@@ -25,6 +26,17 @@ ROS when `src/localization/slam/cpp` is used. It does need normal C++ libraries:
 Eigen3, PCL, and yaml-cpp. The script now checks those before CMake so a
 robot image fails with a clear dependency message instead of a half-built SLAM
 tree.
+
+Global saved-map relocalization additionally needs the CPU 3D-BBS library. Build
+it once before the SLAM core when no initial pose should be required:
+
+```bash
+bash scripts/build/build_3d_bbs.sh
+LINGTU_REQUIRE_BBS3D=ON bash scripts/build/build_slam_core.sh
+```
+
+The default install prefix is `third_party/3d_bbs/install`, and
+`build_slam_core.sh` passes that as `CPU_BBS3D_ROOT` automatically.
 
 ```bash
 bash scripts/build/build_slam_core.sh
@@ -67,12 +79,13 @@ Build the native navigation DDS boundary:
 bash scripts/build/build_nav_endpoint.sh
 ```
 
-That produces `build/nav_endpoint/lingtu_nav_cyclone_endpoint`. It subscribes
-to `rt/nav/goal_pose`, `rt/nav/cancel`, and `rt/nav/semantic/instruction`, calls
-the Gateway's canonical command APIs, then republishes Gateway's latest
-`global_path`, `local_path`, and muxed `cmd_vel` on native DDS topics. This
-replaces the field responsibility of the Python `nav.in` / `nav.out` DDS
-adapters.
+That produces `build/nav_endpoint/lingtu_nav_native_endpoint`. It subscribes
+to `rt/slam/odometry`, `rt/slam/registered_cloud`, `rt/nav/goal_pose`,
+`rt/nav/global_path`, and `rt/nav/cancel`. With `LINGTU_ACTIVE_OCTOMAP` set,
+goals call OctoPlanner3D in-process, then the C++ navigation loop publishes
+`rt/nav/global_path`, `rt/nav/local_path`, and `rt/nav/cmd_vel`. The older
+Gateway-polling `lingtu_nav_cyclone_endpoint` target was removed; use
+`lingtu_nav_native_endpoint` for robot-side navigation.
 
 The older `LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME=ON` target produces
 `lingtu_slam_dds_runtime`, which is C++ but still uses `rclcpp` and ROS 2

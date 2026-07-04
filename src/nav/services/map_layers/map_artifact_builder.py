@@ -297,14 +297,17 @@ class MapArtifactBuilder:
         else:
             tokens = [str(part) for part in converter_command]
 
+        pcd_arg = pcd_path.resolve()
+        octomap_arg = octomap_path.resolve()
+        map_dir_arg = pcd_path.parent.resolve()
         replacements = {
-            "input": str(pcd_path),
-            "output": str(octomap_path),
+            "input": str(pcd_arg),
+            "output": str(octomap_arg),
             "resolution": f"{float(self.config.resolution):g}",
             "free_layers_above": str(max(0, int(self.config.free_layers_above))),
             "free_dilation_cells": str(max(0, int(self.config.free_dilation_cells))),
             "frame": frame_id,
-            "map_dir": str(pcd_path.parent),
+            "map_dir": str(map_dir_arg),
         }
         has_placeholder = any("{" in token and "}" in token for token in tokens)
         if has_placeholder:
@@ -312,9 +315,9 @@ class MapArtifactBuilder:
         return [
             *tokens,
             "--input",
-            str(pcd_path),
+            str(pcd_arg),
             "--output",
-            str(octomap_path),
+            str(octomap_arg),
             "--resolution",
             f"{float(self.config.resolution):g}",
             "--free-layers-above",

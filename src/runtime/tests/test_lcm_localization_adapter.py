@@ -229,8 +229,6 @@ def test_thunder_field_product_blueprints_can_explicitly_use_lcm_localization_ad
             profile,
             localization_adapter="lcm_endpoint",
             endpoint_contract=THUNDER_FIELD_LCM_CONTRACT_NAME,
-            nav_in_adapter="lcm_nav_input",
-            nav_out_adapter="lcm_nav_output",
         )
         bp = blueprint_for_resolved_profile(profile, config)
         slam_entry = next(

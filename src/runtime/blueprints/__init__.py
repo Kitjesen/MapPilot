@@ -13,12 +13,10 @@ _EXPORTS = {
     # factory function and break the top-level lazy API.
     "driver": ("runtime.blueprints.stacks.driver", "driver"),
     "exploration": ("runtime.blueprints.stacks.exploration", "exploration"),
-    "full_stack_blueprint": ("runtime.blueprints.full_stack", "full_stack_blueprint"),
     "gateway": ("runtime.blueprints.stacks.gateway", "gateway"),
     "lidar": ("runtime.blueprints.stacks.lidar", "lidar"),
     "maps": ("runtime.blueprints.stacks.maps", "maps"),
     "memory": ("runtime.blueprints.stacks.memory", "memory"),
-    "multi_robot_blueprint": ("runtime.blueprints.multi_robot", "multi_robot_blueprint"),
     "navigation": ("runtime.blueprints.stacks.navigation", "navigation"),
     "perception": ("runtime.blueprints.stacks.perception", "perception"),
     "planner": ("runtime.blueprints.stacks.planner", "planner"),

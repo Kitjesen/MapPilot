@@ -37,6 +37,15 @@ _SCENE = os.path.normpath(os.path.join(
 ))
 
 
+def _wait_until(predicate, timeout_s: float, interval_s: float = 0.1) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval_s)
+    return predicate()
+
+
 def _build_sim_nav():
     from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
     from runtime.profiles.resolver import resolve_profile_config
@@ -71,6 +80,8 @@ def test_sim_nav_profile_selects_octoplanner3d_and_cpp_local_chain():
     assert config["python_autonomy_backend"] == "nanobind"
     assert config["python_path_follower_backend"] == "nav_kernel"
     assert config["fallback_planner_name"] == ""
+    assert config["map_artifact_gate_required"] is False
+    assert config["octoplanner3d_timeout_s"] == pytest.approx(30.0)
 
 
 @pytest.mark.skipif(not _scipy_available, reason="scipy not installed in this environment")
@@ -128,7 +139,7 @@ class TestSimNavEndToEnd:
             frame_id="map",
         )
         nav.goal_pose._deliver(goal)
-        time.sleep(1.2)
+        _wait_until(lambda: bool(paths), timeout_s=35.0)
         system.stop()
 
         assert paths, "No path planned; OctoPlanner3D did not produce output"
@@ -139,8 +150,20 @@ class TestSimNavEndToEnd:
         system = bp.build()
 
         positions = []
+        global_paths = []
+        local_paths = []
+        follower_cmds = []
+        mux_cmds = []
         drv = system.get_module("StubDogModule")
-        drv.odometry.subscribe(lambda o: positions.append(np.array([o.x, o.y])))
+        nav = system.get_module("nav.mission")
+        local_planner = system.get_module("nav.local_planner")
+        path_follower = system.get_module("nav.path_follower")
+        velocity_mux = system.get_module("nav.velocity_mux")
+        drv.odometry.subscribe(lambda o: positions.append((time.time(), np.array([o.x, o.y]))))
+        nav.global_path.subscribe(lambda p: global_paths.append(p))
+        local_planner.local_path.subscribe(lambda p: local_paths.append(p))
+        path_follower.cmd_vel.subscribe(lambda v: follower_cmds.append(v))
+        velocity_mux.driver_cmd_vel.subscribe(lambda v: mux_cmds.append(v))
 
         system.start()
         time.sleep(1.2)
@@ -155,17 +178,34 @@ class TestSimNavEndToEnd:
             ts=time.time(),
             frame_id="map",
         )
-        nav = system.get_module("nav.mission")
+        goal_ts = time.time()
         nav.goal_pose._deliver(goal)
 
-        deadline = time.time() + 10.0
-        while time.time() < deadline:
-            time.sleep(0.1)
-            if positions and np.linalg.norm(positions[-1] - np.array([5.0, 3.0])) < 2.0:
-                break
+        def moved_after_goal() -> bool:
+            after_goal = [pos for ts, pos in positions if ts >= goal_ts]
+            if len(after_goal) < 2:
+                return False
+            return bool(np.linalg.norm(after_goal[-1] - after_goal[0]) > 0.3)
+
+        _wait_until(
+            moved_after_goal,
+            timeout_s=60.0,
+        )
 
         system.stop()
 
         assert positions, "No odometry; robot did not move"
-        dist_moved = np.linalg.norm(positions[-1] - positions[0])
-        assert dist_moved > 0.3, f"Robot barely moved: {dist_moved:.2f}m"
+        after_goal = [pos for ts, pos in positions if ts >= goal_ts]
+        assert after_goal, "No odometry after goal was sent"
+        dist_moved = np.linalg.norm(after_goal[-1] - after_goal[0])
+        assert global_paths, "No global path published"
+        assert any(len(getattr(path, "poses", []) or []) >= 2 for path in local_paths), (
+            "No trackable local path published"
+        )
+        assert follower_cmds, "Path follower did not publish cmd_vel"
+        assert mux_cmds, "Velocity mux did not publish driver_cmd_vel"
+        assert dist_moved > 0.3, (
+            f"Robot barely moved: {dist_moved:.2f}m; "
+            f"global_paths={len(global_paths)} local_paths={len(local_paths)} "
+            f"follower_cmds={len(follower_cmds)} mux_cmds={len(mux_cmds)}"
+        )

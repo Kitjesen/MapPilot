@@ -24,6 +24,7 @@ class DDSMapOutModule(Module, layer=2):
     """Publish LingTu map outputs as typed DDS messages."""
 
     exploration_grid: In[dict]
+    traversability: In[dict]
 
     def __init__(
         self,
@@ -42,7 +43,7 @@ class DDSMapOutModule(Module, layer=2):
         self._domain_id = int(domain_id)
         self._qos_depth = int(qos_depth)
         self._reliable = bool(reliable)
-        self._publisher = None
+        self._publishers: dict[str, Any] = {}
         self._publish_counts: Counter[str] = Counter()
         self._publish_errors: Counter[str] = Counter()
         self._last_publish_ts = 0.0
@@ -55,17 +56,18 @@ class DDSMapOutModule(Module, layer=2):
         self._transport = self._transport or self._create_default_transport()
         self.exploration_grid.subscribe(self._on_exploration_grid)
         self.exploration_grid.set_policy("latest")
+        self.traversability.subscribe(self._on_traversability)
+        self.traversability.set_policy("latest")
 
     def stop(self) -> None:
-        publisher = self._publisher
-        if publisher is not None:
+        for publisher in self._publishers.values():
             close = getattr(publisher, "close", None)
             if callable(close):
                 try:
                     close()
                 except (RuntimeError, OSError, ValueError):
                     logger.debug("DDS map publisher close failed", exc_info=True)
-        self._publisher = None
+        self._publishers.clear()
         if self._owns_transport and self._transport is not None:
             close = getattr(self._transport, "close", None)
             if callable(close):
@@ -80,9 +82,7 @@ class DDSMapOutModule(Module, layer=2):
         return {
             **self._backend_status.as_health_fields(),
             "transport": "dds",
-            "published_topics": [TOPICS.exploration_grid]
-            if self._publisher is not None
-            else [],
+            "published_topics": list(self._publishers),
             "publish_counts": dict(self._publish_counts),
             "publish_errors": dict(self._publish_errors),
             "last_publish_ts": self._last_publish_ts,
@@ -96,28 +96,42 @@ class DDSMapOutModule(Module, layer=2):
         return DDSTransport(domain_id=self._domain_id)
 
     def _on_exploration_grid(self, grid: dict[str, Any]) -> None:
+        self._publish_grid(TOPICS.exploration_grid, grid, self._frame_id)
+
+    def _on_traversability(self, grid: dict[str, Any]) -> None:
+        self._publish_grid(
+            TOPICS.traversability,
+            grid,
+            topic_default_frame_id(TOPICS.traversability),
+        )
+
+    def _publish_grid(self, topic: str, grid: dict[str, Any], default_frame_id: str) -> None:
         try:
-            self._publisher_for_grid().publish(_to_dds_occupancy_grid(grid, self._frame_id))
+            self._publisher_for_topic(topic).publish(
+                _to_dds_occupancy_grid(grid, default_frame_id)
+            )
         except Exception:
-            self._publish_errors[TOPICS.exploration_grid] += 1
-            logger.exception("Failed to publish typed DDS map payload")
+            self._publish_errors[topic] += 1
+            logger.exception("Failed to publish typed DDS map payload for %s", topic)
             return
-        self._publish_counts[TOPICS.exploration_grid] += 1
+        self._publish_counts[topic] += 1
         self._last_publish_ts = time.time()
 
-    def _publisher_for_grid(self) -> Any:
-        if self._publisher is not None:
-            return self._publisher
+    def _publisher_for_topic(self, topic: str) -> Any:
+        publisher = self._publishers.get(topic)
+        if publisher is not None:
+            return publisher
         if self._transport is None:
             raise RuntimeError("DDS map output transport is not initialized")
-        self._publisher = self._transport.create_publisher(
+        publisher = self._transport.create_publisher(
             TopicConfig(
-                name=TOPICS.exploration_grid,
+                name=topic,
                 qos_depth=self._qos_depth,
                 reliable=self._reliable,
             )
         )
-        return self._publisher
+        self._publishers[topic] = publisher
+        return publisher
 
 
 def _dds() -> Any:

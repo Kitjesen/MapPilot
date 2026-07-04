@@ -19,6 +19,18 @@ def test_driver_stack_config_adds_map_odom_for_in_process_drivers() -> None:
     assert config["odom_frame_id"] == "map"
 
 
+def test_driver_stack_config_aligns_mujoco_no_slam_cloud_frame() -> None:
+    config = driver_stack_config(
+        {},
+        slam_profile="none",
+        driver_module="MujocoDriverModule",
+        enable_semantic=False,
+    )
+
+    assert config["odom_frame_id"] == "map"
+    assert config["map_cloud_frame_id"] == "map"
+
+
 def test_driver_stack_config_enables_mujoco_camera_for_semantic_mode() -> None:
     config = driver_stack_config(
         {},

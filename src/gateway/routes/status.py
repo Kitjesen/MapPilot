@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any
 
 from fastapi import Query
@@ -59,6 +61,92 @@ from gateway.services.telemetry_normalizers import (
     build_path_response,
     build_scene_graph_response,
 )
+
+DEFAULT_NAV_ENDPOINT_STATUS_FILE = "/dev/shm/lingtu/nav_endpoint_status.json"
+DEFAULT_TRAVERSABILITY_STATUS_FILE = "/dev/shm/lingtu/traversability_status.json"
+
+
+def _read_json_snapshot(path: str) -> dict[str, Any] | None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _native_nav_endpoint_status() -> dict[str, Any] | None:
+    return _read_json_snapshot(
+        os.environ.get("LINGTU_NAV_STATUS_FILE") or DEFAULT_NAV_ENDPOINT_STATUS_FILE
+    )
+
+
+def _native_traversability_status() -> dict[str, Any] | None:
+    return _read_json_snapshot(
+        os.environ.get("LINGTU_TRAVERSABILITY_STATUS_FILE")
+        or DEFAULT_TRAVERSABILITY_STATUS_FILE
+    )
+
+
+def _native_path_points(payload: Mapping[str, Any] | None, key: str) -> list[dict[str, Any]]:
+    if not isinstance(payload, Mapping):
+        return []
+    raw_path = payload.get(key)
+    if not isinstance(raw_path, Sequence) or isinstance(raw_path, str):
+        return []
+
+    points: list[dict[str, Any]] = []
+    for item in raw_path:
+        if isinstance(item, Mapping):
+            point = dict(item)
+        elif isinstance(item, Sequence) and not isinstance(item, str) and len(item) >= 2:
+            point = {
+                "x": item[0],
+                "y": item[1],
+                "z": item[2] if len(item) >= 3 else 0.0,
+            }
+        else:
+            continue
+        point.setdefault("frame_id", "map")
+        points.append(point)
+    return points
+
+
+def _native_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _native_cmd_vel_payload(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    last_local = payload.get("last_local")
+    if not isinstance(last_local, Mapping):
+        return None
+    cmd = last_local.get("cmd_vel")
+    if not isinstance(cmd, Mapping):
+        return None
+    return {
+        "frame_id": "base_link",
+        "linear": {
+            "x": _native_float(cmd.get("vx")),
+            "y": _native_float(cmd.get("vy")),
+            "z": 0.0,
+        },
+        "angular": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": _native_float(cmd.get("wz")),
+        },
+        "active_source": (
+            "native_nav_endpoint"
+            if payload.get("publish_cmd_vel") is True
+            else "native_nav_endpoint_preview"
+        ),
+        "ts": payload.get("stamp_s"),
+    }
 
 
 def _probe_brainstem() -> dict[str, Any]:
@@ -633,6 +721,12 @@ def register_status_routes(app, gw) -> None:
             global_path = list(gw._last_path)
             local_path = list(gw._last_local_path)
             robot = gw._odom
+        nav_endpoint = _native_nav_endpoint_status()
+        traversability_endpoint = _native_traversability_status()
+        if not global_path:
+            global_path = _native_path_points(nav_endpoint, "global_path")
+        if not local_path:
+            local_path = _native_path_points(nav_endpoint, "local_path")
         navigation = build_navigation_status(gw)
         cmd_vel = (
             navigation.get("control", {})
@@ -648,15 +742,17 @@ def register_status_routes(app, gw) -> None:
                 "ts": cmd_vel.get("ts"),
             }
         else:
-            cmd_payload = None
+            cmd_payload = _native_cmd_vel_payload(nav_endpoint)
         return {
             "schema_version": "lingtu.navigation.dds_snapshot.v1",
             "global_path": build_path_response(global_path, robot),
             "local_path": build_path_response(local_path, robot),
             "cmd_vel": cmd_payload,
+            "nav_endpoint": nav_endpoint,
+            "traversability_endpoint": traversability_endpoint,
             "navigation": navigation,
             "ts": time.time(),
-            "source": "gateway_navigation_cache",
+            "source": "gateway_navigation_cache+native_status",
         }
 
     @app.get(

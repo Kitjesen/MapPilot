@@ -1,0 +1,42 @@
+[Unit]
+Description=Thunder GenZ-ICP experimental odometry backend
+After=lidar.service robot-lidar.service
+Wants=lidar.service robot-lidar.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+TimeoutStopSec=15
+Type=simple
+User=sunrise
+WorkingDirectory=/home/sunrise/data/inovxio/lingtu
+ExecStart=/bin/bash -c '\
+  source /opt/lingtu/config/ros2-env.sh && \
+  CONFIG="$${GENZ_ICP_CONFIG:-/home/sunrise/data/inovxio/lingtu/install/genz_icp/share/genz_icp/config/s100p.yaml}"; \
+  if [ ! -f "$${CONFIG}" ]; then CONFIG="$$(ros2 pkg prefix genz_icp)/share/genz_icp/config/s100p.yaml"; fi; \
+  exec ros2 run genz_icp odometry_node \
+    --ros-args \
+    -p config_file:="$${CONFIG}" \
+    -p odom_frame:=odom \
+    -p base_frame:=body \
+    -p publish_odom_tf:=true \
+    -p visualize:=true \
+    -r pointcloud_topic:=/lidar/raw_frame \
+    -r /genz/odometry:=/slam/odometry \
+    -r /genz/trajectory:=/slam/genz_trajectory \
+    -r /genz/local_map:=/slam/map_cloud'
+Restart=on-failure
+RestartSec=3
+MemoryMax=2G
+KillMode=control-group
+KillSignal=SIGINT
+SuccessExitStatus=130 SIGINT
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=genz_icp
+Environment=HOME=/home/sunrise
+Environment=ROS_DOMAIN_ID=0
+Environment=GENZ_ICP_CONFIG=
+
+[Install]
+WantedBy=multi-user.target

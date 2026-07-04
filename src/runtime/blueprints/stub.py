@@ -49,7 +49,7 @@ class StubDogModule(Module, layer=1):
     """Stub driver for CI/testing.  No hardware.  Publishes fake odometry.
 
     Also declares (but does not publish) the camera/depth/scene_graph Out
-    ports that real drivers expose. Lets `full_stack_blueprint()` autowire
+    ports that real drivers expose. Lets Blueprint autowire
     downstream consumers (Perception, Reconstruction, Teleop, VisualServo,
     DepthVisualOdom) without errors. Consumers simply never see any frame
     when running against the stub 鈥?correct behaviour for CI.

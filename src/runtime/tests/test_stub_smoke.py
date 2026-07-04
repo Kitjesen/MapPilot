@@ -1,4 +1,4 @@
-"""Stub-mode smoke test 鈥?verify data flows through the minimal blueprint.
+﻿"""Stub-mode smoke test: verify data flows through the minimal blueprint.
 
 Builds the stub blueprint (no SLAM, no semantic, no gateway) and verifies:
   1. Blueprint builds without error
@@ -28,8 +28,8 @@ for k in ["MOONSHOT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_
 
 
 def _build_stub():
-    from runtime.blueprints.full_stack import full_stack_blueprint
-    return full_stack_blueprint(
+    from runtime.blueprints.products.thunder import thunder_blueprint
+    return thunder_blueprint(
         robot="stub",
         slam_profile="none",
         enable_semantic=False,
@@ -40,7 +40,7 @@ def _build_stub():
 
 
 class TestStubSmoke(unittest.TestCase):
-    """Lightweight smoke tests 鈥?no timing-sensitive waits."""
+    """Lightweight smoke tests with minimal timing-sensitive waits."""
 
     def test_blueprint_builds(self):
         bp = _build_stub()
@@ -61,7 +61,7 @@ class TestStubSmoke(unittest.TestCase):
         system.stop()
 
     def test_odometry_flows_to_navigation(self):
-        """StubDogModule publishes odometry 鈫?Navigation receives it."""
+        """StubDogModule publishes odometry and Navigation receives it."""
         bp = _build_stub()
         system = bp.build()
 

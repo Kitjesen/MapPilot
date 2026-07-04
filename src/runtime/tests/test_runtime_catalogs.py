@@ -145,11 +145,11 @@ def test_runtime_endpoint_resolver_reexports_endpoint_catalog() -> None:
         "command_output_mode": "endpoint_only",
         "hardware_control_boundary": "dds_endpoint_source",
         "localization_adapter": "cpp_slam_status",
-        "nav_in_adapter": "dds_nav_input",
-        "nav_out_adapter": "dds_nav_output",
+        "native_navigation_endpoint": "lingtu-nav-dds",
         "manage_session_services": False,
-        "enable_nav_in": True,
-        "enable_nav_out": True,
+        "enable_nav_in": False,
+        "enable_nav_out": False,
+        "enable_map_out": False,
         "enable_camera": True,
         "camera_backend": "orbbec_native",
     }
@@ -506,11 +506,22 @@ def test_product_runtime_configs_use_ros_free_autonomy_backends() -> None:
         )
 
 
-def test_only_teleop_avoid_enables_cmd_vel_collision_monitor() -> None:
+def test_mapped_teleop_profiles_enable_cmd_vel_collision_monitor() -> None:
+    enabled_profiles = set()
     for profile in PRODUCT_PROFILES:
         resolved = resolve_runtime_config(profile)
-        enabled = bool(resolved.config.get("cmd_vel_mux_collision_monitor", False))
-        assert enabled is (profile == "teleop_avoid"), profile
+        if bool(resolved.config.get("cmd_vel_mux_collision_monitor", False)):
+            enabled_profiles.add(profile)
+
+    assert enabled_profiles == {
+        "teleop_avoid",
+        "map",
+        "nav",
+        "super_lio",
+        "super_lio_relocation",
+        "explore",
+        "tare_explore",
+    }
 
 
 def test_no_product_profiles_are_optional_native_runtime_configs() -> None:
@@ -518,9 +529,17 @@ def test_no_product_profiles_are_optional_native_runtime_configs() -> None:
 
 
 def test_octoplanner3d_product_profiles_use_supported_map_formats() -> None:
-    for profile in ("nav", "explore", "tare_explore", "super_lio", "super_lio_relocation"):
+    for profile in (
+        "tracking",
+        "nav",
+        "explore",
+        "tare_explore",
+        "super_lio",
+        "super_lio_relocation",
+    ):
         config = CATALOG_PROFILES[profile]
         assert config["planner"] == "octoplanner3d"
+        assert config.get("fallback_planner_name", "") == ""
         assert Path(config["tomogram"]).suffix.lower() in {
             ".bt",
             ".ot",

@@ -32,8 +32,17 @@ except (ImportError, AttributeError):
     _HAS_3D = False
 
 # 鈹€鈹€ 榛樿璺緞 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+_OCTOPLANNER3D_BUILDING2_9_PCD = os.path.join(
+    _REPO_ROOT,
+    'src', 'nav', 'services', 'plan', 'global_planner', 'algorithm',
+    'OctoPlanner3D', 'octomap', 'pcd_files', 'building2_9.pcd',
+)
+
 _PCD_CANDIDATES = [
     os.environ.get('SIM_PCD_PATH', ''),
+    _OCTOPLANNER3D_BUILDING2_9_PCD,
+    '/home/sunrise/data/SLAM/navigation/src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/octomap/pcd_files/building2_9.pcd',
     '/home/sunrise/data/SLAM/navigation/install/pct_planner/share/pct_planner/rsc/pcd/building2_9.pcd',
     '/home/sunrise/data/SLAM/navigation/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/pcd/building2_9.pcd',
 ]

@@ -11,7 +11,7 @@ from typing import Any, Mapping
 import yaml
 
 from cli.profiles_data import PROFILES
-from runtime.introspection.profile_graph import resolve_profile_config
+from runtime.profiles.resolver import resolve_profile_config
 from runtime.profiles.endpoints import (
     PRODUCT_PROFILE_ENDPOINTS,
     RUNTIME_ENDPOINTS,

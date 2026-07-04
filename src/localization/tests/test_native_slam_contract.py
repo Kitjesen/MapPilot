@@ -253,6 +253,34 @@ def test_native_slam_wiring_covers_old_bridge_consumers() -> None:
     assert spec_by_wire["LidarModule.imu->SlamModule.lidar_imu"].topic == TOPICS.raw_imu
 
 
+def test_mujoco_slam_wiring_uses_raw_lidar_imu_contract() -> None:
+    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from runtime.runtime_interface import TOPICS
+
+    specs = full_stack_wire_specs(
+        {
+            "MujocoDriverModule",
+            "SlamModule",
+        },
+        robot="sim_mujoco",
+        driver_module="MujocoDriverModule",
+        slam_profile="fastlio2",
+        enable_semantic=False,
+    )
+    spec_by_wire = {
+        f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}": spec
+        for spec in specs
+    }
+
+    raw = spec_by_wire["MujocoDriverModule.raw_scan->SlamModule.lidar_raw_scan"]
+    imu = spec_by_wire["MujocoDriverModule.imu->SlamModule.lidar_imu"]
+
+    assert raw.transport == "dds"
+    assert raw.topic == TOPICS.raw_lidar_points
+    assert imu.transport == "dds"
+    assert imu.topic == TOPICS.raw_imu
+
+
 def test_slam_cpp_build_declares_python_native_binding() -> None:
     cmake = Path("src/localization/slam/cpp/CMakeLists.txt").read_text(encoding="utf-8")
     module = Path("src/localization/slam/module.py").read_text(encoding="utf-8")
@@ -297,6 +325,19 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "lingtu_dds_LivoxFrame_desc" in cyclone_runtime
     assert "lingtu_dds_Imu_desc" in cyclone_runtime
     assert "lingtu_dds_TFMessage_desc" in cyclone_runtime
+    assert "lingtu_dds_RelocalizationRequest_desc" in cyclone_runtime
+    assert "lingtu_dds_RelocalizationResponse_desc" in cyclone_runtime
+    assert "drainRelocalizationRequests" in cyclone_runtime
+    assert "dds.writeRelocalizationResponse" in cyclone_runtime
+    assert "track_against_map_started" in cyclone_runtime
+    assert "track_against_map_enabled" in cyclone_runtime
+    assert "track_against_map_failures" in cyclone_runtime
+    assert 'action == "track-against-map"' in cyclone_runtime
+    assert "--track-against-map-period-s" in cyclone_runtime
+    assert "track_against_map_period_s" in cyclone_runtime
+    assert "kTrackAgainstMapMaxFailures" in cyclone_runtime
+    assert "registered_cloud_stale" in cyclone_runtime
+    assert "last_track_against_map_scan_s" in cyclone_runtime
     assert "lingtu::message::kTf.dds_topic.data()" in cyclone_runtime
     assert "lingtu::message::kTfStatic.dds_topic.data()" in cyclone_runtime
     assert "dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL)" in cyclone_runtime
@@ -304,12 +345,74 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "ReaderQos::SensorStream" in cyclone_runtime
     assert "dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 256)" in cyclone_runtime
     assert "dds_qset_history(qos.get(), DDS_HISTORY_KEEP_LAST, 256)" in sdk2_stream
-    assert "resetTrackingCoreAtPose(result.map_body)" in fastlio
-    assert "map_odom_pose_ = Pose3d{}" in fastlio
+    assert "resetTrackingCoreAtPose(*odometry_odom_body_)" in fastlio
+    assert "map_odom_pose_ = result.map_odom" in fastlio
+    assert "composePoses(map_odom_pose_, *odometry_odom_body_)" in fastlio
+    assert "effective_guess" in fastlio
+    assert "relocalization_max_fitness" in fastlio
+    assert "relocalization_fitness_rejected" in fastlio
+    assert "relocalization_map_bounds_margin_m" in fastlio
+    assert "relocalization_outside_map_bounds" in fastlio
+    assert "updateMapBounds" in fastlio
+    assert "poseInsideMapBounds" in fastlio
+    assert "relocalization_refine_backend" in cyclone_runtime
+    assert "relocalization_map_body" in cyclone_runtime
     assert "dds.writeTf(msg.msg)" in cyclone_runtime
     assert "backend->feedLidar" in cyclone_runtime
     assert "backend->feedImu" in cyclone_runtime
     assert "--log-status-s" in cyclone_runtime
+
+
+def test_slam_relocalization_has_typed_dds_request_reply_contract() -> None:
+    idl = Path("src/message/idl/lingtu_slam.idl").read_text(encoding="utf-8")
+    topics = Path("src/message/cpp/dds_topics.hpp").read_text(encoding="utf-8")
+    runtime_topics = Path("src/runtime/runtime_interface.py").read_text(encoding="utf-8")
+    cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(
+        encoding="utf-8"
+    )
+    slam_control = Path("src/localization/slam/cpp/slam_control.cpp").read_text(
+        encoding="utf-8"
+    )
+
+    assert "struct RelocalizationRequest" in idl
+    assert "struct RelocalizationResponse" in idl
+    assert "string action" in idl
+    assert "string engine" in idl
+    assert "boolean has_initial_pose" in idl
+    assert "boolean track_against_map_supported" in idl
+    assert "boolean track_against_map_enabled" in idl
+    assert "long track_against_map_failures" in idl
+
+    assert "kSlamRelocalizationRequest" in topics
+    assert "kSlamRelocalizationResponse" in topics
+    assert "/slam/relocalization/request" in topics
+    assert "/slam/relocalization/response" in topics
+    assert "slam_relocalization_request" in runtime_topics
+    assert "slam_relocalization_response" in runtime_topics
+
+    assert "reader<lingtu_dds_RelocalizationRequest>" in cyclone_runtime
+    assert "writer<lingtu_dds_RelocalizationResponse>" in cyclone_runtime
+    assert "normalizedRelocalizationAction" in cyclone_runtime
+    assert "seeded_relocalize" in cyclone_runtime
+    assert "global_relocalize" in cyclone_runtime
+    assert "query_status" in cyclone_runtime
+    assert "track_against_map_started" in cyclone_runtime
+    assert "track_against_map_enabled" in cyclone_runtime
+    assert "track_against_map_failures" in cyclone_runtime
+    assert "kTrackAgainstMapMaxFailures" in cyclone_runtime
+    assert "--track-against-map-period-s" in cyclone_runtime
+    assert "registered_cloud_stale" in cyclone_runtime
+    assert "backend->relocalize(track_against_map_seed)" in cyclone_runtime
+
+    assert "usesTypedRelocalizationService" in slam_control
+    assert "runTypedRelocalizationService" in slam_control
+    assert "kSlamRelocalizationRequest.dds_topic.data()" in slam_control
+    assert "kSlamRelocalizationResponse.dds_topic.data()" in slam_control
+    assert "lingtu.slam.relocalization_response.v1" in slam_control
+    assert "track_against_map_enabled" in slam_control
+    assert "track_against_map_failures" in slam_control
+    assert "cpp_typed_dds" in slam_control
+    assert "kSlamMapCommand.dds_topic.data()" in slam_control
 
 
 def test_cpp_message_topic_contract_stays_ros_free() -> None:

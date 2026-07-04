@@ -56,11 +56,7 @@ def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> dict:
     import cli.main as main_mod
     import runtime.blueprints.products as products_mod
 
-    calls = {"full_stack": [], "product": []}
-
-    def _fake_full_stack_blueprint(**kwargs):
-        calls["full_stack"].append(dict(kwargs))
-        return _FakeBuilder(system)
+    calls = {"product": []}
 
     def _fake_thunder_blueprint(config=None, **overrides):
         resolved = dict(config or {})
@@ -68,9 +64,6 @@ def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> dict:
         calls["product"].append(resolved)
         return _FakeBuilder(system)
 
-    fake_full_stack = types.ModuleType("runtime.blueprints.full_stack")
-    fake_full_stack.full_stack_blueprint = _fake_full_stack_blueprint
-    monkeypatch.setitem(sys.modules, "runtime.blueprints.full_stack", fake_full_stack)
     monkeypatch.setattr(products_mod, "thunder_blueprint", _fake_thunder_blueprint)
 
     fake_ros2 = types.ModuleType("runtime.adapters.ros2.context")
@@ -217,7 +210,7 @@ def test_lite_preflight_stays_on_lite_lifecycle_without_runtime_extra() -> None:
         ({"module_transport": "lcm"}, "module_transport must be local"),
     ],
 )
-def test_lite_preflight_rejects_full_stack_lifecycle_overrides(
+def test_lite_preflight_rejects_field_runtime_lifecycle_overrides(
     override,
     expected,
     capsys,
@@ -251,7 +244,7 @@ def test_lite_preflight_rejects_full_stack_lifecycle_overrides(
         (["--endpoint", "thunder-field"], "runtime_endpoint must be thunder_lite"),
     ],
 )
-def test_runtime_spec_rejects_lite_full_stack_cli_overrides(
+def test_runtime_spec_rejects_lite_field_runtime_cli_overrides(
     args,
     expected,
     monkeypatch,
@@ -442,8 +435,8 @@ def test_no_repl_clean_gateway_shutdown_exits_zero(monkeypatch, tmp_path):
 
     main_mod.main()
 
-    assert len(calls["full_stack"]) == 1
-    assert calls["product"] == []
+    assert len(calls["product"]) == 1
+    assert calls["product"][0]["robot"] == "stub"
     assert gateway._defer_server is True
     assert gateway.run_server_called is True
     assert system.started is True
@@ -511,7 +504,6 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
     assert len(calls["product"]) == 1
     assert calls["product"][0]["robot"] == "thunder"
     assert calls["product"][0]["slam_profile"] == "localizer"
-    assert calls["full_stack"] == []
     assert system.started is True
 
 
@@ -541,7 +533,6 @@ def test_thunder_nav_alias_runs_canonical_nav_profile(monkeypatch, tmp_path):
     assert saved_state["cfg"]["robot"] == "thunder"
     assert len(calls["product"]) == 1
     assert calls["product"][0]["robot"] == "thunder"
-    assert calls["full_stack"] == []
     assert system.started is True
 
 
@@ -1092,7 +1083,7 @@ def test_runtime_spec_default_prints_operator_summary(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Runtime spec: PASS" in out
-    assert "Profile: profile=explore endpoint=mujoco_live" in out
+    assert "Profile: profile=tare_explore endpoint=mujoco_live" in out
     assert (
         "Runtime: endpoint=mujoco_live data_source=mujoco_fastlio2_live "
         "runtime_contract=mujoco_fastlio2_live "
@@ -1147,7 +1138,7 @@ def test_runtime_spec_accepts_thunder_product_alias(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Runtime spec: PASS" in out
-    assert "Profile: profile=explore endpoint=mujoco_live" in out
+    assert "Profile: profile=tare_explore endpoint=mujoco_live" in out
 
 
 def test_runtime_spec_exits_when_boundary_is_invalid(monkeypatch, capsys):
@@ -2017,12 +2008,11 @@ def test_cli_list_defaults_to_product_profiles_and_all_expands(
     out = capsys.readouterr().out
 
     assert "Available product profiles" in out
-    assert "lite" in out
-    assert "thunder-lite" in out
     assert "map" in out
     assert "nav" in out
     assert "thunder-nav" in out
-    assert "explore" in out
+    assert "tare_explore" in out
+    assert "thunder-explore" in out
     assert "sim_mujoco_live" not in out
     assert "Use --list --all" in out
 

@@ -12,8 +12,6 @@ Use these paths for new deployment work:
 - `thunder/install_services.sh` - canonical Thunder service installer entrypoint.
 - `thunder/install_dds_endpoint_service.sh` - installs the Thunder typed DDS endpoint
   service.
-- `thunder/install_lcm_endpoint_service.sh` - installs the legacy Thunder LCM
-  endpoint service.
 - `thunder/install_lite_service.sh` - installs the Thunder Lite service.
 - `thunder/runtime-env.sh` - Thunder runtime defaults shared by service units.
 - `thunder/ros2-env.sh` - ROS 2 compatibility environment for legacy ROS-backed

@@ -133,7 +133,7 @@ from runtime.blueprint import autoconnect
 from runtime.blueprints.stacks import *
 
 system = autoconnect(
-    driver("thunder", host="192.168.66.190"),
+    driver("thunder", host="192.168.66.13"),
     slam("localizer"),
     maps(),
     perception("bpu"),
@@ -163,7 +163,7 @@ All backends registered via `@register("category", "name")`. Zero if/else.
 Frosted-glass UI served at `http://<robot>:5050`. Access via SSH tunnel:
 
 ```bash
-ssh -L 5050:localhost:5050 sunrise@192.168.66.190
+ssh -L 5050:localhost:5050 sunrise@192.168.66.13
 # Then open http://localhost:5050
 ```
 
@@ -216,7 +216,7 @@ watch <port>             Live port monitor
 
 ```bash
 # Connect Claude Code to the robot
-claude mcp add --transport http lingtu http://192.168.66.190:8090/mcp
+claude mcp add --transport http lingtu http://192.168.66.13:8090/mcp
 ```
 
 ## Semantic Navigation
@@ -266,7 +266,7 @@ python lingtu.py nav                    # Start with localization
 
 ```bash
 # SSH tunnel
-ssh -L 5050:localhost:5050 sunrise@192.168.66.190
+ssh -L 5050:localhost:5050 sunrise@192.168.66.13
 # Browser: http://localhost:5050
 # Scene tab →click on map to send goals
 ```
@@ -356,7 +356,7 @@ route-validation gate.
 ### Update
 
 ```bash
-ssh sunrise@192.168.66.190
+ssh sunrise@192.168.66.13
 cd ~/data/inovxio/lingtu
 git pull origin main
 cd web && npm run build

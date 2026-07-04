@@ -14,3 +14,14 @@ cmake -S "$ROOT/src/nav/services/endpoint/cpp" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 cmake --build "$BUILD_DIR" --parallel "$JOBS"
+
+for bin_name in lingtu_nav_native_endpoint lingtu_traversability_dds; do
+  BIN="$BUILD_DIR/$bin_name"
+  if [[ ! -x "$BIN" ]]; then
+    echo "ERROR: build finished but native navigation DDS endpoint is missing: $BIN" >&2
+    echo "Rebuild with: bash scripts/build/build_nav_endpoint.sh" >&2
+    exit 1
+  fi
+done
+
+echo "$BUILD_DIR/lingtu_nav_native_endpoint"

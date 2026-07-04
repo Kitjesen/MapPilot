@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import math
+import re
 import threading
 import time
 from typing import Any
@@ -17,6 +18,11 @@ from nav.services.plan.contracts import (
 from runtime.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
+SNAP_DISTANCE_TOLERANCE_M = 0.05
+SNAP_LOG_RE = re.compile(
+    r"(?P<endpoint>Start|Goal) snapped to free cell:\s*"
+    r"\[(?P<x>[-+0-9.eE]+),\s*(?P<y>[-+0-9.eE]+),\s*(?P<z>[-+0-9.eE]+)\]"
+)
 
 
 class PlanPreviewBusy(RuntimeError):
@@ -112,7 +118,71 @@ def planner_preview_report_fields(planner: Any) -> dict[str, Any]:
         fields["planner_diagnostics"] = dict(diagnostics)
     if "reached_goal" in report:
         fields["reached_goal"] = bool(report.get("reached_goal"))
+    for key in (
+        "requested_start",
+        "accepted_start",
+        "adjusted_start",
+        "requested_goal",
+        "accepted_goal",
+        "map_only_preview",
+        "primary_replan",
+    ):
+        if key in report:
+            fields[key] = report[key]
     return fields
+
+
+def _xyz_list(value: Any) -> list[float] | None:
+    if isinstance(value, dict):
+        raw = (value.get("x"), value.get("y"), value.get("z", 0.0))
+    else:
+        raw = value
+    try:
+        xyz = [float(raw[0]), float(raw[1]), float(raw[2])]
+    except (TypeError, ValueError, IndexError):
+        return None
+    return xyz if all(math.isfinite(item) for item in xyz) else None
+
+
+def _xyz_distance(a: list[float] | None, b: list[float] | None) -> float | None:
+    if a is None or b is None:
+        return None
+    distance = math.sqrt(
+        (float(a[0]) - float(b[0])) ** 2
+        + (float(a[1]) - float(b[1])) ** 2
+        + (float(a[2]) - float(b[2])) ** 2
+    )
+    return distance if math.isfinite(distance) else None
+
+
+def _xy_distance(a: list[float] | None, b: list[float] | None) -> float | None:
+    if a is None or b is None:
+        return None
+    distance = math.sqrt(
+        (float(a[0]) - float(b[0])) ** 2
+        + (float(a[1]) - float(b[1])) ** 2
+    )
+    return distance if math.isfinite(distance) else None
+
+
+def _rounded_distance(value: float | None) -> float | None:
+    return round(float(value), 3) if value is not None else None
+
+
+def _snap_points_from_diagnostics(diagnostics: dict[str, Any]) -> dict[str, list[float]]:
+    points: dict[str, list[float]] = {}
+    text = "\n".join(
+        str(diagnostics.get(key) or "")
+        for key in ("stderr", "stdout", "error_message")
+    )
+    for match in SNAP_LOG_RE.finditer(text):
+        endpoint = match.group("endpoint").lower()
+        points[endpoint] = [
+            float(match.group("x")),
+            float(match.group("y")),
+            float(match.group("z")),
+        ]
+    return points
 
 
 def planner_backend_status(planner: Any) -> dict[str, Any]:
@@ -188,6 +258,7 @@ class PlanPreviewService:
             "path_safety": None,
             "fallback_reason": "",
             "rejected_plans": [],
+            "snap_diagnostics": None,
             "source": "navigation_preview",
             "reasons": [],
             "error": None,
@@ -268,6 +339,7 @@ class PlanPreviewService:
             result["reasons"] = ["planning_failed"]
             result["error"] = str(exc)
             result.update(planner_preview_report_fields(planner))
+            self._attach_snap_diagnostics(result, planner=planner)
             return result
 
         return self._serialize_plan_result(
@@ -404,7 +476,70 @@ class PlanPreviewService:
             "reasons": ["goal_adjusted"] if adjusted_goal is not None else [],
         })
         result.update(planner_preview_report_fields(planner))
+        self._attach_snap_diagnostics(result, planner=planner)
         return result
+
+    def _attach_snap_diagnostics(
+        self,
+        result: dict[str, Any],
+        *,
+        planner: Any,
+    ) -> None:
+        report = planner_last_plan_report(planner)
+        diagnostics = report.get("planner_diagnostics")
+        if not isinstance(diagnostics, dict):
+            diagnostics = result.get("planner_diagnostics")
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+
+        path = result.get("path") or []
+        logged_snap = _snap_points_from_diagnostics(diagnostics)
+        requested_start = (
+            _xyz_list(report.get("requested_start"))
+            or _xyz_list(diagnostics.get("start_xyz"))
+            or _xyz_list(result.get("start"))
+        )
+        accepted_start = _xyz_list(report.get("accepted_start")) or logged_snap.get("start")
+        if accepted_start is None and path:
+            accepted_start = _xyz_list(path[0])
+        requested_goal = (
+            _xyz_list(report.get("requested_goal"))
+            or _xyz_list(diagnostics.get("goal_xyz"))
+            or _xyz_list(result.get("goal"))
+        )
+        accepted_goal = _xyz_list(report.get("accepted_goal")) or logged_snap.get("goal")
+        if accepted_goal is None and path:
+            accepted_goal = _xyz_list(path[-1])
+
+        start_delta = _xyz_distance(requested_start, accepted_start)
+        goal_delta = _xyz_distance(requested_goal, accepted_goal)
+        start_xy_delta = _xy_distance(requested_start, accepted_start)
+        goal_xy_delta = _xy_distance(requested_goal, accepted_goal)
+        start_snapped = (
+            start_delta is not None and start_delta > SNAP_DISTANCE_TOLERANCE_M
+        )
+        goal_snapped = (
+            goal_delta is not None and goal_delta > SNAP_DISTANCE_TOLERANCE_M
+        )
+        reached_goal = report.get("reached_goal")
+        if not isinstance(reached_goal, bool):
+            reached_goal = result.get("reached_goal")
+        result["snap_diagnostics"] = {
+            "requested_start": requested_start,
+            "effective_start": accepted_start or requested_start,
+            "snapped_start": accepted_start if start_snapped else None,
+            "start_snapped": start_snapped,
+            "start_snap_distance_m": _rounded_distance(start_delta),
+            "start_snap_xy_distance_m": _rounded_distance(start_xy_delta),
+            "requested_goal": requested_goal,
+            "effective_goal": accepted_goal or requested_goal,
+            "snapped_goal": accepted_goal if goal_snapped else None,
+            "goal_snapped": goal_snapped,
+            "goal_snap_distance_m": _rounded_distance(goal_delta),
+            "goal_snap_xy_distance_m": _rounded_distance(goal_xy_delta),
+            "goal_snap_accepted": reached_goal if isinstance(reached_goal, bool) else None,
+            "source": "path_endpoints" if path else "planner_report",
+        }
 
     @staticmethod
     def _path_point(

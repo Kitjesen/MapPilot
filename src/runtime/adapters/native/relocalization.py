@@ -70,6 +70,7 @@ def _run_control(
         stdout=completed.stdout,
         stderr=completed.stderr,
         returncode=completed.returncode,
+        details=payload,
     )
 
 
@@ -113,10 +114,24 @@ class NativeSlamRelocalizationService:
         *,
         timeout_s: float = 5.0,
     ) -> RelocalizationResult:
-        return RelocalizationResult(
-            success=False,
-            message="unsupported_global_relocalization_status",
-            timed_out=False,
+        try:
+            binary = _control_binary()
+        except Exception as exc:
+            return RelocalizationResult(
+                success=False,
+                message=f"native SLAM relocalization unavailable: {exc}",
+            )
+        domain_id = os.environ.get("LINGTU_DDS_DOMAIN_ID", "0").strip() or "0"
+        return _run_control(
+            [
+                binary,
+                "status",
+                "--domain-id",
+                domain_id,
+                "--timeout-s",
+                f"{float(timeout_s):g}",
+            ],
+            timeout_s=timeout_s,
         )
 
     def relocalize_saved_map(
@@ -172,3 +187,40 @@ class NativeSlamRelocalizationService:
             f"{float(timeout_s):g}",
         ]
         return _run_control(argv, timeout_s=timeout_s, base_env=base_env)
+
+    def track_against_map(
+        self,
+        pcd_path: str | os.PathLike[str],
+        x: float,
+        y: float,
+        yaw: float,
+        *,
+        timeout_s: float = 10.0,
+    ) -> RelocalizationResult:
+        try:
+            binary = _control_binary()
+        except Exception as exc:
+            return RelocalizationResult(
+                success=False,
+                message=f"native SLAM relocalization unavailable: {exc}",
+            )
+
+        domain_id = os.environ.get("LINGTU_DDS_DOMAIN_ID", "0").strip() or "0"
+        return _run_control(
+            [
+                binary,
+                "track-against-map",
+                str(Path(pcd_path)),
+                "--x",
+                f"{float(x):g}",
+                "--y",
+                f"{float(y):g}",
+                "--yaw",
+                f"{float(yaw):g}",
+                "--domain-id",
+                domain_id,
+                "--timeout-s",
+                f"{float(timeout_s):g}",
+            ],
+            timeout_s=timeout_s,
+        )

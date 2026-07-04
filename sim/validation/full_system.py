@@ -287,7 +287,7 @@ def validate_slam_localization_contract(repo_root: Path) -> ValidationCheck:
 
 
 def validate_navigation_blueprint(repo_root: Path) -> ValidationCheck:
-    from runtime.blueprints.profile_graph import graph_for_profile
+    from runtime.introspection.profile_graph import graph_for_profile
 
     profile = "portable_mujoco"
     graph = graph_for_profile(profile)

@@ -12,19 +12,13 @@ def blueprint_for_resolved_profile(
     profile: str,
     config: Mapping[str, Any],
 ) -> Blueprint:
-    """Return the product or compatibility Blueprint for a resolved profile."""
+    """Return the product Blueprint for a resolved profile."""
 
     canonical_profile = canonical_profile_name(profile)
 
     from runtime.blueprints.products import product_blueprint_for_profile
 
-    product_blueprint = product_blueprint_for_profile(canonical_profile, config)
-    if product_blueprint is not None:
-        return product_blueprint
-
-    from runtime.blueprints.full_stack import full_stack_blueprint
-
-    return full_stack_blueprint(**dict(config))
+    return product_blueprint_for_profile(canonical_profile, config)
 
 
 def module_transport_name(config: Mapping[str, Any]) -> str:
@@ -72,7 +66,7 @@ def build_system_for_profile(
     overrides: Mapping[str, Any] | None = None,
     **inline_overrides: Any,
 ) -> Any:
-    """Resolve a profile, select product/compat Blueprint, then build System."""
+    """Resolve a profile, select the product Blueprint, then build System."""
 
     from runtime.profiles.resolver import resolve_profile_config
 

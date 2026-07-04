@@ -1,289 +1,214 @@
-# LingTu S100P Deployment
+# LingTu Thunder Deployment
 
-How LingTu is laid out on the Sunrise robot, how to install, update, roll back, and
-diagnose the running stack. The single production entry is `python lingtu.py`,
-orchestrated by `lingtu.service`. There is no Docker, no `colcon launch` orchestration,
-and no `grpc_gateway` daemon in the current build.
+How LingTu is laid out on the field robot, how to install, update, roll back,
+and diagnose the running stack. The product runtime is native DDS plus
+Module-first Python/C++ services; ROS 2 compatibility services are optional
+fallbacks and must be enabled explicitly.
 
----
-
-## One-liner status
+## One-Liner Status
 
 ```bash
-ssh sunrise@192.168.66.190 'systemctl status lingtu robot-brainstem robot-camera robot-lidar robot-fastlio2 robot-localizer'
-ssh sunrise@192.168.66.190 'lingtu status'
+ssh sunrise@192.168.66.13 'systemctl status lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds lingtu'
+ssh sunrise@192.168.66.13 'bash ~/data/SLAM/navigation/scripts/lingtu status'
 ```
 
-The `lingtu` CLI gives you an 8-section snapshot —see `lingtu_cli.md`.
+The `lingtu` CLI gives an 8-section snapshot; see `lingtu_cli.md`.
 
----
+## Robot Runtime
 
-## Three-layer architecture on the robot
+```text
+Sensor DDS     lingtu-livox-dds     Livox SDK2 -> typed DDS       [systemd]
+SLAM DDS       lingtu-slam-dds      C++ SLAM runtime + snapshots  [systemd]
+Nav DDS        lingtu-nav-dds       Gateway/DDS nav endpoint      [systemd]
 
-```
-Hardware       robot-camera         Orbbec Gemini 330           [systemd]
-               robot-lidar          Livox MID-360 driver         [systemd]
+Control        robot-brainstem      Dart gRPC :13145              [systemd]
+Camera         robot-camera         Orbbec camera service         [systemd]
 
-Control        robot-brainstem      Dart gRPC :13145             [systemd]
-
-SLAM           robot-fastlio2       Fast-LIO2 odometry           [systemd]
-               robot-localizer      ICP localizer (needs map)    [systemd]
-               robot-super-lio      experimental Super-LIO       [systemd]
-               robot-super-lio-relocation
-                                    experimental saved-map eval   [systemd]
-
-Algorithm      lingtu               python lingtu.py nav          [systemd]
-                                    HTTP :5050  MCP :8090
+Application    lingtu               python lingtu.py nav          [systemd]
+                                     HTTP :5050  MCP :8090
 ```
 
-Principle: `robot-*` services are the foundation; `lingtu` is the application that
-lives on top. OTA only updates `lingtu` (the contents of `/opt/lingtu/current`).
-The five `robot-*` services are stable and rarely change.
+`robot-fastlio2.service`, `robot-localizer.service`, and `robot-lidar.service`
+are legacy ROS2 compatibility units. They are useful for fallback or comparison
+work, but they are not the product default and should not run beside the native
+DDS chain unless a specific compatibility test requires it.
 
-Only `robot-camera.service` should own the Orbbec ROS driver. Legacy units such
-as `camera.service` or `orbbec-camera.service` must stay stopped or masked; if
-they run together with `robot-camera.service`, ROS can show duplicate camera
-node instances or duplicate image publishers. Seeing one `/camera/camera` node
-and one `/camera/camera_container` node is normal for the component launch.
+There is no standalone `lingtu-gateway.service`: Gateway runs inside
+`lingtu.service` and exposes HTTP `:5050` plus MCP `:8090` from the same
+process.
 
----
+Only `robot-camera.service` should own the Orbbec ROS driver. Legacy camera
+units such as `camera.service` or `orbbec-camera.service` must stay stopped or
+masked; if they run together with `robot-camera.service`, duplicate Orbbec node
+instances or image publishers can appear. Seeing one `/camera/camera` node and
+one `/camera/camera_container` node is normal for the component launch.
 
-## Service inventory (current)
+## Service Inventory
 
-| Service             | Role                                  | Process                                   | Enabled |
-|---------------------|---------------------------------------|-------------------------------------------|:-------:|
-| `robot-lidar`       | Livox MID-360 driver                  | `livox_ros_driver2_node`                  | yes     |
-| `robot-camera`      | Orbbec Gemini 330                     | `component_container` (orbbec_camera)     | yes     |
-| `robot-brainstem`   | Quadruped leg control gRPC :13145     | `dart han_dog/bin/server.dart`            | yes     |
-| `robot-fastlio2`    | LiDAR-IMU SLAM                        | `fastlio2 lio_node`                       | yes     |
-| `robot-localizer`   | ICP localizer (uses prebuilt map)     | `localizer_node`                          | yes     |
-| `robot-super-lio`   | Experimental Super-LIO LIO            | `super_lio_node`                          | field eval |
-| `robot-super-lio-relocation` | Experimental Super-LIO saved-map startup | `relocation_node`               | field eval |
-| `lingtu`            | Algorithm stack (gateway + nav + sem) | `python3 lingtu.py nav`                   | yes     |
-| `ota-agent`         | OTA poller / installer                | `python3 -m ota_agent.main`               | yes     |
+| Service | Role | Default |
+| --- | --- | --- |
+| `lingtu-livox-dds` | Livox MID-360 SDK2 publisher into typed DDS | yes |
+| `lingtu-slam-dds` | C++ SLAM/localization runtime and status snapshots | yes |
+| `lingtu-nav-dds` | Native DDS navigation endpoint | yes |
+| `lingtu` | Gateway, session control, navigation module graph | yes |
+| `robot-brainstem` | Quadruped leg-control gRPC | yes |
+| `robot-camera` | Camera service | yes |
+| `robot-fastlio2` / `robot-localizer` / `robot-lidar` | ROS2 compatibility fallback | no |
+| `robot-genz-icp` / `robot-hba` / `robot-super-lio*` | experimental evaluation backends | no |
 
-There is intentionally no standalone `lingtu-gateway.service`: Gateway runs inside
-`lingtu.service` and exposes HTTP `:5050` plus MCP `:8090` from the same process.
-The Super-LIO units are not part of the default production target yet; install
-them only through the field-evaluation path in `super_lio_backend.md`.
+## Filesystem Layout
 
-Service unit files live in `docs/04-deployment/services/`:
-
-```
-robot-lidar.service
-robot-camera.service
-robot-brainstem.service
-robot-fastlio2.service
-robot-localizer.service
-lingtu.service
-lingtu.target            # umbrella unit pulling in robot-* + lingtu
-ros2-env.sh              # shared ROS2 environment (sourced by service ExecStart)
-install.sh               # idempotent installer
-```
-
-Experimental Super-LIO service templates live under `scripts/deploy/s100p/`:
-
-```
-super_lio.service
-super_lio_relocation.service
-install_services.sh      # field-evaluation installer and robot-super-lio aliases
-```
-
-> The previous `localization.service` was removed and replaced with `robot-fastlio2.service` +
-> `robot-localizer.service`. The legacy `nav-*.service` family (12 disabled stubs from a
-> prior generation), `lingtu_*.service`, `askme*.service`, and the in-process
-> `grpc_gateway`-style `ota-daemon.service` are all gone —see `S100P_STACK_INVENTORY.md`
-> for the historical cleanup decisions.
-
----
-
-## Filesystem layout on the robot
-
-```
+```text
 /opt/lingtu/
-  current -> releases/v2.0.0/   # symlink —OTA flips this
+  current -> releases/vX.Y.Z/
   releases/
-    v2.0.0/                     # immutable, current release
-    v1.9.x/                     # kept for rollback
   config/
-    ros2-env.sh                 # shared ROS2 environment
+    thunder-runtime-env.sh
   nav/
-    ota/                        # ota-agent state, manifests, backups
-  logs/                         # algorithm-layer runtime logs
-  models/                       # BPU .hbm and ONNX
+  logs/
 
 /etc/systemd/system/
-  robot-{lidar,camera,brainstem,fastlio2,localizer}.service
+  lingtu-livox-dds.service
+  lingtu-slam-dds.service
+  lingtu-nav-dds.service
   lingtu.service
-  lingtu.target
-  ota-agent.service
 
 /home/sunrise/data/
-  nova/maps/                    # prebuilt PCD maps
-    active/map.pcd              # localizer reads this
+  nova/maps/
 ```
 
-Developer checkout on the robot lives in `~/data/inovxio/lingtu/`. The
-`lingtu.service` unit shipped under `docs/04-deployment/services/` runs out of
-`/opt/lingtu/current/`; the unit currently checked into `scripts/deploy/` points
-at the developer checkout instead —that's the developer-shell variant used
-during the migration to immutable releases. New robots should use the
-`docs/04-deployment/services/` files.
+Developer checkout on the robot usually lives at
+`~/data/SLAM/navigation` or `~/data/inovxio/lingtu`.
 
----
-
-## Installing on a new robot
+## Installing On A Robot
 
 ```bash
-# 1. Clone repo to ~/data/inovxio/lingtu
-ssh sunrise@<robot> 'git clone https://github.com/Kitjesen/lingtu ~/data/inovxio/lingtu'
+# 1. Build native product modules
+cd ~/data/SLAM/navigation
+bash scripts/build/build_livox_sdk2_stream.sh
+LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF bash scripts/build/build_slam_core.sh
+bash scripts/build/build_nav_endpoint.sh
+bash scripts/build/build_nav_kernel.sh --clean
+bash scripts/build/build_octoplanner3d.sh --require-pcl
 
-# 2. Build native product modules
-ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_nav_kernel.sh --clean'
-ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_octoplanner3d.sh'
+# 2. Optional ROS2 compatibility workspace, only when explicitly needed
+bash scripts/build/build_ros_workspace.sh
 
-# 3. Optional: build ROS compatibility workspace for robot-* SLAM/sensor services
-ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash scripts/build/build_ros_workspace.sh'
+# 3. Install native field services
+bash scripts/deploy/thunder/install_services.sh field-cpp
 
-# 4. Install service units
-ssh sunrise@<robot> 'cd ~/data/inovxio/lingtu && bash docs/04-deployment/services/install.sh'
-
-# 5. Start everything
-ssh sunrise@<robot> 'sudo systemctl start lingtu.target'
+# 4. Start native DDS + LingTu
+sudo systemctl start lingtu-livox-dds.service lingtu-slam-dds.service lingtu-nav-dds.service lingtu.service
 ```
 
-`install.sh` copies the six service files plus `lingtu.target` to
-`/etc/systemd/system/`, copies `ros2-env.sh` to `/opt/lingtu/config/`, runs
-`daemon-reload`, and `enable`s the services plus the umbrella target. It is
-idempotent.
+The legacy installer under `docs/04-deployment/services/install.sh` is guarded by
+`LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1` and should not be used for new installs.
 
----
-
-## OTA update flow
-
-1. Push to `main` and tag `v2.x.x`.
-2. CI builds + signs the artifact, publishes a GitHub Release.
-3. `ota-agent` polls the configured server URL (`/opt/lingtu/nav/ota/config.yaml`).
-4. On match: download, verify Ed25519 signature, verify SHA256, stage to
-   `/opt/lingtu/releases/v2.x.x/`.
-5. Atomic symlink swap: `ln -sfn /opt/lingtu/releases/v2.x.x /opt/lingtu/current`.
-6. `systemctl restart lingtu`.
-7. Health check: `curl http://localhost:5050/api/v1/health`.
-
-Only `/opt/lingtu/current` moves. The five `robot-*` services keep running. See
-`OTA_GUIDE.md` for the manifest schema and signing details.
-
----
-
-## Rollback
+## Release Flow
 
 ```bash
-ssh sunrise@<robot>
-ls /opt/lingtu/releases/
-sudo ln -sfn /opt/lingtu/releases/v1.9.0 /opt/lingtu/current
-sudo systemctl restart lingtu
-curl http://localhost:5050/api/v1/health
+cd ~/data/SLAM/navigation
+bash scripts/deploy/cut_release.sh vX.Y.Z
 ```
 
-If `ota-agent` shipped a bad release and the robot is unreachable: power-cycle, then
-roll back via SSH (the `robot-*` services come up first; `lingtu.service` follows).
+`cut_release.sh` is native-first: it gates on `nav_kernel`, OctoPlanner3D, and
+the OctoMap PCD converter. ROS2 compatibility package checks run only when
+`LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1`.
 
----
+## Common Operations
 
-## Common operations
-
-| Need                              | Command                                                 |
-|-----------------------------------|---------------------------------------------------------|
-| Start everything                  | `sudo systemctl start lingtu.target`                    |
-| Stop algorithm layer only         | `sudo systemctl stop lingtu`                            |
-| Restart SLAM after drift          | `sudo systemctl restart robot-fastlio2 robot-localizer` |
-| Tail algorithm logs               | `journalctl -u lingtu -f`                               |
-| Tail SLAM logs                    | `journalctl -u robot-fastlio2 -f`                       |
-| Verify ports                      | `ss -tnlp \| grep -E '13145\|5050\|8090'`               |
-| One-screen status                 | `lingtu status`                                         |
-| Watch status (1 Hz refresh)       | `lingtu watch`                                          |
-
----
+| Need | Command |
+| --- | --- |
+| One-screen status | `bash scripts/lingtu status` |
+| Watch status | `bash scripts/lingtu watch` |
+| Restart native SLAM | `bash scripts/lingtu svc restart slam` |
+| Restart localization chain | `bash scripts/lingtu svc restart localization` |
+| Restart full native chain | `bash scripts/lingtu svc restart all` |
+| Tail app logs | `journalctl -u lingtu -f` |
+| Tail native SLAM logs | `journalctl -u lingtu-slam-dds -f` |
+| Tail native Livox logs | `journalctl -u lingtu-livox-dds -f` |
+| Verify ports | `ss -tnlp \| grep -E '13145\|5050\|8090'` |
 
 ## Diagnostics
 
-### `lingtu` won't start
+### Native Runtime Not Ready
 
 ```bash
-journalctl -u lingtu -n 80 --no-pager
-sudo systemctl status robot-fastlio2     # depends on this; lingtu won't be useful without it
-ss -tnlp | grep -E "5050|8090"           # leftover process holding the port?
+bash scripts/lingtu svc status
+bash scripts/lingtu health
+bash scripts/lingtu dataflow /nav/odometry
+bash scripts/lingtu dataflow /nav/map_cloud
+journalctl -u lingtu-slam-dds.service -n 80 --no-pager
 ```
 
-### LiDAR no data
+If native binaries are missing, the service logs print the exact build command
+for the missing component.
+
+### LiDAR Or IMU Missing
 
 ```bash
-journalctl -u robot-lidar -n 40
-lingtu doctor
-lingtu dataflow /nav/lidar_scan
-lingtu dataflow /nav/imu
-ip -br addr | grep 192.168.1            # MID-360 host sub-net, usually eth0=192.168.1.5
+journalctl -u lingtu-livox-dds.service -n 80 --no-pager
+bash scripts/lingtu doctor
+bash scripts/lingtu dataflow /nav/lidar_scan
+bash scripts/lingtu dataflow /nav/imu
+ip -br addr | grep 192.168.1
 ```
 
-If `lingtu doctor` reports active legacy `lidar.service`, `localization.service`, or
-`localizer.service`, stop the duplicate stack before restarting the production
-`robot-*` services. Two Livox drivers will fight for the same UDP ports and can leave
-`/nav/lidar_scan` and `/nav/imu` with zero publishers.
+Use `lingtu doctor --ros2` only for explicit compatibility graph inspection.
 
-Legacy command references from older docs are wrong for the current stack:
+### Drift Or Lost Localization
 
 ```bash
-journalctl -u robot-lidar -n 40
-lingtu dataflow /nav/lidar_scan          # not /livox/lidar in production
-lingtu doctor --ros2                     # optional compatibility graph inspection
+bash scripts/lingtu dataflow /nav/odometry
+bash scripts/lingtu dataflow /nav/map_cloud
+bash scripts/lingtu soak --duration 120 --interval 2 --json --strict
+bash scripts/lingtu svc restart localization
 ```
-
-### Drift / lost localization
-
-```bash
-lingtu dataflow /nav/odometry            # expect live odometry flow
-lingtu dataflow /nav/map_cloud           # expect live map cloud in mapping/localization
-lingtu soak --duration 120 --interval 2 --json --strict
-lingtu doctor --ros2                     # optional legacy topic details if needed
-sudo systemctl restart robot-fastlio2 robot-localizer
-```
-
-The Gateway has a SLAM drift watchdog (`src/gateway/gateway_module.py`
-`_drift_watchdog_loop`) that auto-restarts SLAM services when xy or velocity diverge.
-See `docs/archive/05-specialized/slam_drift_watchdog.md`.
 
 `lingtu soak` is the preferred non-motion evidence command after boot or sensor
-reconnects. It does not send goals or velocity commands; it samples Gateway
-readiness, localization freshness, map-cloud stability, command-source idleness,
-and stationary odometry displacement over the requested window.
+reconnects. It samples Gateway readiness, localization freshness, map-cloud
+stability, command-source idleness, and stationary odometry displacement.
 
-### `robot-brainstem` (port 13145) unresponsive
+`svc restart localization` is the narrow restart path for native localization:
+it stops conflicting legacy/experimental localization units, keeps or starts
+`lingtu-livox-dds.service`, restarts `lingtu-slam-dds.service`, then waits for
+the SLAM status snapshot and Gateway readiness. Use `svc restart all` only when
+Livox, SLAM, nav DDS, and Gateway all need a cold restart.
+
+Restart and relocalization are different gates:
+
+| Operation | Command | What It Proves |
+| --- | --- | --- |
+| Restart localization process | `bash scripts/lingtu svc restart localization` | native SLAM DDS can restart and produce status again |
+| Seeded saved-map relocalization | `bash scripts/lingtu nav relocalize <map> X Y YAW` | saved map accepts an operator-provided initial pose |
+| Global saved-map relocalization | `bash scripts/lingtu nav global-relocalize <map>` | backend can find a saved-map alignment without a seed |
+| Static drift gate | `bash scripts/lingtu slamcompare --map <map>` | stationary pose stays within configured drift limits |
+
+Do not treat `TRACKING` alone as navigation-ready. For saved-map navigation,
+`map_odom_tf` must be valid and the odometry must be inside the active map
+frame. A relocalization result with low quality or identity `map->odom` is a
+failed localization gate even if the SLAM process is alive.
+
+### Legacy ROS2 Compatibility
+
+The compatibility path remains available for field comparison:
 
 ```bash
-journalctl -u robot-brainstem -n 30
-sudo systemctl restart robot-brainstem
+LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1 bash scripts/deploy/s100p/install_services.sh
+bash scripts/lingtu svc restart legacy_lidar
+bash scripts/lingtu svc restart legacy_fastlio2
+bash scripts/lingtu svc restart legacy_localizer
+bash scripts/lingtu svc status-legacy
+bash scripts/lingtu doctor --ros2
 ```
 
-ThunderDriver and the Gateway control plane both wait for this gRPC server.
+Do not leave legacy LiDAR/SLAM services active beside the native DDS chain unless
+the test plan explicitly requires it; duplicate drivers can fight for the same
+sensor ports.
 
-### Stale processes after a crash
+## References
 
-```bash
-ss -tnlp | grep -E "13145|5050|8090"
-ps aux | grep -E "lingtu|fastlio|localizer|dart"
-sudo systemctl restart lingtu
-```
-
----
-
-## Pinned references
-
-- `super_lio_backend.md` - experimental Super-LIO build, smoke, rollback, and
-  route-validation gate
-
-- `GOVERNANCE.md` —six principles for deployment hygiene (historical 2026-04 cleanup)
-- `S100P_STACK_INVENTORY.md` —what was on the robot before consolidation, and why
-  the stack looks the way it does today
-- `OTA_GUIDE.md` —OTA design, signing, manifest schema, rollback
-- `lingtu_cli.md` —operations CLI subcommands
-- `services/` —actual systemd unit files installed on the robot
+- `lingtu_cli.md` - operations CLI subcommands
+- `super_lio_backend.md` - experimental Super-LIO evaluation path
+- `OTA_GUIDE.md` - historical OTA design
+- `S100P_STACK_INVENTORY.md` - historical service inventory

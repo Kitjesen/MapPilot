@@ -651,6 +651,7 @@ def register_operation_routes(app, gw) -> None:
                 result.success,
                 message=result.message,
                 quality=result.quality,
+                details=dict(result.details),
             )
         except Exception as e:
             return _slam_operation_response(False, message=str(e), status_code=500)
@@ -722,7 +723,81 @@ def register_operation_routes(app, gw) -> None:
             if ok:
                 gw._persist_last_nav_pose(map_name, x, y, yaw, quality)
             msg = result.message if not ok else f"Relocalized to {map_name}"
-            return slam_operation_payload(ok, message=msg, quality=quality)
+            return slam_operation_payload(
+                ok,
+                message=msg,
+                quality=quality,
+                details=dict(result.details),
+            )
+        except Exception as e:
+            return _slam_operation_response(False, message=str(e), status_code=500)
+
+    @app.post(
+        "/api/v1/slam/track_against_map",
+        summary="Start continuous saved-map tracking",
+        response_model=SlamOperationResponse,
+        responses={
+            400: {"model": SlamOperationResponse},
+            404: {"model": SlamOperationResponse},
+            409: {"model": SlamOperationResponse},
+            500: {"model": SlamOperationResponse},
+            503: {"model": SlamOperationResponse},
+            504: {"model": SlamOperationResponse},
+        },
+    )
+    async def slam_track_against_map(body: SlamRelocalizeRequest):
+        unsupported_response = _unsupported_saved_map_relocalization_response(gw)
+        if unsupported_response is not None:
+            return unsupported_response
+
+        payload = _body_mapping(body)
+        map_name = payload.get("map_name", "")
+        x = float(payload.get("x", 0.0))
+        y = float(payload.get("y", 0.0))
+        yaw = float(payload.get("yaw", 0.0))
+        if not map_name:
+            return _slam_operation_response(
+                False,
+                message="map_name required",
+                status_code=400,
+            )
+        name_error = safe_map_name(map_name)
+        if name_error is not None:
+            return _slam_operation_response(
+                False,
+                message=name_error,
+                status_code=400,
+            )
+        pcd_path = map_dir_for(map_name) / "map.pcd"
+        if not pcd_path.is_file():
+            return _slam_operation_response(
+                False,
+                message=f"Map not found: {pcd_path}",
+                status_code=404,
+            )
+        unavailable_response = _relocalization_service_unavailable_response(gw)
+        if unavailable_response is not None:
+            return unavailable_response
+        try:
+            result = gw._relocalization_service.track_against_map(
+                pcd_path,
+                x,
+                y,
+                yaw,
+                timeout_s=10.0,
+            )
+            if result.timed_out:
+                return _slam_operation_response(
+                    False,
+                    message=result.message,
+                    status_code=504,
+                )
+            return slam_operation_payload(
+                result.success,
+                message=result.message,
+                quality=result.quality,
+                details=dict(result.details),
+            )
         except Exception as e:
             return _slam_operation_response(False, message=str(e), status_code=500)
 

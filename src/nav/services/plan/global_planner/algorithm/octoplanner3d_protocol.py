@@ -42,7 +42,7 @@ SUPPORTED_MAP_FORMATS = (
 SUPPORTED_MAP_EXTENSIONS = tuple(item["extension"] for item in SUPPORTED_MAP_FORMATS)
 DEFAULT_PLANNER_CONSTRAINTS: dict[str, Any] = {
     "robot_radius": 0.25,
-    "max_iterations": 800000,
+    "max_iterations": 500000,
     "snap_search_radius_cells": 12,
     "require_ground_support": True,
     "strict_direct_ground_support": False,

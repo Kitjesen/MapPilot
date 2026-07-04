@@ -19,6 +19,8 @@ Usage:
   sim/scripts/launch_mujoco_fastlio2_live.sh video
   sim/scripts/launch_mujoco_fastlio2_live.sh pct-moving-obstacle
   sim/scripts/launch_mujoco_fastlio2_live.sh pct-moving-obstacle-video
+  sim/scripts/launch_mujoco_fastlio2_live.sh native-dds-sensors
+  sim/scripts/launch_mujoco_fastlio2_live.sh native-dds-gate
   sim/scripts/launch_mujoco_fastlio2_live.sh status
   sim/scripts/launch_mujoco_fastlio2_live.sh stop
 
@@ -52,6 +54,10 @@ Commands:
            -> MuJoCo motion with a route-crossing moving obstacle.
   pct-moving-obstacle-video
            Same gate with MP4 evidence output enabled.
+  native-dds-sensors
+           ROS-free MuJoCo raw MID-360/IMU publisher for native C++ DDS SLAM.
+  native-dds-gate
+           Same publisher, but fails unless C++ SLAM publishes odometry/map/health.
 
 Environment overrides:
   LINGTU_MUJOCO_LIVE_WORLD=industrial_park
@@ -117,6 +123,17 @@ Environment overrides:
   LINGTU_MUJOCO_LIVE_ROS_DOMAIN_ID=83
   LINGTU_MUJOCO_LIVE_PCT_SOURCE_REPORT=artifacts/server_sim_closure/large_terrain/report.large_local.json
   LINGTU_MUJOCO_LIVE_PCT_ROUTE=terrain_long
+  LINGTU_MUJOCO_NATIVE_DDS_DURATION=10
+  LINGTU_MUJOCO_NATIVE_DDS_DOMAIN_ID=83
+  LINGTU_MUJOCO_NATIVE_DDS_PUBLISH_HZ=10
+  LINGTU_MUJOCO_NATIVE_DDS_IMU_HZ=50
+  LINGTU_MUJOCO_NATIVE_DDS_IMU_ACC_MODE=finite_difference
+  LINGTU_MUJOCO_NATIVE_DDS_MIN_LOCALIZATION_QUALITY=0.5
+  LINGTU_MUJOCO_NATIVE_DDS_MAX_ODOM_ABS_M=100
+  LINGTU_MUJOCO_NATIVE_DDS_MAX_ODOM_Z_ABS_M=20
+  LINGTU_MUJOCO_NATIVE_DDS_POLICY_PATH=
+  LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN=build/livox_sdk2_stream/livox_sdk2_stream
+  LINGTU_MUJOCO_NATIVE_DDS_SLAM_STATUS_JSON=artifacts/mujoco_native_dds_slam/status.json
 EOF
 }
 
@@ -152,6 +169,14 @@ prepare_env() {
   # Keep the live gate on the same native-PCT raw-path mode as large_terrain
   # unless the caller explicitly opts into the GPMP optimizer.
   export LINGTU_PCT_OPTIMIZE_TRAJECTORY="${LINGTU_PCT_OPTIMIZE_TRAJECTORY:-0}"
+}
+
+prepare_native_dds_env() {
+  local root="$1"
+  export PYTHONPATH="$root/src:$root:${PYTHONPATH:-}"
+  export PYTEST_DISABLE_PLUGIN_AUTOLOAD="${PYTEST_DISABLE_PLUGIN_AUTOLOAD:-1}"
+  export LINGTU_PROFILE="${LINGTU_PROFILE:-sim_mujoco_live}"
+  export LINGTU_RUNTIME_CONTRACT="${LINGTU_RUNTIME_CONTRACT:-mujoco_fastlio2_live}"
 }
 
 cleanup_stale_fastlio2() {
@@ -733,6 +758,77 @@ run_pct_moving_obstacle() {
   fi
 }
 
+run_native_dds_sensors() {
+  local root="$1"
+  local mode="${2:-sensors}"
+  prepare_native_dds_env "$root"
+
+  local run_root="${LINGTU_MUJOCO_NATIVE_DDS_RUN_DIR:-$root/artifacts/mujoco_native_dds_sensors}"
+  local stamp
+  stamp="$(date +%Y%m%d_%H%M%S)"
+  local run_dir="$run_root/$mode-$stamp"
+  mkdir -p "$run_dir"
+
+  local python_bin="${LINGTU_PYTHON:-/usr/bin/python3}"
+  [[ -x "$python_bin" ]] || python_bin="python3"
+
+  local world="${LINGTU_MUJOCO_NATIVE_DDS_WORLD:-${LINGTU_MUJOCO_LIVE_WORLD:-industrial_park}}"
+  local domain_id="${LINGTU_MUJOCO_NATIVE_DDS_DOMAIN_ID:-${LINGTU_DDS_DOMAIN_ID:-83}}"
+  local duration="${LINGTU_MUJOCO_NATIVE_DDS_DURATION:-10}"
+  local publisher_bin="${LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN:-$root/build/livox_sdk2_stream/livox_sdk2_stream}"
+  local slam_status_json="${LINGTU_MUJOCO_NATIVE_DDS_SLAM_STATUS_JSON:-${LINGTU_SLAM_STATUS_JSON:-$root/artifacts/mujoco_native_dds_slam/status.json}}"
+  local require_slam="${LINGTU_MUJOCO_NATIVE_DDS_REQUIRE_SLAM_OUTPUT:-0}"
+  if [[ "$mode" == "gate" ]]; then
+    require_slam="1"
+  fi
+
+  local cmd=(
+    "$python_bin" "$root/sim/scripts/mujoco_native_dds_sensors.py"
+    "--world" "$world"
+    "--duration" "$duration"
+    "--publish-hz" "${LINGTU_MUJOCO_NATIVE_DDS_PUBLISH_HZ:-10}"
+    "--imu-hz" "${LINGTU_MUJOCO_NATIVE_DDS_IMU_HZ:-50}"
+    "--imu-acc-mode" "${LINGTU_MUJOCO_NATIVE_DDS_IMU_ACC_MODE:-${LINGTU_MUJOCO_LIVE_IMU_ACC_MODE:-finite_difference}}"
+    "--min-localization-quality" "${LINGTU_MUJOCO_NATIVE_DDS_MIN_LOCALIZATION_QUALITY:-0.5}"
+    "--max-odom-abs-m" "${LINGTU_MUJOCO_NATIVE_DDS_MAX_ODOM_ABS_M:-100}"
+    "--max-odom-z-abs-m" "${LINGTU_MUJOCO_NATIVE_DDS_MAX_ODOM_Z_ABS_M:-20}"
+    "--domain-id" "$domain_id"
+    "--publisher-bin" "$publisher_bin"
+    "--slam-status-json" "$slam_status_json"
+    "--drive-mode" "${LINGTU_MUJOCO_NATIVE_DDS_DRIVE_MODE:-kinematic}"
+    "--drive-vx" "${LINGTU_MUJOCO_NATIVE_DDS_DRIVE_VX:-0.10}"
+    "--drive-vy" "${LINGTU_MUJOCO_NATIVE_DDS_DRIVE_VY:-0.0}"
+    "--drive-wz" "${LINGTU_MUJOCO_NATIVE_DDS_DRIVE_WZ:-0.04}"
+    "--n-rays" "${LINGTU_MUJOCO_NATIVE_DDS_N_RAYS:-6400}"
+    "--mid360-samples-per-frame" "${LINGTU_MUJOCO_NATIVE_DDS_MID360_SAMPLES_PER_FRAME:-15000}"
+    "--max-points" "${LINGTU_MUJOCO_NATIVE_DDS_MAX_POINTS:-15000}"
+    "--json-out" "$run_dir/report.json"
+  )
+  if [[ "$require_slam" == "1" || "$require_slam" == "true" || "$require_slam" == "yes" ]]; then
+    cmd+=("--require-slam-output")
+  fi
+  if [[ -n "${LINGTU_MUJOCO_NATIVE_DDS_START:-}" ]]; then
+    cmd+=("--start" "$LINGTU_MUJOCO_NATIVE_DDS_START")
+  fi
+  if [[ -n "${LINGTU_MUJOCO_NATIVE_DDS_PATTERN:-}" ]]; then
+    cmd+=("--mid360-pattern" "$LINGTU_MUJOCO_NATIVE_DDS_PATTERN")
+  fi
+  if [[ -n "${LINGTU_MUJOCO_NATIVE_DDS_POLICY_PATH:-}" ]]; then
+    cmd+=("--policy-path" "$LINGTU_MUJOCO_NATIVE_DDS_POLICY_PATH")
+  fi
+
+  echo "run_dir=$run_dir" | tee "$run_dir/status.txt"
+  echo "LINGTU_PROFILE=$LINGTU_PROFILE" | tee -a "$run_dir/status.txt"
+  echo "LINGTU_RUNTIME_CONTRACT=$LINGTU_RUNTIME_CONTRACT" | tee -a "$run_dir/status.txt"
+  echo "world=$world domain_id=$domain_id duration=$duration require_slam_output=$require_slam" | tee -a "$run_dir/status.txt"
+  echo "publisher_bin=$publisher_bin" | tee -a "$run_dir/status.txt"
+  echo "slam_status_json=$slam_status_json" | tee -a "$run_dir/status.txt"
+  printf '%q ' "${cmd[@]}" >"$run_dir/command.txt"
+  echo >>"$run_dir/command.txt"
+  echo "latest_run_dir=$run_dir" >"$run_root/latest.txt"
+  "${cmd[@]}" 2>&1 | tee "$run_dir/native_dds_sensors.log"
+}
+
 wait_for_topics() {
   local timeout_s="$1"
   shift
@@ -822,10 +918,12 @@ status_demo() {
     cat "$run_root/latest.txt"
   fi
   pgrep -af "mujoco_live_gate.py" || true
+  pgrep -af "mujoco_native_dds_sensors.py" || true
 }
 
 stop_demo() {
   pkill -f "mujoco_live_gate.py" >/dev/null 2>&1 || true
+  pkill -f "mujoco_native_dds_sensors.py" >/dev/null 2>&1 || true
   pkill -f "fastlio.*mujoco_fastlio2_live" >/dev/null 2>&1 || true
   pkill -f "mujoco_fastlio2_live.rviz" >/dev/null 2>&1 || true
   echo "Stopped LingTu MuJoCo Fast-LIO live gate processes."
@@ -852,6 +950,8 @@ main() {
     video) run_gate "$root" "video" ;;
     pct-moving-obstacle|moving-obstacle) run_pct_moving_obstacle "$root" ;;
     pct-moving-obstacle-video|moving-obstacle-video) run_pct_moving_obstacle "$root" "video" ;;
+    native-dds-sensors) run_native_dds_sensors "$root" "sensors" ;;
+    native-dds-gate) run_native_dds_sensors "$root" "gate" ;;
     status) status_demo "$root" ;;
     stop) stop_demo ;;
     -h|--help|"") usage ;;

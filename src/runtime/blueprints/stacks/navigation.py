@@ -27,7 +27,7 @@ def navigation(
     enable_native: bool = False,
     **config,
 ) -> Blueprint:
-    """Global planning + endpoint adapters + local autonomy chain."""
+    """Global planning plus local autonomy unless a native endpoint owns it."""
 
     bp = Blueprint()
     add_navigation_core(
@@ -38,7 +38,8 @@ def navigation(
     )
     add_navigation_io_adapter_stack(bp, **config)
     add_exploration_goal_sources(bp, **config)
-    add_autonomy_chain(bp, enable_native=enable_native, **config)
+    if not config.get("native_navigation_endpoint"):
+        add_autonomy_chain(bp, enable_native=enable_native, **config)
     wire_navigation_output_adapter_stack(bp)
     return bp
 

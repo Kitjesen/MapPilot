@@ -101,7 +101,12 @@ def create_transport_adapter(
             deserializer=loads_message,
         )
     if strategy in {TransportStrategy.DDS, TransportStrategy.DUAL}:
-        from message.dds import dds_type_for_topic, from_dds_message, to_dds_message
+        from message.dds import (
+            TOPIC_SPECS,
+            dds_type_for_topic,
+            from_dds_message,
+            to_dds_message,
+        )
         from .dds import RawMessage
         from .json_codec import dumps_topic_message, loads_message
 
@@ -113,6 +118,7 @@ def create_transport_adapter(
             topic_msg_type=dds_type_for_topic,
             topic_encoder=to_dds_message,
             topic_decoder=from_dds_message,
+            forbidden_topics=frozenset(TOPIC_SPECS),
         )
     return TransportAdapter(transport)
 

@@ -404,7 +404,10 @@ def test_saved_map_relocalize_gate_locks_navigation_contract():
     assert report["runtime_relocalization_executed"] is False
     assert report["runtime_relocalization_validated"] is False
     assert "runtime_relocalization_validated" in report["forbidden_claims"]
-    assert report["default_profiles"]["navigating"] == "localizer"
+    assert report["default_profiles"]["navigating"] == "native_dds"
+    native = report["contracts"]["native_dds"]
+    assert native["health_source"] == "slam_runtime"
+    assert native["saved_map_relocalization_supported"] is True
     localizer = report["contracts"]["localizer"]
     assert localizer["health_source"] == "localizer_health_topic"
     assert localizer["map_save_source"] == "active_map"
@@ -412,8 +415,8 @@ def test_saved_map_relocalize_gate_locks_navigation_contract():
     assert localizer["recovery_method"] == "relocalize_service"
     for backend in ("fastlio2", "super_lio", "super_lio_relocation"):
         assert report["contracts"][backend]["saved_map_relocalization_supported"] is False
-    assert report["plans"]["session_navigating_fastlio2"]["ensure"] == ("slam", "localizer")
-    assert report["plans"]["switch_localizer"]["ensure"] == ("slam", "localizer")
+    assert report["plans"]["session_navigating_native_dds"]["ensure"] == ("slam",)
+    assert report["plans"]["switch_localizer"]["ensure"] == ("slam",)
     assert all(report["launch_services"].values())
     status = report["bridge_status"]["localizer"]
     assert status["backend"] == "localizer"

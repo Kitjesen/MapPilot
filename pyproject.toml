@@ -177,6 +177,7 @@ ignore_missing_imports = true   # many deps lack stubs
 exclude = ["src/external_adapters/pct/pct_planner/planner/lib/3rdparty/", "third_party/", "research/"]
 
 [tool.pytest.ini_options]
+addopts = "-p no:anyio"
 testpaths = [
     "tests/contracts",
     "src/runtime/tests",

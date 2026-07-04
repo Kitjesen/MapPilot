@@ -150,6 +150,12 @@ struct SlamOutputs {
   std::string relocalization_state = "unsupported";
   std::string last_relocalization_message;
   double relocalization_quality = -1.0;
+  std::optional<Pose3d> relocalization_map_body;
+  std::string relocalization_refine_backend;
+  int relocalization_refine_iterations = -1;
+  int relocalization_refine_inliers = -1;
+  bool relocalization_refine_converged = false;
+  double relocalization_refine_pos_cov_trace = -1.0;
 
   double localization_quality = 0.0;
   GnssFusionHealth gnss_fusion_health;

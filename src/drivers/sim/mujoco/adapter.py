@@ -24,7 +24,7 @@ MUJOCO_PORTABLE_ODOM_FRAME_ID = topic_default_frame_id(TOPICS.odometry)
 MUJOCO_PORTABLE_BODY_FRAME_ID = topic_default_frame_id(TOPICS.registered_cloud)
 MUJOCO_PORTABLE_MAP_CLOUD_FRAME_ID = MUJOCO_PORTABLE_ODOM_FRAME_ID
 MUJOCO_PORTABLE_CAMERA_FRAME_ID = FRAMES.camera
-MUJOCO_PORTABLE_IMU_FRAME_ID = "imu_link"
+MUJOCO_PORTABLE_IMU_FRAME_ID = topic_default_frame_id(TOPICS.imu)
 
 
 @dataclass
@@ -162,10 +162,7 @@ class MujocoPortableAdapter:
     def _imu_from_state(state: Any, ts: float) -> Imu:
         quat = np.asarray(state.orientation, dtype=float)
         gyro = np.asarray(getattr(state, "imu_gyro", (0.0, 0.0, 0.0)), dtype=float)
-        projected_gravity = np.asarray(
-            getattr(state, "imu_projected_gravity", (0.0, 0.0, -1.0)),
-            dtype=float,
-        )
+        accel = np.asarray(getattr(state, "imu_linear_acceleration", (0.0, 0.0, 0.0)), dtype=float)
         return Imu(
             orientation=Quaternion(
                 float(quat[0]),
@@ -175,9 +172,9 @@ class MujocoPortableAdapter:
             ),
             angular_velocity=Vector3(float(gyro[0]), float(gyro[1]), float(gyro[2])),
             linear_acceleration=Vector3(
-                float(projected_gravity[0]),
-                float(projected_gravity[1]),
-                float(projected_gravity[2]),
+                float(accel[0]),
+                float(accel[1]),
+                float(accel[2]),
             ),
             ts=ts,
             frame_id=MUJOCO_PORTABLE_IMU_FRAME_ID,

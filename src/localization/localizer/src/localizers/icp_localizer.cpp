@@ -1,7 +1,29 @@
 #include "icp_localizer.h"
 
+#include <algorithm>
+#include <cmath>
 #include <exception>
 #include <iostream>
+
+#ifdef LINGTU_ENABLE_SMALL_GICP
+namespace {
+
+double positionCovarianceTrace(const Eigen::Matrix<double, 6, 6> &hessian)
+{
+    if (!hessian.allFinite()) {
+        return -1.0;
+    }
+    const double det = hessian.determinant();
+    if (!std::isfinite(det) || std::abs(det) < 1e-12) {
+        return -1.0;
+    }
+    const Eigen::Matrix<double, 6, 6> cov = hessian.inverse();
+    const double trace = cov.block<3, 3>(3, 3).trace();
+    return std::isfinite(trace) ? trace : -1.0;
+}
+
+}  // namespace
+#endif
 
 ICPLocalizer::ICPLocalizer(const ICPConfig &config) : m_config(config)
 {
@@ -10,9 +32,12 @@ ICPLocalizer::ICPLocalizer(const ICPConfig &config) : m_config(config)
     m_rough_inp.reset(new CloudType);
     m_rough_tgt.reset(new CloudType);
 
-    // Keep the robot runtime on PCL ICP until accelerated ICP backends are
-    // proven against live Livox scans. The previous small_gicp path could
-    // throw from worker threads and crash the localizer process.
+#ifdef LINGTU_ENABLE_SMALL_GICP
+    m_rough_icp.setRegistrationType("GICP");
+    m_refine_icp.setRegistrationType("GICP");
+    m_rough_icp.setNumThreads(std::max(1, m_config.num_threads));
+    m_refine_icp.setNumThreads(std::max(1, m_config.num_threads));
+#endif
 }
 bool ICPLocalizer::loadMap(const std::string &path)
 {
@@ -86,6 +111,7 @@ bool ICPLocalizer::align(M4F &guess)
     if (m_refine_tgt->size() == 0 || m_rough_tgt->size() == 0) {
         m_last_fitness_score = -1.0;
         m_last_iterations = -1;
+        m_last_inliers = -1;
         m_last_converged = false;
         m_last_pos_cov_trace = -1.0;
         return false;
@@ -99,6 +125,7 @@ bool ICPLocalizer::align(M4F &guess)
             m_rough_icp.getFitnessScore() > m_config.rough_score_thresh) {
             m_last_fitness_score = m_rough_icp.getFitnessScore();
             m_last_iterations = -1;
+            m_last_inliers = -1;
             m_last_converged = false;
             m_last_pos_cov_trace = -1.0;
             return false;
@@ -106,13 +133,17 @@ bool ICPLocalizer::align(M4F &guess)
         m_refine_icp.setInputSource(m_refine_inp);
         m_refine_icp.align(*aligned_cloud, m_rough_icp.getFinalTransformation());
         m_last_fitness_score = m_refine_icp.getFitnessScore();
-
-        // PCL ICP does not expose reliable iteration/covariance diagnostics
-        // across ROS/PCL versions. Keep explicit sentinels so downstream
-        // health parsers know the metrics are unavailable rather than stale.
         m_last_iterations = -1;
+        m_last_inliers = -1;
         m_last_converged = m_refine_icp.hasConverged();
         m_last_pos_cov_trace = -1.0;
+#ifdef LINGTU_ENABLE_SMALL_GICP
+        const auto &detail = m_refine_icp.getRegistrationResult();
+        m_last_iterations = static_cast<int>(detail.iterations);
+        m_last_inliers = static_cast<int>(detail.num_inliers);
+        m_last_converged = detail.converged;
+        m_last_pos_cov_trace = positionCovarianceTrace(detail.H);
+#endif
 
         if (!m_last_converged || m_last_fitness_score > m_config.refine_score_thresh)
             return false;
@@ -125,6 +156,7 @@ bool ICPLocalizer::align(M4F &guess)
     }
     m_last_fitness_score = -1.0;
     m_last_iterations = -1;
+    m_last_inliers = -1;
     m_last_converged = false;
     m_last_pos_cov_trace = -1.0;
     return false;

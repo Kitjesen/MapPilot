@@ -2,6 +2,7 @@
 
 import os
 import sys
+from inspect import signature
 
 _repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _src = os.path.join(_repo, "src")
@@ -17,9 +18,9 @@ for _p in [
         sys.path.insert(0, _p)
 
 
-def pytest_ignore_collect(collection_path, config):
+def _pytest_ignore_collect_impl(candidate):
     """Skip 3rdparty and vendored directories to avoid import noise and leaks."""
-    _str_path = str(collection_path)
+    _str_path = str(candidate)
     _skip_patterns = [
         "/3rdparty/",
         "/third_party/",
@@ -40,3 +41,21 @@ def pytest_ignore_collect(collection_path, config):
         if pat in _str_path:
             return True
     return None
+
+
+try:
+    from _pytest import hookspec as _pytest_hookspec
+
+    _ignore_collect_params = signature(_pytest_hookspec.pytest_ignore_collect).parameters
+except Exception:
+    _ignore_collect_params = {}
+
+if "collection_path" in _ignore_collect_params:
+
+    def pytest_ignore_collect(collection_path, config):
+        return _pytest_ignore_collect_impl(collection_path)
+
+else:
+
+    def pytest_ignore_collect(path, config):
+        return _pytest_ignore_collect_impl(path)

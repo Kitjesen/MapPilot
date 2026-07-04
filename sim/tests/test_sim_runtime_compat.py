@@ -25,7 +25,7 @@ except ImportError:
 
 from sim.engine.core.robot import RobotConfig
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
 from drivers.sim.mujoco.driver import MujocoDriverModule
@@ -35,9 +35,9 @@ def test_default_nova_dog_resolves_real_robot_model():
     sim_root = Path(__file__).resolve().parents[2] / "sim"
     cfg = RobotConfig.default_nova_dog().resolve_paths(base_dir=str(sim_root))
 
-    assert Path(cfg.robot_xml).name == "thunder_v3_lingtu.xml"
+    assert Path(cfg.robot_xml).as_posix().endswith("robots/thunderv4/mjcf/thunderv4.xml")
     assert Path(cfg.robot_xml).exists()
-    assert cfg.policy_onnx == ""
+    assert Path(cfg.policy_onnx).name == "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
     assert cfg.base_body_name == "base_link"
     assert cfg.lidar_body_name == "lidar_link"
     assert cfg.leg_act_offset == 0
@@ -50,7 +50,7 @@ def test_default_nova_dog_resolves_paths_from_engine_core_default():
 
     assert Path(cfg.robot_xml).exists()
     assert Path(cfg.robot_xml).is_relative_to(sim_root)
-    assert Path(cfg.robot_xml).name == "thunder_v3_lingtu.xml"
+    assert Path(cfg.robot_xml).name == "thunderv4.xml"
     assert "sim/sim" not in Path(cfg.robot_xml).as_posix()
 
 
@@ -66,6 +66,68 @@ def test_mujoco_driver_splits_body_lidar_cloud_from_world_map_cloud():
     assert body_pts[0, :3] == pytest.approx([1.0, 0.0, 0.0], abs=1e-6)
     assert FRAMES.body == "body"
     assert FRAMES.odom == "odom"
+
+
+def test_mujoco_driver_builds_livox_raw_scan_frame():
+    from drivers.sim.mujoco.driver import _xyzi_to_livox_frame
+
+    pts = np.array(
+        [[1.0, 2.0, 3.0, 42.0], [4.0, 5.0, 6.0, 84.0]],
+        dtype=np.float32,
+    )
+
+    frame = _xyzi_to_livox_frame(
+        pts,
+        timestamp_ns=1_000_000_000,
+        sequence=7,
+        frame_id="lidar_link",
+        scan_duration_ns=100_000_000,
+    )
+
+    assert frame.frame_id == "lidar_link"
+    assert frame.sequence == 7
+    assert frame.timestamp_ns == 1_000_000_000
+    assert frame.point_count == 2
+    assert frame.points["x"].tolist() == pytest.approx([1.0, 4.0])
+    assert frame.points["intensity"].tolist() == pytest.approx([42.0, 84.0])
+    assert frame.points["offset_time_ns"][0] == 0
+    assert frame.points["offset_time_ns"][1] > 0
+    assert frame.to_xyzi() == pytest.approx(pts)
+
+
+def test_mujoco_driver_raw_scan_uses_lidar_frame_for_native_slam():
+    import drivers.sim.mujoco.driver as driver
+    from runtime.runtime_interface import TOPICS, topic_default_frame_id
+
+    source = Path(driver.__file__).read_text(encoding="utf-8")
+
+    assert driver.MUJOCO_MODULE_LIDAR_FRAME_ID == topic_default_frame_id(TOPICS.lidar_scan)
+    assert "frame_id=MUJOCO_MODULE_LIDAR_FRAME_ID" in source
+
+
+def test_mujoco_portable_imu_uses_runtime_frame_and_acceleration():
+    from drivers.sim.mujoco.adapter import MujocoPortableAdapter
+    from sim.engine.core.engine import RobotState
+
+    state = RobotState(
+        position=np.zeros(3),
+        orientation=np.array([0.0, 0.0, 0.0, 1.0]),
+        linear_velocity=np.zeros(3),
+        angular_velocity=np.zeros(3),
+        joint_positions=np.zeros(16),
+        joint_velocities=np.zeros(16),
+        imu_gyro=np.array([0.1, -0.2, 0.3]),
+        imu_projected_gravity=np.array([0.0, 0.0, -1.0]),
+        imu_linear_acceleration=np.array([1.0, 2.0, 9.8]),
+    )
+
+    imu = MujocoPortableAdapter._imu_from_state(state, 12.5)
+
+    assert imu.frame_id == "lidar_link"
+    assert imu.angular_velocity.z == pytest.approx(0.3)
+    assert imu.linear_acceleration.x == pytest.approx(1.0)
+    assert imu.linear_acceleration.y == pytest.approx(2.0)
+    assert imu.linear_acceleration.z == pytest.approx(9.8)
 
 
 def test_thunder_v3_urdf_xml_assets_are_current_and_resolvable():
@@ -430,6 +492,196 @@ def test_launch_mujoco_fastlio2_live_passes_wall_timeout_guard():
     assert '"--partial-json-out" "$run_dir/report.partial.json"' in text
 
 
+def test_launch_mujoco_fastlio2_live_exposes_native_dds_sensor_gate():
+    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+
+    assert "native-dds-sensors" in text
+    assert "native-dds-gate" in text
+    assert "mujoco_native_dds_sensors.py" in text
+    assert "--imu-hz" in text
+    assert "--publisher-bin" in text
+    assert "--slam-status-json" in text
+    assert "--require-slam-output" in text
+    assert "--policy-path" in text
+    assert "LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN" in text
+    assert "LINGTU_MUJOCO_NATIVE_DDS_SLAM_STATUS_JSON" in text
+    assert "LINGTU_MUJOCO_NATIVE_DDS_POLICY_PATH" in text
+    assert "prepare_native_dds_env" in text
+
+
+def test_navigation_runtime_dataflow_documents_no_python_slam_rule():
+    architecture = Path("docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md").read_text(encoding="utf-8")
+    recording = Path("docs/07-testing/thunderv4_mujoco_lidar_recording_requirements.md").read_text(encoding="utf-8")
+
+    assert "Do not write or ship Python SLAM" in architecture
+    assert "Python code may adapt streams, status" in architecture
+    assert "it must not become a SLAM backend" in architecture
+    assert "Do not write or ship Python SLAM" in recording
+    assert "Reports must keep `no_python_slam=true`" in recording
+
+
+def test_mujoco_native_dds_sensor_bridge_declares_no_python_slam_contract():
+    from collections import Counter
+
+    from sim.scripts import mujoco_native_dds_sensors as bridge
+
+    source = Path(bridge.__file__).read_text(encoding="utf-8")
+    report = bridge._make_report(
+        ok=False,
+        duration_s=1.0,
+        domain_id=83,
+        sensor_counts=Counter({bridge.TOPICS.lidar_scan: 1, bridge.TOPICS.imu: 1}),
+        slam_counts=Counter(),
+        require_slam_output=True,
+        remaining_gaps=["native_slam_output_missing:/slam/odometry"],
+    )
+
+    assert "not SLAM" in source
+    assert "localization.slam._native" not in source
+    assert "DDSTransport" not in source
+    assert "runtime.transport.dds" not in source
+    assert bridge.NATIVE_SLAM_RUNTIME == "lingtu_slam_cyclone_runtime"
+    assert bridge.NATIVE_SENSOR_PUBLISHER == "livox_sdk2_stream --stdin-records --dds"
+    assert bridge.REQUIRED_SLAM_OUTPUT_TOPICS == (
+        bridge.TOPICS.odometry,
+        bridge.TOPICS.map_cloud,
+        bridge.TOPICS.localization_health,
+    )
+    assert report["no_python_slam"] is True
+    assert report["native_sensor_publisher"] == ""
+    assert report["python_role"] == "mujoco_sensor_dds_adapter_only"
+    assert report["localization_runtime_expected"] == "lingtu_slam_cyclone_runtime"
+    assert report["sensor_topics"][bridge.TOPICS.lidar_scan]["dds_topic"] == "rt/lidar/raw_frame"
+
+
+def test_mujoco_native_dds_sensor_bridge_accepts_policy_path_override():
+    from sim.scripts import mujoco_native_dds_sensors as bridge
+
+    args = bridge._build_parser().parse_args(
+        [
+            "--drive-mode",
+            "policy",
+            "--policy-path",
+            "sim/robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.onnx",
+        ]
+    )
+    source = Path(bridge.__file__).read_text(encoding="utf-8")
+
+    assert args.policy_path.endswith("_policy.onnx")
+    assert 'policy_path=str(args.policy_path or "") or None' in source
+
+
+def test_mujoco_native_dds_sensor_bridge_reads_native_slam_status(tmp_path):
+    from sim.scripts import mujoco_native_dds_sensors as bridge
+
+    status_path = tmp_path / "status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "has_odom": True,
+                "registered_points": 7,
+                "map_points": 11,
+                "state": "TRACKING",
+                "localization_quality": 0.42,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    counts, status = bridge._slam_status_counts(str(status_path))
+
+    assert counts[bridge.TOPICS.odometry] == 1
+    assert counts[bridge.TOPICS.registered_cloud] == 1
+    assert counts[bridge.TOPICS.map_cloud] == 1
+    assert counts[bridge.TOPICS.localization_health] == 1
+    assert counts[bridge.TOPICS.localization_quality] == 1
+    assert status["state"] == "TRACKING"
+
+
+def test_mujoco_native_dds_sensor_bridge_writes_livox_binary_record():
+    import io
+
+    from sim.scripts import mujoco_native_dds_sensors as bridge
+
+    stream = io.BytesIO()
+    bridge._write_record(stream, bridge._RECORD_IMU, 123, 4, b"abcdef", 1)
+
+    raw = stream.getvalue()
+    magic, record_type, timestamp_ns, sequence, count, payload_bytes = bridge._HEADER.unpack(
+        raw[: bridge._HEADER.size]
+    )
+    assert magic == bridge._MAGIC
+    assert record_type == bridge._RECORD_IMU
+    assert timestamp_ns == 123
+    assert sequence == 4
+    assert count == 1
+    assert payload_bytes == 6
+    assert raw[bridge._HEADER.size :] == b"abcdef"
+
+
+def test_mujoco_native_dds_sensor_bridge_writes_mid360_imu_acceleration_in_g_units():
+    import io
+
+    from runtime.msgs.geometry import Quaternion, Vector3
+    from runtime.msgs.sensor import Imu
+    from sim.scripts import mujoco_native_dds_sensors as bridge
+
+    imu = Imu(
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        angular_velocity=Vector3(0.1, 0.2, 0.3),
+        linear_acceleration=Vector3(0.0, 0.0, bridge._MID360_ACCEL_MPS2_PER_G),
+        ts=1.0,
+        frame_id=bridge.IMU_FRAME_ID,
+    )
+    stream = io.BytesIO()
+
+    bridge._write_native_imu(stream, imu, sequence=5)
+    payload = stream.getvalue()[bridge._HEADER.size :]
+    gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z = bridge._IMU_PAYLOAD.unpack(payload)
+
+    assert gyro_x == pytest.approx(0.1)
+    assert gyro_y == pytest.approx(0.2)
+    assert gyro_z == pytest.approx(0.3)
+    assert acc_x == pytest.approx(0.0)
+    assert acc_y == pytest.approx(0.0)
+    assert acc_z == pytest.approx(1.0)
+
+
+def test_mujoco_native_dds_sensor_bridge_uses_specific_force_for_raw_imu():
+    from sim.scripts import mujoco_native_dds_sensors as bridge
+
+    class State:
+        orientation = np.array([0.0, 0.0, 0.0, 1.0])
+        imu_gyro = np.array([0.1, 0.2, 0.3])
+        imu_linear_acceleration = np.array([0.0, 0.0, -123.0])
+        linear_velocity = np.zeros(3)
+
+    imu = bridge._runtime_imu_from_state(State(), 1.0, None, 0.0)
+
+    assert imu.angular_velocity.z == pytest.approx(0.3)
+    assert imu.linear_acceleration.x == pytest.approx(0.0)
+    assert imu.linear_acceleration.y == pytest.approx(0.0)
+    assert imu.linear_acceleration.z == pytest.approx(9.81)
+
+
+def test_mujoco_native_dds_sensor_bridge_flags_unhealthy_native_slam_status():
+    from sim.scripts import mujoco_native_dds_sensors as bridge
+
+    gaps = bridge._slam_health_gaps(
+        {
+            "state": "TRACKING",
+            "localization_quality": 0.2,
+            "odometry": {"pose": {"x": 0.0, "y": 0.0, "z": -56.0}},
+        },
+        min_quality=0.5,
+        max_odom_abs_m=100.0,
+        max_odom_z_abs_m=20.0,
+    )
+
+    assert "native_slam_quality_low:0.200" in gaps
+    assert "native_slam_odom_z_out_of_bounds:-56.000" in gaps
+
+
 def test_mujoco_fastlio2_live_gate_accepts_partial_report_path():
     from sim.scripts.mujoco_live_gate import _build_parser
 
@@ -692,7 +944,7 @@ def test_launch_mujoco_fastlio2_live_passes_inspection_tracking_controls():
 
 def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
     from drivers.sim.mujoco import stack as mujoco_stack
-    import runtime.blueprints.full_stack as full_stack_module
+    import runtime.blueprints.profile_builder as profile_builder_module
 
     captured = {}
     modules = {
@@ -708,18 +960,16 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
         def get_module(self, name):
             return modules[name]
 
-    class FakeBlueprint:
-        def build(self):
-            return FakeSystem()
-
-    def fake_full_stack_blueprint(**kwargs):
+    def fake_build_system_for_profile(profile, overrides=None, **kwargs):
+        captured["profile"] = profile
+        captured.update(dict(overrides or {}))
         captured.update(kwargs)
-        return FakeBlueprint()
+        return FakeSystem()
 
     monkeypatch.setattr(
-        full_stack_module,
-        "full_stack_blueprint",
-        fake_full_stack_blueprint,
+        profile_builder_module,
+        "build_system_for_profile",
+        fake_build_system_for_profile,
     )
 
     stack = mujoco_stack.build_fastlio2_inspection_stack(
@@ -739,9 +989,9 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
 
     assert stack.navigation is modules["nav.mission"]
     assert stack.driver is modules["SimEndpointDriverModule"]
+    assert captured["profile"] == "sim_mujoco_live"
     assert captured["robot"] == "sim_endpoint"
     assert captured["enable_nav_out"] is False
-    assert captured["enable_endpoint_grid_bridge"] is False
     assert "enable_ros2_path_bridge" not in captured
     assert "enable_ros2_grid_bridge" not in captured
     assert captured["planner_backend"] == "pct"
@@ -1990,7 +2240,7 @@ def test_mujoco_driver_setup_uses_selected_scene_and_real_robot(monkeypatch):
     assert driver._engine is not None
     assert Path(driver._engine.loaded_xml_path) == expected_world
     assert Path(driver._engine.world_config.scene_xml) == expected_world
-    assert Path(driver._engine.robot_config.robot_xml).name == "thunder_v3_lingtu.xml"
+    assert Path(driver._engine.robot_config.robot_xml).name == "thunderv4.xml"
     assert Path(driver._engine.robot_config.robot_xml).exists()
     assert driver._engine.robot_config.base_body_name == "base_link"
     assert driver._engine.lidar_config.body_name == "lidar_link"
@@ -2014,17 +2264,15 @@ def test_mujoco_driver_uses_scene_placeholder_start_pose(monkeypatch):
 
     assert driver._engine is not None
     assert driver._engine.robot_config.init_position == [2.0, 3.0, 0.5]
+    assert Path(driver._engine.robot_config.policy_onnx).name == "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
 
 
-def test_mujoco_driver_policy_candidates_prioritize_brainstem_default():
+def test_mujoco_driver_defaults_to_thunderv4_policy():
     import drivers.sim.mujoco.driver as driver_mod
 
-    first = driver_mod._POLICY_CANDIDATES[0]
-    assert first.name == "policy_251119.onnx"
-    assert first.parent.name == "model"
-    assert first.parent.parent.name == "nova_dog"
-    assert driver_mod._POLICY_CANDIDATES[-2].name == "policy.onnx"
-    assert driver_mod._POLICY_CANDIDATES[-1].name == "thunder_policy.onnx"
+    assert len(driver_mod._POLICY_CANDIDATES) == 1
+    assert driver_mod._POLICY_CANDIDATES[0].name == "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
+    assert driver_mod._EXPLICIT_POLICY_CANDIDATES[0].name == "policy_251119.onnx"
 
 
 def test_legacy_nova_nav_bridge_uses_current_robot_paths():
@@ -2096,12 +2344,9 @@ def test_root_operation_scripts_do_not_point_at_deleted_navigation_launches():
     ota_install = (repo_root / "scripts" / "ota" / "install_nav.sh").read_text(
         encoding="utf-8"
     )
-    pct_profile = (
-        repo_root / "launch" / "profiles" / "planner_pct_py.launch.py"
-    ).read_text(encoding="utf-8")
     scripts_index = (repo_root / "scripts" / "README.md").read_text(encoding="utf-8")
 
-    for source in (shell_entry, ota_start, ota_install, pct_profile):
+    for source in (shell_entry, ota_start, ota_install):
         assert "navigation_run.launch.py" not in source
         assert "navigation_bringup.launch.py" not in source
         assert "launch/subsystems/planning.launch.py" not in source
@@ -2113,8 +2358,8 @@ def test_root_operation_scripts_do_not_point_at_deleted_navigation_launches():
     assert "_run_lingtu status" in shell_entry
     assert '"$NAV_DIR/lingtu.py" nav' in ota_start
     assert "python3 \\$NAV_DIR/lingtu.py nav" in ota_install
-    assert "Shell 鍏煎鍏ュ彛" in scripts_index
-    assert "鏈哄櫒浜虹 `scripts/lingtu`" in scripts_index
+    assert "LingTu Operations Entrypoints" in scripts_index
+    assert "`scripts/lingtu health`" in scripts_index
 
 
 def test_sim_boundary_indexes_document_stable_contracts():
@@ -2228,7 +2473,7 @@ def test_sim_boundary_indexes_document_stable_contracts():
     assert "must not have hardware cmd_vel subscribers" in launch_index
 
 
-def test_mujoco_driver_prefers_brainstem_policy_and_resolves_repo_relative_paths(monkeypatch, tmp_path):
+def test_mujoco_driver_resolves_explicit_policy_and_repo_relative_paths(monkeypatch, tmp_path):
     import drivers.sim.mujoco.driver as driver_mod
 
     sim_root = tmp_path / "sim"
@@ -2243,10 +2488,10 @@ def test_mujoco_driver_prefers_brainstem_policy_and_resolves_repo_relative_paths
     legacy_policy.write_bytes(b"legacy")
 
     monkeypatch.setattr(driver_mod, "_SIM_ROOT", sim_root)
-    monkeypatch.setattr(driver_mod, "_POLICY_CANDIDATES", (brainstem_policy, legacy_policy, thunder_policy))
+    monkeypatch.setattr(driver_mod, "_POLICY_CANDIDATES", ())
 
     driver = MujocoDriverModule(policy_path="")
-    assert Path(driver._policy_path) == brainstem_policy
+    assert driver._policy_path == ""
 
     explicit = MujocoDriverModule(policy_path="model/policy_251119.onnx")
     assert Path(explicit._policy_path) == brainstem_policy.resolve()
@@ -2358,6 +2603,44 @@ def test_mujoco_policy_runner_clamp_matches_brainstem_noop():
 
     assert np.allclose(clamped, action)
     assert clamped is not action
+
+
+def test_mujoco_thunderv4_onnx_policy_uses_thunderv4_runner():
+    from sim.engine.mujoco.robot_controller import _is_thunderv4_policy
+
+    assert _is_thunderv4_policy(
+        Path("sim/robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.onnx")
+    )
+    assert _is_thunderv4_policy(Path("pose_flat_low_kpkd_microterrain_model29600_policy.onnx"))
+    assert not _is_thunderv4_policy(Path("model/policy_251119.onnx"))
+
+
+def test_mujoco_thunderv4_onnx_policy_infers_when_available():
+    pytest.importorskip("onnxruntime")
+    from sim.engine.mujoco.robot_controller import (
+        OBS_DIM,
+        THUNDERV4_STANDING_POSE,
+        ThunderV4OnnxPolicyRunner,
+        load_policy_runner,
+    )
+
+    policy = (
+        Path(__file__).resolve().parents[2]
+        / "sim"
+        / "robots"
+        / "thunderv4"
+        / "policy"
+        / "pose_flat_low_kpkd_microterrain_model29600_policy.onnx"
+    )
+    if not policy.exists():
+        pytest.skip(f"ThunderV4 ONNX policy missing: {policy}")
+
+    runner = load_policy_runner(str(policy))
+    action = runner.infer(np.zeros(OBS_DIM, dtype=np.float32))
+
+    assert isinstance(runner, ThunderV4OnnxPolicyRunner)
+    assert action.shape == (16,)
+    assert np.allclose(action, THUNDERV4_STANDING_POSE)
 
 
 def _stable_policy_contact_summary():
@@ -2710,7 +2993,7 @@ def test_mujoco_policy_idle_command_detection():
 
 
 def test_navigation_stack_passes_path_follower_precision_params():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         slam_profile="none",
         detector="sim_scene",
@@ -2742,7 +3025,7 @@ def test_navigation_stack_passes_path_follower_precision_params():
 
 
 def test_navigation_stack_passes_local_planner_trackable_path_threshold():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         slam_profile="none",
         detector="sim_scene",
@@ -2908,7 +3191,7 @@ def _real_policy_path_or_skip() -> Path:
 
     policy_path = driver_mod._first_existing_path(driver_mod._POLICY_CANDIDATES)
     if not policy_path:
-        pytest.skip("policy_251119.onnx is not available in this checkout")
+        pytest.skip("default MuJoCo policy is not available in this checkout")
     return Path(policy_path)
 
 
@@ -2927,7 +3210,7 @@ def _rpy_from_xyzw(q) -> tuple[float, float, float]:
 
 def test_mujoco_policy_cmd_vel_produces_stable_motion_when_real_policy_available():
     pytest.importorskip("mujoco")
-    pytest.importorskip("onnxruntime")
+    pytest.importorskip("torch")
     from sim.engine.core.engine import VelocityCommand
 
     policy_path = _real_policy_path_or_skip()
@@ -2975,7 +3258,7 @@ def test_mujoco_policy_cmd_vel_produces_stable_motion_when_real_policy_available
 def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
     pytest.importorskip("mujoco")
 
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         world="open_field",
         slam_profile="none",
@@ -3108,10 +3391,10 @@ def test_sim_mujoco_full_stack_emits_costmap_and_plans_local_goal():
 
 def test_sim_mujoco_full_stack_policy_mode_moves_under_nav_cmds_when_real_policy_available():
     pytest.importorskip("mujoco")
-    pytest.importorskip("onnxruntime")
+    pytest.importorskip("torch")
     policy_path = _real_policy_path_or_skip()
 
-    # MuJoCo + ONNX policy state is not repeat-isolated inside one Windows
+    # MuJoCo + policy state is not repeat-isolated inside one Windows
     # Python process. Production validation launches this gate in a fresh
     # process, so keep the test boundary identical to the runtime boundary.
     script = r'''
@@ -3119,16 +3402,16 @@ import json
 import math
 import time
 
-from runtime.blueprints.full_stack import full_stack_blueprint
+from runtime.blueprints.products.thunder import thunder_blueprint
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
-system = full_stack_blueprint(
+system = thunder_blueprint(
     robot="sim_mujoco",
     world="open_field",
     slam_profile="none",
     detector="sim_scene",
     llm="mock",
-    planner_backend="astar",
+    planner_backend="direct",
     enable_native=False,
     enable_semantic=False,
     enable_gateway=False,
@@ -3285,7 +3568,7 @@ finally:
 def test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux():
     pytest.importorskip("mujoco")
 
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="sim_mujoco",
         world="open_field",
         slam_profile="none",
@@ -3435,7 +3718,7 @@ def test_full_stack_required_safety_stop_wire_reports_missing_contract():
 
 
 def test_full_stack_wires_frontier_exploration_goal_to_navigation():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         enable_native=False,
@@ -3463,7 +3746,7 @@ def test_full_stack_wires_frontier_exploration_goal_to_navigation():
 
 
 def test_frontier_exploration_goal_reaches_navigation_planner():
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         planner_backend="astar",

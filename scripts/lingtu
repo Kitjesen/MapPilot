@@ -213,6 +213,54 @@ print(json.dumps({"x": x, "y": y, "z": 0.0, "yaw": yaw}, separators=(",", ":")))
 PY
 }
 
+nav_forward_goal_args() {
+    local distance="${1:-0.08}" path_json loc_json
+    path_json=$(curl -s --max-time 5 "$GW/api/v1/path" 2>/dev/null || echo '{}')
+    loc_json=$(curl -s --max-time 5 "$GW/api/v1/localization/status" 2>/dev/null || echo '{}')
+    python3 - "$distance" "$path_json" "$loc_json" <<'PY'
+import json
+import math
+import sys
+
+try:
+    distance = float(sys.argv[1])
+    path = json.loads(sys.argv[2])
+    loc = json.loads(sys.argv[3])
+except Exception:
+    sys.exit(1)
+robot = path.get("robot") if isinstance(path, dict) else {}
+tf = loc.get("map_odom_tf") if isinstance(loc, dict) else {}
+try:
+    ox = float(robot.get("x"))
+    oy = float(robot.get("y"))
+    oyaw = float(robot.get("yaw", 0.0))
+except Exception:
+    sys.exit(1)
+if not all(math.isfinite(v) for v in (distance, ox, oy, oyaw)):
+    sys.exit(1)
+tx = ty = tyaw = 0.0
+if isinstance(tf, dict) and tf.get("valid", True):
+    try:
+        tx = float(tf.get("tx", 0.0))
+        ty = float(tf.get("ty", 0.0))
+        qx = float(tf.get("qx", 0.0))
+        qy = float(tf.get("qy", 0.0))
+        qz = float(tf.get("qz", 0.0))
+        qw = float(tf.get("qw", 1.0))
+        tyaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+    except Exception:
+        tx = ty = tyaw = 0.0
+c = math.cos(tyaw)
+s = math.sin(tyaw)
+mx = tx + c * ox - s * oy
+my = ty + s * ox + c * oy
+myaw = oyaw + tyaw
+gx = mx + math.cos(myaw) * distance
+gy = my + math.sin(myaw) * distance
+print(f"{gx:.3f} {gy:.3f} {myaw:.3f}")
+PY
+}
+
 format_nav_relocalize_payload() {
     python3 - "$1" "$2" "$3" "$4" <<'PY'
 import json
@@ -942,6 +990,47 @@ cmd_map() {
         list|ls)
             curl -s "$GW/api/v1/maps" -X POST -H "Content-Type: application/json" \
                 -d '{"action":"list"}' | python3 -m json.tool | head -60 ;;
+        check)
+            local name="${2:-}" forward="0.08" goal_x="" goal_y="" goal_yaw="" maps_root raw_name payload build_json build_ok
+            [ -z "$name" ] && { echo "Usage: lingtu map check <name> [--goal X Y YAW|--forward M]"; exit 1; }
+            shift 2
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --goal)
+                        [ "$#" -ge 4 ] || { echo "Usage: lingtu map check <name> --goal X Y YAW"; exit 1; }
+                        goal_x="$2"; goal_y="$3"; goal_yaw="$4"; shift 4 ;;
+                    --forward)
+                        forward="${2:-}"; [ -n "$forward" ] || { echo "Usage: lingtu map check <name> --forward M"; exit 1; }
+                        shift 2 ;;
+                    -h|--help)
+                        echo "Usage: lingtu map check <name> [--goal X Y YAW|--forward M]"
+                        return 0 ;;
+                    *)
+                        echo "Usage: lingtu map check <name> [--goal X Y YAW|--forward M]"
+                        exit 1 ;;
+                esac
+            done
+            maps_root="$(lingtu_maps_root)"
+            raw_name="$name"
+            name=$(resolve_relocation_map_name "$maps_root" "$raw_name") || {
+                echo -e "${R}FAIL${N}: unsafe map name: $raw_name"
+                exit 1
+            }
+            [ -d "$maps_root/$name" ] || { echo -e "${R}FAIL${N}: map not found: $maps_root/$name"; exit 1; }
+            if [ -z "$goal_x" ]; then
+                read -r goal_x goal_y goal_yaw < <(nav_forward_goal_args "$forward") || {
+                    echo -e "${R}FAIL${N}: cannot derive current forward goal from Gateway pose"
+                    exit 1
+                }
+            fi
+            payload=$(format_nav_goal_payload "$goal_x" "$goal_y" "$goal_yaw") || { echo "goal must be numeric X Y YAW"; exit 1; }
+            echo -e "${B}=== Lingtu map check: $name ===${N}"
+            cmd_saved_map_artifact_gate "$maps_root/$name" --require-occupancy --expected-frame-id map || exit 1
+            build_json=$(curl -s --max-time 30 -X POST "$GW/api/v1/maps/$name/build_octomap" 2>/dev/null || echo '{}')
+            build_ok=$(pjson "$build_json" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+            [ "$build_ok" = "true" ] || { echo -e "${R}FAIL${N}: build_octomap failed"; echo "$build_json" | python3 -m json.tool 2>/dev/null || echo "$build_json"; exit 1; }
+            saved_map_plan_precheck "$name" "$payload" || exit 1
+            echo -e "${G}PASS${N}: map flow ok: $name goal=$goal_x,$goal_y,$goal_yaw" ;;
         restore)
             local name="${2:-}"
             [ -z "$name" ] && { echo "Usage: lingtu map restore <name>"; exit 1; }
@@ -961,7 +1050,7 @@ cmd_map() {
                 rebuild_ok=$(pjson "$rebuild_json" 'print(str(d.get("success", False)).lower())')
                 [ "$rebuild_ok" = "true" ] || { echo -e "${R}FAIL${N}: $rebuild_action failed"; exit 1; }
             done ;;
-        *) echo "Usage: lingtu map [start|save <name>|end|list|restore <name>]"; exit 1 ;;
+        *) echo "Usage: lingtu map [start|save <name>|end|list|check <name>|restore <name>]"; exit 1 ;;
     esac
 }
 
@@ -1028,6 +1117,47 @@ cmd_nav() {
                 echo "Current localization is not reusable; trying global saved-map relocalization..."
                 nav_global_relocalize_saved_map "$map" || exit 1
             fi ;;
+        smoke|motion-smoke|motioncheck)
+            local map="${2:-}" forward="0.08" goal_x="" goal_y="" goal_yaw="" timeout="25" evidence_duration="12" min_motion_m="0.01" allow_motion=0
+            [ -z "$map" ] && { echo "Usage: lingtu nav smoke <map> --allow-motion [--forward M|--goal X Y YAW]"; exit 1; }
+            shift 2
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --allow-motion)
+                        allow_motion=1; shift ;;
+                    --goal)
+                        [ "$#" -ge 4 ] || { echo "Usage: lingtu nav smoke <map> --goal X Y YAW"; exit 1; }
+                        goal_x="$2"; goal_y="$3"; goal_yaw="$4"; shift 4 ;;
+                    --forward)
+                        forward="${2:-}"; [ -n "$forward" ] || { echo "Usage: lingtu nav smoke <map> --forward M"; exit 1; }
+                        shift 2 ;;
+                    --timeout)
+                        timeout="${2:-}"; shift 2 ;;
+                    --evidence-duration|--evidence-duration-sec)
+                        evidence_duration="${2:-}"; shift 2 ;;
+                    --min-motion-m)
+                        min_motion_m="${2:-}"; shift 2 ;;
+                    -h|--help)
+                        echo "Usage: lingtu nav smoke <map> --allow-motion [--forward M|--goal X Y YAW]"
+                        return 0 ;;
+                    *)
+                        echo "Usage: lingtu nav smoke <map> --allow-motion [--forward M|--goal X Y YAW]"
+                        exit 1 ;;
+                esac
+            done
+            if [ -z "$goal_x" ]; then
+                read -r goal_x goal_y goal_yaw < <(nav_forward_goal_args "$forward") || {
+                    echo -e "${R}FAIL${N}: cannot derive current forward goal from Gateway pose"
+                    exit 1
+                }
+            fi
+            if [ "$allow_motion" != "1" ]; then
+                cmd_motion_smoke --map "$map" --goal "$goal_x" "$goal_y" "$goal_yaw"
+                exit $?
+            fi
+            cmd_motion_smoke --map "$map" --goal "$goal_x" "$goal_y" "$goal_yaw" \
+                --reuse-tracking --allow-motion --timeout "$timeout" \
+                --evidence-duration "$evidence_duration" --min-motion-m "$min_motion_m" ;;
         stop|end)
             curl -s -X POST "$GW/api/v1/session/end" | python3 -m json.tool ;;
         relocalize|init-pose|initial-pose)
@@ -1050,7 +1180,7 @@ cmd_nav() {
             curl -s -X POST -H "Content-Type: application/json" \
                 -d "$payload" \
                 "$GW/api/v1/goal" | python3 -m json.tool ;;
-        *) echo "Usage: lingtu nav [start <map> [--initial-pose X Y YAW|--relocalize]|stop|relocalize <map> [X Y YAW]|global-relocalize [map]|goal X Y [YAW]]"; exit 1 ;;
+        *) echo "Usage: lingtu nav [start <map> [--initial-pose X Y YAW|--relocalize]|stop|relocalize <map> [X Y YAW]|global-relocalize [map]|goal X Y [YAW]|smoke <map> --allow-motion]"; exit 1 ;;
     esac
 }
 
@@ -1336,7 +1466,7 @@ cmd_svc() {
                         svc_restart_localization_chain ;;
                 *)
                         local unit
-                        unit=$(svc_unit "$target") || { echo "Usage: lingtu svc restart [lidar|slam|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
+                        unit=$(svc_unit "$target") || { echo "Usage: lingtu svc restart [lidar|slam|localization|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
                         sudo systemctl restart "$unit"
                         echo "$unit restarted" ;;
             esac ;;
@@ -1347,7 +1477,7 @@ cmd_svc() {
                      echo "native Livox + SLAM + Nav DDS, legacy SLAM/LiDAR, experimental backends, and lingtu stopped" ;;
                 *)
                     local unit
-                    unit=$(svc_unit "$target") || { echo "Usage: lingtu svc stop [lidar|slam|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
+                    unit=$(svc_unit "$target") || { echo "Usage: lingtu svc stop [lidar|slam|localization|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
                     sudo systemctl stop "$unit"; echo "$unit stopped" ;;
             esac ;;
         *) echo "Usage: lingtu svc [status|status-legacy|restart <target>|stop <target>]"; exit 1 ;;

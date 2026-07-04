@@ -1,13 +1,7 @@
-"""runtime.introspection — Blueprint and SystemHandle visualization.
+"""Blueprint/SystemHandle visualization and graph inspection helpers.
 
-Quick usage::
-
-    from runtime.introspection import render_text, render_dot, render_svg
-
-    print(render_text(system))           # ANSI terminal tree (no deps)
-    print(render_dot(system))            # Graphviz DOT string
-    render_svg(system, "graph.svg")      # SVG file (needs graphviz CLI)
-    render_png(system, "graph.png")      # PNG file (needs graphviz CLI)
+Graph contracts live in ``runtime.introspection.module_graph`` and profile
+graph snapshots live in ``runtime.introspection.profile_graph``.
 """
 
 from .dot import render as render_dot

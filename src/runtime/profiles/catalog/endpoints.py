@@ -164,11 +164,14 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "command_output_mode": "endpoint_only",
             "hardware_control_boundary": "dds_endpoint_source",
             "localization_adapter": "cpp_slam_status",
-            "nav_in_adapter": "dds_nav_input",
-            "nav_out_adapter": "dds_nav_output",
+            "native_navigation_endpoint": "lingtu-nav-dds",
             "manage_session_services": False,
-            "enable_nav_in": True,
-            "enable_nav_out": True,
+            # Field DDS is owned by C++ services. Python nav/map DDS adapters
+            # remain compatibility tools only; enabling them here creates
+            # duplicate goal/path/map writers.
+            "enable_nav_in": False,
+            "enable_nav_out": False,
+            "enable_map_out": False,
             "enable_camera": True,
             "camera_backend": "orbbec_native",
         },

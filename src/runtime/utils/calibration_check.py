@@ -1,6 +1,6 @@
 """Startup calibration self-check — validates sensor calibration before system start.
 
-Called automatically by full_stack_blueprint() when native SLAM or camera is enabled.
+Called automatically by product blueprints when native SLAM or camera is enabled.
 Returns structured results so callers can block startup on FAIL-level issues.
 
 Usage::

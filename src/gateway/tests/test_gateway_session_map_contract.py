@@ -25,13 +25,22 @@ def _payload(response_or_payload):
 
 
 class _FakeRelocalizationService:
-    def __init__(self, *, global_result=None, saved_result=None, env_result=None):
+    def __init__(
+        self,
+        *,
+        global_result=None,
+        saved_result=None,
+        env_result=None,
+        track_result=None,
+    ):
         self.global_result = global_result
         self.saved_result = saved_result
         self.env_result = env_result
+        self.track_result = track_result
         self.global_calls = []
         self.saved_calls = []
         self.env_calls = []
+        self.track_calls = []
 
     def trigger_global_relocalize(self, *, timeout_s: float = 10.0):
         self.global_calls.append(timeout_s)
@@ -53,6 +62,10 @@ class _FakeRelocalizationService:
     ):
         self.env_calls.append((pcd_path, x, y, yaw, timeout_s, base_env))
         return self.env_result
+
+    def track_against_map(self, pcd_path, x, y, yaw, *, timeout_s: float = 10.0):
+        self.track_calls.append((pcd_path, x, y, yaw, timeout_s))
+        return self.track_result
 
 
 def _seed_map_artifacts(map_dir: Path) -> None:
@@ -279,6 +292,7 @@ class _FakeMapOnlyPreviewNav:
         self.calls = []
         self.adjust_goal = False
         self.reached_goal_override: bool | None = None
+        self.snap_diagnostics = None
 
     def preview_plan(
         self,
@@ -327,6 +341,7 @@ class _FakeMapOnlyPreviewNav:
             "path_safety": None,
             "fallback_reason": "",
             "rejected_plans": [],
+            "snap_diagnostics": self.snap_diagnostics,
             "source": "navigation_preview",
             "reasons": [],
             "error": None,
@@ -773,6 +788,180 @@ def test_map_validate_plan_is_explicit_no_motion_octoplanner_preview(monkeypatch
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_map_validate_plan_live_safety_blocks_no_motion_gate(monkeypatch):
+    import gateway.routes.maps as map_routes
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import PlanPreviewRequest
+
+    class LiveSafetyPlanner:
+        def evaluate_current_path_safety(self, path):
+            return {
+                "ok": False,
+                "reason": "live_obstacle",
+                "blocked_sample_count": 2,
+            }
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "octomap_ready"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+
+        gateway = GatewayModule()
+        gateway.setup()
+        gateway._session_mode = "navigating"
+        gateway._session_active_map_name = lambda: "octomap_ready"
+        _seed_ready_navigation(gateway)
+        nav = _FakeMapOnlyPreviewNav()
+        nav._planner_svc = LiveSafetyPlanner()
+        gateway.on_system_modules({"nav.mission": nav})
+        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+
+        payload = asyncio.run(
+            _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
+                "octomap_ready",
+                PlanPreviewRequest(x=2.0, y=1.0, z=0.0),
+            )
+        )
+
+        gate = payload["no_motion_gate"]
+        failure = gate["planner_failure"]
+        assert payload["success"] is False
+        assert payload["map_plan_ok"] is True
+        assert payload["executable_feasible"] is False
+        assert gate["blocked"] is True
+        assert gate["live_safety_blocked"] is True
+        assert "path_safety_failed" in gate["blockers"]
+        assert "live_path_safety_failed" in gate["blockers"]
+        assert failure["reason"] == "live_path_safety_failed"
+        assert failure["path_safety"]["reason"] == "live_obstacle"
+        assert gateway.goal_pose.msg_count == 0
+        assert gateway.cmd_vel.msg_count == 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_map_validate_plan_blocks_large_start_snap(monkeypatch):
+    import gateway.routes.maps as map_routes
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import PlanPreviewRequest
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "octomap_ready"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+
+        gateway = GatewayModule()
+        gateway.setup()
+        gateway._session_mode = "navigating"
+        gateway._session_active_map_name = lambda: "octomap_ready"
+        _seed_ready_navigation(gateway)
+        nav = _FakeMapOnlyPreviewNav()
+        nav.snap_diagnostics = {
+            "requested_start": [0.0, 0.0, 0.0],
+            "effective_start": [0.8, 0.0, 0.0],
+            "snapped_start": [0.8, 0.0, 0.0],
+            "start_snapped": True,
+            "start_snap_distance_m": 0.8,
+            "requested_goal": [2.0, 1.0, 0.0],
+            "effective_goal": [2.0, 1.0, 0.0],
+            "snapped_goal": None,
+            "goal_snapped": False,
+            "goal_snap_distance_m": 0.0,
+            "goal_snap_accepted": True,
+        }
+        gateway.on_system_modules({"nav.mission": nav})
+        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+
+        payload = asyncio.run(
+            _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
+                "octomap_ready",
+                PlanPreviewRequest(x=2.0, y=1.0, z=0.0),
+            )
+        )
+
+        gate = payload["no_motion_gate"]
+        assert payload["success"] is False
+        assert payload["map_plan_ok"] is True
+        assert payload["executable_feasible"] is False
+        assert gate["blocked"] is True
+        assert "start_snap_too_large" in gate["blockers"]
+        assert gate["planner_failure"]["reason"] == "start_snap_too_large"
+        assert gate["snap_diagnostics"]["start_snap_distance_m"] == 0.8
+        assert gateway.goal_pose.msg_count == 0
+        assert gateway.cmd_vel.msg_count == 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_map_validate_plan_allows_vertical_start_snap_when_xy_is_close(monkeypatch):
+    import gateway.routes.maps as map_routes
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import PlanPreviewRequest
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "octomap_ready"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+
+        gateway = GatewayModule()
+        gateway.setup()
+        gateway._session_mode = "navigating"
+        gateway._session_active_map_name = lambda: "octomap_ready"
+        _seed_ready_navigation(gateway)
+        nav = _FakeMapOnlyPreviewNav()
+        nav.snap_diagnostics = {
+            "requested_start": [0.0, 0.0, 0.0],
+            "effective_start": [0.1, 0.1, 0.7],
+            "snapped_start": [0.1, 0.1, 0.7],
+            "start_snapped": True,
+            "start_snap_distance_m": 0.714,
+            "start_snap_xy_distance_m": 0.141,
+            "requested_goal": [2.0, 1.0, 0.0],
+            "effective_goal": [2.0, 1.0, 0.0],
+            "snapped_goal": None,
+            "goal_snapped": False,
+            "goal_snap_distance_m": 0.0,
+            "goal_snap_xy_distance_m": 0.0,
+            "goal_snap_accepted": True,
+        }
+        gateway.on_system_modules({"nav.mission": nav})
+        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+
+        payload = asyncio.run(
+            _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
+                "octomap_ready",
+                PlanPreviewRequest(x=2.0, y=1.0, z=0.0),
+            )
+        )
+
+        gate = payload["no_motion_gate"]
+        assert payload["success"] is True
+        assert payload["map_plan_ok"] is True
+        assert payload["executable_feasible"] is True
+        assert gate["blocked"] is False
+        assert "start_snap_too_large" not in gate["blockers"]
+        assert gate["snap_diagnostics"]["start_snap_xy_distance_m"] == 0.141
+        assert gateway.goal_pose.msg_count == 0
+        assert gateway.cmd_vel.msg_count == 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_map_validate_plan_structures_octoplanner_start_out_of_map(monkeypatch):
     import gateway.routes.maps as map_routes
     from gateway.gateway_module import GatewayModule
@@ -802,7 +991,12 @@ def test_map_validate_plan_structures_octoplanner_start_out_of_map(monkeypatch):
                 "feasible": False,
                 "reached_goal": False,
                 "frame_id": "map",
-                "start": {"x": 331.6, "y": 18.0, "z": -46.7, "frame_id": "map"},
+                "start": {
+                    "x": 219143.115717,
+                    "y": 421310.983082,
+                    "z": 2678.665038,
+                    "frame_id": "map",
+                },
                 "goal": {"x": 2.0, "y": 1.0, "z": 0.0, "frame_id": "map"},
                 "path": [],
                 "count": 0,
@@ -846,7 +1040,10 @@ def test_map_validate_plan_structures_octoplanner_start_out_of_map(monkeypatch):
         assert payload["motion_published"] is False
         assert "planning_failed" in payload["no_motion_gate"]["blockers"]
         assert "start_occupied_or_out_of_map" in payload["no_motion_gate"]["blockers"]
+        assert "pose_map_mismatch" in payload["no_motion_gate"]["blockers"]
         assert failure["reason"] == "start_occupied_or_out_of_map"
+        assert failure["diagnostic_codes"] == ["pose_map_mismatch"]
+        assert failure["start_goal_xy_delta_m"] > 1000.0
         assert failure["runtime_mode"] == "cxx_headless"
         assert failure["process_boundary"] == "subprocess"
         assert failure["returncode"] == 2
@@ -2784,6 +2981,62 @@ def test_relocalize_delegates_validated_request_and_persists_on_success(
     assert payload["ts"] > 0
     assert payload["message"] == "Relocalized to demo"
     assert payload["quality"] == 0.123
+
+
+def test_track_against_map_delegates_validated_request_to_service(
+    monkeypatch,
+    tmp_path,
+):
+    import subprocess
+
+    from runtime.relocalization import RelocalizationResult
+    from gateway.gateway_module import GatewayModule
+
+    subprocess_calls = []
+    map_dir = tmp_path / "maps"
+    (map_dir / "demo").mkdir(parents=True)
+    (map_dir / "demo" / "map.pcd").write_text("pcd", encoding="utf-8")
+    monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
+
+    def fail_run(*args, **kwargs):
+        subprocess_calls.append((args, kwargs))
+        raise AssertionError("Gateway track route must use injected service")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "backend": "localizer",
+        "saved_map_relocalization_supported": True,
+    }
+    gateway._get_slam_profile = lambda: "localizer"
+    service = _FakeRelocalizationService(
+        track_result=RelocalizationResult(
+            True,
+            "track_against_map_started",
+            quality=0.2,
+            details={"track_against_map_enabled": True},
+        )
+    )
+    gateway._relocalization_service = service
+
+    monkeypatch.setattr(subprocess, "run", fail_run)
+    payload = asyncio.run(
+        _endpoint(gateway, "/api/v1/slam/track_against_map")(
+            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
+        )
+    )
+
+    assert service.track_calls == [
+        (map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 10.0)
+    ]
+    assert subprocess_calls == []
+    assert payload["schema_version"] == 1
+    assert payload["ok"] is True
+    assert payload["success"] is True
+    assert payload["ts"] > 0
+    assert payload["message"] == "track_against_map_started"
+    assert payload["quality"] == 0.2
+    assert payload["details"] == {"track_against_map_enabled": True}
 
 
 def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(

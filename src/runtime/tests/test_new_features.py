@@ -114,7 +114,7 @@ def test_32_vector_memory_numpy():
 
 
 # =========================================================================
-# Test 33: No API key startup éˆ¥?system.build() succeeds
+# Test 33: No API key startup éˆ?system.build() succeeds
 # =========================================================================
 def test_33_no_api_key_startup():
     # Double-check all API keys are removed
@@ -122,10 +122,10 @@ def test_33_no_api_key_startup():
               'DASHSCOPE_API_KEY']:
         os.environ.pop(k, None)
 
-    from runtime.blueprints.full_stack import full_stack_blueprint
+    from runtime.blueprints.products.thunder import thunder_blueprint
 
     # Build dev profile: stub driver, no C++ nodes, semantic enabled, mock LLM
-    system = full_stack_blueprint(
+    system = thunder_blueprint(
         robot="stub",
         slam_profile="none",
         detector="yoloe",
@@ -157,14 +157,14 @@ def test_33_no_api_key_startup():
 
 
 # =========================================================================
-# Test 34: No CLIP startup éˆ¥?EncoderModule doesn't crash
+# Test 34: No CLIP startup éˆ?EncoderModule doesn't crash
 # =========================================================================
 def test_34_no_clip_startup():
-    from runtime.blueprints.full_stack import full_stack_blueprint
+    from runtime.blueprints.products.thunder import thunder_blueprint
     from perception.encoding.encoder_module import EncoderModule
     from unittest.mock import patch
 
-    # Build dev profile éˆ¥?on Windows, open_clip is typically not installed.
+    # Build dev profile éˆ?on Windows, open_clip is typically not installed.
     # EncoderModule should catch ImportError and set _backend = None.
     class MissingClipBackend:
         def load_model(self):
@@ -176,7 +176,7 @@ def test_34_no_clip_startup():
         "_create_backend",
         return_value=MissingClipBackend(),
     ):
-        system = full_stack_blueprint(
+        system = thunder_blueprint(
             robot="stub",
             slam_profile="none",
             detector="yoloe",
@@ -203,7 +203,7 @@ def test_34_no_clip_startup():
 
 
 # =========================================================================
-# Test 35: Empty SceneGraph éˆ¥?no crash, no goal_pose published
+# Test 35: Empty SceneGraph éˆ?no crash, no goal_pose published
 # =========================================================================
 def test_35_empty_scene_graph():
     from runtime.msgs.semantic import SceneGraph
@@ -253,7 +253,7 @@ def test_36_waypoint_tracker_stuck():
     robot_pos = np.array([0.0, 0.0, 0.0])
     tracker.reset(path, robot_pos)
 
-    # Update with same position repeatedly éˆ¥?should trigger stuck
+    # Update with same position repeatedly éˆ?should trigger stuck
     events_seen = []
     deadline = time.time() + 2.0  # safety timeout
     while time.time() < deadline:

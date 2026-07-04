@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from runtime.blueprints.profile_graph import graph_for_profile, resolve_profile_config
+from runtime.introspection.profile_graph import graph_for_profile
+from runtime.profiles.resolver import resolve_profile_config
 
 
 def _wire_set(graph):

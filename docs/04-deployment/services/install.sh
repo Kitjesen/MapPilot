@@ -1,7 +1,20 @@
 #!/bin/bash
-# Install LingTu service files to S100P
+# Install legacy ROS2-compatible LingTu service files.
 # Run from repo root: bash docs/04-deployment/services/install.sh
 set -e
+
+if [ "${LINGTU_ENABLE_LEGACY_ROS2_SERVICES:-0}" != "1" ]; then
+  cat >&2 <<'EOF'
+ERROR: docs/04-deployment/services/install.sh installs the legacy ROS2 robot-* stack.
+
+The current product service installer is:
+  bash scripts/deploy/thunder/install_services.sh field-cpp
+
+To intentionally install these legacy compatibility units, rerun with:
+  LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1 bash docs/04-deployment/services/install.sh
+EOF
+  exit 2
+fi
 
 SERVICES_DIR="$(cd "$(dirname "$0")" && pwd)"
 SYSTEMD_DIR="/etc/systemd/system"

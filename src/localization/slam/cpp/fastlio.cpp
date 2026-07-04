@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -25,6 +26,8 @@ struct RuntimeConfig {
   double acc_scale = 1.0;
   double time_diff_lidar_to_imu = 0.0;
   double max_imu_gap_s = 0.25;
+  double relocalization_max_fitness = 0.5;
+  double relocalization_map_bounds_margin_m = 2.0;
   std::size_t max_imu_buffer = 4000;
   std::size_t max_lidar_buffer = 64;
 };
@@ -88,6 +91,11 @@ Status loadYamlConfig(
   readIfPresent(config, "acc_scale", runtime_config.acc_scale);
   readIfPresent(config, "time_diff_lidar_to_imu", runtime_config.time_diff_lidar_to_imu);
   readIfPresent(config, "max_imu_gap_s", runtime_config.max_imu_gap_s);
+  readIfPresent(config, "relocalization_max_fitness", runtime_config.relocalization_max_fitness);
+  readIfPresent(
+      config,
+      "relocalization_map_bounds_margin_m",
+      runtime_config.relocalization_map_bounds_margin_m);
 
   readIfPresent(config, "lidar_filter_num", builder_config.lidar_filter_num);
   readIfPresent(config, "lidar_min_range", builder_config.lidar_min_range);
@@ -220,6 +228,32 @@ Pose3d poseFromState(const State& state) {
   return pose;
 }
 
+Pose3d composePoses(const Pose3d& lhs, const Pose3d& rhs) {
+  Eigen::Quaterniond lq(lhs.qw, lhs.qx, lhs.qy, lhs.qz);
+  Eigen::Quaterniond rq(rhs.qw, rhs.qx, rhs.qy, rhs.qz);
+  if (!std::isfinite(lq.norm()) || lq.norm() <= 0.0) {
+    lq = Eigen::Quaterniond::Identity();
+  }
+  if (!std::isfinite(rq.norm()) || rq.norm() <= 0.0) {
+    rq = Eigen::Quaterniond::Identity();
+  }
+  lq.normalize();
+  rq.normalize();
+  const Eigen::Vector3d translated =
+      Eigen::Vector3d(lhs.x, lhs.y, lhs.z) +
+      lq * Eigen::Vector3d(rhs.x, rhs.y, rhs.z);
+  const Eigen::Quaterniond q = (lq * rq).normalized();
+  Pose3d out;
+  out.x = translated.x();
+  out.y = translated.y();
+  out.z = translated.z();
+  out.qx = q.x();
+  out.qy = q.y();
+  out.qz = q.z();
+  out.qw = q.w();
+  return out;
+}
+
 void applyPose(State& state, const Pose3d& pose) {
   Eigen::Quaterniond q(pose.qw, pose.qx, pose.qy, pose.qz);
   q.normalize();
@@ -342,6 +376,10 @@ class FastLioBackend final : public ISlamBackend {
   Status setMode(SlamMode mode, const std::string& map_path) override {
     mode_ = mode;
     map_path_ = map_path;
+    if (mode_ == SlamMode::Mapping) {
+      map_loaded_ = false;
+      map_bounds_ready_ = false;
+    }
     if (mode_ == SlamMode::Localization && !map_path.empty()) {
       const Status status = loadMap(map_path);
       if (!status.ok) {
@@ -459,7 +497,11 @@ class FastLioBackend final : public ISlamBackend {
       last_relocalization_message_ = reason_;
       return Status::Error(reason_);
     }
-    if (!guess.has_value() && !relocalizer_->supportsGlobalRelocalization()) {
+    std::optional<Pose3d> effective_guess = guess;
+    if (!effective_guess.has_value() && has_map_odom_pose_ && odometry_odom_body_.has_value()) {
+      effective_guess = composePoses(map_odom_pose_, *odometry_odom_body_);
+    }
+    if (!effective_guess.has_value() && !relocalizer_->supportsGlobalRelocalization()) {
       state_ = SlamState::Lost;
       reason_ = "initial_pose_required";
       relocalization_state_ = "initial_pose_required";
@@ -481,8 +523,8 @@ class FastLioBackend final : public ISlamBackend {
       return Status::Error(reason_);
     }
 
-    const NativeRelocalizationResult result = guess.has_value()
-        ? relocalizer_->relocalize(*registered_cloud_body_, *guess, *odometry_odom_body_)
+    const NativeRelocalizationResult result = effective_guess.has_value()
+        ? relocalizer_->relocalize(*registered_cloud_body_, *effective_guess, *odometry_odom_body_)
         : relocalizer_->globalRelocalize(*registered_cloud_body_, *odometry_odom_body_);
     relocalization_quality_ = result.quality;
     last_relocalization_message_ = result.message;
@@ -492,10 +534,29 @@ class FastLioBackend final : public ISlamBackend {
       reason_ = result.message;
       return Status::Error(reason_);
     }
+    if (result.quality >= 0.0 && result.quality > runtime_config_.relocalization_max_fitness) {
+      state_ = SlamState::Lost;
+      relocalization_state_ = "rejected";
+      reason_ = "relocalization_fitness_rejected";
+      last_relocalization_message_ = reason_;
+      return Status::Error(reason_);
+    }
+    if (!poseInsideMapBounds(result.map_body)) {
+      state_ = SlamState::Lost;
+      relocalization_state_ = "rejected";
+      reason_ = "relocalization_outside_map_bounds";
+      last_relocalization_message_ = reason_;
+      return Status::Error(reason_);
+    }
 
-    resetTrackingCoreAtPose(result.map_body);
-    map_odom_pose_ = Pose3d{};
+    resetTrackingCoreAtPose(*odometry_odom_body_);
+    map_odom_pose_ = result.map_odom;
     map_body_pose_at_relocalization_ = result.map_body;
+    relocalization_refine_backend_ = result.refine_backend;
+    relocalization_refine_iterations_ = result.refine_iterations;
+    relocalization_refine_inliers_ = result.refine_inliers;
+    relocalization_refine_converged_ = result.refine_converged;
+    relocalization_refine_pos_cov_trace_ = result.refine_pos_cov_trace;
     has_map_odom_pose_ = true;
     map_frame_jump_ = true;
     confidence_ = result.quality >= 0.0
@@ -570,6 +631,10 @@ class FastLioBackend final : public ISlamBackend {
     if (!std::filesystem::exists(pcd)) {
       return Status::Error("map_pcd_write_failed");
     }
+    CloudType saved_cloud;
+    if (pcl::io::loadPCDFile<PointType>(pcd.string(), saved_cloud) >= 0) {
+      updateMapBounds(saved_cloud);
+    }
     const Status trajectory_status = writeTrajectory(pcd.parent_path(), pose_history_);
     if (!trajectory_status.ok) {
       return trajectory_status;
@@ -610,6 +675,7 @@ class FastLioBackend final : public ISlamBackend {
     if (pcl::io::loadPCDFile<PointType>(pcd.string(), cloud) < 0) {
       return Status::Error("map_pcd_load_failed");
     }
+    updateMapBounds(cloud);
     if (!relocalizer_) {
       relocalizer_ = std::make_unique<NativeRelocalizer>();
     }
@@ -656,6 +722,12 @@ class FastLioBackend final : public ISlamBackend {
     out.relocalization_state = relocalization_state_;
     out.last_relocalization_message = last_relocalization_message_;
     out.relocalization_quality = relocalization_quality_;
+    out.relocalization_map_body = map_body_pose_at_relocalization_;
+    out.relocalization_refine_backend = relocalization_refine_backend_;
+    out.relocalization_refine_iterations = relocalization_refine_iterations_;
+    out.relocalization_refine_inliers = relocalization_refine_inliers_;
+    out.relocalization_refine_converged = relocalization_refine_converged_;
+    out.relocalization_refine_pos_cov_trace = relocalization_refine_pos_cov_trace_;
     out.localization_quality = localization_quality_;
     out.gnss_fusion_health = gnss_health_;
     out.scene_mode = scene_mode_;
@@ -679,12 +751,18 @@ class FastLioBackend final : public ISlamBackend {
     map_loaded_ = false;
     map_frame_jump_ = false;
     has_map_odom_pose_ = false;
+    map_bounds_ready_ = false;
     map_odom_pose_ = Pose3d{};
     map_body_pose_at_relocalization_.reset();
     saved_map_points_ = 0;
     confidence_ = 0.0;
     localization_quality_ = 0.0;
     relocalization_quality_ = -1.0;
+    relocalization_refine_backend_.clear();
+    relocalization_refine_iterations_ = -1;
+    relocalization_refine_inliers_ = -1;
+    relocalization_refine_converged_ = false;
+    relocalization_refine_pos_cov_trace_ = -1.0;
     relocalization_state_ = "idle";
     last_relocalization_message_ = "reset";
     reason_ = "reset";
@@ -756,6 +834,34 @@ class FastLioBackend final : public ISlamBackend {
       lidar_buffer_.pop_front();
       ++dropped_lidar_frames_;
     }
+  }
+
+  void updateMapBounds(const CloudType& cloud) {
+    map_bounds_ready_ = false;
+    map_min_x_ = map_min_y_ = map_min_z_ = std::numeric_limits<double>::infinity();
+    map_max_x_ = map_max_y_ = map_max_z_ = -std::numeric_limits<double>::infinity();
+    for (const auto& point : cloud.points) {
+      if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+        continue;
+      }
+      map_min_x_ = std::min(map_min_x_, static_cast<double>(point.x));
+      map_min_y_ = std::min(map_min_y_, static_cast<double>(point.y));
+      map_min_z_ = std::min(map_min_z_, static_cast<double>(point.z));
+      map_max_x_ = std::max(map_max_x_, static_cast<double>(point.x));
+      map_max_y_ = std::max(map_max_y_, static_cast<double>(point.y));
+      map_max_z_ = std::max(map_max_z_, static_cast<double>(point.z));
+      map_bounds_ready_ = true;
+    }
+  }
+
+  bool poseInsideMapBounds(const Pose3d& pose) const {
+    if (!map_bounds_ready_) {
+      return true;
+    }
+    const double margin = std::max(0.0, runtime_config_.relocalization_map_bounds_margin_m);
+    return pose.x >= map_min_x_ - margin && pose.x <= map_max_x_ + margin &&
+           pose.y >= map_min_y_ - margin && pose.y <= map_max_y_ + margin &&
+           pose.z >= map_min_z_ - margin && pose.z <= map_max_z_ + margin;
   }
 
   bool prepareFastLioPackage() {
@@ -886,6 +992,13 @@ class FastLioBackend final : public ISlamBackend {
   std::string scene_mode_ = "unknown";
   std::string map_path_;
   std::string last_map_path_;
+  bool map_bounds_ready_ = false;
+  double map_min_x_ = 0.0;
+  double map_min_y_ = 0.0;
+  double map_min_z_ = 0.0;
+  double map_max_x_ = 0.0;
+  double map_max_y_ = 0.0;
+  double map_max_z_ = 0.0;
   std::shared_ptr<IESKF> kf_;
   std::unique_ptr<MapBuilder> builder_;
   std::unique_ptr<NativeRelocalizer> relocalizer_;
@@ -907,6 +1020,11 @@ class FastLioBackend final : public ISlamBackend {
   double confidence_ = 0.0;
   double localization_quality_ = 0.0;
   double relocalization_quality_ = -1.0;
+  std::string relocalization_refine_backend_;
+  int relocalization_refine_iterations_ = -1;
+  int relocalization_refine_inliers_ = -1;
+  bool relocalization_refine_converged_ = false;
+  double relocalization_refine_pos_cov_trace_ = -1.0;
   std::string relocalization_state_ = "idle";
   std::string last_relocalization_message_;
   int imu_batch_ = 0;

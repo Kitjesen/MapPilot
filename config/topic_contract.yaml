@@ -371,6 +371,7 @@ topic_formats:
   - map_cloud
   /nav/traversability:
   - traversability
+  - nav_msgs/msg/OccupancyGrid
   /nav/height_rays:
   - height_rays
   /nav/cmd_vel:
@@ -550,6 +551,7 @@ topic_ros_types:
   - sensor_msgs/msg/PointCloud2
   /nav/traversability:
   - application/json
+  - nav_msgs/msg/OccupancyGrid
   /nav/height_rays:
   - application/json
   /nav/cmd_vel:
