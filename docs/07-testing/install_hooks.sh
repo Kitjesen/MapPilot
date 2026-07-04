@@ -31,8 +31,12 @@ cat > "$HOOK_DIR/pre-push" <<'HOOK'
 # LingTu L2 - block push if L1 or stub smoke fails.
 set -e
 cd "$(git rev-parse --show-toplevel)"
-echo "[L2 pre-push] running pytest src/runtime/tests/ ..."
-PYTHONIOENCODING=utf-8 python -m pytest src/runtime/tests/ -q --tb=no 2>&1 | tail -6
+if [ "${SKIP_HEAVY_TESTS}" != "true" ]; then
+  echo "[L2 pre-push] running pytest src/runtime/tests/ ..."
+  PYTHONIOENCODING=utf-8 python -m pytest src/runtime/tests/ -q --tb=no 2>&1 | tail -6
+else
+  echo "[L2 pre-push] SKIPPED pytest src/runtime/tests/ (SKIP_HEAVY_TESTS=true)"
+fi
 echo "[L2 pre-push] running stub blueprint smoke ..."
 PYTHONIOENCODING=utf-8 python -c "
 import sys
