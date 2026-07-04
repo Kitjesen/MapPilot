@@ -832,7 +832,8 @@ def _real_runtime_preflight_blockers(
         or hardware.get("hardware_command_route_observed") is True
         or report.get("cmd_vel_sent_to_hardware") is True
     )
-    if not route_observed:
+    hardware_required = validation.get("hardware_boundary_required") is not False
+    if hardware_required and not route_observed:
         blockers.append("real-runtime-evidence hardware command route missing")
     return list(dict.fromkeys(blockers))
 

@@ -103,6 +103,47 @@ Real motion remains blocked until start pose alignment and executable preview
 both pass with `publish_cmd_vel=false`; only then should `/nav/cmd_vel` be
 enabled in a controlled field test.
 
+## Follow-up No-motion Nav Session
+
+After the first closure, a navigating session was started on
+`accept_ready_20260702_162847` with `publish_cmd_vel=false`.
+
+The Gateway readiness blocker `real_runtime_evidence_missing_or_stale` was
+caused by the no-motion evidence gate still requiring a hardware command route.
+That gate now respects `hardware_boundary_required=false` for preflight
+evidence. Full real-motion evidence still fails until `/nav/cmd_vel` is
+actually validated.
+
+Observed no-motion state:
+
+| Metric | Value |
+| --- | --- |
+| Session mode | `navigating` |
+| `can_accept_goal` | true |
+| `real_runtime_evidence_ok` | true for preflight |
+| `real_runtime_evidence_full_ok` | false |
+| SLAM | `TRACKING`, about `10 Hz` |
+| Native nav endpoint | `tick_hz=20`, odom/traversability present |
+| `publish_cmd_vel` | false |
+| `cmd_vel_published` | `0` |
+
+One short forward `/api/v1/navigation/plan` preview returned an OctoPlanner3D
+path with no path-safety blockers, but strict saved-map validation still failed
+after relocalization:
+
+```text
+start_snap_xy_distance_m ~= 0.59
+MAX_EXECUTABLE_START_SNAP_M = 0.5
+blocker = start_snap_too_large
+motion_published = false
+```
+
+Conclusion: the communication and no-motion planning path are working, but the
+robot's current pose is not close enough to the saved map's executable
+traversable graph. Do not enable velocity output from this standing pose. The
+next field action is physical placement or map editing/regeneration around the
+start cell, then rerun the same no-motion preview.
+
 ## Local Verification
 
 Local tests run for this change set:

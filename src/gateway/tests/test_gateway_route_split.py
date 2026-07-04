@@ -1752,6 +1752,56 @@ def test_real_runtime_evidence_latest_uses_newest_report_even_when_failing(tmp_p
     assert "newer real motion evidence failed" in payload["blockers"]
 
 
+def test_real_runtime_evidence_preflight_allows_no_motion_without_hardware_boundary(
+    tmp_path,
+):
+    from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
+
+    validation = {
+        "schema_version": "lingtu.real_runtime_evidence.validation.v1",
+        "ok": False,
+        "expected_contract": "thunder_field",
+        "hardware_boundary_required": False,
+        "checked_real_motion_evidence": {"ok": False},
+        "checked_hardware_boundary_evidence": {"ok": False},
+        "checked_live_topic_freshness": {
+            "/slam/odometry": {"ok": True},
+            "/nav/cmd_vel": {"ok": False},
+        },
+        "checked_runtime_data_flow_evidence": {
+            "endpoint_adapter": {"ok": True},
+            "slam_or_relayed_localization_map": {"ok": True},
+        },
+        "checked_frame_link_evidence": {
+            "map_to_odom": {"ok": True},
+            "odom_to_body": {"ok": True},
+            "body_to_lidar": {"ok": True},
+            "body_to_camera": {"ok": True},
+        },
+        "blockers": ["no motion yet"],
+    }
+    report_path = _write_real_runtime_evidence_report(
+        tmp_path / "thunder_field_runtime",
+        runtime_evidence=validation,
+    )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["real_robot_motion"] = False
+    report["cmd_vel_sent_to_hardware"] = False
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    payload = build_real_runtime_evidence_latest_summary(
+        tmp_path,
+        max_age_s=1000.0,
+        now=200.0,
+    )
+
+    assert payload["ok"] is False
+    assert payload["preflight_ok"] is True
+    assert "real-runtime-evidence hardware command route missing" not in payload[
+        "preflight_blockers"
+    ]
+
+
 def test_real_runtime_evidence_latest_diagnostic_reports_missing_artifact(tmp_path):
     from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
 
