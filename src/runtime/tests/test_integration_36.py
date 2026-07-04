@@ -2,7 +2,7 @@ import pytest
 
 pytestmark = [pytest.mark.ros2]
 
-"""Full integration verification é—?36 tests across all new modules.
+"""Full integration verification: 36 tests across all new modules.
 
 TODO: Replace time.sleep with threading.Event for module output
       synchronization. Many sleeps wait for module threads to produce

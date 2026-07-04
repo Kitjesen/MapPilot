@@ -3,7 +3,7 @@
 #
 # Idempotent. Re-running overwrites previous versions.
 
-set -e
+set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 REPO_ROOT="$(pwd)"
@@ -18,7 +18,7 @@ fi
 cat > "$HOOK_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 # LingTu L1 - block commit if any framework test fails.
-set -e
+set -euo pipefail
 echo "[L1 pre-commit] running pytest src/runtime/tests/ ..."
 cd "$(git rev-parse --show-toplevel)"
 PYTHONIOENCODING=utf-8 python -m pytest src/runtime/tests/ -q --tb=no 2>&1 | tail -6
@@ -29,9 +29,9 @@ HOOK
 cat > "$HOOK_DIR/pre-push" <<'HOOK'
 #!/usr/bin/env bash
 # LingTu L2 - block push if L1 or stub smoke fails.
-set -e
+set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-if [ "${SKIP_HEAVY_TESTS}" != "true" ]; then
+if [ "${SKIP_HEAVY_TESTS:-}" != "true" ]; then
   echo "[L2 pre-push] running pytest src/runtime/tests/ ..."
   PYTHONIOENCODING=utf-8 python -m pytest src/runtime/tests/ -q --tb=no 2>&1 | tail -6
 else

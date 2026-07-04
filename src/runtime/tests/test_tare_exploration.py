@@ -2,7 +2,7 @@
 
 Runs without any C++ binary or DDS transport; relies on the in-process policy
 path, and exercises the
-contracts (ports, skills, waypoint �?PoseStamped conversion).
+contracts (ports, skills, waypoint to PoseStamped conversion).
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def _odom(x: float, y: float, z: float = 0.0) -> Odometry:
         frame_id="map",
     )
 
-# 閳光偓閳光偓閳光�?Bridge module 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
+# Bridge module
 
 class TestTAREExplorerModulePorts(unittest.TestCase):
 
@@ -574,7 +574,7 @@ class TestTAREskills(unittest.TestCase):
         self.assertEqual(parsed["degraded_reason"], "")
 
 
-# 閳光偓閳光偓閳光�?Stack factory 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
+# Stack factory
 
 def _module_names(bp) -> set[str]:
     """Return the set of registered module names/aliases in a Blueprint."""
@@ -599,7 +599,7 @@ class TestExplorationStackFactory(unittest.TestCase):
             exploration(backend="bogus")
 
     def test_wavefront_backend_removed(self):
-        """commit 1c457f3 moved 'wavefront' out of this stack �?wavefront
+        """commit 1c457f3 moved 'wavefront' out of this stack; wavefront
         now lives only in nav.exploration.frontier_explorer_module (added separately
         via navigation(enable_frontier=True)). exploration() should reject
         the legacy backend name explicitly."""

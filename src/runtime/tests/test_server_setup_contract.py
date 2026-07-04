@@ -33,7 +33,7 @@ def test_server_setup_runs_multifloor_closure_without_robot_motion():
     assert "verify_ros2_local_planner_setup" not in script
     assert "building PCT Rust GPMP runtime" in script
     assert "scripts/build/build_rust_kernels.py --target gpmp_trajectory_optimizer --release" in script
-    assert 'pct_runtime/rust/${arch}' in script
+    assert 'local out_dir="${ROOT}/src/nav/services/plan/global_planner/algorithm/pct/runtime/rust/${arch}"' in script
     assert 'if [[ "${PCT_BUILD_LEGACY_NATIVE}" == "1" ]]; then' in script
     assert "building PCT legacy native/GTSAM runtime for parity baselines" in script
     assert 'LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE=1 \\' in script
@@ -137,15 +137,18 @@ def test_l2_hook_runs_stub_build_and_offline_start_smoke():
     )
 
     assert "running stub blueprint smoke" in hook
+    assert "runtime.blueprints.profile_builder" in hook
+    assert "runtime.blueprints.full_stack" not in hook
+    assert "full_stack_blueprint" not in hook
     assert "stub profile build OK" in hook
     assert "stub profile start OK" in hook
     assert "runtime.start()" in hook
     assert "runtime.stop()" in hook
     assert "failed_modules" in hook
-    assert "enable_native=False" in hook
-    assert "enable_gateway=False" in hook
-    assert "enable_map_modules=False" in hook
-    assert "run_startup_checks=False" in hook
+    assert "'enable_native': False" in hook
+    assert "'enable_gateway': False" in hook
+    assert "'enable_map_modules': False" in hook
+    assert "'run_startup_checks': False" in hook
     assert "profile='stub'" not in hook
     assert 'profile="stub"' not in hook
 
