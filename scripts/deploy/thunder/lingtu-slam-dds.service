@@ -9,9 +9,13 @@ WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
 Environment=LINGTU_SLAM_BIN=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime
 Environment=LINGTU_SLAM_BACKEND=fastlio2
-Environment=LINGTU_SLAM_MODE=mapping
+Environment=LINGTU_SLAM_MODE=localization
 Environment=LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml
-Environment=LINGTU_SLAM_MAP=
+Environment=LINGTU_SLAM_MAP=/home/sunrise/data/nova/maps/active/map.pcd
+Environment=LINGTU_SLAM_TRACK_INITIAL_X=0
+Environment=LINGTU_SLAM_TRACK_INITIAL_Y=0
+Environment=LINGTU_SLAM_TRACK_INITIAL_Z=0
+Environment=LINGTU_SLAM_TRACK_INITIAL_YAW=-0.496
 Environment=LINGTU_SLAM_TICK_HZ=50
 Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_SLAM_LOG_STATUS_S=5

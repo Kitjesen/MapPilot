@@ -43,7 +43,7 @@ and velocity muxing remain in `src/nav/` and `src/nav/kernel/`.
 
 | Function | Decision entry | Strategy/algorithm used | Lower layer handoff |
 | --- | --- | --- | --- |
-| Natural-language goal resolution | `modules/semantic_planner_module.py`, `modules/goal_resolver_module.py` | `goal_resolution/goal_resolver.py` with `FastPathMixin`, `SlowPathMixin`, `AdaCoTRouter`, tokenizer, optional SG-Nav reasoning | Publishes `goal_pose`; `NavigationModule` and planner backends handle path planning. |
+| Natural-language goal resolution | `modules/semantic_planner_module.py`, `modules/goal_resolver_module.py` | `goal_resolution/goal_resolver.py` with `FastPathMixin`, `SlowPathMixin`, `AdaCoTRouter`, tokenizer, optional SG-Nav reasoning | Publishes `goal_pose`; `Navigation` and planner backends handle path planning. |
 | Unknown-target exploration choice | `modules/semantic_planner_module.py`, `modules/frontier_module.py` | `exploration/frontier_scorer.py`, frontier BFS, information gain, uncertainty, KG/semantic prior, simple TSP ordering | Publishes an exploration `goal_pose`; map/frontier data comes from map/navigation layers. |
 | Multi-step task execution | `modules/semantic_planner_module.py`, `modules/action_executor_module.py` | `tasking/task_decomposer.py`, `tasking/task_rules.py`, `tasking/action_executor.py`, LERa recovery rules | Converts high-level actions to `goal_pose`, `cmd_vel`, or `cancel`; actual motion arbitration stays outside decision. |
 | Tool-calling agent loop | `modules/semantic_planner_module.py` | `tasking/agent_loop.py` plus discovered `@skill` tools and optional VLM scene agent | Calls Module skills; does not own hardware or planner execution. |
@@ -61,7 +61,7 @@ from decision.modules.visual_servo_module import VisualServoModule
 
 - Decision code may publish `goal_pose`, `cancel`, `servo_target`, and
   short-range `cmd_vel` through Module ports.
-- Decision code does not directly drive hardware or own the `CmdVelMux`.
+- Decision code does not directly drive hardware or own the `VelocityMux`.
 - Decision code does not own global planning, local obstacle avoidance, path
   following, map maintenance, SLAM, or localization health.
 - MCP skills are discovered from runtime Modules through

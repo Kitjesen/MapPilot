@@ -236,14 +236,14 @@ def test_resolver_user_overrides_win_after_endpoint_layer() -> None:
 
 
 def test_resolver_allows_explicit_module_transport_override() -> None:
-    config = resolve_profile_config("nav", module_transport="lcm")
+    config = resolve_profile_config("nav", module_transport="shm")
     spec = resolve_runtime_run_spec("nav", config)
 
     assert config["_module_transport"] == "local"
-    assert config["module_transport"] == "lcm"
-    assert spec.module_transport == "lcm"
+    assert config["module_transport"] == "shm"
+    assert spec.module_transport == "shm"
     assert spec.endpoint_transport == "dds"
-    assert spec.env["LINGTU_MODULE_TRANSPORT"] == "lcm"
+    assert spec.env["LINGTU_MODULE_TRANSPORT"] == "shm"
     assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
 
 
@@ -254,7 +254,7 @@ def test_resolver_cli_metadata_mode_keeps_launch_contracts_not_selection_key() -
     )
 
     assert config["_desc"] == "MuJoCo raw MID-360 + Fast-LIO live simulation"
-    assert config["_external_launcher"] == "sim/scripts/launch_mujoco_fastlio2_live.sh"
+    assert config["_external_launcher"] == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert config["_runtime_contract"] == "mujoco_fastlio2_live"
     assert "_default_robot" not in config
 

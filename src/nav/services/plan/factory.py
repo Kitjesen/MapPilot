@@ -27,7 +27,7 @@ def create_planner_service(
     canonical_fallback_planner_name = normalize_planner_name(fallback_planner_name)
 
     if canonical_planner_name == "direct":
-        from nav.services.plan.global_planner.direct import MaplessDirectPlannerService
+        from nav.services.plan.compat.direct import MaplessDirectPlannerService
 
         return MaplessDirectPlannerService(
             planner_name=canonical_planner_name,

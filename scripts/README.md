@@ -12,14 +12,15 @@ deployment.
 
 | Task | Command |
 | --- | --- |
-| Start navigation | `python lingtu.py thunder-nav` |
-| Start mapping | `python lingtu.py thunder-map` |
-| Start exploration | `python lingtu.py thunder-explore` |
+| Start navigation | `python lingtu.py nav` |
+| Start Thunder navigation alias | `python lingtu.py thunder-nav` |
+| Start mapping | `python lingtu.py map` |
+| Start exploration | `python lingtu.py tare_explore` |
 | Environment diagnostics | `python lingtu.py doctor` |
 | Robot-side operations CLI | `scripts/lingtu health` / `scripts/lingtu status` / `scripts/lingtu doctor --ros2` for legacy ROS graph checks |
 | Thunder field deploy | `bash scripts/deploy/deploy_thunder.sh` |
 | Cut Thunder release | `bash scripts/deploy/cut_release.sh v2.1.1` |
-| Install Thunder DDS endpoint service | `bash scripts/deploy/thunder/install_services.sh dds-endpoint` |
+| Install Thunder DDS endpoint service | `bash scripts/deploy/thunder/install_services.sh field-cpp` |
 | Run Thunder field endpoint source group | `python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_field` |
 | Run Thunder Brainstem endpoint source | `python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_brainstem` |
 | Run no-ROS JSONL localization source | `LINGTU_ENDPOINT_JSONL_PATH=/data/thunder/localization.jsonl python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_field` |
@@ -44,6 +45,10 @@ deployment.
 | `lingtu.sh` | Shell compatibility wrapper around `python lingtu.py`（Shell 兼容入口�? |
 
 ## Directory Map
+
+`thunder-nav`, `thunder-map`, and `thunder-explore` are compatibility aliases.
+New operator docs should use canonical profiles: `nav`, `map`, and
+`tare_explore`.
 
 | Directory | Purpose | Representative files |
 | --- | --- | --- |

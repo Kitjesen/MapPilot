@@ -36,6 +36,7 @@ from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from runtime.same_source_map_artifacts import (
     validate_saved_map_artifact_dir,
 )
+from runtime.utils.sanitize import sanitize_dict
 
 logger = logging.getLogger(__name__)
 MAX_EXECUTABLE_START_SNAP_M = 0.5
@@ -741,7 +742,7 @@ def register_map_routes(app, gw) -> None:
                 code = str(diagnostic_code)
                 if code and code not in no_motion_blockers:
                     no_motion_blockers.append(code)
-        return {
+        payload = {
             "schema_version": 1,
             "ok": executable_ok,
             "success": executable_ok,
@@ -773,6 +774,7 @@ def register_map_routes(app, gw) -> None:
             "motion_published": False,
             "ts": time.time(),
         }
+        return sanitize_dict(payload)
 
     @app.get(
         "/api/v1/maps/{name}/pcd",

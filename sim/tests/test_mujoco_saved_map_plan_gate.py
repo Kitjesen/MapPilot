@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from sim.scripts.mujoco_saved_map_plan_gate import (
+from sim.scripts.mujoco.saved_map_plan_gate import (
     BUILDING_DEFAULT_GOAL,
     BUILDING_DEFAULT_START,
     building_scene_clip,
@@ -88,7 +88,7 @@ def test_planner_constraint_overrides_are_explicit() -> None:
     }
 
 
-def test_mujoco_lidar_map_source_defaults_to_mid360_mature_backend() -> None:
+def test_mujoco_lidar_map_source_defaults_to_mid360_product_backend() -> None:
     args = build_parser().parse_args([])
 
     assert args.lidar_backend == "mujoco_lidar"
@@ -111,7 +111,8 @@ def test_mujoco_lidar_collection_uses_product_engine(monkeypatch, tmp_path: Path
         def get_lidar_backend_report(self) -> dict:
             return {
                 "backend": "mujoco_lidar",
-                "mature_backend": True,
+                "product_backend": True,
+                "product_lidar_backend_verified": True,
                 "fallback_used": False,
             }
 
@@ -154,7 +155,7 @@ def test_mujoco_lidar_collection_uses_product_engine(monkeypatch, tmp_path: Path
     assert report["lidar_backend"]["backend"] == "mujoco_lidar"
     assert calls["lidar_backend"] == "mujoco_lidar"
     assert calls["mujoco_lidar_backend"] == "cpu"
-    assert calls["require_mature_lidar_backend"] is True
+    assert calls["require_product_lidar_backend"] is True
     assert calls["allow_legacy_lidar_fallback"] is False
 
 

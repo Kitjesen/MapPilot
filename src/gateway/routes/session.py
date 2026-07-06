@@ -17,6 +17,8 @@ from runtime.runtime_policy import (
     session_transition_plan,
     slam_switch_plan,
 )
+from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
+from runtime.profiles.resolver import canonical_profile_name
 from gateway.schemas import (
     SessionResponse,
     SessionStartRequest,
@@ -98,6 +100,69 @@ def _normalize_slam_profile(profile: str) -> str:
     return normalize_slam_profile(profile)
 
 
+_DEFAULT_PRODUCT_IDENTITY_BY_MODE = {
+    "idle": (None, "idle"),
+    "mapping": ("map", "mapping"),
+    "navigating": ("nav", "navigation"),
+    "exploring": ("tare_explore", "exploration"),
+}
+
+
+def _default_product_identity_for_mode(mode: str) -> tuple[str | None, str]:
+    return _DEFAULT_PRODUCT_IDENTITY_BY_MODE.get(
+        str(mode or "").strip().lower(),
+        (None, str(mode or "unknown").strip().lower() or "unknown"),
+    )
+
+
+def _normalize_product_identity(
+    payload: dict[str, Any],
+    mode: str,
+) -> tuple[str | None, str]:
+    raw_profile = (
+        payload.get("product_profile")
+        or payload.get("profile")
+        or ""
+    )
+    product_profile = (
+        canonical_profile_name(str(raw_profile).strip())
+        if str(raw_profile or "").strip()
+        else None
+    )
+    explicit_session = str(payload.get("product_session") or "").strip().lower()
+
+    if product_profile in PRODUCT_MODE_CONTRACTS:
+        default_session = PRODUCT_MODE_CONTRACTS[product_profile].product_session
+    else:
+        default_profile, default_session = _default_product_identity_for_mode(mode)
+        if product_profile is None:
+            product_profile = default_profile
+
+    return product_profile, explicit_session or default_session
+
+
+def _resolve_session_map_name(
+    map_name: str,
+) -> tuple[str | None, Any | None, Any | None, str | None]:
+    map_root = nav_map_root()
+    candidate = map_root / map_name
+    try:
+        resolved = candidate.resolve(strict=False)
+    except RuntimeError as exc:
+        return None, map_root, None, f"Map '{map_name}' cannot be resolved: {exc}"
+    try:
+        rel = resolved.relative_to(map_root)
+    except ValueError:
+        return None, map_root, None, "map_name escapes NAV_MAP_DIR"
+    if len(rel.parts) != 1:
+        return None, map_root, None, "map_name must resolve to a direct map directory"
+    normalized = rel.parts[0]
+    err = safe_map_name(normalized)
+    if err is not None:
+        return None, map_root, None, err
+    return normalized, map_root, map_root / normalized, None
+
+
 def register_session_routes(app, gw) -> None:
     @app.get(
         "/api/v1/session",
@@ -107,14 +172,19 @@ def register_session_routes(app, gw) -> None:
     async def session_get():
         inferred_mode, inferred_map = gw._session_detect_current_mode()
         if inferred_mode != gw._session_mode:
+            product_profile, product_session = _default_product_identity_for_mode(
+                inferred_mode
+            )
             gw._session_mode = inferred_mode
+            gw._session_product_profile = product_profile
+            gw._session_product_session = product_session
             gw._session_map = inferred_map
             gw._session_since = time.time()
         return gw._session_snapshot()
 
     @app.post(
         "/api/v1/session/start",
-        summary="Enter mapping or navigating mode",
+        summary="Enter a low-level mapping, navigating, or exploring session",
         response_model=SessionTransitionResponse,
         responses={
             400: {"model": SessionTransitionResponse},
@@ -140,6 +210,10 @@ def register_session_routes(app, gw) -> None:
                     "Use 'mapping' | 'navigating' | 'exploring'."
                 ),
             )
+        product_profile, product_session = _normalize_product_identity(
+            payload,
+            mode,
+        )
         if slam_profile and not is_supported_slam_profile(slam_profile):
             return _transition_response(
                 False,
@@ -206,16 +280,16 @@ def register_session_routes(app, gw) -> None:
                     message="map_name is required for navigating",
                 )
 
-            map_root = nav_map_root()
-            base = (map_root / map_name).resolve()
-            try:
-                base.relative_to(map_root)
-            except ValueError:
+            resolved_map_name, map_root, base, map_err = _resolve_session_map_name(
+                map_name
+            )
+            if map_err is not None or not resolved_map_name or base is None:
                 return _transition_response(
                     False,
                     status_code=400,
-                    message="map_name escapes NAV_MAP_DIR",
+                    message=map_err or "map_name cannot be resolved",
                 )
+            map_name = resolved_map_name
             if not (base / "map.pcd").is_file():
                 return _transition_response(
                     False,
@@ -315,6 +389,8 @@ def register_session_routes(app, gw) -> None:
                     )
 
             gw._session_mode = mode
+            gw._session_product_profile = product_profile
+            gw._session_product_session = product_session
             gw._session_map = map_name if mode == "navigating" else None
             gw._session_slam_profile = backend
             gw._cached_slam_profile = backend
@@ -365,6 +441,8 @@ def register_session_routes(app, gw) -> None:
                 svc = get_service_manager()
                 svc.stop(*slam_switch_plan("stop").stop)
             gw._session_mode = "idle"
+            gw._session_product_profile = None
+            gw._session_product_session = "idle"
             gw._session_map = None
             gw._session_slam_profile = "stopped"
             gw._cached_slam_profile = "stopped"

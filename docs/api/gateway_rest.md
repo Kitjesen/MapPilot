@@ -76,7 +76,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 - **src\gateway\routes\session.py**:
   - `GET /api/v1/session` — Current session state + capabilities
   - `POST /api/v1/session/end` — Exit current mode and return to idle
-  - `POST /api/v1/session/start` — Enter mapping or navigating mode
+  - `POST /api/v1/session/start` — Enter a low-level mapping, navigating, or exploring session
 - **src\gateway\routes\status.py**:
   - `GET /api/v1/devices` — Hardware device registry status
   - `GET /api/v1/events` — SSE event stream
@@ -400,7 +400,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Handler:** `session_end`
 
 ### `POST /api/v1/session/start`
-**Summary:** Enter mapping or navigating mode
+**Summary:** Enter a low-level mapping, navigating, or exploring session
 **Response model:** `SessionTransitionResponse`
 **Handler:** `session_start`
 

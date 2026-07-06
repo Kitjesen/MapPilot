@@ -1,4 +1,4 @@
-"""Tests for transport backends — LocalTransport, SHM, and Dual.
+"""Tests for transport backends: LocalTransport, SHM, and DDS.
 
 TODO: Replace time.sleep with threading.Event for subscriber delivery
       synchronization. SHM subscriber startup is near-instant; poll
@@ -316,58 +316,8 @@ class TestTransportAdapter:
         adapter.close()
 
 
-class TestLCMTransport:
-    """LCM is optional and stays behind the transport boundary."""
-
-    def test_lcm_transport_requires_optional_package(self, monkeypatch):
-        import runtime.transport.lcm as lcm_mod
-
-        monkeypatch.setattr(lcm_mod, "_LCM_AVAILABLE", False)
-        with pytest.raises(ImportError, match="lcm is not installed"):
-            lcm_mod.LCMTransport()
-
-    def test_lcm_factory_requires_optional_package(self, monkeypatch):
-        import runtime.transport.lcm as lcm_mod
-        from runtime.transport.factory import create_transport
-
-        monkeypatch.setattr(lcm_mod, "_LCM_AVAILABLE", False)
-        with pytest.raises(ImportError, match="lcm is not installed"):
-            create_transport(TransportStrategy.LCM)
-
-    def test_lcm_publisher_accepts_only_bytes(self):
-        from runtime.transport.lcm import LCMPublisher
-
-        class FakeLCM:
-            def __init__(self):
-                self.published = []
-
-            def publish(self, channel, data):
-                self.published.append((channel, data))
-
-        client = FakeLCM()
-        topic = TopicConfig(name="/test/lcm_bytes", strategy=TransportStrategy.LCM)
-        pub = LCMPublisher(topic, client)
-
-        with pytest.raises(TypeError, match="expects bytes"):
-            pub.publish({"not": "serialized"})
-
-        pub.publish(bytearray(b"serialized"))
-        assert client.published == [("/test/lcm_bytes", b"serialized")]
-
-    def test_lcm_subscriber_delivers_bytes_with_timestamp(self):
-        from runtime.transport.lcm import LCMSubscriber
-
-        class FakeLCM:
-            pass
-
-        received = []
-        topic = TopicConfig(name="/test/lcm_sub", strategy=TransportStrategy.LCM)
-        sub = LCMSubscriber(topic, lambda data, ts: received.append((data, ts)), FakeLCM())
-        sub._on_lcm_message("/test/lcm_sub", bytearray(b"payload"))
-
-        assert received
-        assert received[0][0] == b"payload"
-        assert isinstance(received[0][1], float)
+class TestJsonCodec:
+    """JSON codec stays available for explicit endpoint adapters."""
 
     def test_json_codec_roundtrips_core_message(self):
         import json
@@ -392,7 +342,7 @@ class TestLCMTransport:
         assert decoded.linear.y == 2.0
         assert decoded.angular.z == 0.5
 
-    def test_lcm_transport_adapter_uses_json_codec(self, monkeypatch):
+    def test_shm_transport_adapter_uses_json_codec(self, monkeypatch):
         from runtime.msgs.geometry import Twist, Vector3
         from runtime.transport.abc import TopicConfig
         import runtime.transport.factory as factory_mod
@@ -410,7 +360,7 @@ class TestLCMTransport:
                 pass
 
         class CapturingBackend:
-            name = "lcm"
+            name = "shm"
 
             def __init__(self):
                 self.publisher = BytesOnlyPublisher()
@@ -429,7 +379,7 @@ class TestLCMTransport:
         backend = CapturingBackend()
         monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None: backend)
 
-        transport = factory_mod.create_transport_adapter("lcm")
+        transport = factory_mod.create_transport_adapter("shm")
         received = []
         transport.subscribe("/nav/cmd_vel", received.append)
         transport.publish(
@@ -450,8 +400,7 @@ class TestLCMTransport:
         backend.callback(b"not-json", time.time())
         assert len(received) == before_invalid
 
-    @pytest.mark.parametrize("strategy", ["dds", "dual"])
-    def test_dds_backed_transport_adapter_uses_raw_json_envelope(self, monkeypatch, strategy):
+    def test_dds_backed_transport_adapter_uses_raw_json_envelope(self, monkeypatch):
         import json
         from runtime.msgs.geometry import Twist, Vector3
         from runtime.transport.abc import TopicConfig
@@ -492,7 +441,7 @@ class TestLCMTransport:
         backend = CapturingBackend()
         monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None: backend)
 
-        transport = factory_mod.create_transport_adapter(strategy)
+        transport = factory_mod.create_transport_adapter("dds")
         received = []
         topic = "/test/cmd_vel"
         transport.subscribe(topic, received.append)
@@ -517,8 +466,7 @@ class TestLCMTransport:
         backend.callback(b"not-json", time.time())
         assert len(received) == before_invalid
 
-    @pytest.mark.parametrize("strategy", ["dds", "dual"])
-    def test_dds_backed_transport_adapter_rejects_product_topics(self, monkeypatch, strategy):
+    def test_dds_backed_transport_adapter_rejects_product_topics(self, monkeypatch):
         import runtime.transport.factory as factory_mod
 
         class CapturingBackend:
@@ -535,7 +483,7 @@ class TestLCMTransport:
 
         monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None: CapturingBackend())
 
-        transport = factory_mod.create_transport_adapter(strategy)
+        transport = factory_mod.create_transport_adapter("dds")
         with pytest.raises(ValueError, match="registered product topic /nav/cmd_vel"):
             transport.subscribe("/nav/cmd_vel", lambda _msg: None)
         with pytest.raises(ValueError, match="registered product topic /nav/cmd_vel"):
@@ -679,12 +627,4 @@ class TestTransportFactory:
         from runtime.transport.factory import create_transport
         t = create_transport(TransportStrategy.DDS)
         assert isinstance(t, DDSTransport)
-        t.close()
-
-    def test_create_dual(self):
-        pytest.importorskip("cyclonedds", reason="cyclonedds not installed")
-        from runtime.transport.dual import DualTransport
-        from runtime.transport.factory import create_transport
-        t = create_transport(TransportStrategy.DUAL)
-        assert isinstance(t, DualTransport)
         t.close()

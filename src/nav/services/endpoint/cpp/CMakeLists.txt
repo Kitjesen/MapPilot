@@ -7,6 +7,7 @@ endif()
 
 find_package(iceoryx_binding_c QUIET)
 find_package(CycloneDDS REQUIRED)
+find_package(OpenMP QUIET)
 find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -35,6 +36,7 @@ add_subdirectory(
 
 add_executable(lingtu_nav_native_endpoint
   nav_native_endpoint.cpp
+  nav_status_writer.cpp
   "${_NAV_PLAN_CPP_DIR}/nav_loop.cpp"
   "${_NAV_KERNEL_DIR}/src/path_follower_core.cpp"
   "${_LINGTU_IDL_SOURCE}")
@@ -51,6 +53,10 @@ target_link_libraries(lingtu_nav_native_endpoint PRIVATE
   octoplanner3d_runtime
   CycloneDDS::ddsc
   pthread)
+
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(lingtu_nav_native_endpoint PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 target_compile_options(lingtu_nav_native_endpoint PRIVATE
   -Wall
@@ -70,6 +76,10 @@ target_link_libraries(lingtu_traversability_dds PRIVATE
   CycloneDDS::ddsc
   pthread)
 
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(lingtu_traversability_dds PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 target_compile_options(lingtu_traversability_dds PRIVATE
   -Wall
   -Wextra
@@ -88,6 +98,23 @@ target_link_libraries(lingtu_nav_control PRIVATE
   pthread)
 
 target_compile_options(lingtu_nav_control PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic)
+
+add_executable(lingtu_motion_mock_dds
+  motion_mock_dds.cpp
+  "${_LINGTU_IDL_SOURCE}")
+
+target_include_directories(lingtu_motion_mock_dds PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}"
+  "${_LINGTU_ROOT}/src")
+
+target_link_libraries(lingtu_motion_mock_dds PRIVATE
+  CycloneDDS::ddsc
+  pthread)
+
+target_compile_options(lingtu_motion_mock_dds PRIVATE
   -Wall
   -Wextra
   -Wpedantic)

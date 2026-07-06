@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
@@ -45,7 +45,7 @@ def _candidate(*, feasible: bool = True) -> dict:
 
 
 def test_inspection_acceptance_passes_field_ready_targets():
-    from runtime.inspection_acceptance import build_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import build_inspection_acceptance
 
     field_check = _field_check()
     field_check["frontier_preview"] = {
@@ -102,7 +102,7 @@ def test_inspection_acceptance_passes_field_ready_targets():
 
 def test_inspection_acceptance_formats_runtime_switch_preflight():
     from cli.runtime_display import format_inspection_acceptance
-    from runtime.inspection_acceptance import build_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import build_inspection_acceptance
 
     field_check = _field_check()
     field_check["runtime_switch"] = {
@@ -133,7 +133,7 @@ def test_inspection_acceptance_formats_runtime_switch_preflight():
 
 
 def test_inspection_acceptance_blocks_when_field_ready_fails():
-    from runtime.inspection_acceptance import build_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import build_inspection_acceptance
 
     payload = build_inspection_acceptance(
         field_check=_field_check(ok=False),
@@ -147,7 +147,7 @@ def test_inspection_acceptance_blocks_when_field_ready_fails():
 
 
 def test_inspection_acceptance_fails_infeasible_goal_candidate_preview():
-    from runtime.inspection_acceptance import build_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import build_inspection_acceptance
 
     payload = build_inspection_acceptance(
         field_check=_field_check(),
@@ -166,7 +166,7 @@ def test_inspection_acceptance_fails_infeasible_goal_candidate_preview():
 
 
 def test_inspection_acceptance_aggregates_multiple_points_with_motion_safety():
-    from runtime.inspection_acceptance import build_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import build_inspection_acceptance
 
     field_check = _field_check()
     field_check["navigation"] = {
@@ -205,7 +205,7 @@ def test_inspection_acceptance_aggregates_multiple_points_with_motion_safety():
 
 
 def test_inspection_acceptance_blocks_motion_safety_when_preview_published_command():
-    from runtime.inspection_acceptance import build_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import build_inspection_acceptance
 
     field_check = _field_check()
     field_check["navigation"] = {
@@ -231,7 +231,7 @@ def test_inspection_acceptance_blocks_motion_safety_when_preview_published_comma
 
 
 def test_inspection_acceptance_blocks_motion_safety_when_publish_counter_missing():
-    from runtime.inspection_acceptance import build_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import build_inspection_acceptance
 
     field_check = _field_check()
     field_check["navigation"] = {
@@ -259,7 +259,7 @@ def test_inspection_acceptance_blocks_motion_safety_when_publish_counter_missing
 
 
 def test_inspection_acceptance_fails_missing_requested_saved_location(monkeypatch):
-    import runtime.inspection_acceptance as module
+    import runtime.diagnostics.inspection_acceptance as module
 
     def _fake_field_check(**kwargs):
         return _field_check()
@@ -289,7 +289,7 @@ def test_inspection_acceptance_fails_missing_requested_saved_location(monkeypatc
 
 
 def test_inspection_acceptance_collects_locations_and_goal_candidates(monkeypatch):
-    import runtime.inspection_acceptance as module
+    import runtime.diagnostics.inspection_acceptance as module
 
     requests: list[tuple[str, dict | None]] = []
 
@@ -341,7 +341,7 @@ def test_inspection_acceptance_collects_locations_and_goal_candidates(monkeypatc
 
 
 def test_inspection_acceptance_rejects_coordinate_payloads_before_goal_candidate(monkeypatch):
-    import runtime.inspection_acceptance as module
+    import runtime.diagnostics.inspection_acceptance as module
 
     requests: list[tuple[str, dict | None]] = []
 
@@ -376,7 +376,7 @@ def test_inspection_acceptance_rejects_coordinate_payloads_before_goal_candidate
 
 def test_inspection_check_cli_writes_json(monkeypatch, tmp_path, capsys):
     import cli.main as main_mod
-    import runtime.inspection_acceptance as module
+    import runtime.diagnostics.inspection_acceptance as module
 
     out_path = tmp_path / "inspection.json"
 

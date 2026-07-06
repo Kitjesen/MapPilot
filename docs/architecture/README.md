@@ -8,8 +8,10 @@ in `../plans/` and old decisions in `../archive/`.
 | Document | Status | Scope |
 | --- | --- | --- |
 | [`SYSTEM_DESIGN.md`](./SYSTEM_DESIGN.md) | current | End-to-end system design, written as a paper-style overview. |
+| [`PRODUCT_MODE_RUNTIME_CONTRACT.md`](./PRODUCT_MODE_RUNTIME_CONTRACT.md) | current | Product profiles, operator-facing product sessions, endpoint/session/SLAM mode naming. |
 | [`NAVIGATION_COMPUTE_CONTRACT.md`](./NAVIGATION_COMPUTE_CONTRACT.md) | current | Planning/local-planning/safety/control boundary. |
 | [`NAVIGATION_RUNTIME_DATAFLOW.md`](./NAVIGATION_RUNTIME_DATAFLOW.md) | current | ROS-free navigation-base dataflow, transports, payloads, OctoPlanner3D map inputs, and local-planner inputs. |
+| [`MODULE_SERVICE_BOUNDARY.md`](./MODULE_SERVICE_BOUNDARY.md) | current cleanup guide | Names and boundaries for Modules, system services, internal service helpers, adapters, and remaining ROS surfaces. |
 | [`GLOBAL_PLANNING_CONTRACT.md`](./GLOBAL_PLANNING_CONTRACT.md) | current | Global planner request/result, backend, preview, and transport boundary. |
 | [`MAP_SERVICE_CONTRACT.md`](./MAP_SERVICE_CONTRACT.md) | current | Saved-map classes, artifact capabilities, bundle lookup, and builder gap. |
 | [`local_planner_io_contract.md`](./local_planner_io_contract.md) | current | Local planner inputs, outputs, and remaining traversability gap. |

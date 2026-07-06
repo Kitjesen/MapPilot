@@ -5,11 +5,10 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-__all__ = ["GlobalPlanner", "MaplessDirectPlannerService", "SavedMapArtifacts"]
+__all__ = ["GlobalPlanner", "SavedMapArtifacts"]
 
 _EXPORTS = {
     "GlobalPlanner": "nav.services.plan.global_planner.service",
-    "MaplessDirectPlannerService": "nav.services.plan.global_planner.direct",
     "SavedMapArtifacts": "nav.services.plan.global_planner.artifacts",
 }
 

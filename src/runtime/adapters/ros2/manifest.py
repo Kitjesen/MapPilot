@@ -38,6 +38,11 @@ ROS_IMPORT_ROOTS: frozenset[str] = frozenset(
 ROS_SCAN_EXCLUDED_PREFIXES: tuple[str, ...] = (
     "drivers/real/camera/OrbbecSDK_ROS2/",
     "nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/",
+    # Descriptive-only: this diagnostics report emits a documented shell
+    # checklist for the legacy Linux sim closure procedure. It never imports
+    # ROS or shells out itself; the literal "/opt/ros/" text is report content,
+    # not runtime coupling. See docs/architecture/MODULE_SERVICE_BOUNDARY.md.
+    "runtime/diagnostics/dimos_gap.py",
 )
 
 

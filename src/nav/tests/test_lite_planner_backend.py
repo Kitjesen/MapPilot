@@ -10,7 +10,7 @@ import pytest
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.nav import Path as NavPath
 from nav.services.plan.contracts import GlobalPlanRequest, GlobalPlanResult
-from nav.services.plan.global_planner.algorithm.direct_path import DirectPathBackend
+from nav.services.plan.compat.direct_path import DirectPathBackend
 
 SRC_DIR = Path(__file__).resolve().parents[2]
 
@@ -64,7 +64,7 @@ def test_direct_path_backend_collapses_near_zero_route_to_goal() -> None:
 def test_direct_path_backend_import_does_not_load_map_backed_planning() -> None:
     script = (
         "import sys\n"
-        "from nav.services.plan.global_planner.algorithm.direct_path import DirectPathBackend\n"
+        "from nav.services.plan.compat.direct_path import DirectPathBackend\n"
         "forbidden = {'nav.services.plan.global_planner.service', 'global_planning', 'nav.services.safety.plan_safety'}\n"
         "print(any(name == f or name.startswith(f + '.') for name in sys.modules for f in forbidden))\n"
     )

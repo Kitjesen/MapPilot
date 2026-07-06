@@ -10,7 +10,7 @@ Group=sunrise
 WorkingDirectory=/opt/lingtu/current
 Environment=HOME=/home/sunrise
 Environment=LINGTU_REPO=/opt/lingtu/current
-Environment=LINGTU_PROFILE=thunder-nav
+Environment=LINGTU_PROFILE=nav
 Environment=LINGTU_PYTHON=python3
 Environment=LINGTU_MODULE_TRANSPORT=local
 Environment=LINGTU_ENDPOINT=thunder_field

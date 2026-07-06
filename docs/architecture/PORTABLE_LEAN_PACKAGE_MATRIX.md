@@ -77,7 +77,7 @@ Observed from a local import scan over `src`, `cli`, `sim`, `scripts`, and `tool
 | Vendor hardware | 9 | `src/drivers/real/thunder/*`, gateway status, manager, generated proto tools | `lingtu-robot-thunder` only. |
 | MuJoCo | 23 | `sim/engine/*`, `src/drivers/sim/*`, `sim/scripts/*` | `lingtu-sim-mujoco` optional but first-class. |
 | Native heavy | 92 | PCT/GTSAM/Open3D/rerun surfaces | Process/C ABI or feature pack; never core import. |
-| LCM | 2 | `src/runtime/transport/factory.py`, `src/runtime/transport/lcm.py` | Endpoint optional; guard imports. |
+| LCM | 2 | `src/runtime/adapters/lcm/transport.py` | Legacy endpoint optional; guard imports. |
 
 A top-level import scan of the critical portable runtime surface currently found no heavy top-level imports in:
 

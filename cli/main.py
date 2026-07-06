@@ -358,7 +358,7 @@ def _cmd_runtime_audit(args: argparse.Namespace) -> None:
 def _cmd_gateway_runtime_acceptance(args: argparse.Namespace) -> None:
     import json
 
-    from runtime.gateway_runtime_acceptance import (
+    from runtime.diagnostics.gateway_runtime_acceptance import (
         collect_gateway_runtime_acceptance,
         format_gateway_runtime_acceptance,
     )
@@ -579,7 +579,7 @@ def _cmd_dataflow(args: argparse.Namespace) -> None:
 def _cmd_field_check(args: argparse.Namespace) -> None:
     import json
 
-    from runtime.product_field_check import collect_product_field_check
+    from runtime.diagnostics.product_field_check import collect_product_field_check
 
     if len(args.extra) > 1:
         print(
@@ -619,7 +619,7 @@ def _parse_inspection_point(raw: str):
 def _cmd_inspection_check(args: argparse.Namespace) -> None:
     import json
 
-    from runtime.inspection_acceptance import collect_inspection_acceptance
+    from runtime.diagnostics.inspection_acceptance import collect_inspection_acceptance
 
     if len(args.extra) > 1:
         print(
@@ -704,7 +704,7 @@ def _cmd_real_runtime_evidence(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    from runtime.runtime_evidence import REAL_RUNTIME_CONTRACT
+    from runtime.diagnostics.runtime_evidence import REAL_RUNTIME_CONTRACT
 
     repo_root = Path(__file__).resolve().parent.parent
     report_path = args.json_out or Path("artifacts/thunder_field_runtime/report.json")

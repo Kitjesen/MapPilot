@@ -33,12 +33,12 @@ ROOT = Path(__file__).resolve().parents[3]
 def test_runtime_binding_policy_prefers_operator_transport_over_endpoint_default() -> None:
     config = {
         "_module_transport": "local",
-        "module_transport": "lcm",
+        "module_transport": "shm",
         "_endpoint_transport": "local",
         "endpoint_transport": "lcm",
     }
 
-    assert module_transport_for_config(config) == "lcm"
+    assert module_transport_for_config(config) == "shm"
     assert endpoint_transport_for_config(config) == "lcm"
 
 

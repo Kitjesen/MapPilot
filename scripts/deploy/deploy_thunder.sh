@@ -10,7 +10,7 @@
 set -euo pipefail
 
 REPO="${LINGTU_REPO:-$HOME/data/inovxio/lingtu}"
-PROFILE="${LINGTU_DEPLOY_PROFILE:-thunder-nav}"
+PROFILE="${LINGTU_DEPLOY_PROFILE:-nav}"
 PYTHON_BIN="${LINGTU_PYTHON:-python3}"
 LOG="${LINGTU_DEPLOY_LOG:-/tmp/deploy_thunder.log}"
 STARTUP_TIMEOUT="${LINGTU_DEPLOY_STARTUP_TIMEOUT:-30}"

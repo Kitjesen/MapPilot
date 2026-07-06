@@ -1,51 +1,247 @@
-# ThunderV4 MuJoCo MID-360 录制规范
+# ThunderV4 MuJoCo MID-360 Recording Requirements
 
-这是 ThunderV4 在 MuJoCo 中做 MID-360 雷达仿真录制的默认验收格式。
+This is the default acceptance format for ThunderV4 MID-360 LiDAR simulation
+recordings in MuJoCo.
 
-## 固定风格
+## Fixed Style
 
-- 主画面必须是 MuJoCo RGB render，不能用 Matplotlib 点云图代替。
-- 机器人使用 `sim/robots/thunderv4/mjcf/thunderv4.xml`。
-- 运动必须使用 `sim/robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.pt`，report 中应显示 `policy_class=TorchScriptPolicyRunner`。
-- 背景使用低干扰灰色 MuJoCo 场景，保留阴影和简单障碍物。
-- 机器人本体可以为了可读性调暗，但不能改物理、关节、policy、碰撞体。
-- 轨迹如果显示，必须是连续细线，不使用离散点。
+- The main view must be a MuJoCo RGB render, not a Matplotlib point-cloud image.
+- The robot model must be `sim/robots/thunderv4/mjcf/thunderv4.xml`.
+- Motion must use `sim/robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.pt`.
+- The report must show `policy_class=TorchScriptPolicyRunner`.
+- The scene should use a low-clutter gray MuJoCo background with shadows and simple obstacles.
+- Robot brightness may be adjusted for readability, but physics, joints, policy, and collision bodies must not change.
+- If trajectory is shown, it must be a continuous thin line, not scattered points.
 
-## 雷达要求
+## LiDAR Requirements
 
-- 雷达后端必须是 MuJoCo-LiDAR：`backend=mujoco_lidar`。
-- 扫描 pattern 使用 `sim/assets/livox/mid360.npy`。
-- 点云必须来自 `engine.get_lidar_points()` 的 XYZI raycast hit points。
-- 不允许用 ground-projected pattern 当作正式雷达点云。
-- 不画雷达射线，只画红色 hit points。
-- 可以为了视频渲染抽样显示点数，但 report 中要保留真实 scan 点数。
-- XYZI 的 intensity 是当前仿真的反射强度代理，不是材质真实反射率。
-- 当前 intensity 模型：`180/(1+(range_m/25)^2)+N(0,3)`，并裁剪到 `[1,255]`。
-- report 必须写明 `mature_lidar_backend_verified=true`、`fallback_used=false`、`ground_projected_pattern=false`、`rays_drawn=false`、`point_source=engine.get_lidar_points() XYZI raycast hits` 和 `intensity.min/p50/mean/p95/max`。
+- The LiDAR backend must be MuJoCo-LiDAR: `backend=mujoco_lidar`.
+- Product reports must use `product_lidar_backend_verified`; do not introduce
+  `mature_*` fields for this path.
+- The scan pattern must use `sim/assets/livox/mid360.npy`.
+- Point clouds must come from `engine.get_lidar_points()` XYZI raycast hit points.
+- Ground-projected patterns are not valid LiDAR point clouds.
+- Do not draw LiDAR rays; render only hit points.
+- Video rendering may sample points for readability, but the report must keep the real scan counts.
+- XYZI intensity is the current simulation proxy, not true material reflectance.
+- Current intensity model: `180/(1+(range_m/25)^2)+N(0,3)`, clipped to `[1,255]`.
+- The report must include `product_lidar_backend_verified=true`, `fallback_used=false`, `ground_projected_pattern=false`, `rays_drawn=false`, `point_source=engine.get_lidar_points() XYZI raycast hits`, and `intensity.min/p50/mean/p95/max`.
 
-## IMU 与 SLAM 要求
+## IMU And SLAM Requirements
 
-- MuJoCo engine 必须能读到 IMU 状态：`imu_gyro`、`imu_projected_gravity` 和 `imu_linear_acceleration`。
-- `MujocoDriverModule` 必须发布 runtime `raw_scan` 和 `imu` 输出口，对齐 `/lidar/raw_frame` / `TOPICS.raw_lidar_points` 与 `/imu/raw` / `TOPICS.imu`，frame 使用 `lidar_link`。
-- 录制脚本本身不是运行时 topic 发布器；它只在 report 中记录 IMU 采样和 driver 是否具备 IMU 输出。
-- 仅有录制视频不等于 SLAM 输入完整接通。直接跑 Fast-LIO 仍要验证 raw LiDAR frame、IMU、时间同步和 DDS/portable adapter 输入窗口。
-- report 中 `ready_for_direct_slam=false` 时，不能宣称 SLAM 已经可以直接跑。
+- The MuJoCo engine must expose `imu_gyro`, `imu_projected_gravity`, and `imu_linear_acceleration`.
+- `MujocoDriverModule` must publish runtime `raw_scan` and `imu` outputs aligned with `/lidar/raw_frame` / `TOPICS.raw_lidar_points` and `/imu/raw` / `TOPICS.imu`; frame is `lidar_link`.
+- The recording script is not the runtime topic publisher. It only records in the report whether IMU samples and driver IMU outputs are available.
+- A video recording alone does not prove SLAM input is wired. Direct Fast-LIO validation still needs raw LiDAR frame, IMU, time sync, and DDS/portable adapter input checks.
+- If the report has `ready_for_direct_slam=false`, do not claim direct SLAM is ready.
+- If production SLAM services are already running on DDS domain `0`, use an
+  isolated DDS domain for MuJoCo validation. Do not inject simulated frames into
+  the live robot SLAM domain.
 
-## 接地要求
+## Sunrise Native DDS SLAM Check
 
-- 轮子可见部分使用 `FR_wheel`、`FL_wheel`、`RR_wheel`、`RL_wheel` 四个 wheel cylinder。
-- 四个旧 `*_foot_visual` mesh 会穿地，录制时不作为可见轮子使用。
-- report 必须输出 `visible_wheel_clearance_min_m`。
-- `visible_wheel_clearance_min_m` 必须大于等于 0，不能出现可见轮子嵌入地面。
+Run the sensor bridge against a temporary C++ SLAM runtime on an isolated domain:
 
-## 生成命令
+```bash
+export PYTHONPATH="$PWD/src:$PWD"
+
+build/slam_core/lingtu_slam_cyclone_runtime \
+  --backend fastlio2 \
+  --mode mapping \
+  --config src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml \
+  --domain-id 83 \
+  --status-json /tmp/lingtu_mujoco_slam_status_domain83.json \
+  --cloud-snapshot-dir /dev/shm/lingtu_mujoco_slam_domain83 &
+
+python3 sim/scripts/mujoco/native_dds_sensors.py \
+  --duration 30.0 \
+  --world industrial_park \
+  --settle-s 3.0 \
+  --warmup-s 2.0 \
+  --drive-ramp-s 5.0 \
+  --publish-hz 10 \
+  --imu-hz 200 \
+  --drive-mode policy \
+  --imu-acc-mode sensor \
+  --imu-acc-conditioning realistic \
+  --imu-acc-axis-scale auto \
+  --scan-time-profile physical_rolling \
+  --timestamp-clock sim_hardware \
+  --domain-id 83 \
+  --publisher-bin build/livox_sdk2_stream/livox_sdk2_stream \
+  --slam-status-json /tmp/lingtu_mujoco_slam_status_domain83.json \
+  --min-slam-motion-ratio 0.5 \
+  --max-slam-motion-ratio 1.6 \
+  --min-sim-yaw-for-odom-check-rad 0.2 \
+  --max-slam-yaw-error-rad 0.15 \
+  --require-slam-output
+```
+
+Expected pass evidence:
+
+- `/lidar/raw_frame` and `/imu/raw` are published by
+  `livox_sdk2_stream --stdin-records --dds`.
+- `lingtu_slam_cyclone_runtime` reaches `state=TRACKING`.
+- `observed_slam_outputs` includes `/slam/odometry`, `/slam/registered_cloud`,
+  `/slam/map_cloud`, and `/slam/localization_health`.
+- `motion.sim_xy_m` records nonzero MuJoCo motion and
+  `motion.slam_to_sim_xy_ratio` is between the configured min and max ratio.
+  If MuJoCo moves but SLAM odometry remains near zero, the report must fail
+  with `native_slam_motion_mismatch`; if SLAM over-estimates too far, the
+  report must fail with `native_slam_motion_overshoot`. Treat the map-frame
+  transform as unverified when either gap appears.
+- For turning runs, `motion.slam_to_sim_yaw_error_rad` must remain below the
+  configured yaw error threshold. If it exceeds the threshold, the report must
+  fail with `native_slam_yaw_mismatch`.
+- `/dev/shm/lingtu_mujoco_slam_domain83/map_cloud.bin` is non-empty and can be
+  decoded as `runtime.msgs.sensor.PointCloud2`.
+- Do not stack `/slam/map_cloud` snapshots and call that a complete map.
+  `/slam/map_cloud` is the current map-frame scan output. For a saved map image,
+  send `lingtu_slam_control save-map <map.pcd>` and render that PCD. A saved PCD
+  proves the native map-builder wrote a cumulative artifact, but it is usable
+  navigation evidence only after both the motion-consistency gate and the saved
+  map quality gate pass.
+
+After `save-map`, run the saved-map quality gate for known MuJoCo worlds:
+
+```bash
+python3 sim/scripts/mujoco/saved_map_quality_gate.py \
+  --pcd artifacts/<run>/native_saved_map.pcd \
+  --world industrial_park \
+  --json-out artifacts/<run>/native_saved_map_quality_gate.json \
+  --plot-out artifacts/<run>/native_saved_map_quality_gate.png
+```
+
+The gate filters obstacle-height cells (`0.30 <= z <= 1.60`), drops sparse and
+small isolated components, and reports both raw scene-frame overlap and bounded
+2D aligned overlap. Use the aligned result to judge local map shape. Use the
+native DDS motion gate to judge map-frame yaw/translation consistency.
+
+## Current Sunrise Native DDS Result
+
+Current isolated-domain MuJoCo native DDS closure on sunrise:
+
+```text
+/home/sunrise/data/inovxio/lingtu/artifacts/sunrise_mujoco_fastlio_sensor_fixed_30s_20260706/
+```
+
+Motion result was `report.ok=true`, `save-map` succeeded, and saved-map
+quality result was `quality.ok=true`. This is the current accepted MuJoCo
+native DDS saved-map evidence because it uses policy motion, sensor-mode IMU
+with realistic conditioning, no odom prior, unified simulated hardware clock,
+and the native C++ Fast-LIO runtime.
+
+Observed data:
+
+- Native DDS sensor input worked with `imu_acc_mode=sensor`,
+  `sim_hardware_sensor_model=mujoco_accelerometer_conditioned_imu`.
+- Native SLAM output existed: `/slam/odometry`, `/slam/registered_cloud`,
+  `/slam/map_cloud`, `/slam/localization_health`, and
+  `/slam/localization_quality`.
+- SLAM reached `state=TRACKING`.
+- MuJoCo moved `motion.sim_xy_m=1.407 m`.
+- SLAM odometry moved `motion.slam_odom_xy_m=1.381 m`.
+- `motion.slam_to_sim_xy_ratio=0.982` with gate range `[0.5, 1.6]`.
+- Yaw error was `-0.0006 rad` with gate max `0.150 rad`.
+- `remaining_gaps=[]`.
+- Native `save-map` produced `native_saved_map.pcd`.
+- Saved-map quality gate passed after bounded 2D scene alignment:
+  `99.65%` of candidate cells were within `0.4 m` of expected obstacle
+  geometry, and `0.0%` were farther than `0.6 m`.
+- Current native DDS saved-map evidence must use `--drive-mode policy`,
+  `--imu-acc-mode sensor`, `--imu-acc-conditioning realistic`,
+  `--timestamp-clock sim_hardware`, empty IMU/LiDAR timestamp overrides,
+  physical rolling subscans, 200 Hz IMU target, and `--imu-acc-axis-scale auto`
+  resolving to identity under policy sensor mode.
+  `gravity_only` remains a diagnostic baseline only.
+
+Long-run full-map status:
+
+```text
+/home/sunrise/data/inovxio/lingtu/artifacts/sunrise_mujoco_fastlio_sensor_fixed_240s_20260706/
+```
+
+The 240 s `box_explore` run is red and must not be used as full-map closure
+evidence. It used the same sensor-conditioned Fast-LIO-only route and saved a
+native map, but the motion gate failed: `sim_path_length_xy_m=15.257`,
+`sim_xy_m=1.175`, `slam_odom_xy_m=2.635`, and yaw error `-0.263 rad`. The
+saved-map quality gate also failed with aligned near ratio `45.73%`,
+far-ghost ratio `40.78%`, median nearest obstacle distance `0.463 m`, and p90
+distance `1.262 m`.
+
+Interpretation of the long run: the raw LiDAR/IMU transport and short local map
+path are connected, but complete long-trajectory map acceptance is not closed
+yet. The current native DDS save path accumulates Fast-LIO odometry without
+loop-closure/PGO correction, so long loop-like motion can create duplicate
+walls and ghost obstacle cells.
+
+Interpretation:
+
+- The raw LiDAR/IMU -> native DDS -> Fast-LIO2 transport chain is closed. The
+  old kinematic finite-difference result and the old gravity-only result are
+  superseded. Saved-map acceptance now requires the policy sensor-conditioned
+  bridge plus the saved-map quality gate.
+- Use `mid360_mujoco_native_dds.yaml` for this simulation gate. Do not run
+  MuJoCo synthetic IMU through the real-board `mid360_s100p.yaml` acceleration
+  scale.
+- Keep the current MuJoCo gate extrinsic colocated (`t_il=[0,0,0]`) because the
+  simulation bridge now publishes a single simulated MID-360 package: raw LiDAR
+  points and IMU samples both come from `lidar_site/lidar_link`.
+- Do not use the old split-clock workaround (`LiDAR wall`, `IMU sim`) as the
+  product default. It remains only a legacy diagnostic comparison.
+- Real robot timestamp issues are possible but different from this MuJoCo
+  problem. On hardware, validate device/driver timestamp source,
+  `time_diff_lidar_to_imu`, extrinsics, and SLAM sync diagnostics; there is no
+  MuJoCo `sim_time` competing with process `wall_time`.
+- The native saved PCD is the cumulative map artifact for inspection. Do not use
+  accumulated `/slam/map_cloud` snapshots as the complete map; that
+  visualization can look like a TF error because it stacks current scan windows.
+- The saved PCD top-down screenshot and any quick filtered occupancy preview are
+  diagnostic only. The domain103 preview used a 0.2 m XY grid with
+  count/z-span/z-max filtering; diagnostics showed 12,989 high points above
+  1.60 m and 750 sparse kept cells under the previous preview rule. This is not
+  a product navigation map.
+- Product navigation acceptance requires a real map-layer output: saved PCD or
+  live `/slam/map_cloud` -> height/ground filtering -> raycast free-space
+  occupancy -> inflation/traversability cost -> planner input. Do not approve
+  localplanner/exploration behavior from a raw PCD scatter plot.
+- MuJoCo odom-prior map artifacts are diagnostic only. They prove raycast and
+  native map-artifact plumbing with a ground-truth pose prior; they do not prove
+  Fast-LIO mapping quality and are not product map acceptance evidence.
+- Product simulation mapping acceptance requires Fast-LIO-only input by
+  default: no `/slam/odom_prior`, unified simulated hardware timestamps,
+  physical rolling subscan timing, 200 Hz IMU samples, Livox-compatible
+  `tag/line` fields, and a saved obstacle layer that passes the map-quality
+  gate. Real S100P/MID-360 maps must not use a MuJoCo pose prior.
+
+Historical red gate:
+
+```text
+artifacts/sunrise_mujoco_native_dds_slam_motion_gate_domain88_20260705_112017/report.json
+motion.sim_xy_m = 1.132
+motion.slam_odom_xy_m = 0.000047
+remaining_gaps = native_slam_motion_mismatch:sim_xy=1.132,slam_xy=0.000,min_slam_xy=0.226
+```
+
+That failure showed that DDS connectivity and SLAM output alone were not enough:
+the initial bridge had no rest warmup and the ZUPT static detector could clamp
+smooth kinematic motion. The current gate keeps this failure mode covered.
+
+## Ground Contact Requirements
+
+- Visible wheels must use the four wheel cylinders: `FR_wheel`, `FL_wheel`, `RR_wheel`, and `RL_wheel`.
+- `*_foot_visual` meshes can intersect the ground and must not be treated as visible wheels in the recording.
+- The report must output `visible_wheel_clearance_min_m`.
+- `visible_wheel_clearance_min_m` must be greater than or equal to `0`.
+
+## Generation Command
 
 ```powershell
-$env:PYTHONPATH='D:\inovxio\brain\lingtu\third_party\MuJoCo-LiDAR\src;D:\inovxio\brain\lingtu\src;D:\inovxio\brain\lingtu'
+$env:PYTHONPATH='D:\inovxio\brain\lingtu\src;D:\inovxio\brain\lingtu'
 python sim\scripts\record_thunderv4_mid360_policy.py
 ```
 
-默认输出到：
+Default output:
 
 ```text
 artifacts/mujoco_thunderv4_mid360_policy_<timestamp>/
@@ -56,20 +252,21 @@ artifacts/mujoco_thunderv4_mid360_policy_<timestamp>/
   report.json
 ```
 
-## 当前验收样例
+## Current Acceptance Sample
 
 ```text
 artifacts/mujoco_thunderv4_mid360_policy_20260704_074304/
 ```
 
-关键结果：
+Key results:
 
-- `.pt` policy 已使用：`TorchScriptPolicyRunner`。
-- 机器人低速运动距离：约 1.08 m。
-- 可见轮最低离地：约 1.1 mm。
-- 雷达点源：真实 MuJoCo-LiDAR hit points。
-- 未使用射线或地面投影 pattern。
-- IMU/raw LiDAR：engine 内部可用，`MujocoDriverModule` 已具备 runtime `raw_scan`/`imu` 输出口；直接 SLAM 仍需 raw LiDAR/IMU 输入窗口验收。
+- `.pt` policy used: `TorchScriptPolicyRunner`.
+- Low-speed robot travel distance: about `1.08 m`.
+- Minimum visible wheel clearance: about `1.1 mm`.
+- LiDAR source: real MuJoCo-LiDAR hit points.
+- No rays or ground-projected pattern used.
+- IMU/raw LiDAR are available inside the engine; `MujocoDriverModule` has runtime `raw_scan`/`imu` outputs. Direct SLAM still requires raw LiDAR/IMU input validation.
+
 ## No Python SLAM
 
 Do not write or ship Python SLAM for MuJoCo validation. Python may render

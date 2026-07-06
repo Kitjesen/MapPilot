@@ -14,7 +14,7 @@ details into Navigation, Gateway, UI, or transport code.
 | Planner service factory | `src/nav/services/plan/factory.py` |
 | Map-backed planner service | `src/nav/services/plan/global_planner/service.py` |
 | Saved-map bundle lookup | `src/nav/services/plan/global_planner/artifacts.py` |
-| Mapless/direct service | `src/nav/services/plan/global_planner/direct.py` |
+| Mapless/direct service | `src/nav/services/plan/compat/direct.py` |
 | Backend runtime adapter | `src/nav/services/plan/global_planner/backend_runtime.py` |
 | OctoPlanner3D backend | `src/nav/services/plan/global_planner/algorithm/octoplanner3d_planner.py` |
 | PCT legacy backend | `src/nav/services/plan/global_planner/algorithm/pct/planner.py` |

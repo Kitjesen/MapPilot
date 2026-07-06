@@ -146,9 +146,10 @@ def test_pointlio_profile_accepts_raw_lidar_but_reports_pending_algorithm() -> N
     assert outputs["reason"] == "pointlio_algorithm_pending_ros_node_extraction"
 
 
-def test_slam_module_save_map_writes_contract_artifacts(tmp_path) -> None:
+def test_slam_module_save_map_writes_contract_artifacts(tmp_path, monkeypatch) -> None:
     from localization.slam.module import SlamModule
 
+    monkeypatch.setenv("LINGTU_DISABLE_NATIVE_SLAM_BINDING", "1")
     module = SlamModule()
     module.setup()
     module.start()
@@ -167,10 +168,16 @@ def test_slam_module_save_map_writes_contract_artifacts(tmp_path) -> None:
 
     assert result["ok"] is True
     assert (tmp_path / "map.pcd").exists()
+    assert (tmp_path / "map.raw.pcd").exists()
+    assert (tmp_path / "map_optimization.json").exists()
     assert (tmp_path / "poses.txt").exists()
     assert (tmp_path / "trajectory.txt").exists()
     assert (tmp_path / "patches").is_dir()
     assert (tmp_path / "patches" / "latest_scan.pcd").exists()
+    metadata = (tmp_path / "map_optimization.json").read_text(encoding="utf-8")
+    assert "lingtu.slam.map_optimization.v1" in metadata
+    assert "loop_closure_enabled" in metadata
+    assert "refine_applied" in metadata
 
 
 def test_slam_stack_defaults_to_native_slam_module() -> None:
@@ -281,6 +288,39 @@ def test_mujoco_slam_wiring_uses_raw_lidar_imu_contract() -> None:
     assert imu.topic == TOPICS.raw_imu
 
 
+def test_native_mapping_save_path_reports_patch_pose_graph_optimization() -> None:
+    fastlio = Path("src/localization/slam/cpp/fastlio.cpp").read_text(encoding="utf-8")
+    header = Path("src/localization/slam/cpp/slam.hpp").read_text(encoding="utf-8")
+    binding = Path("src/localization/slam/cpp/bind.cpp").read_text(encoding="utf-8")
+    cyclone_runtime = Path("src/localization/slam/cpp/cyclone_runtime.cpp").read_text(
+        encoding="utf-8"
+    )
+    module = Path("src/localization/slam/module.py").read_text(encoding="utf-8")
+
+    assert "Status saveMap(const std::string& pcd_path) override" in fastlio
+    assert "map.raw.pcd" in fastlio
+    assert "optimizePatchMapForSave(" in fastlio
+    assert "writeMapOptimizationMetadata(" in fastlio
+    assert "writeTrajectory(pcd.parent_path(), pose_history_)" in fastlio
+    assert "writePatchBundle(pcd.parent_path(), patches)" in fastlio
+    assert "native_patch_pose_graph" in fastlio
+    assert "native_voxel_refine" in fastlio
+    assert "lingtu.slam.map_optimization.v1" in fastlio
+    assert "loop_closure_enabled" in fastlio
+    assert "loop_count" in fastlio
+    assert "optimized_pose_count" in fastlio
+    assert "refine_applied" in fastlio
+
+    assert 'action == "track_against_map"' in cyclone_runtime
+    assert "if (runtime_mode != SlamMode::Localization)" in cyclone_runtime
+    assert '"localization_mode_required"' in cyclone_runtime
+    assert "map_optimization_status" in header
+    assert "map_optimization_loop_count" in header
+    assert "map_optimization" in binding
+    assert "map_optimization" in cyclone_runtime
+    assert '"map_optimization"' in module
+
+
 def test_slam_cpp_build_declares_python_native_binding() -> None:
     cmake = Path("src/localization/slam/cpp/CMakeLists.txt").read_text(encoding="utf-8")
     module = Path("src/localization/slam/module.py").read_text(encoding="utf-8")
@@ -336,6 +376,8 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "--track-against-map-period-s" in cyclone_runtime
     assert "track_against_map_period_s" in cyclone_runtime
     assert "kTrackAgainstMapMaxFailures" in cyclone_runtime
+    assert "restart_track_against_map" in cyclone_runtime
+    assert 'action == "seeded_relocalize" || action == "global_relocalize"' in cyclone_runtime
     assert "registered_cloud_stale" in cyclone_runtime
     assert "last_track_against_map_scan_s" in cyclone_runtime
     assert "lingtu::message::kTf.dds_topic.data()" in cyclone_runtime
@@ -353,6 +395,11 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "relocalization_fitness_rejected" in fastlio
     assert "relocalization_map_bounds_margin_m" in fastlio
     assert "relocalization_outside_map_bounds" in fastlio
+    assert "preserve_tracking_on_relocalization_failure" in fastlio
+    assert 'relocalization_state_ = preserve_tracking ? "tracking" : relocalization_state' in fastlio
+    assert "fail_relocalization" in fastlio
+    assert "map_alignment_update" in fastlio
+    assert "state_estimation_at_scan_ = odometry_odom_body_" in fastlio
     assert "updateMapBounds" in fastlio
     assert "poseInsideMapBounds" in fastlio
     assert "relocalization_refine_backend" in cyclone_runtime
@@ -400,6 +447,7 @@ def test_slam_relocalization_has_typed_dds_request_reply_contract() -> None:
     assert "track_against_map_enabled" in cyclone_runtime
     assert "track_against_map_failures" in cyclone_runtime
     assert "kTrackAgainstMapMaxFailures" in cyclone_runtime
+    assert "restart_track_against_map" in cyclone_runtime
     assert "--track-against-map-period-s" in cyclone_runtime
     assert "registered_cloud_stale" in cyclone_runtime
     assert "backend->relocalize(track_against_map_seed)" in cyclone_runtime
@@ -474,10 +522,11 @@ def test_fastlio_feed_lidar_only_queues_raw_frame() -> None:
     assert "toPclCloud(lidar_buffer_.front(), builder_config_)" in sync
 
 
-def test_slam_sensor_callbacks_are_enqueue_only() -> None:
+def test_slam_sensor_callbacks_are_enqueue_only(monkeypatch) -> None:
     from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
     from localization.slam.module import SlamModule
 
+    monkeypatch.setenv("LINGTU_DISABLE_NATIVE_SLAM_BINDING", "1")
     points = np.zeros(1, dtype=POINT_DTYPE)
     points["x"] = [1.0]
     points["y"] = [2.0]
@@ -500,10 +549,11 @@ def test_slam_sensor_callbacks_are_enqueue_only() -> None:
     assert module.slam_status()["input_queue"]["lidar"] == 0
 
 
-def test_slam_status_reports_lidar_imu_sync_window() -> None:
+def test_slam_status_reports_lidar_imu_sync_window(monkeypatch) -> None:
     from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
     from localization.slam.module import SlamModule
 
+    monkeypatch.setenv("LINGTU_DISABLE_NATIVE_SLAM_BINDING", "1")
     points = np.zeros(2, dtype=POINT_DTYPE)
     points["x"] = [1.0, 2.0]
     points["offset_time_ns"] = [0, 100_000_000]

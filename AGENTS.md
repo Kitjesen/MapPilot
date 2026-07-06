@@ -10,7 +10,7 @@ outdoor/off-road environments.
 - **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64), ROS 2 Humble, Ubuntu 22.04
 - **Languages**: Python for the module framework and semantic stack; C++ for SLAM, terrain, and planning hot paths
 - **Architecture**: Module-First. Module is the only runtime unit; Blueprint is the only orchestration unit
-- **Canonical architecture guide**: `docs/archive/MODULE_FIRST_GUIDELINE.md`
+- **Canonical architecture guide**: `docs/architecture/README.md`
 
 ## Working Rules
 
@@ -216,7 +216,7 @@ profile.
 | `config/robot_config.yaml` | physical robot and calibration source of truth |
 | `config/devices.yaml` | hardware device registry |
 | `config/dufomap.toml` | LingTu-tuned DUFOMap config |
-| `docs/archive/05-specialized/dynamic_obstacle_removal.md` | DUFOMap design notes |
+| `docs/04-deployment/lingtu_cli.md` | DUFOMap operations and restore notes |
 
 ## Build And Test
 
@@ -487,7 +487,7 @@ Disable save-time filtering with:
 export LINGTU_SAVE_DYNAMIC_FILTER=0
 ```
 
-Reference: `docs/archive/05-specialized/dynamic_obstacle_removal.md`.
+Reference: `docs/04-deployment/lingtu_cli.md`.
 
 ## SLAM Drift Watchdog
 

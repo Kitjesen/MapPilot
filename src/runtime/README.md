@@ -18,6 +18,7 @@ node logic.
 | find shared messages | `msgs/`, `contracts/` |
 | find topic, frame, or runtime contract names | `runtime_interface.py` |
 | register or resolve a backend | `registry.py` |
+| inspect runtime diagnostics and acceptance evidence | `diagnostics/` |
 | understand every file in this folder | `FILES.md` |
 
 ## Mental Model
@@ -30,7 +31,7 @@ Blueprint   = a module graph before it starts
 SystemHandle = the running graph
 ```
 
-Normal product flow is:
+Normal Module flow is:
 
 ```text
 goal / sensor / map input
@@ -40,7 +41,8 @@ goal / sensor / map input
   -> robot command or user-facing status
 ```
 
-Example navigation path:
+Example Module-owned navigation path, used by simulation, local-driver, and
+compatibility profiles:
 
 ```text
 GatewayModule.goal_pose
@@ -51,6 +53,21 @@ GatewayModule.goal_pose
   -> VelocityMuxModule
   -> Driver
 ```
+
+The default physical `thunder_field` navigation path is not this Python
+autonomy chain. Field navigation is owned by native DDS services:
+
+```text
+lingtu-livox-dds
+  -> lingtu-slam-dds
+  -> lingtu-traversability-dds
+  -> lingtu-nav-dds
+  -> /nav/cmd_vel
+```
+
+In that mode `src/runtime` still assembles Gateway, mission/status, map, and
+business modules, but it must not load Python `nav.terrain`,
+`nav.local_planner`, or `nav.path_follower` as the product control loop.
 
 ## Minimal Example
 
@@ -101,14 +118,28 @@ bp.wire("SourceModule", "doubled", "SinkModule", "value")
 | --- | --- |
 | core runtime | should stay here |
 | product assembly and runtime catalog | should stay here, but keep it declarative |
-| audit, evidence, and legacy compatibility helpers | useful today, but not part of the clean kernel |
+| audit and evidence helpers | `diagnostics/`; useful today, but not part of the clean kernel |
+| legacy compatibility helpers | isolated files or adapter packages; do not add product behavior there |
 
-Known compatibility or cleanup candidates include:
+Known compatibility candidates include:
 
 - `native_module.py`, `native_install.py`: legacy native/ROS process helpers
-- `dimos_*.py`, `runtime_evidence.py`, `gateway_runtime_acceptance.py`,
-  `inspection_acceptance.py`, `product_field_check.py`: audit and evidence
-  tooling
+- `adapters/ros2/`: ROS 2 compatibility boundary only
+- `adapters/lcm/`, `transport/lcm.py`: replay/dev compatibility, not field
+  default
+- `dds.py`, `adapters/dds/*`: Python DDS utilities that must not become the
+  Thunder field control loop while the native C++ DDS endpoints own that path
+
+Audit and evidence tooling now lives in `diagnostics/`:
+
+- `diagnostics/dimos_*.py`
+- `diagnostics/runtime_evidence.py`
+- `diagnostics/runtime_validation_gates.py`
+- `diagnostics/gateway_runtime_acceptance.py`
+- `diagnostics/inspection_acceptance.py`
+- `diagnostics/product_field_check.py`
+- `diagnostics/migration_catalog.py`
+- `diagnostics/efficiency_status.py`
 
 Do not delete these just because they look old. Some are still used by tests,
 deployment checks, or status commands. Move them only after replacing imports

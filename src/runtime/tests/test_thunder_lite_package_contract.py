@@ -389,8 +389,8 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
     assert "src/nav/kernel/paths.py" in copied_files
     assert "src/nav/services/plan/contracts.py" in copied_files
     assert "src/nav/services/plan/factory.py" in copied_files
-    assert "src/nav/services/plan/global_planner/direct.py" in copied_files
-    assert "src/nav/services/plan/global_planner/algorithm/direct_path.py" in copied_files
+    assert "src/nav/services/plan/compat/direct.py" in copied_files
+    assert "src/nav/services/plan/compat/direct_path.py" in copied_files
     assert "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/Dockerfile.build" not in copied_files
     assert "src/nav/mission/model/frame_contract.py" in copied_files
     assert "src/nav/mission/tracking/waypoint_tracker.py" in copied_files
@@ -516,7 +516,7 @@ def test_thunder_lite_packager_builds_filtered_package(tmp_path: Path) -> None:
     ).is_file()
     assert (output_dir / "src" / "nav" / "services" / "plan" / "factory.py").is_file()
     assert (
-        output_dir / "src" / "nav" / "services" / "plan" / "global_planner" / "direct.py"
+        output_dir / "src" / "nav" / "services" / "plan" / "compat" / "direct.py"
     ).is_file()
     assert (
         output_dir
@@ -524,8 +524,7 @@ def test_thunder_lite_packager_builds_filtered_package(tmp_path: Path) -> None:
         / "nav"
         / "services"
         / "plan"
-        / "global_planner"
-        / "algorithm"
+        / "compat"
         / "direct_path.py"
     ).is_file()
     assert (

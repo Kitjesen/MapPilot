@@ -217,6 +217,9 @@ def _xyzi_to_livox_frame(
     sequence: int,
     frame_id: str,
     scan_duration_ns: int,
+    offset_time_ns: np.ndarray | None = None,
+    line_ids: np.ndarray | None = None,
+    tag_values: np.ndarray | None = None,
 ) -> LivoxPointFrame:
     xyzi = np.asarray(points, dtype=np.float32)
     count = 0 if xyzi.ndim != 2 else int(xyzi.shape[0])
@@ -226,12 +229,32 @@ def _xyzi_to_livox_frame(
         raw["y"] = xyzi[:, 1]
         raw["z"] = xyzi[:, 2]
         raw["intensity"] = xyzi[:, 3] if xyzi.shape[1] >= 4 else 0.0
-        raw["offset_time_ns"] = np.linspace(
-            0,
-            max(0, int(scan_duration_ns) - 1),
-            count,
-            dtype=np.uint32,
-        )
+        if offset_time_ns is None:
+            raw["offset_time_ns"] = np.linspace(
+                0,
+                max(0, int(scan_duration_ns) - 1),
+                count,
+                dtype=np.uint32,
+            )
+        else:
+            offsets = np.asarray(offset_time_ns, dtype=np.uint64).reshape(-1)
+            if offsets.shape[0] != count:
+                raise ValueError(f"offset_time_ns must have {count} entries")
+            raw["offset_time_ns"] = np.minimum(offsets, np.iinfo(np.uint32).max).astype(np.uint32)
+        if line_ids is None:
+            raw["line"] = (np.arange(count, dtype=np.uint16) % 4).astype(np.uint8)
+        else:
+            lines = np.asarray(line_ids, dtype=np.uint16).reshape(-1)
+            if lines.shape[0] != count:
+                raise ValueError(f"line_ids must have {count} entries")
+            raw["line"] = np.minimum(lines, np.iinfo(np.uint8).max).astype(np.uint8)
+        if tag_values is None:
+            raw["tag"] = np.full(count, 0x10, dtype=np.uint8)
+        else:
+            tags = np.asarray(tag_values, dtype=np.uint16).reshape(-1)
+            if tags.shape[0] != count:
+                raise ValueError(f"tag_values must have {count} entries")
+            raw["tag"] = np.minimum(tags, np.iinfo(np.uint8).max).astype(np.uint8)
     frame = LivoxPointFrame(points=raw, timestamp_ns=int(timestamp_ns), sequence=int(sequence))
     frame.frame_id = str(frame_id)
     return frame

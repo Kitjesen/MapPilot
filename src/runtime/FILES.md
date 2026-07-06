@@ -44,6 +44,7 @@ These define common language between modules. They should stay ROS-free.
 | `contracts/` | Runtime contract dataclasses, including simulation contracts |
 | `runtime_interface.py` | Canonical topics, frames, remappings, runtime manifest |
 | `profiles/` | Runtime resolver, catalog, endpoint config, binding policy |
+| `diagnostics/` | Runtime evidence, acceptance, and audit tooling |
 
 ## Product Assembly
 
@@ -75,23 +76,39 @@ These provide shared plumbing. They should not make navigation decisions.
 | `utils/` | Small cross-cutting helpers |
 | `resource_monitor/` | Resource monitor |
 | `introspection/` | Graph and text visualization |
+| `diagnostics/` | Acceptance gates, evidence reports, and audit helpers |
 
-## Legacy Or Audit Material
+## Diagnostics And Audit Material
 
-These files are useful, but they are not the clean runtime kernel. Treat them
-as managed debt: keep them working, but avoid adding new product behavior here.
+These files are useful, but they are not the clean runtime kernel. They live in
+`diagnostics/` so the runtime root stays focused on module lifecycle, transport,
+profiles, and product graph assembly. Treat them as managed debt: keep them
+working, but avoid adding new product behavior here.
+
+| Path | Role |
+| --- | --- |
+| `diagnostics/runtime_evidence.py` | Runtime evidence report tooling |
+| `diagnostics/dimos_runtime_dataflow.py` | Data-flow audit tooling |
+| `diagnostics/dimos_gap.py` | Gap audit tooling |
+| `diagnostics/gateway_runtime_acceptance.py` | Gateway acceptance evaluator |
+| `diagnostics/inspection_acceptance.py` | Inspection acceptance evaluator |
+| `diagnostics/product_field_check.py` | Field deployment sanity checks |
+| `diagnostics/runtime_validation_gates.py` | Runtime validation gates |
+| `diagnostics/migration_catalog.py` | Package and kernel migration catalog |
+| `diagnostics/efficiency_status.py` | Benchmark claim metadata and status helpers |
+
+## Legacy Compatibility Material
+
+These files and packages still exist for compatibility or tooling. They should
+not become product behavior.
 
 | Path | Role |
 | --- | --- |
 | `native_module.py` | Legacy native/ROS process wrapper |
 | `native_install.py` | Legacy install-layout helper |
-| `runtime_evidence.py` | Runtime evidence report tooling |
-| `dimos_runtime_dataflow.py` | Data-flow audit tooling |
-| `dimos_gap.py` | Gap audit tooling |
-| `gateway_runtime_acceptance.py` | Gateway acceptance evaluator |
-| `inspection_acceptance.py` | Inspection acceptance evaluator |
-| `product_field_check.py` | Field deployment sanity checks |
-| `runtime_validation_gates.py` | Runtime validation gates |
+| `adapters/ros2/` | ROS 2 compatibility adapters only |
+| `adapters/lcm/`, `transport/lcm.py` | Legacy/replay transport compatibility |
+| `dds.py`, `adapters/dds/` | Python DDS utilities; field control loop belongs to native C++ DDS services |
 | `runtime_policy.py` | Runtime policy checks |
 | `runtime_switch.py` | Runtime override/switch support |
 | `worker.py`, `worker_manager.py`, `coordinator.py` | Worker helpers |

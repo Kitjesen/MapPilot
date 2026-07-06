@@ -52,16 +52,12 @@ triage map, not another architecture contract.
 
 ## 4. Plans
 
-All files under `plans/` are forward-looking unless explicitly promoted into
-`architecture/`.
+`docs/plans/` now keeps only active forward-looking work. Retired PRDs and
+historical plans were removed; use git history when old context is needed.
 
 | File | Decision |
 | --- | --- |
-| `PRD-lingtu-enterprise-runtime-profiles.md` | active PRD |
-| `PRD-lingtu-native-slam-navigation-runtime.md` | active PRD, too long, should be split after implementation boundaries settle |
-| `PRD-slam-transport-navigation-dataflow.md` | active PRD |
-| `octoplanner3d-map-artifact-closed-loop.md` | implementation plan |
-| `simulation-closure-plan.md` | validation plan, not current evidence |
+| `current-roadmap.md` | current product/runtime roadmap and remaining validation gates |
 
 ## 5. Testing Docs
 

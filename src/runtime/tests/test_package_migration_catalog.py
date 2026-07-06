@@ -1,8 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
-from runtime.migration_catalog import (
+from runtime.diagnostics.migration_catalog import (
     PACKAGE_MIGRATION_TARGETS,
     target_for_package,
     targets_by_phase,
@@ -10,6 +10,58 @@ from runtime.migration_catalog import (
 
 
 REPO = Path(__file__).resolve().parents[3]
+STALE_RUNTIME_PATHS = (
+    "src/runtime/dimos_gap.py",
+    "src/runtime/dimos_runtime_dataflow.py",
+    "src/runtime/efficiency_status.py",
+    "src/runtime/gateway_runtime_acceptance.py",
+    "src/runtime/inspection_acceptance.py",
+    "src/runtime/migration_catalog.py",
+    "src/runtime/product_field_check.py",
+    "src/runtime/runtime_evidence.py",
+    "src/runtime/runtime_validation_gates.py",
+    "src/runtime/transport/dual.py",
+    "src/runtime/transport/lcm.py",
+    "src/nav/services/plan/global_planner/direct.py",
+    "src/nav/services/plan/global_planner/algorithm/direct_path.py",
+)
+STALE_PATH_SCAN_ROOTS = (
+    "cli",
+    "config",
+    "scripts",
+    "sim",
+    "src",
+    "tools",
+)
+STALE_PATH_TEXT_SUFFIXES = {
+    "",
+    ".cfg",
+    ".cmake",
+    ".h",
+    ".hpp",
+    ".ini",
+    ".json",
+    ".md",
+    ".py",
+    ".ps1",
+    ".sh",
+    ".toml",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+STALE_PATH_SKIP_DIRS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+    "build",
+    "build-release",
+    "dist",
+    "node_modules",
+    "vendor",
+}
 
 
 def test_migration_catalog_covers_current_src_packages():
@@ -21,6 +73,32 @@ def test_migration_catalog_covers_current_src_packages():
     catalog_packages = {target.package for target in PACKAGE_MIGRATION_TARGETS}
 
     assert src_packages <= catalog_packages
+
+
+def test_non_doc_surfaces_do_not_reference_stale_runtime_paths():
+    offenders: list[str] = []
+    for root_name in STALE_PATH_SCAN_ROOTS:
+        root = REPO / root_name
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if (
+                not path.is_file()
+                or any(part in STALE_PATH_SKIP_DIRS for part in path.parts)
+                or "tests" in path.parts
+                or path.suffix.lower() not in STALE_PATH_TEXT_SUFFIXES
+            ):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                continue
+            for stale in STALE_RUNTIME_PATHS:
+                if stale in text:
+                    rel = path.relative_to(REPO).as_posix()
+                    offenders.append(f"{rel}: {stale}")
+
+    assert offenders == []
 
 
 def test_migration_catalog_covers_top_level_product_areas():

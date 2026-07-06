@@ -41,7 +41,7 @@ from runtime.runtime_interface import (
     runtime_topic_default_frame_contract,
 )
 from runtime.runtime_switch import validate_runtime_switch
-from runtime.runtime_validation_gates import (
+from runtime.diagnostics.runtime_validation_gates import (
     RUNTIME_AUDIT_CHECKS,
     runtime_validation_gates,
     validate_runtime_validation_gates,

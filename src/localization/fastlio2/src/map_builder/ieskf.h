@@ -91,6 +91,8 @@ public:
         double max_condition,
         double max_update_translation_m,
         double max_update_rotation_rad,
+        double max_update_velocity_mps,
+        double max_update_velocity_delta_mps,
         bool reject_nonconverged_update,
         bool reject_degenerate_nonconverged_update)
     {
@@ -98,6 +100,8 @@ public:
         m_degeneracy_max_condition = max_condition;
         m_max_update_translation_m = max_update_translation_m;
         m_max_update_rotation_rad = max_update_rotation_rad;
+        m_max_update_velocity_mps = max_update_velocity_mps;
+        m_max_update_velocity_delta_mps = max_update_velocity_delta_mps;
         m_reject_nonconverged_update = reject_nonconverged_update;
         m_reject_degenerate_nonconverged_update = reject_degenerate_nonconverged_update;
     }
@@ -158,6 +162,8 @@ private:
     double m_degeneracy_max_condition = 50000.0;
     double m_max_update_translation_m = 0.5;
     double m_max_update_rotation_rad = 0.35;
+    double m_max_update_velocity_mps = 3.0;
+    double m_max_update_velocity_delta_mps = 1.0;
     bool m_reject_nonconverged_update = true;
     bool m_reject_degenerate_nonconverged_update = true;
 };

@@ -30,13 +30,13 @@ from lingtu.plugin_seed import install_builtin_plugin_catalog  # noqa: E402
 
 install_builtin_plugin_catalog()
 
-EXPECTED_PROFILE = "thunder-nav"
+EXPECTED_PROFILE = "nav"
 EXPECTED_CANONICAL_PROFILE = "nav"
 EXPECTED_ENDPOINT = "thunder_field"
 EXPECTED_CONTRACT = "thunder_field_dds_v1"
 EXPECTED_HARDWARE_BOUNDARY = "dds_endpoint_source"
 EXPECTED_COMMAND_MODE = "endpoint_only"
-FIELD_PRODUCT_GRAPH_PROFILES = ("thunder-map", "thunder-nav", "thunder-explore")
+FIELD_PRODUCT_GRAPH_PROFILES = ("map", "nav", "tare_explore")
 FORBIDDEN_PRODUCT_MODULE_PREFIXES = ("runtime.adapters.ros2",)
 
 EXPECTED_SPEC = {
@@ -46,10 +46,10 @@ EXPECTED_SPEC = {
     "robot_preset": "thunder",
     "module_transport": "local",
     "endpoint_transport": "dds",
-    "endpoint_contract": None,
-    "localization_adapter": "dds_endpoint",
-    "nav_in_adapter": "dds_nav_input",
-    "nav_out_adapter": "dds_nav_output",
+    "endpoint_contract": EXPECTED_CONTRACT,
+    "localization_adapter": "cpp_slam_status",
+    "nav_in_adapter": None,
+    "nav_out_adapter": None,
     "simulation_only": False,
     "command_sink": "hardware_driver_after_cmd_vel_mux",
 }
@@ -58,11 +58,11 @@ EXPECTED_CONFIG = {
     "enable_robot_driver": False,
     "command_output_mode": EXPECTED_COMMAND_MODE,
     "hardware_control_boundary": EXPECTED_HARDWARE_BOUNDARY,
-    "localization_adapter": "dds_endpoint",
-    "nav_in_adapter": "dds_nav_input",
-    "nav_out_adapter": "dds_nav_output",
-    "enable_nav_in": True,
-    "enable_nav_out": True,
+    "localization_adapter": "cpp_slam_status",
+    "native_navigation_endpoint": "lingtu-nav-dds",
+    "enable_nav_in": False,
+    "enable_nav_out": False,
+    "enable_map_out": False,
 }
 
 EXPECTED_SERVICE_ENV = {
@@ -86,19 +86,30 @@ EXPECTED_SERVICE_ENV = {
 }
 
 EXPECTED_ENTRY_CLASSES = {
-    "SlamBridgeModule": "DDSLocalizationAdapterModule",
-    "nav.in": "DDSNavInModule",
-    "nav.out": "DDSNavOutModule",
+    "SlamAdapterModule": "CppSlamStatusAdapterModule",
 }
 
 REQUIRED_WIRES = {
-    "nav.in.goal_pose->nav.mission.goal_pose",
-    "nav.in.cancel->nav.mission.cancel",
-    "nav.in.instruction->nav.mission.instruction",
-    "nav.mission.global_path->nav.out.global_path",
-    "nav.local_planner.local_path->nav.out.local_path",
-    "nav.mission.waypoint->nav.out.waypoint",
-    "nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel",
+    "SlamAdapterModule.odometry->GatewayModule.odometry",
+    "SlamAdapterModule.map_cloud->nav.maps.map_cloud",
+    "SlamAdapterModule.localization_status->GatewayModule.localization_status",
+    "nav.velocity_mux.driver_cmd_vel->nav.safety.cmd_vel",
+}
+
+MISSION_WIRES = {
+    "GatewayModule.goal_pose->nav.goals.goal_request",
+    "GatewayModule.cancel->nav.goals.cancel_request",
+    "nav.goals.goal_pose->nav.mission.goal_pose",
+    "nav.goals.cancel->nav.mission.cancel",
+    "nav.mission.global_path->GatewayModule.global_path",
+}
+
+TARE_WIRES = {
+    "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid",
+    "SlamAdapterModule.odometry->TAREExplorerModule.odometry",
+    "TAREExplorerModule.exploration_goal->nav.mission.goal_pose",
+    "TAREExplorerModule.exploration_path->nav.mission.patrol_goals",
+    "nav.mission.mission_status->TAREExplorerModule.navigation_status",
 }
 
 FORBIDDEN_WIRES = {
@@ -203,9 +214,7 @@ def _validate_runtime_layers(
         "LINGTU_RUNTIME_CONTRACT": THUNDER_FIELD_RUNTIME_CONTRACT,
         "LINGTU_MODULE_TRANSPORT": "local",
         "LINGTU_ENDPOINT_TRANSPORT": "dds",
-        "LINGTU_LOCALIZATION_ADAPTER": "dds_endpoint",
-        "LINGTU_NAV_IN_ADAPTER": "dds_nav_input",
-        "LINGTU_NAV_OUT_ADAPTER": "dds_nav_output",
+        "LINGTU_LOCALIZATION_ADAPTER": "cpp_slam_status",
         "LINGTU_ENABLE_ROBOT_DRIVER": "0",
         "LINGTU_COMMAND_OUTPUT_MODE": EXPECTED_COMMAND_MODE,
         "LINGTU_HARDWARE_CONTROL_BOUNDARY": EXPECTED_HARDWARE_BOUNDARY,
@@ -214,8 +223,10 @@ def _validate_runtime_layers(
         actual = spec.env.get(key)
         if actual != expected:
             blockers.append(f"runtime env {key} expected {expected!r}, got {actual!r}")
-    if "LINGTU_ENDPOINT_CONTRACT" in spec.env:
-        blockers.append("runtime env LINGTU_ENDPOINT_CONTRACT must not be set for typed DDS profile")
+    if spec.env.get("LINGTU_ENDPOINT_CONTRACT") != EXPECTED_CONTRACT:
+        blockers.append(
+            f"runtime env LINGTU_ENDPOINT_CONTRACT expected {EXPECTED_CONTRACT!r}"
+        )
 
 
 def _validate_endpoint_contract(blockers: list[str]) -> None:
@@ -313,9 +324,17 @@ def _validate_blueprint_graph(
                 f"{graph_label} graph entry {module_name} expected "
                 f"{expected_class}, got {actual or '<missing>'}"
             )
-    for wire in sorted(REQUIRED_WIRES):
+    required_wires = set(REQUIRED_WIRES)
+    if profile in {"nav", "tracking", "inspection", "tare_explore"}:
+        required_wires |= MISSION_WIRES
+    if profile == "tare_explore":
+        required_wires |= TARE_WIRES
+    for wire in sorted(required_wires):
         if wire not in wires:
             blockers.append(f"{graph_label} graph missing required wire: {wire}")
+    for old_entry in ("nav.in", "nav.out", "SlamBridgeModule"):
+        if old_entry in entry_classes:
+            blockers.append(f"{graph_label} graph must not include old field entry {old_entry}")
     for wire in sorted(FORBIDDEN_WIRES):
         if wire in wires:
             blockers.append(
@@ -383,7 +402,7 @@ def _validate_deploy_script(blockers: list[str], checked_files: set[str]) -> Non
 
     text = DEPLOY_PATH.read_text(encoding="utf-8-sig")
     required_markers = (
-        "LINGTU_DEPLOY_PROFILE:-thunder-nav",
+        "LINGTU_DEPLOY_PROFILE:-nav",
         "LINGTU_ENDPOINT:=thunder_field",
         "LINGTU_ENDPOINT_TRANSPORT:=dds",
         "LINGTU_MODULE_TRANSPORT:=local",
@@ -454,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         default=EXPECTED_PROFILE,
         help=(
             "Product profile graph to validate; the standalone endpoint "
-            "service defaults are still checked against thunder-nav"
+            "service defaults are checked against the canonical nav profile"
         ),
     )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")

@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
-Environment=LINGTU_PROFILE=thunder-nav
+Environment=LINGTU_PROFILE=nav
 Environment=LINGTU_MODULE_TRANSPORT=local
 Environment=LINGTU_ENDPOINT=thunder_field
 Environment=LINGTU_ENDPOINT_TRANSPORT=dds

@@ -11,12 +11,26 @@ from __future__ import annotations
 from typing import Any
 
 from runtime.blueprint import Blueprint, autoconnect
-from runtime.blueprints.full_stack_wiring import normalize_nav_plan_transport
 from runtime.blueprints.stacks.driver import driver
 from runtime.blueprints.stacks.navigation import navigation
 from runtime.blueprints.stacks.safety import safety
 from runtime.blueprints.stacks.stack_config import driver_stack_config
-from runtime.blueprints.wires.navigation import navigation_execution_specs
+from runtime.runtime_interface import TOPICS
+
+
+def _normalize_nav_plan_transport(value: object | None) -> object | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"", "callback", "direct", "inprocess", "in_process", "none"}:
+            return None
+        return text
+    return value
+
+
+def _transport_topic(transport: object | None, topic: str) -> str | None:
+    return topic if transport is not None else None
 
 
 def compose_thunder_lite_modules(
@@ -56,7 +70,7 @@ def apply_thunder_lite_wires(
     """Apply the explicit control and safety wires for Thunder Lite."""
 
     names = set(bp.export_graph().module_names)
-    nav_plan_transport = normalize_nav_plan_transport(nav_plan_transport)
+    nav_plan_transport = _normalize_nav_plan_transport(nav_plan_transport)
 
     def wire_if_present(
         out_module: str,
@@ -93,14 +107,61 @@ def apply_thunder_lite_wires(
     ):
         wire_if_present(driver_module, "odometry", consumer, "odometry")
 
-    for spec in navigation_execution_specs(local_planner_transport=nav_plan_transport):
+    for spec in (
+        (
+            "nav.mission",
+            "global_path",
+            "nav.local_planner",
+            "global_path",
+            TOPICS.global_path,
+        ),
+        ("nav.mission", "waypoint", "nav.local_planner", "waypoint", TOPICS.nav_way_point),
+        (
+            "nav.mission",
+            "clear_path",
+            "nav.local_planner",
+            "clear_path",
+            TOPICS.local_planner_clear_path,
+        ),
+        ("nav.terrain", "terrain_map", "nav.local_planner", "terrain_map", TOPICS.terrain_map),
+        (
+            "nav.terrain",
+            "terrain_map_ext",
+            "nav.local_planner",
+            "terrain_map_ext",
+            TOPICS.terrain_map_ext,
+        ),
+        (
+            "nav.terrain",
+            "traversability",
+            "nav.local_planner",
+            "traversability",
+            TOPICS.traversability,
+        ),
+        (
+            "nav.local_planner",
+            "local_path",
+            "nav.path_follower",
+            "local_path",
+            TOPICS.local_path,
+        ),
+        ("nav.local_planner", "local_path", "nav.safety", "path", TOPICS.local_path),
+        (
+            "nav.local_planner",
+            "control_hint",
+            "nav.path_follower",
+            "control_hint",
+            TOPICS.local_planner_control_hint,
+        ),
+    ):
+        out_module, out_port, in_module, in_port, topic = spec
         wire_if_present(
-            spec.out_module,
-            spec.out_port,
-            spec.in_module,
-            spec.in_port,
-            transport=spec.transport,
-            topic=spec.topic,
+            out_module,
+            out_port,
+            in_module,
+            in_port,
+            transport=nav_plan_transport,
+            topic=_transport_topic(nav_plan_transport, topic),
         )
 
     wire_if_present("nav.mission", "recovery_cmd_vel", "nav.velocity_mux", "recovery_cmd_vel")

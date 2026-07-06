@@ -9,7 +9,7 @@ from typing import Any
 
 from runtime.map_save import (
     MapSaveError,
-    save_pgo_map_with_adapter,
+    save_slam_map_with_adapter,
     seed_default_map_save_adapter_plugins,
 )
 from runtime.msgs.numpy_compat import np
@@ -154,7 +154,7 @@ class MapRuntimeBridge:
         try:
             if self.map_save_adapter is None:
                 seed_default_map_save_adapter_plugins()
-            result = save_pgo_map_with_adapter(
+            result = save_slam_map_with_adapter(
                 self.map_save_adapter,
                 pcd_path,
                 save_patches=True,

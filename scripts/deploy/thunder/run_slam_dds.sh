@@ -27,4 +27,22 @@ if [ -n "${LINGTU_SLAM_MAP:-}" ]; then
   args+=(--map "$LINGTU_SLAM_MAP")
 fi
 
+track_seed_file="${LINGTU_SLAM_TRACK_SEED_FILE:-}"
+if [ -z "$track_seed_file" ] && [ -n "${LINGTU_SLAM_MAP:-}" ]; then
+  track_seed_file="$(dirname "$LINGTU_SLAM_MAP")/track_seed.json"
+fi
+if [ -n "$track_seed_file" ]; then
+  args+=(--track-against-map-seed-file "$track_seed_file")
+fi
+
+if [ -n "${LINGTU_SLAM_TRACK_INITIAL_YAW:-}" ]; then
+  args+=(
+    --track-against-map-initial-pose
+    "${LINGTU_SLAM_TRACK_INITIAL_X:-0}"
+    "${LINGTU_SLAM_TRACK_INITIAL_Y:-0}"
+    "${LINGTU_SLAM_TRACK_INITIAL_Z:-0}"
+    "$LINGTU_SLAM_TRACK_INITIAL_YAW"
+  )
+fi
+
 exec "${args[@]}"

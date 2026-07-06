@@ -36,8 +36,8 @@ result:   path, plan_ms, reached_goal, error, diagnostics, report
 OctoPlanner3D executable receives the JSON protocol described below.
 
 The runtime path does not use the generic registry to select algorithms anymore.
-`GlobalPlanner` directly maps `octoplanner3d`, `pct`, and `direct` to their
-planner classes. The old `planner_backend` registry entry remains only for
+`GlobalPlanner` directly maps `octoplanner3d` and explicit PCT compatibility
+to their planner classes. The old `planner_backend` registry entry remains only for
 compatibility and metadata tests.
 
 ## Python module layout
@@ -50,7 +50,6 @@ compatibility and metadata tests.
   parsing.
 - `octoplanner3d_runtime.py`: C++ executable discovery, WSL path conversion, and
   subprocess execution.
-- `direct_path.py`: mapless direct planner used by Thunder Lite.
 - `OctoPlanner3D/`: complete upstream OctoPlanner3D source plus the ROS-free
   runtime wrapper in `OctoPlanner3D/runtime`.
 

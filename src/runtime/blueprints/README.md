@@ -41,7 +41,7 @@ Each product mode is a profile-level graph, not a separate runtime framework.
 
 | Mode | Graph intent |
 | --- | --- |
-| `teleop` | Gateway/teleop commands through `CmdVelMux` to the driver boundary. |
+| `teleop` | Gateway/teleop commands through `VelocityMux` to the driver boundary. |
 | `teleop_avoid` | Teleop plus localization, map layers, and velocity collision guard. |
 | `map` | Sensor/localization data into map layers and map save/build services. |
 | `tracking` | Localization plus local goal tracking and path following. |

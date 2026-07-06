@@ -52,6 +52,8 @@ struct Config
     double degeneracy_max_condition = 50000.0;
     double max_update_translation_m = 0.5;
     double max_update_rotation_rad = 0.35;
+    double max_update_velocity_mps = 3.0;
+    double max_update_velocity_delta_mps = 1.0;
     bool reject_nonconverged_update = true;
     bool reject_degenerate_nonconverged_update = true;
     bool gravity_align = true;

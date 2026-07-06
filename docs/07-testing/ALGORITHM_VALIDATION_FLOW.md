@@ -1,4 +1,4 @@
-# Algorithm Validation Flow
+﻿# Algorithm Validation Flow
 
 Last updated: 2026-05-21.
 
@@ -27,7 +27,7 @@ Use these documents as the evidence entry points:
 
 | Evidence | Meaning |
 | --- | --- |
-| `docs/plans/simulation-closure-plan.md` | Historical server-side MuJoCo/Fast-LIO, saved-map, relocalization, planning, local-planning, and policy-gate evidence. |
+| `docs/07-testing/field-runs/` | Dated field and simulation evidence. Current entries must name the active product profile, services, map artifact, planner, and blocker. |
 | `artifacts/server_sim_closure/...` | Archived server reports and videos produced by the server closure gates. |
 | `python lingtu.py real-runtime-evidence --duration-sec 20 --json-out artifacts/thunder_field_runtime/report.json` | Endpoint communication probe for Gateway/runtime dataflow; read-only collector, no goal or velocity publishing. |
 | Gateway `:5050` and MCP `:8090` checks | Control-plane communication evidence only; they do not prove planner or SLAM correctness unless paired with stage evidence. |
@@ -345,7 +345,7 @@ The summary must report:
 - `cmd_vel_sent_to_hardware=false`
 
 For gates that declare `runtime_contract`, the server closure summary must also
-surface `evidence.runtime_evidence` from `runtime.runtime_evidence`; this is the
+surface `evidence.runtime_evidence` from `runtime.diagnostics.runtime_evidence`; this is the
 shared check for simulation-only status, hardware command isolation, path
 evidence, command evidence, runtime contract name/health, and any required
 `frame_evidence` links such as `map->odom`, `odom->body`, and `body->lidar`.
@@ -454,7 +454,7 @@ gate's command, collector/gate commands, ROS/endpoint requirements, validates
 list, checks, and coverage map so UI and operations tooling do not need to infer
 the validation sequence from ad hoc text.
 The gate uses
-`runtime.runtime_evidence.validate_real_runtime_evidence` and requires
+`runtime.diagnostics.runtime_evidence.validate_real_runtime_evidence` and requires
 `runtime_contract.name=thunder_field`, the configured command boundary,
 `map->odom->body->lidar_link` frame
 evidence, concrete `resolved_runtime_data_flow.thunder_field` stage evidence, and

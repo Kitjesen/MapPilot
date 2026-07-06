@@ -1,8 +1,7 @@
 """Transport factory for LingTu module communication.
 
 Default creation is product-neutral and ROS-free: LocalTransport for in-process
-graphs, SHM for same-host IPC, optional LCM for lightweight cross-process IPC,
-and DDS only for compatibility windows.
+graphs, SHM for same-host IPC, and DDS only for compatibility windows.
 """
 
 from __future__ import annotations
@@ -46,22 +45,10 @@ def create_transport(
 
         return SHMTransport()
 
-    if strategy == TransportStrategy.LCM:
-        from .lcm import LCMTransport
-
-        return LCMTransport()
-
     if strategy == TransportStrategy.DDS:
         from .dds import DDSTransport
 
         return DDSTransport()
-
-    if strategy == TransportStrategy.DUAL:
-        from .dds import DDSTransport
-        from .dual import DualTransport
-        from .shm import SHMTransport
-
-        return DualTransport(SHMTransport(), DDSTransport())
 
     if strategy == TransportStrategy.AUTO:
         from .shm import SHMTransport
@@ -92,7 +79,7 @@ def create_transport_adapter(
 
     from .adapter import TransportAdapter
 
-    if strategy in {TransportStrategy.SHM, TransportStrategy.LCM}:
+    if strategy == TransportStrategy.SHM:
         from .json_codec import dumps_topic_message, loads_message
 
         return TransportAdapter(
@@ -100,7 +87,7 @@ def create_transport_adapter(
             topic_serializer=dumps_topic_message,
             deserializer=loads_message,
         )
-    if strategy in {TransportStrategy.DDS, TransportStrategy.DUAL}:
+    if strategy == TransportStrategy.DDS:
         from message.dds import (
             TOPIC_SPECS,
             dds_type_for_topic,

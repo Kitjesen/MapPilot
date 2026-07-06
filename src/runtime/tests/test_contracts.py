@@ -9,7 +9,12 @@ from runtime.contracts import (
 )
 from runtime.runtime_interface import LEGACY_REAL_RUNTIME_CONTRACT, REAL_RUNTIME_CONTRACT, TOPICS
 from runtime.runtime_interface import THUNDER_LITE_RUNTIME_CONTRACT
-from runtime.runtime_interface import runtime_contract_manifest, topic_ros_types
+from runtime.runtime_interface import (
+    adapter_aliases,
+    runtime_contract_manifest,
+    topic_formats,
+    topic_ros_types,
+)
 
 
 def test_mission_status_contract_accepts_navigation_payload():
@@ -210,6 +215,30 @@ def test_runtime_contract_registry_resolves_topic_and_data_source_contracts():
     )
     assert lite_cmd_vel.allowed_frame_ids == ("body",)
     assert lite_cmd_vel.default_frame_id == "body"
+
+
+def test_clearing_topics_are_native_bool_with_ros_compat_aliases():
+    assert topic_formats(TOPICS.map_clearing) == ("lingtu.dds.Bool",)
+    assert topic_formats(TOPICS.cloud_clearing) == ("lingtu.dds.Bool",)
+    assert topic_ros_types(TOPICS.map_clearing) == ("std_msgs/msg/Bool",)
+    assert topic_ros_types(TOPICS.cloud_clearing) == ("std_msgs/msg/Bool",)
+
+    assert topic_formats("/map_clearing") == ("std_msgs/msg/Bool",)
+    assert topic_formats("/cloud_clearing") == ("std_msgs/msg/Bool",)
+
+    terrain_aliases = adapter_aliases("terrain_analysis")
+    map_alias = next(
+        alias for alias in terrain_aliases if alias.target == TOPICS.map_clearing
+    )
+    assert map_alias.source == "/map_clearing"
+    assert map_alias.msg_format == "std_msgs/msg/Bool"
+
+    terrain_ext_aliases = adapter_aliases("terrain_analysis_ext")
+    cloud_alias = next(
+        alias for alias in terrain_ext_aliases if alias.target == TOPICS.cloud_clearing
+    )
+    assert cloud_alias.source == "/cloud_clearing"
+    assert cloud_alias.msg_format == "std_msgs/msg/Bool"
 
 
 def test_runtime_contract_registry_validates_lcm_style_envelope():

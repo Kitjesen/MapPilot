@@ -1,8 +1,8 @@
 # MapService Spatial Data OS Plan
 
 Status: Phase 1 implemented; Phase 1.5 modularization implemented; map type
-catalog, bundle contract, and lifecycle event port implemented. Product PRD:
-`../plans/PRD-map-service-spatial-data-platform.md`.
+catalog, bundle contract, and lifecycle event port implemented. Current product
+priorities are tracked in `../plans/current-roadmap.md`.
 
 Authoritative implementation contract: `MAP_SERVICE_CONTRACT.md`.
 
@@ -35,7 +35,7 @@ layers under `src/nav/services/map/`.
 
 ## Requirement Gap Matrix
 
-| PRD Requirement | Current Implementation | Gap |
+| Product Requirement | Current Implementation | Gap |
 | --- | --- | --- |
 | MapService as Spatial Data Platform | Started: records, artifact graph, health, capabilities, and service layers exist | Still file-backed and command-port based |
 | Standard map asset management | Supports pointcloud, occupancy, tomogram, octomap metadata | ESDF and semantic artifacts are only modeled, not built |

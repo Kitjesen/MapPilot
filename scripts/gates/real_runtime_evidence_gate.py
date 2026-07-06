@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Validate a Thunder field runtime evidence report.
 
 This script is intentionally read-only. It does not publish goals, cmd_vel, or
@@ -40,7 +40,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("report", type=Path, help="Path to the collected report JSON")
     _ensure_import_path()
-    from runtime.runtime_evidence import REAL_RUNTIME_CONTRACT
+    from runtime.diagnostics.runtime_evidence import REAL_RUNTIME_CONTRACT
 
     parser.add_argument("--expected-contract", default=REAL_RUNTIME_CONTRACT)
     parser.add_argument("--allow-missing-paths", action="store_true")
@@ -62,11 +62,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(argv or sys.argv[1:]))
     _ensure_import_path()
 
-    from runtime.runtime_evidence import (
+    from runtime.diagnostics.runtime_evidence import (
         real_runtime_evidence_payload,
         validate_real_runtime_evidence,
     )
-    from runtime.runtime_validation_gates import runtime_validation_gates
+    from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
 
     report = _load_report(args.report)
     result = validate_real_runtime_evidence(

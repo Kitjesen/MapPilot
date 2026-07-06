@@ -1,6 +1,6 @@
 """Abstract base classes for pluggable transport backends.
 
-Provides the ABC hierarchy used by Local, SHM, LCM, DDS, and dual transport
+Provides the ABC hierarchy used by Local, SHM, and DDS transport
 backends. Upper layers communicate through Publisher / Subscriber without
 knowing the underlying implementation.
 """
@@ -18,9 +18,7 @@ class TransportStrategy(Enum):
     LOCAL = "local"
     DDS = "dds"
     SHM = "shm"
-    LCM = "lcm"
     AUTO = "auto"
-    DUAL = "dual"
 
 
 @dataclass

@@ -368,7 +368,7 @@ def test_fastlio_speed_scan_plan_preserves_diagnostic_variables() -> None:
     text = plan.read_text(encoding="utf-8")
 
     assert 'git -C "${SCRIPT_DIR}" rev-parse --show-toplevel' in text
-    assert 'sim/scripts/mujoco_live_gate.py' in text
+    assert 'sim/scripts/mujoco/live_gate.py' in text
     assert '[[ -d "${candidate}/src" ]]' in text
     assert "source_setup_if_present()" in text
     assert "set +u" in text

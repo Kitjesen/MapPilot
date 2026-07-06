@@ -44,6 +44,8 @@ jobs:
             cli
             config
             sim
+            tests
+            tools
             calibration
             pyproject.toml
           sparse-checkout-cone-mode: false
@@ -57,7 +59,7 @@ jobs:
         run: |
           python -m pytest src/runtime/tests/ tests/drivers/ src/gateway/tests/ \
             src/memory/tests/ src/nav/tests/ src/perception/tests/ \
-            src/decision/tests/ src/localization/tests/ \
+            src/decision/tests/ src/localization/tests/ tests/contracts/ \
             -q --tb=short
         env:
           PYTHONPATH: src

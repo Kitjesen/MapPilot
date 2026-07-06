@@ -755,35 +755,6 @@ def test_s100p_localizer_template_matches_relocalize_api():
     assert "-r map_cloud:=/nav/map_cloud" not in text
 
 
-def test_localizer_launch_profile_matches_topic_contract():
-    text = _read("launch/profiles/localizer_icp.launch.py")
-
-    assert 'default_value="/home/sunrise/data/nova/maps/active/map"' in text
-    for source, target in adapter_remappings("localizer").items():
-        assert f'("{source}", "{target}")' in text
-    assert f'("/localization_quality", "{TOPICS.localization_quality}")' in text
-    assert f'("global_relocalize", "{TOPICS.global_relocalize_service}")' in text
-    assert (
-        f'("global_relocalize_status", "{TOPICS.global_relocalize_status_service}")'
-        in text
-    )
-    assert '("map_cloud", "/nav/map_cloud")' not in text
-
-
-@pytest.mark.parametrize(
-    ("launch_path", "surface"),
-    (
-        ("launch/profiles/slam_fastlio2.launch.py", "fastlio2"),
-        ("launch/profiles/slam_pointlio.launch.py", "pointlio"),
-    ),
-)
-def test_slam_launch_profiles_match_adapter_contract(launch_path, surface):
-    text = " ".join(_read(launch_path).split())
-
-    for source, target in adapter_remappings(surface).items():
-        assert f'("{source}", "{target}")' in text
-
-
 @pytest.mark.parametrize(
     "service_path",
     (
@@ -2090,6 +2061,9 @@ def test_lingtu_cli_has_lightweight_localization_recovery():
 def test_lingtu_nav_start_auto_relocalizes_when_tracking_not_reusable():
     script = _read("scripts/lingtu")
     nav_start = script.split("cmd_nav() {", 1)[1].split("\n        stop|end)", 1)[0]
+    seeded_relocalize = script.split("nav_relocalize_saved_map() {", 1)[1].split(
+        "\n}\n\nnav_global_relocalize_saved_map() {", 1
+    )[0]
     reuse_check = script.split("nav_relocalization_ready_without_request() {", 1)[1].split(
         "\nPY\n}", 1
     )[0]
@@ -2097,9 +2071,12 @@ def test_lingtu_nav_start_auto_relocalizes_when_tracking_not_reusable():
     assert 'elif nav_relocalization_ready_without_request "$map"; then' in nav_start
     assert 'nav_global_relocalize_saved_map "$map" || exit 1' in nav_start
     assert 'nav_relocalize_saved_map "$map" "$initial_x" "$initial_y" "$initial_yaw" || exit 1' in nav_start
+    assert 'raw_map="$map"' in nav_start
+    assert 'map=$(resolve_relocation_map_name "$maps_root" "$raw_map")' in nav_start
     assert 'tf.get("valid") is True' in reuse_check
     assert 'reported_map == map_name' in reuse_check
     assert "pose_fresh_ok" in reuse_check
+    assert '*timeout*)' in seeded_relocalize
 
 
 def test_lingtu_svc_status_defaults_to_native_services():

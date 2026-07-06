@@ -78,7 +78,6 @@ def test_cmu_unity_sim_gate_accepts_complete_preflight_workspace(tmp_path: Path)
     assert checks["lingtu_tare_explore_profile"] is True
     assert checks["lingtu_cmu_tare_profile"] is True
     assert checks["lingtu_cmu_adapter_exists"] is True
-    assert checks["lingtu_cmu_adapter_launch_exists"] is True
     assert checks["lingtu_cmu_stack_script_exists"] is True
     assert checks["lingtu_cmu_adapter_relay_contract"] is True
     assert checks["lingtu_cmu_adapter_safety_contract"] is True

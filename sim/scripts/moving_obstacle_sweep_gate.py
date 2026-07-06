@@ -780,7 +780,7 @@ def run_matrix_cases(
     cases: Sequence[Mapping[str, Any]],
     *,
     child_run_root: Path,
-    launch_script: Path = Path("sim/scripts/launch_mujoco_fastlio2_live.sh"),
+    launch_script: Path = Path("sim/scripts/mujoco/launch_fastlio2_live.sh"),
     case_timeout_s: float = 900.0,
     duration_s: float = 120.0,
     inspection_goals: str = DEFAULT_INSPECTION_GOALS,
@@ -1095,7 +1095,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--launch-script",
         type=Path,
-        default=ROOT / "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        default=ROOT / "sim/scripts/mujoco/launch_fastlio2_live.sh",
     )
     parser.add_argument("--case-timeout-s", type=float, default=900.0)
     parser.add_argument("--duration-s", type=float, default=120.0)

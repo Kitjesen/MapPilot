@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Build a DimOS-style gap report from LingTu simulation closure evidence."""
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from runtime.dimos_gap import build_dimos_gap_report
-from runtime.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
+from runtime.diagnostics.dimos_gap import build_dimos_gap_report
+from runtime.diagnostics.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
 from sim.scripts import server_sim_closure
 
 DEFAULT_HOST_PREFLIGHT_MAX_AGE_S = 86_400.0

@@ -286,12 +286,27 @@ import sys
 payload = {
     "mode": "navigating",
     "map_name": sys.argv[1],
+    "profile": "nav",
+    "product_session": "navigation",
 }
 profile = sys.argv[2].strip() if len(sys.argv) > 2 else ""
 if profile:
     payload["slam_profile"] = profile
 print(json.dumps(payload, separators=(",", ":")))
 PY
+}
+
+mode_product_session_for_target() {
+    case "$1" in
+        teleop) echo "teleop" ;;
+        teleop_avoid) echo "teleop_avoid" ;;
+        map) echo "mapping" ;;
+        tracking) echo "tracking" ;;
+        nav) echo "navigation" ;;
+        inspection) echo "inspection" ;;
+        tare_explore|explore) echo "exploration" ;;
+        *) echo "$1" ;;
+    esac
 }
 
 nav_goal_precheck() {
@@ -619,7 +634,7 @@ nav_relocalize_saved_map() {
 
         retry=0
         case "$msg" in
-            *registered_cloud_unavailable*|*waiting_for_scan*|*scan_too_small*|*cloud_unavailable*|*scan_unavailable*)
+            *registered_cloud_unavailable*|*waiting_for_scan*|*scan_too_small*|*cloud_unavailable*|*scan_unavailable*|*timeout*)
                 retry=1 ;;
         esac
         [ "$retry" = "1" ] || break
@@ -710,13 +725,13 @@ PY
 
 # -- Subcommand: mode --
 mode_switch_usage() {
-    echo "Usage: lingtu mode switch <teleop|teleop_avoid|map|tracking|nav|inspection> [--map NAME] [--current PROFILE] [--endpoint thunder_field] [--relocalize|--no-relocalize] [--initial-pose X Y YAW]"
+    echo "Usage: lingtu mode switch <teleop|teleop_avoid|map|tracking|nav|inspection|tare_explore> [--map NAME] [--current PROFILE] [--endpoint thunder_field] [--relocalize|--no-relocalize] [--initial-pose X Y YAW]"
     echo "Cold-restart the product runtime after preflight, motion stop, session end, profile update, SLAM mode setup, and readiness checks."
 }
 
 mode_is_product_profile() {
     case "$1" in
-        teleop|teleop_avoid|map|tracking|nav|inspection) return 0 ;;
+        teleop|teleop_avoid|map|tracking|nav|inspection|tare_explore) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -844,11 +859,19 @@ mode_start_session_for_target() {
             return 0 ;;
         map)
             curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
-                -d '{"mode":"mapping"}' "$GW/api/v1/session/start" | python3 -m json.tool
+                -d '{"mode":"mapping","profile":"map","product_session":"mapping"}' \
+                "$GW/api/v1/session/start" | python3 -m json.tool
+            return ${PIPESTATUS[0]} ;;
+        tare_explore)
+            curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
+                -d '{"mode":"exploring","profile":"tare_explore","product_session":"exploration"}' \
+                "$GW/api/v1/session/start" | python3 -m json.tool
             return ${PIPESTATUS[0]} ;;
         teleop_avoid|tracking|nav|inspection)
+            local product_session
+            product_session="$(mode_product_session_for_target "$target")"
             raw=$(curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
-                -d "{\"mode\":\"navigating\",\"map_name\":\"$map_name\"}" \
+                -d "{\"mode\":\"navigating\",\"map_name\":\"$map_name\",\"profile\":\"$target\",\"product_session\":\"$product_session\"}" \
                 "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
             printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
             ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
@@ -950,6 +973,8 @@ cmd_mode() {
                     slam_dds_set_mode mapping "" || return 1 ;;
                 teleop)
                     ;;
+                tare_explore)
+                    slam_dds_set_mode mapping "" || return 1 ;;
                 teleop_avoid|tracking|nav|inspection)
                     slam_dds_set_mode localization "$map_pcd" || return 1 ;;
             esac
@@ -957,6 +982,8 @@ cmd_mode() {
             mode_restart_product_stack "$target" || return 1
             case "$target" in
                 map)
+                    slam_dds_wait_status mapping 0 35 || return 1 ;;
+                tare_explore)
                     slam_dds_wait_status mapping 0 35 || return 1 ;;
                 teleop_avoid|tracking|nav|inspection)
                     slam_dds_wait_status localization 1 35 || return 1 ;;
@@ -977,7 +1004,8 @@ cmd_map() {
     case "$action" in
         start)
             slam_dds_set_mode mapping "" || exit 1
-            curl -s -X POST -H "Content-Type: application/json" -d '{"mode":"mapping"}' \
+            curl -s -X POST -H "Content-Type: application/json" \
+                -d '{"mode":"mapping","profile":"map","product_session":"mapping"}' \
                 "$GW/api/v1/session/start" | python3 -m json.tool ;;
         save)
             local name="${2:-}"
@@ -1080,16 +1108,23 @@ cmd_nav() {
                         exit 1 ;;
                 esac
             done
-            local map_pcd
-            map_pcd=$(slam_dds_map_pcd_for_name "$map") || {
-                echo "map.pcd not found or unsafe map name: $map"
+            local maps_root raw_map map_pcd
+            maps_root="$(lingtu_maps_root)"
+            raw_map="$map"
+            map=$(resolve_relocation_map_name "$maps_root" "$raw_map") || {
+                echo "map.pcd not found or unsafe map name: $raw_map"
+                exit 1
+            }
+            map_pcd="$maps_root/$map/map.pcd"
+            [ -f "$map_pcd" ] || {
+                echo "map.pcd not found: $map_pcd"
                 exit 1
             }
             slam_dds_set_mode localization "$map_pcd" || exit 1
             slam_dds_wait_status localization 1 35 || exit 1
             local raw ok msg active_session active_map session_mode
             raw=$(curl -s -X POST -H "Content-Type: application/json" \
-                -d "{\"mode\":\"navigating\",\"map_name\":\"$map\"}" \
+                -d "{\"mode\":\"navigating\",\"map_name\":\"$map\",\"profile\":\"nav\",\"product_session\":\"navigation\"}" \
                 "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
             printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
             ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')

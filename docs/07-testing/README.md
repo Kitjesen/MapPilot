@@ -165,8 +165,8 @@ LINGTU_P0_RUN_EXPLORE=1 LINGTU_P0_EXPLORE_DURATION=30 \
 
 After the run:
 1. Record `PASS / FAIL / BLOCKED` plus reason in `docs/07-testing/field-runs/YYYY-MM-DD.md`.
-2. Update the matching item in `BACKLOG.md` (status + last-on-robot date).
-3. Failure cases get their own ticket under `docs/archive/08-project-management/known-issues/` (when that location is created).
+2. Update `docs/plans/current-roadmap.md` when a blocker changes priority or is cleared.
+3. Failure cases get their own issue or a dated note under `docs/07-testing/field-runs/`.
 
 ---
 
@@ -203,8 +203,8 @@ The detailed runbook is in `sim/README.md`.
 
 - Never run validation commands ad hoc over SSH; always go through a script.
 - Never bypass pre-commit / pre-push without an emergency rationale in the PR.
-- New PRs must update `BACKLOG.md` first.
-- Items in `blocked` must be re-evaluated every Friday.
+- New PRs that change product behavior must name the affected product mode and validation gate.
+- Blocked field items must be re-evaluated in the next dated field-run note.
 
 ---
 

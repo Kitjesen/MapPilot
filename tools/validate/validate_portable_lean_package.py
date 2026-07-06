@@ -22,7 +22,7 @@ REQUIREMENTS_LITE_PATH = ROOT_DIR / "requirements-lite.txt"
 REQUIREMENTS_SIM_MUJOCO_PATH = ROOT_DIR / "requirements-sim-mujoco.txt"
 
 CORE_PORTABLE_DEPS = frozenset({"numpy", "scipy", "pyyaml", "pydantic"})
-SIM_MUJOCO_DEPS = frozenset({"mujoco"})
+SIM_MUJOCO_DEPS = frozenset({"mujoco", "mujoco-lidar"})
 
 ROS_COMPAT_ONLY = frozenset(
     {
@@ -120,6 +120,14 @@ CRITICAL_SCAN_EXCLUDES = (
     "src/nav/tests/local/",
     "sim/tests/",
     "__pycache__/",
+    "/build/",
+    "/build_nb_win/",
+    "/build_nb/",
+    "/_deps/",
+    # Legacy/manual-experiment PCT backend vendor code. Tracked as a known
+    # native-heavy (Open3D) surface in docs/architecture/PORTABLE_LEAN_PACKAGE_MATRIX.md
+    # ("Isolate PCT/GTSAM/Open3D"); not on the default portable runtime path.
+    "src/nav/services/plan/global_planner/algorithm/pct/vendor/",
 )
 BOTTOM_LAYER_SURFACES = (
     "src/runtime/portable",
@@ -371,7 +379,7 @@ def _check_profile(profile: str) -> Check:
     if str(ROOT_DIR) not in sys.path:
         sys.path.insert(0, str(ROOT_DIR))
 
-    from runtime.blueprints.profile_graph import graph_for_profile
+    from runtime.introspection.profile_graph import graph_for_profile
     from runtime.profiles.resolver import resolve_profile_config
     from runtime.runtime_interface import DATA_SOURCE_CONTRACTS, profile_data_source
 

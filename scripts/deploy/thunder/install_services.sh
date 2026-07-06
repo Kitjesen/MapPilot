@@ -25,7 +25,7 @@ case "${MODE}" in
     lingtu|app|runtime)
         exec bash "${SCRIPT_DIR}/install_lingtu_service.sh"
         ;;
-    field|thunder-nav|field-cpp|dds-cpp)
+    field|nav|thunder-nav|field-cpp|dds-cpp)
         bash "${SCRIPT_DIR}/install_dds_endpoint_service.sh"
         bash "${SCRIPT_DIR}/install_slam_dds_service.sh"
         bash "${SCRIPT_DIR}/install_traversability_dds_service.sh"

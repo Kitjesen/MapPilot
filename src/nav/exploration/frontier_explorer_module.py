@@ -378,15 +378,29 @@ class WavefrontFrontierExplorer(Module, layer=2):
 
         clusters = self._find_frontier_clusters(grid, meta, rx, ry)
         clusters = self._score_clusters(clusters, rx, ry, ryaw, meta)
-        return [
-            {
+        output = []
+        for c in clusters:
+            item = {
                 "cx": float(c["cx"]),
                 "cy": float(c["cy"]),
                 "size": int(c["size"]),
                 "score": float(c.get("score", 0.0)),
             }
-            for c in clusters
-        ]
+            if "distance" in c:
+                item["distance"] = float(c.get("distance", 0.0))
+            if c.get("approach_goal"):
+                item["approach_goal"] = True
+            frontier_target = c.get("frontier_target")
+            if (
+                isinstance(frontier_target, (list, tuple))
+                and len(frontier_target) >= 2
+            ):
+                item["frontier_target"] = [
+                    float(frontier_target[0]),
+                    float(frontier_target[1]),
+                ]
+            output.append(item)
+        return output
 
     @skill
     def get_frontiers(self) -> str:

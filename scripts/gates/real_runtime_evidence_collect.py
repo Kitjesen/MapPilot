@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Collect read-only Thunder field runtime evidence.
 
 This script does not publish goals, cmd_vel, or any robot-control topic. The
@@ -33,7 +33,7 @@ def _ensure_import_path() -> None:
 
 _ensure_import_path()
 
-from runtime.runtime_evidence import (
+from runtime.diagnostics.runtime_evidence import (
     REAL_HARDWARE_COMMAND_SINK,
     REAL_RUNTIME_COLLECTOR_NAME,
     REAL_RUNTIME_CONTRACT,
@@ -59,7 +59,7 @@ from runtime.runtime_interface import (
     resolved_runtime_data_flow,
     runtime_data_flow_topics,
 )
-from runtime.runtime_validation_gates import runtime_validation_gates
+from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
 
 
 OBSERVED_TOPICS = runtime_data_flow_topics(REAL_RUNTIME_CONTRACT)

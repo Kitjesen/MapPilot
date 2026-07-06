@@ -191,7 +191,7 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "sim_mujoco_pct_live",
         ),
         simulation_only=True,
-        external_launcher="sim/scripts/launch_mujoco_fastlio2_live.sh",
+        external_launcher="sim/scripts/mujoco/launch_fastlio2_live.sh",
         runtime_contract="mujoco_fastlio2_live",
         config_overrides=MUJOCO_LIVE_CONFIG,
         profile_overrides={

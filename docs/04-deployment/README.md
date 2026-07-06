@@ -8,8 +8,8 @@ fallbacks and must be enabled explicitly.
 ## One-Liner Status
 
 ```bash
-ssh sunrise@192.168.66.13 'systemctl status lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds lingtu'
-ssh sunrise@192.168.66.13 'bash ~/data/SLAM/navigation/scripts/lingtu status'
+ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'systemctl status lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds lingtu'
+ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'bash ~/data/SLAM/navigation/scripts/lingtu status'
 ```
 
 The `lingtu` CLI gives an 8-section snapshot; see `lingtu_cli.md`.
@@ -211,4 +211,3 @@ sensor ports.
 - `lingtu_cli.md` - operations CLI subcommands
 - `super_lio_backend.md` - experimental Super-LIO evaluation path
 - `OTA_GUIDE.md` - historical OTA design
-- `S100P_STACK_INVENTORY.md` - historical service inventory

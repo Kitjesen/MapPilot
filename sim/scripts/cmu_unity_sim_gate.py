@@ -310,13 +310,11 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     tare_topics = ROOT / "src/nav/exploration/tare/topics.py"
     profiles = ROOT / "cli/profiles_data.py"
     adapter_path = ROOT / "sim/engine/bridge/cmu_unity_lingtu_adapter.py"
-    adapter_launch = ROOT / "launch/profiles/cmu_unity_lingtu_adapter.launch.py"
     stack_script = ROOT / "sim/scripts/cmu_unity_lingtu_stack.py"
     topic_text = _read_text(tare_topics)
     tare_profile = PROFILES.get("tare_explore", {})
     cmu_profile = PROFILES.get("sim_cmu_tare", {})
     adapter_text = _read_text(adapter_path)
-    launch_text = _read_text(adapter_launch)
     stack_text = _read_text(stack_script)
 
     uses_adapter_alias_contract = 'adapter_remappings("tare")' in topic_text
@@ -391,12 +389,6 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     )
     _add_check(
         checks,
-        "lingtu_cmu_adapter_launch_exists",
-        adapter_launch.exists(),
-        detail=str(adapter_launch),
-    )
-    _add_check(
-        checks,
         "lingtu_cmu_stack_script_exists",
         stack_script.exists(),
         detail=str(stack_script),
@@ -424,7 +416,7 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     )
 
     safety_presence = {
-        token: (token in adapter_text or token in launch_text)
+        token: (token in adapter_text)
         for token in LINGTU_ADAPTER_SAFETY_TOKENS
     }
     _add_check(
@@ -433,7 +425,6 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         all(safety_presence.values()),
         detail={
             "adapter": str(adapter_path),
-            "launch": str(adapter_launch),
             "tokens": safety_presence,
         },
     )
@@ -454,7 +445,6 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "tare_topics": str(tare_topics),
             "profiles": str(profiles),
             "adapter": str(adapter_path),
-            "adapter_launch": str(adapter_launch),
             "stack_script": str(stack_script),
             "remaps": TARE_REMAPS,
             "profile_tokens": profile_required_tokens,

@@ -388,6 +388,40 @@ def test_auth_routes_validate_response_contracts(monkeypatch):
     assert login.message == "\u8ba4\u8bc1\u672a\u542f\u7528"
 
 
+def test_validation_error_handler_serializes_invalid_json_body(monkeypatch):
+    from fastapi.exceptions import RequestValidationError
+
+    from gateway import auth
+    from gateway.gateway_module import GatewayModule
+
+    monkeypatch.setattr(auth, "_get_configured_key", lambda: None)
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    handler = gateway._app.exception_handlers[RequestValidationError]
+    response = asyncio.run(
+        handler(
+            None,
+            RequestValidationError(
+                [
+                    {
+                        "type": "json_invalid",
+                        "loc": ("body", 0),
+                        "msg": "JSON decode error",
+                        "input": b"{key:bad}",
+                    }
+                ]
+            ),
+        )
+    )
+
+    assert response.status_code == 422
+    payload = json.loads(response.body)
+    assert payload["error"] == "validation_error"
+    assert isinstance(payload["detail"], list)
+
+
 def test_auth_login_invalid_key_preserves_legacy_message(monkeypatch):
     from gateway import auth
     from gateway.gateway_module import GatewayModule
@@ -552,6 +586,8 @@ def test_session_start_accepts_legacy_map_field(monkeypatch):
         assert transition.ts > 0
         assert transition.session is not None
         assert transition.session.mode == "navigating"
+        assert transition.session.product_profile == "nav"
+        assert transition.session.product_session == "navigation"
         assert transition.session.active_map == "demo"
         assert transition.session.map_has_pcd is True
         assert transition.session.map_has_tomogram is True
@@ -614,6 +650,8 @@ def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(mon
         assert transition.ok is True
         assert transition.session is not None
         assert transition.session.mode == "navigating"
+        assert transition.session.product_profile == "nav"
+        assert transition.session.product_session == "navigation"
         assert transition.session.map_has_pcd is True
         assert transition.session.map_has_tomogram is False
         assert transition.session.map_has_octomap is True
@@ -664,6 +702,8 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
         assert transition.ok is True
         assert transition.session is not None
         assert transition.session.mode == "navigating"
+        assert transition.session.product_profile == "nav"
+        assert transition.session.product_session == "navigation"
         assert transition.session.slam_profile == "fastlio2"
         assert gateway._session_map == "dds_external"
 
@@ -673,7 +713,109 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
         assert ended.ok is True
         assert ended.session is not None
         assert ended.session.mode == "idle"
+        assert ended.session.product_profile is None
+        assert ended.session.product_session == "idle"
         assert gateway._session_map is None
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_session_start_normalizes_active_map_symlink(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "demo"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+        active = map_root / "active"
+        try:
+            active.symlink_to(map_dir, target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"filesystem symlinks unavailable: {exc}")
+
+        gateway = GatewayModule(manage_session_services=False)
+        gateway.setup()
+        with gateway._state_lock:
+            gateway._localization_status = {
+                "backend": "fastlio2",
+                "state": "TRACKING",
+                "confidence": 1.0,
+            }
+
+        payload = asyncio.run(
+            _endpoint(gateway, "/api/v1/session/start")(
+                {"mode": "navigating", "map": "active"}
+            )
+        )
+
+        transition = SessionTransitionResponse.model_validate(_payload(payload))
+        assert transition.ok is True
+        assert transition.session is not None
+        assert transition.session.active_map == "demo"
+        assert gateway._session_map == "demo"
+        assert active.is_symlink()
+        assert active.readlink() == Path("demo")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_session_start_preserves_product_session_for_tracking(monkeypatch):
+    import runtime.service_manager as service_manager
+    import gateway.gateway_module as gateway_module
+    import gateway.routes.session as session_routes
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    def fail_service_manager():
+        raise AssertionError("external DDS endpoint must not use service_manager")
+
+    monkeypatch.setattr(service_manager, "get_service_manager", fail_service_manager)
+    monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "tracking_map"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+
+        gateway = GatewayModule(manage_session_services=False)
+        gateway.setup()
+        monkeypatch.setattr(gateway_module, "active_map_name", lambda: "tracking_map")
+        with gateway._state_lock:
+            gateway._localization_status = {
+                "backend": "fastlio2",
+                "state": "TRACKING",
+                "confidence": 1.0,
+            }
+
+        payload = asyncio.run(
+            _endpoint(gateway, "/api/v1/session/start")(
+                {
+                    "mode": "navigating",
+                    "map": "tracking_map",
+                    "profile": "tracking",
+                }
+            )
+        )
+
+        transition = SessionTransitionResponse.model_validate(_payload(payload))
+        assert transition.ok is True
+        assert transition.session is not None
+        assert transition.session.mode == "navigating"
+        assert transition.session.product_profile == "tracking"
+        assert transition.session.product_session == "tracking"
+        assert gateway._session_product_profile == "tracking"
+        assert gateway._session_product_session == "tracking"
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -784,6 +926,54 @@ def test_map_validate_plan_is_explicit_no_motion_octoplanner_preview(monkeypatch
         assert gateway.goal_pose.msg_count == 0
         assert gateway.cmd_vel.msg_count == 0
         assert gateway.stop_cmd.msg_count == 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_map_validate_plan_sanitizes_nonfinite_preview_payload(monkeypatch):
+    import gateway.routes.maps as map_routes
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import PlanPreviewRequest
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "octomap_ready"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+
+        gateway = GatewayModule()
+        gateway.setup()
+        gateway._session_mode = "navigating"
+        gateway._session_active_map_name = lambda: "octomap_ready"
+        _seed_ready_navigation(gateway)
+        nav = _FakeMapOnlyPreviewNav()
+        original_preview = nav.preview_plan
+
+        def nonfinite_preview(*args, **kwargs):
+            payload = original_preview(*args, **kwargs)
+            payload["distance_m"] = float("inf")
+            payload["planner_diagnostics"] = {"score": float("nan")}
+            return payload
+
+        nav.preview_plan = nonfinite_preview
+        gateway.on_system_modules({"nav.mission": nav})
+        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+
+        payload = asyncio.run(
+            _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
+                "octomap_ready",
+                PlanPreviewRequest(x=2.0, y=1.0, z=0.0),
+            )
+        )
+
+        json.dumps(payload, allow_nan=False)
+        assert payload["preview"]["distance_m"] == 0.0
+        assert payload["preview"]["planner_diagnostics"]["score"] == 0.0
+        assert payload["motion_published"] is False
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

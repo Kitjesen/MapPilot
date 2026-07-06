@@ -14,29 +14,29 @@ def test_validate_thunder_field_deployment_contract_passes() -> None:
     result = validator.validate()
 
     assert result["ok"] is True
-    assert result["profile"] == "thunder-nav"
+    assert result["profile"] == "nav"
     assert result["canonical_profile"] == "nav"
     assert result["endpoint"] == "thunder_field"
     assert result["contract"] == "thunder_field_dds_v1"
-    assert result["runtime_endpoint_contract"] is None
+    assert result["runtime_endpoint_contract"] == "thunder_field_dds_v1"
     assert result["runtime_contract"] == "thunder_field"
     assert result["blockers"] == []
     assert "scripts/deploy/thunder/runtime-env.sh" in result["checked_files"]
     assert result["checked_graph_profiles"] == [
-        "thunder-explore",
-        "thunder-map",
-        "thunder-nav",
+        "map",
+        "nav",
+        "tare_explore",
     ]
 
 
 def test_validate_thunder_field_deployment_profile_option_checks_graph() -> None:
-    result = validator.validate(profile="thunder-map")
+    result = validator.validate(profile="map")
 
     assert result["ok"] is True
-    assert result["profile"] == "thunder-map"
+    assert result["profile"] == "map"
     assert result["canonical_profile"] == "map"
     assert result["endpoint"] == "thunder_field"
-    assert "thunder-map" in result["checked_graph_profiles"]
+    assert "map" in result["checked_graph_profiles"]
 
 
 def test_validate_thunder_field_deployment_rejects_ros_compat_graph_module(
@@ -68,7 +68,7 @@ def test_validate_thunder_field_deployment_reports_service_drift(monkeypatch, tm
         "\n".join(
             [
                 "[Service]",
-                "Environment=LINGTU_PROFILE=thunder-nav",
+                "Environment=LINGTU_PROFILE=nav",
                 "Environment=LINGTU_ENDPOINT=thunder_field",
                 "Environment=LINGTU_ENDPOINT_TRANSPORT=local",
                 "Environment=LINGTU_ENDPOINT_CONTRACT=thunder_field_dds_v1",

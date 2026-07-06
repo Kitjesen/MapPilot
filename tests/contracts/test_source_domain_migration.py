@@ -94,6 +94,9 @@ TOKEN_SCAN_ALLOWLIST = {
     "sim/scripts/cmu_unity_sim_gate.py",
     "sim/scripts/launch_cmu_unity_baseline.sh",
     "sim/scripts/launch_cmu_unity_lingtu_runtime.sh",
+    # Explains, by name, that src/semantic/ was retired and stays deleted -- the
+    # token appears as historical/explanatory prose, not a live reference.
+    "src/perception/README.md",
 }
 
 IMPORT_LINE_RE = re.compile(

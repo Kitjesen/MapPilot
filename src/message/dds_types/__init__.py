@@ -52,7 +52,7 @@ from .nav import (
     Path,
 )
 from .pointcloud import DDS_PointCloud2, DDS_PointField, PointCloud2, PointField
-from .scalar import DDS_Float32, DDS_String, Float32, String, Text
+from .scalar import DDS_Bool, DDS_Float32, DDS_String, Bool, Float32, String, Text
 from .slam import (
     DDS_RelocalizationRequest,
     DDS_RelocalizationResponse,
@@ -62,6 +62,7 @@ from .slam import (
 
 __all__ = [
     "DDS_Float32",
+    "DDS_Bool",
     "DDS_Header",
     "DDS_Imu",
     "DDS_MapMetaData",
@@ -87,6 +88,7 @@ __all__ = [
     "DDS_TwistWithCovariance",
     "DDS_Vector3",
     "Float32",
+    "Bool",
     "Header",
     "Imu",
     "LivoxCustomMsg",

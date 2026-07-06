@@ -254,17 +254,17 @@ def _runtime_status_state() -> dict:
                 "axis_convention": "x_forward_y_left_z_up",
             },
             "topic_allowed_frame_ids": {
-                "/nav/odometry": ["odom", "map"],
-                "/nav/registered_cloud": ["body"],
-                "/nav/map_cloud": ["map"],
+                "/slam/odometry": ["odom", "map"],
+                "/slam/registered_cloud": ["body"],
+                "/slam/map_cloud": ["map"],
                 "/nav/global_path": ["map"],
                 "/nav/local_path": ["map", "odom", "body"],
                 "/nav/cmd_vel": ["body"],
             },
             "topic_default_frame_ids": {
-                "/nav/odometry": "odom",
-                "/nav/registered_cloud": "body",
-                "/nav/map_cloud": "map",
+                "/slam/odometry": "odom",
+                "/slam/registered_cloud": "body",
+                "/slam/map_cloud": "map",
                 "/nav/global_path": "map",
                 "/nav/local_path": "map",
                 "/nav/cmd_vel": "body",
@@ -325,7 +325,7 @@ def test_status_json_output_includes_runtime_boundary(monkeypatch, capsys):
     assert report["runtime"]["endpoint"] == "thunder_field"
     assert report["runtime"]["data_source"] == "thunder_field"
     assert report["runtime"]["command_sink"] == "hardware_driver_after_cmd_vel_mux"
-    assert report["runtime"]["topic_allowed_frame_ids"]["/nav/map_cloud"] == [
+    assert report["runtime"]["topic_allowed_frame_ids"]["/slam/map_cloud"] == [
         "map"
     ]
     assert report["runtime"]["frames"]["axis_convention"] == "x_forward_y_left_z_up"

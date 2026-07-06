@@ -1,6 +1,6 @@
 # LingTu Simulation Environment
 
-> A hardware-free, full-stack simulation framework for quadruped robot navigation. Built on MuJoCo physics with ray-cast LiDAR, it enables end-to-end testing of SLAM, terrain-aware planning, semantic navigation, and person-following 锟?all without a physical robot.
+> A hardware-free, full-stack simulation framework for quadruped robot navigation. Built on MuJoCo physics with ray-cast LiDAR, it enables end-to-end testing of SLAM, terrain-aware planning, semantic navigation, and person-following 閿?all without a physical robot.
 
 ## 1. Overview
 
@@ -13,22 +13,33 @@ physical split of every script role. Keep these roots stable:
 
 | Root | Contract |
 |------|----------|
+| `engine/` | Importable simulation engine framework: physics loop, MuJoCo wrappers, sensors, scenario management. |
 | `worlds/` | Canonical MuJoCo XML and Gazebo SDF scenes. |
 | `assets/` | Thunder v3 assets, meshes, MJCF/URDF, and Livox scan-pattern assets. |
-| `robots/` | Compatibility robot models and fallback policy paths. |
+| `robots/` | Robot model and policy assets used by simulation entrypoints. |
+| `sensors/` | Standalone sensor simulators and lightweight fallbacks. |
+| `bridge/` | Physics-to-navigation bridges and visualization adapters. |
+| `planning/` | Simulation planning probes and route fixtures. |
+| `following/` | Person-following simulation controllers, perception, and metrics. |
+| `datasets/` | Offline LiDAR/IMU datasets and dataset metadata. |
+| `evaluation/` | Offline SLAM/navigation evaluation manifests and helpers. |`r`n| `experiments/` | Historical/experimental simulation probes that are not product gates. |
 | `scripts/` | Public launcher, gate, validation, demo, and benchmark entrypoints. |
 | `validation/` | Importable full-system validation package used by wrappers and tests. |
 | `tests/` | Simulation integration and filesystem contract tests. |
+| `launch/` | Legacy ROS launch/smoke compatibility files. |
+| `external_scenes/` | Optional external or license-constrained scene placeholders. |`r`n| `semantic/` | Legacy semantic simulation residue. |
+| `configs/` | Reserved local simulation config fixture mount point. |
+| `maps/` | Reserved local simulation map fixture mount point. |
 
-`sim/scripts/<name>` paths are public repository entrypoints used by profiles,
-tests, deploy scripts, and closure reports. Keep scripts in place and classify
-them through `sim/scripts/README.md` unless a future compatibility migration
-adds wrappers, a deprecation window, and a full path-contract audit.
+`sim/scripts/mujoco/*` holds the canonical MuJoCo script implementations. Old
+`sim/scripts/<name>` paths remain compatibility wrappers when they are already
+used by profiles, deploy scripts, or field notes. New MuJoCo entrypoints should
+go under `sim/scripts/mujoco/`.
 
 **Supported capabilities:**
 
 - Full 6-DOF rigid body dynamics with contact
-- Ray-cast LiDAR simulation (Livox Mid-360 pattern, 360掳 FoV)
+- Ray-cast LiDAR simulation (Livox Mid-360 pattern, 360鎺?FoV)
 - RGB-D camera rendering
 - Person-following behavioral simulation with FSM control
 - Semantic search and exploration
@@ -38,9 +49,9 @@ adds wrappers, a deprecation window, and a full path-contract audit.
 
 The system has three layers:
 
-**Physics** 锟?MuJoCo loads a world XML + robot MJCF, runs the physics step each tick, and reads ray-cast LiDAR data from the sensor plugin.
+**Physics** 閿?MuJoCo loads a world XML + robot MJCF, runs the physics step each tick, and reads ray-cast LiDAR data from the sensor plugin.
 
-**Bridge** 锟?Three bridge options connect physics to navigation:
+**Bridge** 閿?Three bridge options connect physics to navigation:
 
 | Bridge | Path | Notes |
 |--------|------|-------|
@@ -49,9 +60,9 @@ The system has three layers:
 | `nova_nav_bridge.py` | MuJoCo/NOVA policy to ROS2 topics | Legacy ROS2 compatibility bridge |
 | `mujoco_viz_bridge.py` | MuJoCo to ROS2 visualization topics | Visualization-only compatibility bridge |
 
-**Navigation** 锟?Either the ROS2 C++ autonomy stack (terrain + local planner + path follower) or the pure-Python LingTu module stack (`python lingtu.py sim`).
+**Navigation** 閿?Either the ROS2 C++ autonomy stack (terrain + local planner + path follower) or the pure-Python LingTu module stack (`python lingtu.py sim`).
 
-Worlds, robots, and bridges are independent 锟?any world can host any robot, and either bridge connects to navigation.
+Worlds, robots, and bridges are independent 閿?any world can host any robot, and either bridge connects to navigation.
 
 Default product runtime contract: `enable_native=False` keeps motion ownership
 inside LingTu Modules. PCT/A* produce global plans in `Navigation`, then
@@ -140,10 +151,10 @@ The `FollowingBehavior` state machine manages five states:
 
 | State | Trigger In | Trigger Out |
 |-------|-----------|-------------|
-| **FOLLOW** | target re-acquired / target moves | target stopped 锟?WAIT, target lost 锟?SEARCH |
-| **WAIT** | target stopped | target moves 锟?FOLLOW |
-| **SEARCH** | target lost | target found 锟?FOLLOW, timeout 锟?EXPLORE |
-| **EXPLORE** | search timeout | target found 锟?FOLLOW, timeout 锟?RECOVER |
+| **FOLLOW** | target re-acquired / target moves | target stopped 閿?WAIT, target lost 閿?SEARCH |
+| **WAIT** | target stopped | target moves 閿?FOLLOW |
+| **SEARCH** | target lost | target found 閿?FOLLOW, timeout 閿?EXPLORE |
+| **EXPLORE** | search timeout | target found 閿?FOLLOW, timeout 閿?RECOVER |
 | **RECOVER** | explore timeout | (terminal) |
 
 ### 5.3 Controller Comparison
@@ -730,7 +741,7 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 export PYTHONPATH=src:.
 
-python sim/scripts/native_pct_mujoco_gate.py \
+python sim/scripts/mujoco/native_pct_gate.py \
   --generate-source-report \
   --route same_floor \
   --ros-domain-id 93 \
@@ -758,7 +769,7 @@ export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 export PYTHONPATH=src:.
 
-python sim/scripts/native_pct_mujoco_gate.py \
+python sim/scripts/mujoco/native_pct_gate.py \
   --source-report artifacts/large_terrain_nav_validation_pct_ros_v10/report.json \
   --route terrain_long \
   --planner pct \
@@ -869,7 +880,7 @@ ros2 launch sim/launch/sim.launch.py world:=building_scene
 # Via REPL
 python lingtu.py sim
 > go 5 3
-> go 鎵惧埌椁愭
+> go 閹垫儳鍩屾鎰攽
 
 # Via ROS2
 ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped \
@@ -1014,10 +1025,10 @@ messages in the bag.
 
 | Topic | Message Type | Direction | Rate |
 |-------|-------------|-----------|------|
-| `/mujoco/pos_w_pointcloud` | `sensor_msgs/PointCloud2` | Sim 锟?Nav | 10 Hz |
-| `/nav/odometry` | `nav_msgs/Odometry` | Sim 锟?Nav | 50 Hz |
-| `/nav/cmd_vel` | `geometry_msgs/TwistStamped` | Nav 锟?Sim | 50 Hz |
-| TF (`map鈫抩dom鈫抌ody`) | `tf2_msgs/TFMessage` | Sim 锟?Nav | 50 Hz |
+| `/mujoco/pos_w_pointcloud` | `sensor_msgs/PointCloud2` | Sim 閿?Nav | 10 Hz |
+| `/nav/odometry` | `nav_msgs/Odometry` | Sim 閿?Nav | 50 Hz |
+| `/nav/cmd_vel` | `geometry_msgs/TwistStamped` | Nav 閿?Sim | 50 Hz |
+| TF (`map閳姪dom閳妼ody`) | `tf2_msgs/TFMessage` | Sim 閿?Nav | 50 Hz |
 
 ## 10. Directory Reference
 
@@ -1028,7 +1039,7 @@ messages in the bag.
 | `robots/` | Compatibility robot model and policy paths for older scripts |
 | `assets/` | Canonical Thunder v3 robot assets, meshes, MJCF/URDF, and Livox assets |
 | `sensors/` | Standalone sensor simulators and fallbacks |
-| `bridge/` | Physics 锟?navigation bridges (ROS2, direct Python, visualization) |
+| `bridge/` | Physics 閿?navigation bridges (ROS2, direct Python, visualization) |
 | `following/` | Person-following simulation (FSM, controllers, perception, metrics) |
 | `semantic/` | Legacy semantic simulation test residue |
 | `datasets/` | Offline LiDAR/IMU datasets |

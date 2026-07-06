@@ -11,6 +11,7 @@ class ProductModeContract:
     profile: str
     label: str
     product_mode: str
+    product_session: str
     required_modules: frozenset[str]
     forbidden_modules: frozenset[str]
     required_wires: frozenset[str]
@@ -23,6 +24,7 @@ class ProductModeContract:
             "profile": self.profile,
             "label": self.label,
             "product_mode": self.product_mode,
+            "product_session": self.product_session,
             "required_modules": sorted(self.required_modules),
             "forbidden_modules": sorted(self.forbidden_modules),
             "required_wires": sorted(self.required_wires),
@@ -67,19 +69,18 @@ _SAFETY_CHAIN = frozenset({
     "nav.mission.mission_status->GatewayModule.mission_status",
 }) | _COMMAND_OUTPUT_CHAIN
 
-_NAV_EXECUTION_CHAIN = frozenset({
-    "SlamAdapterModule.odometry->nav.terrain.odometry@/slam/odometry",
-    "SlamAdapterModule.map_cloud->nav.terrain.map_cloud@/slam/map_cloud",
+_PYTHON_AUTONOMY_MODULES = frozenset({
+    "nav.terrain",
+    "nav.local_planner",
+    "nav.path_follower",
+})
+
+_NATIVE_NAV_MISSION_CHAIN = frozenset({
+    "SlamAdapterModule.odometry->nav.mission.odometry@/slam/odometry",
+    "SlamAdapterModule.localization_status->nav.mission.localization_status@/slam/localization_health",
+    "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf",
+    "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event",
     "TraversabilityCostModule.fused_cost->nav.mission.costmap",
-    "nav.terrain.traversability->nav.mission.traversability",
-    "nav.mission.global_path->nav.local_planner.global_path",
-    "nav.mission.waypoint->nav.local_planner.waypoint",
-    "nav.mission.clear_path->nav.local_planner.clear_path",
-    "nav.terrain.terrain_map->nav.local_planner.terrain_map",
-    "nav.terrain.traversability->nav.local_planner.traversability",
-    "nav.local_planner.local_path->nav.path_follower.local_path",
-    "nav.local_planner.control_hint->nav.path_follower.control_hint",
-    "nav.path_follower.cmd_vel->nav.velocity_mux.path_follower_cmd_vel",
 })
 
 _GOAL_SERVICE_CHAIN = frozenset({
@@ -104,6 +105,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         profile="teleop",
         label="Teleop",
         product_mode="teleop",
+        product_session="teleop",
         required_modules=frozenset({
             "GatewayModule",
             "TeleopModule",
@@ -112,12 +114,10 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         }),
         forbidden_modules=frozenset({
             "nav.mission",
-            "nav.local_planner",
-            "nav.path_follower",
             "SlamModule",
             "SlamAdapterModule",
             "SlamBridgeModule",
-        }),
+        }) | _PYTHON_AUTONOMY_MODULES,
         required_wires=_TELEOP_CHAIN,
         switch_policy="cold_restart",
     ),
@@ -125,6 +125,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         profile="teleop_avoid",
         label="Teleop avoid",
         product_mode="teleop_avoid",
+        product_session="teleop_avoid",
         required_modules=frozenset({
             "GatewayModule",
             "TeleopModule",
@@ -136,10 +137,8 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         }),
         forbidden_modules=frozenset({
             "nav.mission",
-            "nav.local_planner",
-            "nav.path_follower",
             "SemanticPlannerModule",
-        }),
+        }) | _PYTHON_AUTONOMY_MODULES,
         required_wires=_TELEOP_CHAIN | _MAP_CHAIN | _TELEOP_AVOID_CHAIN,
         switch_policy="cold_restart",
     ),
@@ -147,6 +146,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         profile="map",
         label="Mapping",
         product_mode="mapping",
+        product_session="mapping",
         required_modules=frozenset({
             "GatewayModule",
             "TeleopModule",
@@ -157,10 +157,8 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         }),
         forbidden_modules=frozenset({
             "nav.mission",
-            "nav.local_planner",
-            "nav.path_follower",
             "SemanticPlannerModule",
-        }),
+        }) | _PYTHON_AUTONOMY_MODULES,
         required_wires=_TELEOP_CHAIN | _MAP_CHAIN,
         switch_policy="cold_restart",
     ),
@@ -168,16 +166,16 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         profile="tracking",
         label="Tracking",
         product_mode="tracking",
+        product_session="tracking",
         required_modules=frozenset({
             "GatewayModule",
             "SlamAdapterModule",
+            "nav.goals",
             "nav.mission",
-            "nav.local_planner",
-            "nav.path_follower",
             "nav.velocity_mux",
         }),
-        forbidden_modules=frozenset({"SemanticPlannerModule"}),
-        required_wires=_SAFETY_CHAIN | _NAV_EXECUTION_CHAIN,
+        forbidden_modules=frozenset({"SemanticPlannerModule"}) | _PYTHON_AUTONOMY_MODULES,
+        required_wires=_SAFETY_CHAIN | _NATIVE_NAV_MISSION_CHAIN | _GOAL_SERVICE_CHAIN,
         switch_policy="same_graph_candidate",
         hot_switch_candidates=_NAV_HOT_CANDIDATES,
         online_hot_switch_supported=True,
@@ -186,16 +184,16 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         profile="nav",
         label="Navigation",
         product_mode="navigation",
+        product_session="navigation",
         required_modules=frozenset({
             "GatewayModule",
             "SlamAdapterModule",
+            "nav.goals",
             "nav.mission",
-            "nav.local_planner",
-            "nav.path_follower",
             "SemanticPlannerModule",
         }),
-        forbidden_modules=frozenset(),
-        required_wires=_SAFETY_CHAIN | _NAV_EXECUTION_CHAIN,
+        forbidden_modules=_PYTHON_AUTONOMY_MODULES,
+        required_wires=_SAFETY_CHAIN | _NATIVE_NAV_MISSION_CHAIN | _GOAL_SERVICE_CHAIN,
         switch_policy="same_graph_candidate",
         hot_switch_candidates=_NAV_HOT_CANDIDATES,
         online_hot_switch_supported=True,
@@ -204,17 +202,17 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         profile="inspection",
         label="Inspection",
         product_mode="inspection",
+        product_session="inspection",
         required_modules=frozenset({
             "GatewayModule",
             "SlamAdapterModule",
+            "nav.goals",
             "nav.mission",
-            "nav.local_planner",
-            "nav.path_follower",
             "SemanticPlannerModule",
             "TaskSchedulerModule",
         }),
-        forbidden_modules=frozenset(),
-        required_wires=_SAFETY_CHAIN | _NAV_EXECUTION_CHAIN | _GOAL_SERVICE_CHAIN,
+        forbidden_modules=_PYTHON_AUTONOMY_MODULES,
+        required_wires=_SAFETY_CHAIN | _NATIVE_NAV_MISSION_CHAIN | _GOAL_SERVICE_CHAIN,
         switch_policy="same_graph_candidate",
         hot_switch_candidates=_NAV_HOT_CANDIDATES,
         online_hot_switch_supported=True,
@@ -223,6 +221,7 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
         profile="tare_explore",
         label="TARE exploration",
         product_mode="exploration",
+        product_session="exploration",
         required_modules=frozenset({
             "GatewayModule",
             "SlamAdapterModule",
@@ -233,17 +232,15 @@ PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
             "TraversabilityCostModule",
             "TAREExplorerModule",
             "nav.maps",
+            "nav.goals",
             "nav.mission",
-            "nav.terrain",
-            "nav.local_planner",
-            "nav.path_follower",
             "nav.velocity_mux",
         }),
-        forbidden_modules=frozenset({"WavefrontFrontierExplorer"}),
+        forbidden_modules=frozenset({"WavefrontFrontierExplorer"}) | _PYTHON_AUTONOMY_MODULES,
         required_wires=(
             _SAFETY_CHAIN
             | _MAP_CHAIN
-            | _NAV_EXECUTION_CHAIN
+            | _NATIVE_NAV_MISSION_CHAIN
             | _GOAL_SERVICE_CHAIN
             | _TARE_EXPLORATION_CHAIN
         ),

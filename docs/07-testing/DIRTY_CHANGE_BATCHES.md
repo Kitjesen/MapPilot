@@ -266,7 +266,7 @@ git add \
   src/nav/services/plan/global_planner/algorithm/octoplanner3d_runtime.py \
   src/nav/services/plan/global_planner/artifact_gate.py \
   src/nav/services/plan/global_planner/backend_runtime.py \
-  src/nav/services/plan/global_planner/direct.py \
+  src/nav/services/plan/compat/direct.py \
   src/nav/services/plan/global_planner/service.py \
   src/nav/services/plan/local_planner/output.py \
   src/nav/services/plan/local_planner/service.py \

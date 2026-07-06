@@ -34,7 +34,7 @@ def _exec_start_lines(unit_text: str) -> list[str]:
 def test_canonical_thunder_deploy_script_uses_product_profile() -> None:
     text = _read("scripts/deploy/deploy_thunder.sh")
 
-    assert "LINGTU_DEPLOY_PROFILE:-thunder-nav" in text
+    assert "LINGTU_DEPLOY_PROFILE:-nav" in text
     assert 'lingtu.py "${PROFILE}" --daemon' in text
     assert "git reset --hard" not in text
     assert "git pull --ff-only" in text
@@ -69,7 +69,7 @@ def test_thunder_service_installer_defaults_to_native_field_cpp_stack() -> None:
     assert "install_traversability_dds_service.sh" in text
     assert "slam-dds|cpp-slam" in text
     assert "traversability-dds|terrain-dds" in text
-    assert "field|thunder-nav|field-cpp|dds-cpp" in text
+    assert "field|nav|thunder-nav|field-cpp|dds-cpp" in text
     assert "install_lcm_endpoint_service.sh" not in text
     assert "install_lite_service.sh" in text
     assert "Usage: $0 [field-cpp|dds-endpoint|slam-dds|traversability-dds|nav-dds|lingtu|lite|ros-compat]" in text
@@ -124,7 +124,7 @@ def test_thunder_main_lingtu_service_uses_field_dds_endpoint() -> None:
     text = _read("scripts/deploy/thunder/lingtu.service")
 
     assert "Description=LingTu Thunder navigation runtime" in text
-    assert "LINGTU_PROFILE=thunder-nav" in text
+    assert "LINGTU_PROFILE=nav" in text
     assert "LINGTU_MODULE_TRANSPORT=local" in text
     assert "LINGTU_ENDPOINT=thunder_field" in text
     assert "LINGTU_ENDPOINT_TRANSPORT=dds" in text
@@ -152,7 +152,7 @@ def test_thunder_dds_endpoint_service_is_standalone_product_entrypoint() -> None
 
     assert "Description=LingTu Thunder typed DDS endpoint" in text
     assert "thunder-runtime-env.sh" in text
-    assert "LINGTU_PROFILE=thunder-nav" in text
+    assert "LINGTU_PROFILE=nav" in text
     assert "LINGTU_ENDPOINT=thunder_field" in text
     assert "LINGTU_ENDPOINT_TRANSPORT=dds" in text
     assert "LINGTU_ENDPOINT_CONTRACT=thunder_field_dds_v1" in text
@@ -232,8 +232,13 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "robot-lidar.service" not in text
     assert "LINGTU_SLAM_BIN=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime" in text
     assert "LINGTU_SLAM_BACKEND=fastlio2" in text
-    assert "LINGTU_SLAM_MODE=mapping" in text
-    assert "LINGTU_SLAM_MAP=" in text
+    assert "LINGTU_SLAM_MODE=localization" in text
+    assert "LINGTU_SLAM_MAP=/home/sunrise/data/nova/maps/active/map.pcd" in text
+    assert "LINGTU_SLAM_TRACK_SEED_FILE=/home/sunrise/data/nova/maps/active/track_seed.json" not in text
+    assert "LINGTU_SLAM_TRACK_INITIAL_X=0" in text
+    assert "LINGTU_SLAM_TRACK_INITIAL_Y=0" in text
+    assert "LINGTU_SLAM_TRACK_INITIAL_Z=0" in text
+    assert "LINGTU_SLAM_TRACK_INITIAL_YAW=-0.496" in text
     assert "LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml" in text
     assert "LINGTU_DDS_DOMAIN_ID=0" in text
     assert "LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json" in text
@@ -243,6 +248,9 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "--domain-id" in runner
     assert "--mode" in runner
     assert '--map "$LINGTU_SLAM_MAP"' in runner
+    assert "--track-against-map-seed-file" in runner
+    assert 'track_seed_file="$(dirname "$LINGTU_SLAM_MAP")/track_seed.json"' in runner
+    assert "--track-against-map-initial-pose" in runner
     assert "source /opt/lingtu/config/thunder-runtime-env.sh" not in text
     assert "source /opt/lingtu/config/ros2-env.sh" not in text
     assert "python" not in text.lower()
@@ -250,23 +258,123 @@ def test_thunder_slam_dds_service_runs_cpp_runtime() -> None:
     assert "rclcpp" not in text
 
 
+def test_slam_runtime_uses_persisted_track_seed_before_fallback_seed() -> None:
+    text = _read("src/localization/slam/cpp/cyclone_runtime.cpp")
+
+    assert "loadTrackSeed(cli.track_against_map_seed_file, cli.map_path)" in text
+    assert "saveTrackSeed(cli.track_against_map_seed_file, cli.map_path" in text
+    assert "track_against_map_initial_pose" in text
+    assert "startup_track_seed.has_value()" in text
+    assert "std::optional<Pose3d> track_against_map_seed = startup_track_seed" in text
+
+
+def test_slam_track_against_map_waits_for_inputs_without_disabling() -> None:
+    text = _read("src/localization/slam/cpp/cyclone_runtime.cpp")
+
+    assert "bool isTrackAgainstMapInputWait" in text
+    assert 'note_track_wait("registered_cloud_unavailable")' in text
+    assert 'note_track_wait("registered_cloud_stale")' in text
+    assert "isTrackAgainstMapInputWait(track_status.message)" in text
+    assert "note_track_failure(track_status.message)" in text
+    assert 'note_track_failure("registered_cloud_unavailable")' not in text
+    assert 'note_track_failure("registered_cloud_stale")' not in text
+
+
+def test_lidar_network_service_waits_for_managed_eth1_before_secondary_address() -> None:
+    text = _read("scripts/deploy/setup_network.sh")
+
+    assert "NetworkManager-wait-online.service" in text
+    assert "ip addr replace ${HOST_IP}/${SUBNET_MASK} dev \\$IFACE" in text
+    assert "ip route replace ${LIDAR_SUBNET} dev \\$IFACE src ${HOST_IP}" in text
+    assert "nmcli device set \\$IFACE managed no" not in text
+    assert "ip link set \\$IFACE down" not in text
+
+
 def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     text = _read("scripts/deploy/thunder/lingtu-traversability-dds.service")
     installer = _read("scripts/deploy/thunder/install_traversability_dds_service.sh")
+    source = _read("src/nav/services/endpoint/cpp/traversability_dds.cpp")
+    cmake = _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
+    topics = _read("src/message/cpp/dds_topics.hpp")
+    idl = _read("src/message/idl/lingtu_slam.idl")
 
     assert "Description=LingTu native traversability DDS producer" in text
     assert "lingtu-slam-dds.service" in text
     assert "LINGTU_TRAVERSABILITY_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds" in text
+    assert "LINGTU_TRAVERSABILITY_PUBLISH_HZ=10" in text
+    assert "LINGTU_TRAVERSABILITY_TICK_HZ=50" in text
     assert "LINGTU_TRAVERSABILITY_STATUS_FILE=/dev/shm/lingtu/traversability_status.json" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_DECAY_S=2.0" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_BLOCK_POINTS=10" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_QUANTILE=0.25" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_CACHE_MAX_POINTS=80000" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_CLEAR_DY_OBS=1" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_DIS=0.30" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_ANGLE=0.0" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_REL_Z=-0.5" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_ABS_DY_OBS_REL_Z_THRE=0.2" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_VFOV=-16.0" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_MAX_DY_OBS_VFOV=16.0" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_POINT_NUM=1" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_NO_DATA_OBSTACLE=0" in text
+    assert "LINGTU_TRAVERSABILITY_TERRAIN_NO_DATA_BLOCK_SKIP_NUM=0" in text
     assert "--publish-hz" in text
+    assert "--tick-hz" in text
     assert "--resolution" in text
     assert "--radius" in text
     assert "--max-points" in text
+    assert "--terrain-decay-s" in text
+    assert "--terrain-min-block-points" in text
+    assert "--terrain-quantile" in text
+    assert "--terrain-cache-max-points" in text
+    assert "--terrain-clear-dy-obs" in text
+    assert "--terrain-min-dy-obs-dis" in text
+    assert "--terrain-min-dy-obs-angle" in text
+    assert "--terrain-min-dy-obs-rel-z" in text
+    assert "--terrain-abs-dy-obs-rel-z-thre" in text
+    assert "--terrain-min-dy-obs-vfov" in text
+    assert "--terrain-max-dy-obs-vfov" in text
+    assert "--terrain-min-dy-obs-point-num" in text
+    assert "--terrain-no-data-obstacle" in text
+    assert "--terrain-no-data-block-skip-num" in text
     assert "native traversability DDS producer is missing or not executable" in text
     assert "build_nav_endpoint.sh" in text
     assert "ros2-env.sh" not in text
     assert "python" not in text.lower()
     assert "lingtu-traversability-dds.service" in installer
+    assert "LINGTU_ENABLE_SERVICE:-1" in installer
+    assert "double publish_hz{10.0}" in source
+    assert "double tick_hz{50.0}" in source
+    assert "kNavTerrainMap" in source
+    assert "kNavTerrainMapExt" in source
+    assert "kNavMapClearing" in source
+    assert "kNavCloudClearing" in source
+    assert "DDS_RELIABILITY_RELIABLE" in source
+    assert "writeTerrainMap" in source
+    assert "writeTerrainMapExt" in source
+    assert "drainMapClearing" in source
+    assert "drainCloudClearing" in source
+    assert "TerrainAnalysisCore terrain_core" in source
+    assert "terrainParamsFromConfig" in source
+    assert "terrain_core.process" in source
+    assert "terrain_core.clear()" in source
+    assert "xyzToXyzi" in source
+    assert "limitXyzi(terrain_result.terrain_points, cfg.max_points)" in source
+    assert "buildTerrainMapCloud" not in source
+    assert "terrain_min_block_points{10}" in source
+    assert "terrain_clear_dy_obs{false}" in source
+    assert "terrain_no_data_obstacle{false}" in source
+    assert "terrain_decay_s{2.0}" in source
+    assert '\\"terrain_clear_dy_obs\\"' in source
+    assert '\\"terrain_no_data_obstacle\\"' in source
+    assert "terrain_map_ext_points" in source
+    assert '"map_clearing"' in source
+    assert '"cloud_clearing"' in source
+    assert "find_package(OpenMP QUIET)" in cmake
+    assert "target_link_libraries(lingtu_traversability_dds PRIVATE OpenMP::OpenMP_CXX)" in cmake
+    assert '"/nav/map_clearing", "rt/nav/map_clearing"' in topics
+    assert '"/nav/cloud_clearing", "rt/nav/cloud_clearing"' in topics
+    assert "struct Bool" in idl
 
 
 def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
@@ -296,22 +404,65 @@ def test_thunder_livox_dds_service_publishes_native_sdk2_stream() -> None:
 
 def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     text = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
+    source = _read("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp")
 
     assert "Description=LingTu native navigation DDS endpoint" in text
+    assert "lingtu-traversability-dds.service" in text
     assert "LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint" in text
     assert "LINGTU_LOCAL_PLANNER_PATHS=/opt/lingtu/current/src/nav/services/plan/local_planner/paths" in text
     assert "LINGTU_ACTIVE_OCTOMAP=" in text
-    assert "LINGTU_NAV_PUBLISH_CMD_VEL=0" in text
+    assert "LINGTU_NAV_PUBLISH_CMD_VEL=1" in text
+    assert "LINGTU_NAV_CHECK_OBSTACLE=1" in text
+    assert "LINGTU_NAV_USE_TRAVERSABILITY_COST=1" in text
+    assert "LINGTU_NAV_TRAVERSABILITY_MAX_AGE_S=0.5" in text
+    assert "LINGTU_NAV_TERRAIN_MAP_MAX_AGE_S=0.5" in text
     assert "LINGTU_NAV_STATUS_FILE=/dev/shm/lingtu/nav_endpoint_status.json" in text
     assert "--path-library" in text
     assert "--max-obstacle-points" in text
     assert "--publish-cmd-vel" in text
+    assert "--check-obstacle" in text
+    assert "--use-traversability-cost" in text
+    assert "--traversability-max-age-s" in text
+    assert "--terrain-map-max-age-s" in text
     assert "--status-file" in text
     assert "--gateway-host" not in text
     assert "--gateway-port" not in text
     assert "native navigation DDS endpoint is missing or not executable" in text
     assert "build_nav_endpoint.sh" in text
     assert "ros2-env.sh" not in text
+    assert "LINGTU_NAV_CHECK_OBSTACLE" in source
+    assert "cfg.check_obstacle = parseBool" in source
+    assert "cfg.check_obstacle && cfg.use_traversability_cost" in source
+    assert "cfg.check_obstacle ? &obstacle_xyzh : nullptr" in source
+
+
+def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> None:
+    text = _read("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp")
+
+    assert "name == \"intensity\"" in text
+    assert "const bool has_height = offsets.height >= 0 || offsets.intensity >= 0" in text
+    assert "height = static_cast<float>(world_z - map_body->position.z)" in text
+    assert "offsets.height >= 0 ? readFloat(base + offsets.height) : z" not in text
+    assert "kNavTerrainMap" in text
+    assert "kNavTerrainMapExt" in text
+    assert "kNavMapClearing" in text
+    assert "kNavCloudClearing" in text
+    assert "drainTerrainMap" in text
+    assert "drainTerrainMapExt" in text
+    assert "drainMapClearing" in text
+    assert "drainCloudClearing" in text
+    assert "clear_planner_terrain_inputs" in text
+    assert "obstacle_xyzh.clear()" in text
+    assert "appendXyzhCloud(planner_terrain_xyzh, terrain_xyzh" in text
+    assert "appendXyzhCloud(planner_terrain_xyzh, terrain_ext_xyzh" in text
+    assert "terrain_map_fresh ? terrain_xyzh : obstacle_xyzh" not in text
+    status = _read("src/nav/services/endpoint/cpp/nav_status_writer.cpp")
+    assert "has_terrain_map" in status
+    assert "has_terrain_map_ext" in status
+    assert "terrain_maps" in status
+    assert "terrain_map_exts" in status
+    assert "map_clearing" in status
+    assert "cloud_clearing" in status
 
 
 def test_thunder_slam_dds_installer_is_explicit_cpp_slam_boundary() -> None:
@@ -421,7 +572,52 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
 
     assert "lingtu_nav_native_endpoint" in nav
     assert "lingtu_traversability_dds" in nav
+    assert "lingtu_nav_control" in nav
+    assert "lingtu_motion_mock_dds" in nav
+    assert "LINGTU_CYCLONEDDS_PREFIX}/bin" in nav
+    assert "include/${multiarch}" in nav
     assert "native navigation DDS endpoint is missing" in nav
+
+
+def test_motion_mock_dds_closes_cmd_vel_to_odom_loop_without_hardware() -> None:
+    cmake = _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
+    source = _read("src/nav/services/endpoint/cpp/motion_mock_dds.cpp")
+
+    assert "add_executable(lingtu_motion_mock_dds" in cmake
+    assert "motion_mock_dds.cpp" in cmake
+    assert "kNavCmdVel" in source
+    assert "kSlamOdometry" in source
+    assert "kTf" in source
+    assert "cmd.vx * c - cmd.vy * s" in source
+    assert "cmd.vx * s + cmd.vy * c" in source
+    assert 'fillHeader(out.header, stamp_s, "odom")' in source
+    assert 'out.child_frame_id = const_cast<char*>("body")' in source
+    assert 'fillHeader(out.transform.header, stamp_s, "map")' in source
+    assert 'out.transform.child_frame_id = const_cast<char*>("odom")' in source
+    assert '\\"lingtu.motion_mock.status.v1\\"' in source
+    assert "LINGTU_MOTION_MOCK_STATUS_FILE" in source
+
+
+def test_nav_control_can_publish_external_global_path_for_smoke_tests() -> None:
+    text = _read("src/nav/services/endpoint/cpp/nav_control.cpp")
+
+    assert "path X1 Y1 Z1 X2 Y2 Z2" in text
+    assert "kNavGlobalPath" in text
+    assert "dds_write(global_path)" in text
+    assert 'waitForMatchedReader(writer, "global_path")' in text
+    assert 'dds_wait_for_acks(writer, DDS_SECS(2)), "dds_wait_for_acks(global_path)"' in text
+    assert 'waitForMatchedReader(writer, "goal_pose")' in text
+    assert 'dds_wait_for_acks(writer, DDS_SECS(2)), "dds_wait_for_acks(goal_pose)"' in text
+    assert "waitForMatchedReader(writer, cfg.command.c_str())" in text
+    assert 'dds_wait_for_acks(writer, DDS_SECS(2)), "dds_wait_for_acks(text)"' in text
+    assert "clear <map|cloud|all>" in text
+    assert "kNavMapClearing" in text
+    assert "kNavCloudClearing" in text
+    assert "DDS_RELIABILITY_RELIABLE" in text
+    assert "dds_wait_for_acks" in text
+    assert "waitForMatchedReader(writer, label)" in text
+    assert "publish_clear(lingtu::message::kNavMapClearing, \"map_clearing\")" in text
+    assert "publish_clear(lingtu::message::kNavCloudClearing, \"cloud_clearing\")" in text
 
 
 def test_ota_and_build_docs_do_not_recommend_legacy_ros2_planning_or_local_autonomy() -> None:
@@ -538,7 +734,10 @@ def test_robot_ops_has_product_mode_switch_entrypoint() -> None:
     text = _read("scripts/lingtu")
 
     assert "cmd_mode()" in text
-    assert "mode switch <teleop|teleop_avoid|map|tracking|nav|inspection>" in text
+    assert (
+        "mode switch <teleop|teleop_avoid|map|tracking|nav|inspection|tare_explore>"
+        in text
+    )
     assert "mode_switch_preflight" in text
     assert 'switch-plan "$current" "$target"' in text
     assert 'mode_profile_dropin "$target" "$endpoint"' in text
@@ -550,6 +749,7 @@ def test_robot_ops_has_product_mode_switch_entrypoint() -> None:
     assert '$GW/api/v1/session/end' in text
     assert 'slam_dds_set_mode mapping ""' in text
     assert 'slam_dds_set_mode localization "$map_pcd"' in text
+    assert '{"mode":"exploring","profile":"tare_explore","product_session":"exploration"}' in text
     assert 'mode_restart_product_stack "$target"' in text
     assert 'mode)           shift; cmd_mode' in text
     assert "Mode $target requires --map NAME" in text

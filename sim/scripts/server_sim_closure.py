@@ -405,7 +405,7 @@ def _shared_runtime_evidence(
 
     try:
         _ensure_core_import_path()
-        from runtime.runtime_evidence import validate_runtime_evidence
+        from runtime.diagnostics.runtime_evidence import validate_runtime_evidence
 
         result = validate_runtime_evidence(
             report,
@@ -3001,7 +3001,6 @@ def _eval_cmu_unity_sim(report: dict[str, Any]) -> tuple[bool, list[str], dict[s
         "lingtu_tare_explore_profile",
         "lingtu_cmu_tare_profile",
         "lingtu_cmu_adapter_exists",
-        "lingtu_cmu_adapter_launch_exists",
         "lingtu_cmu_adapter_relay_contract",
         "lingtu_cmu_adapter_safety_contract",
     )
@@ -3579,7 +3578,7 @@ GATES: tuple[GateSpec, ...] = (
         "export PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-egl}; "
         "PYTHONPATH=src:.:/opt/ros/humble/local/lib/python3.10/dist-packages:"
         "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
-        "python3 sim/scripts/native_pct_mujoco_gate.py "
+        "python3 sim/scripts/mujoco/native_pct_gate.py "
         "--source-report artifacts/server_sim_closure/large_terrain/report.json "
         "--route terrain_short --planner pct "
         "--artifact-dir artifacts/server_sim_closure/native_pct_mujoco "
@@ -3613,7 +3612,7 @@ GATES: tuple[GateSpec, ...] = (
             "artifacts/fastlio2*/report.json",
         ),
         "LINGTU_MUJOCO_LIVE_RUN_DIR=artifacts/server_sim_closure/mujoco_fastlio2_live "
-        "bash sim/scripts/launch_mujoco_fastlio2_live.sh gate",
+        "bash sim/scripts/mujoco/launch_fastlio2_live.sh gate",
         _eval_fastlio2_live,
         host_requirements=ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS,
     ),
@@ -3651,7 +3650,7 @@ GATES: tuple[GateSpec, ...] = (
         "export LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M=${LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M:-1.0}; "
         "PYTHONPATH=src:.:/opt/ros/humble/local/lib/python3.10/dist-packages:"
         "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
-        "bash sim/scripts/launch_mujoco_fastlio2_live.sh inspection-moving-obstacle-video'",
+        "bash sim/scripts/mujoco/launch_fastlio2_live.sh inspection-moving-obstacle-video'",
         _eval_fastlio2_dynamic_inspection,
         host_requirements=ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS,
     ),
@@ -3731,7 +3730,7 @@ GATES: tuple[GateSpec, ...] = (
         "PYTHONPATH=src:.:/opt/ros/humble/local/lib/python3.10/dist-packages:"
         "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
         "run_start=$(date +%s); "
-        "bash sim/scripts/launch_mujoco_fastlio2_live.sh inspection-loop-video; "
+        "bash sim/scripts/mujoco/launch_fastlio2_live.sh inspection-loop-video; "
         "latest=$(sed -n \"s/^latest_run_dir=//p\" \"$LINGTU_MUJOCO_LIVE_RUN_DIR/latest.txt\" | tail -n 1); "
         "test -n \"$latest\" && test -f \"$latest/report.json\" && "
         "test \"$(stat -c %Y \"$latest/report.json\")\" -ge \"$run_start\" && "
@@ -3759,7 +3758,7 @@ GATES: tuple[GateSpec, ...] = (
         "export LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM=${LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM:-1}; "
         "PYTHONPATH=src:.:/opt/ros/humble/local/lib/python3.10/dist-packages:"
         "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
-        "bash sim/scripts/launch_mujoco_fastlio2_live.sh tare'",
+        "bash sim/scripts/mujoco/launch_fastlio2_live.sh tare'",
         _eval_fastlio2_live,
         host_requirements=ROS2_MUJOCO_FASTLIO2_HOST_REQUIREMENTS,
     ),

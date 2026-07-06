@@ -1,4 +1,4 @@
-﻿import importlib.util
+import importlib.util
 import json
 import math
 import os
@@ -288,7 +288,7 @@ def test_fastlio2_cpp_applies_configured_ieskf_iteration_and_degeneracy_guard():
 
 
 def test_mujoco_fastlio2_live_gate_converts_world_cloud_to_sensor_frame():
-    from sim.scripts.mujoco_live_gate import _world_xyzi_to_sensor_xyzi
+    from sim.scripts.mujoco.live_gate import _world_xyzi_to_sensor_xyzi
 
     class FakeData:
         xpos = [None, np.array([1.0, 2.0, 0.5])]
@@ -334,7 +334,7 @@ def test_mujoco_fastlio2_live_gate_converts_sensor_cloud_to_body_frame():
 
 
 def test_mujoco_fastlio2_live_gate_stationary_imu_specific_force_points_up():
-    from sim.scripts.mujoco_live_gate import _specific_force_body
+    from sim.scripts.mujoco.live_gate import _specific_force_body
 
     state = types.SimpleNamespace(
         orientation=np.array([0.0, 0.0, 0.0, 1.0]),
@@ -347,7 +347,7 @@ def test_mujoco_fastlio2_live_gate_stationary_imu_specific_force_points_up():
 
 
 def test_mujoco_fastlio2_live_gate_gravity_only_imu_ignores_kinematic_velocity_step():
-    from sim.scripts.mujoco_live_gate import _specific_force_body
+    from sim.scripts.mujoco.live_gate import _specific_force_body
 
     state = types.SimpleNamespace(
         orientation=np.array([0.0, 0.0, 0.0, 1.0]),
@@ -393,7 +393,7 @@ def test_mujoco_fastlio2_live_gate_preserves_signed_imu_gyro_z():
 
 
 def test_mujoco_fastlio2_live_gate_defaults_to_kinematic_safe_imu_mode():
-    from sim.scripts.mujoco_live_gate import _build_parser
+    from sim.scripts.mujoco.live_gate import _build_parser
 
     args = _build_parser().parse_args([])
 
@@ -403,7 +403,7 @@ def test_mujoco_fastlio2_live_gate_defaults_to_kinematic_safe_imu_mode():
 
 
 def test_mujoco_fastlio2_live_gate_exposes_wall_timeout_guard():
-    from sim.scripts.mujoco_live_gate import (
+    from sim.scripts.mujoco.live_gate import (
         _build_parser,
         _wall_timeout_status,
     )
@@ -423,7 +423,7 @@ def test_mujoco_fastlio2_live_gate_exposes_wall_timeout_guard():
 
 
 def test_launch_mujoco_fastlio2_live_passes_wall_timeout_guard():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--max-wall-time-s" in text
     assert "LINGTU_MUJOCO_LIVE_MAX_WALL_TIME_S" in text
@@ -431,7 +431,7 @@ def test_launch_mujoco_fastlio2_live_passes_wall_timeout_guard():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_partial_report_path():
-    from sim.scripts.mujoco_live_gate import _build_parser
+    from sim.scripts.mujoco.live_gate import _build_parser
 
     args = _build_parser().parse_args(
         ["--partial-json-out", "artifacts/live/report.partial.json"]
@@ -441,7 +441,7 @@ def test_mujoco_fastlio2_live_gate_accepts_partial_report_path():
 
 
 def test_mujoco_fastlio2_live_gate_writes_json_before_stdout_print():
-    text = Path("sim/scripts/mujoco_live_gate.py").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/live_gate.py").read_text(encoding="utf-8")
 
     json_write = text.index("if args.json_out:")
     stdout_print = text.index("print(text)")
@@ -451,7 +451,7 @@ def test_mujoco_fastlio2_live_gate_writes_json_before_stdout_print():
 
 
 def test_launch_mujoco_fastlio2_live_defaults_mid360_lidar_to_rolling_scan_time():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--scan-time-profile" in text
     assert '${LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE:-physical_rolling}' in text
@@ -459,7 +459,7 @@ def test_launch_mujoco_fastlio2_live_defaults_mid360_lidar_to_rolling_scan_time(
 
 
 def test_launch_mujoco_fastlio2_live_uses_sim_clock_inspection_timeout_default():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert 'inspection_default_goal_timeout="${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_TIMEOUT:-900}"' in text
     assert 'if [[ "$duration_clock" != "sim"' in text
@@ -467,21 +467,21 @@ def test_launch_mujoco_fastlio2_live_uses_sim_clock_inspection_timeout_default()
 
 
 def test_launch_mujoco_fastlio2_live_disables_pct_optimizer_by_default():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert 'LINGTU_PCT_OPTIMIZE_TRAJECTORY="${LINGTU_PCT_OPTIMIZE_TRAJECTORY:-0}"' in text
     assert "explicitly opts into the GPMP optimizer" in text
 
 
 def test_mujoco_fastlio2_live_gate_disables_pct_optimizer_by_default():
-    text = Path("sim/scripts/mujoco_live_gate.py").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/live_gate.py").read_text(encoding="utf-8")
 
     assert 'PCT_OPTIMIZE_TRAJECTORY_ENV = "LINGTU_PCT_OPTIMIZE_TRAJECTORY"' in text
     assert 'os.environ.setdefault(PCT_OPTIMIZE_TRAJECTORY_ENV, "0")' in text
 
 
 def test_mujoco_fastlio2_live_gate_samples_video_on_duration_clock():
-    from sim.scripts.mujoco_live_gate import _video_sample_elapsed_s
+    from sim.scripts.mujoco.live_gate import _video_sample_elapsed_s
 
     assert _video_sample_elapsed_s(
         "sim",
@@ -501,7 +501,7 @@ def test_mujoco_fastlio2_live_gate_samples_video_on_duration_clock():
 
 
 def test_launch_mujoco_fastlio2_live_cleans_stale_fastlio_processes():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "cleanup_stale_fastlio2" in text
     assert "pkill -f" in text
@@ -510,7 +510,7 @@ def test_launch_mujoco_fastlio2_live_cleans_stale_fastlio_processes():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_fastlio_tuning_args():
-    from sim.scripts.mujoco_live_gate import _build_parser
+    from sim.scripts.mujoco.live_gate import _build_parser
 
     args = _build_parser().parse_args(
         [
@@ -538,7 +538,7 @@ def test_mujoco_fastlio2_live_gate_accepts_fastlio_tuning_args():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_fastlio_time_diff_arg():
-    from sim.scripts.mujoco_live_gate import _build_parser
+    from sim.scripts.mujoco.live_gate import _build_parser
 
     args = _build_parser().parse_args(["--fastlio-time-diff-lidar-to-imu", "-0.0075"])
 
@@ -546,7 +546,7 @@ def test_mujoco_fastlio2_live_gate_accepts_fastlio_time_diff_arg():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_vertical_velocity_constraint_arg():
-    from sim.scripts.mujoco_live_gate import _build_parser
+    from sim.scripts.mujoco.live_gate import _build_parser
 
     default_args = _build_parser().parse_args([])
     explicit_args = _build_parser().parse_args(
@@ -558,7 +558,7 @@ def test_mujoco_fastlio2_live_gate_accepts_vertical_velocity_constraint_arg():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_turn_speed_coupling_args():
-    from sim.scripts.mujoco_live_gate import _build_parser
+    from sim.scripts.mujoco.live_gate import _build_parser
 
     args = _build_parser().parse_args(
         [
@@ -574,7 +574,7 @@ def test_mujoco_fastlio2_live_gate_accepts_turn_speed_coupling_args():
 
 
 def test_mujoco_fastlio2_live_gate_accepts_inspection_tracking_args():
-    from sim.scripts.mujoco_live_gate import _build_parser
+    from sim.scripts.mujoco.live_gate import _build_parser
 
     default_args = _build_parser().parse_args([])
     args = _build_parser().parse_args(
@@ -628,7 +628,7 @@ def test_mujoco_fastlio2_live_gate_accepts_inspection_tracking_args():
 
 
 def test_launch_mujoco_fastlio2_live_passes_fastlio_time_diff_control():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--fastlio-time-diff-lidar-to-imu" in text
     assert "LINGTU_MUJOCO_LIVE_FASTLIO_TIME_DIFF_LIDAR_TO_IMU" in text
@@ -637,7 +637,7 @@ def test_launch_mujoco_fastlio2_live_passes_fastlio_time_diff_control():
 
 
 def test_launch_mujoco_fastlio2_live_passes_turn_speed_coupling_controls():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--nav-turn-speed-yaw-rate-start" in text
     assert "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START" in text
@@ -646,7 +646,7 @@ def test_launch_mujoco_fastlio2_live_passes_turn_speed_coupling_controls():
 
 
 def test_launch_mujoco_fastlio2_live_passes_inspection_tracking_controls():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--inspection-waypoint-threshold" in text
     assert "--inspection-downsample-dist" in text
@@ -757,7 +757,7 @@ def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
 
 
 def test_mujoco_fastlio2_live_gate_reports_fastlio_observability_warnings(tmp_path: Path):
-    from sim.scripts.mujoco_live_gate import _fastlio2_log_diagnostics
+    from sim.scripts.mujoco.live_gate import _fastlio2_log_diagnostics
 
     log = tmp_path / "fastlio2_node.log"
     log.write_text(
@@ -783,7 +783,7 @@ def test_mujoco_fastlio2_live_gate_reports_fastlio_observability_warnings(tmp_pa
 
 
 def test_mujoco_fastlio2_live_gate_summarizes_degeneracy_detail_samples():
-    from sim.scripts.mujoco_live_gate import _summarize_degeneracy_detail_samples
+    from sim.scripts.mujoco.live_gate import _summarize_degeneracy_detail_samples
 
     summary = _summarize_degeneracy_detail_samples(
         [
@@ -819,7 +819,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_degeneracy_detail_samples():
 
 
 def test_mujoco_fastlio2_live_gate_confirms_runtime_faults_by_streak():
-    from sim.scripts.mujoco_live_gate import _update_runtime_fault_streak
+    from sim.scripts.mujoco.live_gate import _update_runtime_fault_streak
 
     streaks = {"motion": 0, "z": 0, "yaw": 0}
 
@@ -848,7 +848,7 @@ def test_mujoco_fastlio2_live_gate_confirms_runtime_faults_by_streak():
 
 
 def test_mujoco_fastlio2_live_gate_finds_nearest_time_aligned_sim_pose():
-    from sim.scripts.mujoco_live_gate import _nearest_sim_pose_sample
+    from sim.scripts.mujoco.live_gate import _nearest_sim_pose_sample
 
     samples = [
         (1.0, 10.0, 0.0, 0.1, 0.2),
@@ -867,7 +867,7 @@ def test_mujoco_fastlio2_live_gate_finds_nearest_time_aligned_sim_pose():
 
 
 def test_mujoco_fastlio2_live_gate_builds_fastlio_large_loop_diagnostic_report():
-    from sim.scripts.mujoco_live_gate import _fastlio_large_loop_diagnostic_report
+    from sim.scripts.mujoco.live_gate import _fastlio_large_loop_diagnostic_report
 
     report = _fastlio_large_loop_diagnostic_report(
         segment_consistency=[
@@ -977,7 +977,7 @@ def test_fastlio2_nav_bridge_records_odom_header_stamps():
 
 
 def test_mujoco_fastlio2_motion_window_aligns_sim_samples_to_odom_stamps():
-    from sim.scripts.mujoco_live_gate import _aligned_motion_window
+    from sim.scripts.mujoco.live_gate import _aligned_motion_window
 
     window = _aligned_motion_window(
         [
@@ -1005,7 +1005,7 @@ def test_mujoco_fastlio2_motion_window_aligns_sim_samples_to_odom_stamps():
 
 
 def test_mujoco_fastlio2_motion_window_reports_fallback_when_stamps_are_missing():
-    from sim.scripts.mujoco_live_gate import _aligned_motion_window
+    from sim.scripts.mujoco.live_gate import _aligned_motion_window
 
     window = _aligned_motion_window(
         [],
@@ -1179,7 +1179,7 @@ def test_fastlio2_nav_bridge_rejects_messages_without_frame_header():
 
 
 def test_mujoco_fastlio2_live_gate_exposes_scan_time_profiles():
-    from sim.scripts.mujoco_live_gate import (
+    from sim.scripts.mujoco.live_gate import (
         _build_parser,
         _physical_rolling_scan_from_samples,
         _relative_times_for_scan,
@@ -1234,7 +1234,7 @@ def test_mujoco_fastlio2_live_gate_exposes_scan_time_profiles():
 
 
 def test_mujoco_fastlio2_live_gate_defaults_use_raw_fastlio2_topics():
-    from sim.scripts.mujoco_live_gate import (
+    from sim.scripts.mujoco.live_gate import (
         _build_parser,
         _nav_planner_has_live_map,
         _parse_inspection_goals,
@@ -1280,7 +1280,7 @@ def test_mujoco_fastlio2_live_gate_defaults_use_raw_fastlio2_topics():
 
 
 def test_mujoco_fastlio2_live_gate_builds_navigation_diagnostic_sample():
-    from sim.scripts.mujoco_live_gate import _navigation_diagnostic_sample
+    from sim.scripts.mujoco.live_gate import _navigation_diagnostic_sample
 
     sample = _navigation_diagnostic_sample(
         sim_time_s=12.345,
@@ -1376,7 +1376,7 @@ def test_mujoco_fastlio2_live_gate_builds_navigation_diagnostic_sample():
 
 
 def test_mujoco_fastlio2_live_gate_can_stop_when_inspection_evidence_is_complete():
-    from sim.scripts.mujoco_live_gate import _inspection_gate_evidence_complete
+    from sim.scripts.mujoco.live_gate import _inspection_gate_evidence_complete
 
     ready = _inspection_gate_evidence_complete(
         run_lingtu_inspection=True,
@@ -1487,7 +1487,7 @@ def test_mujoco_fastlio2_live_gate_can_stop_when_inspection_evidence_is_complete
 
 
 def test_mujoco_fastlio2_live_gate_summarizes_path_geometry():
-    from sim.scripts.mujoco_live_gate import _path_summary
+    from sim.scripts.mujoco.live_gate import _path_summary
 
     path = types.SimpleNamespace(
         poses=[
@@ -1515,7 +1515,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_path_geometry():
 
 
 def test_mujoco_fastlio2_live_gate_summarizes_numpy_path_points():
-    from sim.scripts.mujoco_live_gate import _path_summary
+    from sim.scripts.mujoco.live_gate import _path_summary
 
     summary = _path_summary(
         [
@@ -1535,7 +1535,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_numpy_path_points():
 def test_mujoco_truth_nav_pose_aligns_to_tomogram_map_frame(tmp_path: Path):
     from types import SimpleNamespace
 
-    from sim.scripts.mujoco_live_gate import (
+    from sim.scripts.mujoco.live_gate import (
         _map_frame_origin_world_xy_from_tomogram,
         _state_in_map_frame,
     )
@@ -1563,7 +1563,7 @@ def test_mujoco_truth_nav_pose_aligns_to_tomogram_map_frame(tmp_path: Path):
 
 
 def test_mujoco_live_gate_limits_command_acceleration_for_imu_consistency():
-    from sim.scripts.mujoco_live_gate import _limit_command_delta
+    from sim.scripts.mujoco.live_gate import _limit_command_delta
 
     limited = _limit_command_delta(
         target=(0.25, -0.1, 0.4),
@@ -1577,7 +1577,7 @@ def test_mujoco_live_gate_limits_command_acceleration_for_imu_consistency():
 
 
 def test_mujoco_fastlio2_live_gate_rejects_large_translation_scale_error():
-    from sim.scripts.mujoco_live_gate import _motion_consistency_report
+    from sim.scripts.mujoco.live_gate import _motion_consistency_report
 
     report = _motion_consistency_report(
         fastlio2_moved_m=1.7019,
@@ -1603,7 +1603,7 @@ def test_mujoco_fastlio2_live_gate_rejects_large_translation_scale_error():
 
 
 def test_mujoco_fastlio2_live_gate_can_hold_latest_nav_cmd_for_slow_sim_clock():
-    from sim.scripts.mujoco_live_gate import _select_nav_cmd_for_step
+    from sim.scripts.mujoco.live_gate import _select_nav_cmd_for_step
 
     selected = _select_nav_cmd_for_step(
         latest_nav_cmd={"vx": 0.2, "vy": -0.03, "wz": 0.1, "stamp": 100.0},
@@ -1618,7 +1618,7 @@ def test_mujoco_fastlio2_live_gate_can_hold_latest_nav_cmd_for_slow_sim_clock():
 
 
 def test_mujoco_fastlio2_live_gate_summarizes_dynamic_obstacle_sweep_quality():
-    from sim.scripts.mujoco_live_gate import _dynamic_obstacle_sweep_quality
+    from sim.scripts.mujoco.live_gate import _dynamic_obstacle_sweep_quality
 
     report = _dynamic_obstacle_sweep_quality(
         cases=[
@@ -1636,7 +1636,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_dynamic_obstacle_sweep_quality():
 
 
 def test_launch_mujoco_fastlio2_live_exposes_cmd_vel_timeout_override():
-    text = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--cmd-vel-timeout" in text
     assert "--cmd-vel-mux-source-timeout" in text
@@ -1669,7 +1669,7 @@ def test_safety_stack_allows_sim_specific_cmd_vel_mux_source_timeout():
 
 
 def test_mujoco_fastlio2_live_gate_robot_crossing_obstacles_scale_density_and_speed():
-    from sim.scripts.mujoco_live_gate import (
+    from sim.scripts.mujoco.live_gate import (
         _live_moving_obstacle_boxes_from_pose,
         _live_moving_obstacle_points,
         _live_moving_obstacle_speed_bounds,
@@ -1756,7 +1756,7 @@ def test_mujoco_world_registry_includes_product_industrial_park_scene():
 def test_mujoco_fastlio2_live_gate_relays_fastlio_outputs_to_nav_topics():
     from pathlib import Path
     from runtime.runtime_interface import TOPICS
-    from sim.scripts import mujoco_live_gate
+    from sim.scripts.mujoco import live_gate as mujoco_live_gate
 
     source = Path(mujoco_live_gate.__file__).read_text(encoding="utf-8")
     report_source = Path("sim/scripts/mujoco_live/report.py").read_text(
@@ -1770,7 +1770,7 @@ def test_mujoco_fastlio2_live_gate_relays_fastlio_outputs_to_nav_topics():
     )
     combined_source = source + report_source + diagnostics_source + motion_source
     stack_source = Path("src/drivers/sim/mujoco/stack.py").read_text(encoding="utf-8")
-    launcher_source = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(encoding="utf-8")
+    launcher_source = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "resolved_runtime_data_flow" in combined_source
     assert "FastLio2NavBridgeRuntime" not in combined_source
@@ -1804,7 +1804,7 @@ def test_mujoco_fastlio2_live_gate_relays_fastlio_outputs_to_nav_topics():
 
 
 def test_mujoco_fastlio2_live_gate_exception_report_keeps_runtime_contract():
-    from sim.scripts.mujoco_live_gate import _gate_exception_report
+    from sim.scripts.mujoco.live_gate import _gate_exception_report
 
     args = types.SimpleNamespace(
         duration_clock="wall",
@@ -1899,7 +1899,7 @@ def test_mujoco_fastlio2_live_gate_exception_report_keeps_runtime_contract():
 
 def test_mujoco_data_flow_marks_unrequired_navigation_stages_not_run():
     from runtime.runtime_interface import TOPICS
-    from sim.scripts.mujoco_live_gate import _mujoco_data_flow_evidence
+    from sim.scripts.mujoco.live_gate import _mujoco_data_flow_evidence
 
     evidence = _mujoco_data_flow_evidence(
         topic_evidence={
@@ -2639,7 +2639,7 @@ def test_policy_nav_smoke_defaults_to_product_backends():
 
 def test_record_policy_nav_video_uses_product_backends():
     repo_root = Path(__file__).resolve().parents[2]
-    source = (repo_root / "sim/scripts/record_policy_nav_video.py").read_text(encoding="utf-8")
+    source = (repo_root / "sim/scripts/mujoco/record_policy_nav_video.py").read_text(encoding="utf-8")
 
     assert "PRODUCTION_GLOBAL_PLANNER_BACKEND" in source
     assert "planner_backend=PRODUCTION_GLOBAL_PLANNER_BACKEND" in source

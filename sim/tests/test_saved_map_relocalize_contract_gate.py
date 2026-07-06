@@ -417,7 +417,7 @@ def test_saved_map_relocalize_gate_locks_navigation_contract():
         assert report["contracts"][backend]["saved_map_relocalization_supported"] is False
     assert report["plans"]["session_navigating_native_dds"]["ensure"] == ("slam",)
     assert report["plans"]["switch_localizer"]["ensure"] == ("slam",)
-    assert all(report["launch_services"].values())
+    assert all(report["localizer_services"].values())
     status = report["bridge_status"]["localizer"]
     assert status["backend"] == "localizer"
     assert status["localizer_health"] == "LOCKED"

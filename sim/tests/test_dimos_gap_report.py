@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -8,8 +8,8 @@ import time
 from pathlib import Path
 
 from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from runtime.dimos_runtime_dataflow import RUNTIME_DATAFLOW_GATES
-from runtime.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
+from runtime.diagnostics.dimos_runtime_dataflow import RUNTIME_DATAFLOW_GATES
+from runtime.diagnostics.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
 from sim.scripts import dimos_gap_report
 
 

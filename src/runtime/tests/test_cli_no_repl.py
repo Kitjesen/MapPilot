@@ -240,7 +240,7 @@ def test_lite_preflight_rejects_field_runtime_lifecycle_overrides(
     [
         (["--slam-profile", "fastlio2"], "slam_profile must be none"),
         (["--native"], "enable_native must be false"),
-        (["--module-transport", "lcm"], "module_transport must be local"),
+        (["--module-transport", "dds"], "module_transport must be local"),
         (["--endpoint", "thunder-field"], "runtime_endpoint must be thunder_lite"),
     ],
 )
@@ -549,7 +549,7 @@ def test_cli_module_transport_override_reaches_runtime_build(
     sentinel_transport = object()
 
     def fake_module_transport_for_resolved_config(config):
-        assert config["module_transport"] == "lcm"
+        assert config["module_transport"] == "shm"
         return sentinel_transport
 
     monkeypatch.setattr(
@@ -560,14 +560,14 @@ def test_cli_module_transport_override_reaches_runtime_build(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["lingtu.py", "thunder-nav", "--module-transport", "lcm", "--no-repl"],
+        ["lingtu.py", "thunder-nav", "--module-transport", "shm", "--no-repl"],
     )
 
     main_mod.main()
 
-    assert os.environ["LINGTU_MODULE_TRANSPORT"] == "lcm"
+    assert os.environ["LINGTU_MODULE_TRANSPORT"] == "shm"
     assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
-    assert calls["product"][0]["module_transport"] == "lcm"
+    assert calls["product"][0]["module_transport"] == "shm"
     assert system.build_transport is sentinel_transport
     assert system.started is True
 
@@ -594,7 +594,7 @@ def test_external_simulation_profile_runs_relative_launcher(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "status",
     ]
     assert (Path(captured["cwd"]) / "lingtu.py").exists()
@@ -625,7 +625,7 @@ def test_pct_mujoco_profile_defaults_to_pct_video_launcher(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "pct-moving-obstacle-video",
     ]
     assert (Path(captured["cwd"]) / "lingtu.py").exists()
@@ -663,7 +663,7 @@ def test_product_task_endpoint_routes_to_mujoco_live_launcher(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "video",
     ]
     assert (Path(captured["cwd"]) / "lingtu.py").exists()
@@ -710,14 +710,14 @@ def test_external_launcher_uses_runtime_run_spec_env(monkeypatch, capsys):
     ) in output
     assert "Frames:   map->odom, odom->body, body->lidar_link" in output
     assert (
-        "Topic frames: lidar_scan=lidar_link imu=lidar_link "
+        "Topic frames: raw_frame=lidar_link raw=lidar_link "
         "odometry=odom,map registered_cloud=body "
         "map_cloud=map,odom global_path=map,odom "
         "local_path=map,odom,body cmd_vel=body"
     ) in output
     assert (
-        "Flow:     sensors=/points_raw,/imu_raw "
-        "localization_map=/nav/odometry,/nav/registered_cloud,/nav/map_cloud "
+        "Flow:     sensors=/lidar/raw_frame,/imu/raw "
+        "localization_map=/slam/odometry,/slam/registered_cloud,/slam/map_cloud "
         "command=mujoco_velocity_adapter"
     ) in output
     assert (
@@ -728,7 +728,7 @@ def test_external_launcher_uses_runtime_run_spec_env(monkeypatch, capsys):
     assert "command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist]" in output
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "video",
     ]
     assert captured["env"]["LINGTU_PROFILE"] == "explore"
@@ -775,7 +775,7 @@ def test_external_launcher_overrides_stale_runtime_env(monkeypatch, capsys):
     assert "command_sink=mujoco_velocity_adapter simulation_only=true" in output
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "video",
     ]
     assert captured["env"]["LINGTU_PROFILE"] == "explore"
@@ -813,7 +813,7 @@ def test_tare_product_task_endpoint_record_routes_to_mujoco_live_video(monkeypat
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "tare-video",
     ]
     assert (Path(captured["cwd"]) / "lingtu.py").exists()
@@ -849,7 +849,7 @@ def test_endpoint_launcher_accepts_trailing_action_after_options(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "status",
     ]
     assert captured["env"]["LINGTU_PROFILE"] == "explore"
@@ -882,7 +882,7 @@ def test_mujoco_live_endpoint_accepts_visible_demo_action(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "demo",
     ]
     assert captured["env"]["LINGTU_PROFILE"] == "explore"
@@ -913,8 +913,8 @@ def test_switch_plan_prints_sim_to_real_boundary(monkeypatch, capsys):
     assert "lidar_extrinsic=real_mid360" in out
     assert "Current frame links:" in out
     assert "Target data-flow topics:" in out
-    assert "/points_raw,/imu_raw" in out
-    assert "/nav/lidar_scan,/nav/imu" in out
+    assert "/lidar/raw_frame,/imu/raw" in out
+    assert "/slam/odometry,/slam/registered_cloud,/slam/map_cloud" in out
     assert "Current data flow:" in out
     assert "Target data flow:" in out
     assert "command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist]" in out
@@ -945,8 +945,8 @@ def test_switch_plan_json_prints_machine_payload(monkeypatch, capsys):
     assert '"required_topic_frame_ids": [' in out
     assert '"runtime_data_flow_topics": [' in out
     assert '"resolved_runtime_data_flow": [' in out
-    assert '"/points_raw"' in out
-    assert '"/nav/lidar_scan"' in out
+    assert '"/lidar/raw_frame"' in out
+    assert '"/imu/raw"' in out
     assert '"current_validation": {' in out
     assert '"target_validation": {' in out
     assert '"command_sink": "hardware_driver_after_cmd_vel_mux"' in out
@@ -1063,10 +1063,10 @@ def test_runtime_spec_prints_single_profile_boundary(monkeypatch, capsys):
     assert '"command_sink": "mujoco_velocity_adapter"' in out
     assert '"frame_links": {' in out
     assert '"topic_allowed_frame_ids": {' in out
-    assert '"/nav/map_cloud": [' in out
+    assert '"/slam/map_cloud": [' in out
     assert '"resolved_runtime_data_flow": [' in out
     assert '"startup_gates": [' in out
-    assert '"/points_raw"' in out
+    assert '"/lidar/raw_frame"' in out
     assert '"LINGTU_RUNTIME_CONTRACT": "mujoco_fastlio2_live"' in out
 
 
@@ -1083,7 +1083,7 @@ def test_runtime_spec_default_prints_operator_summary(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Runtime spec: PASS" in out
-    assert "Profile: profile=tare_explore endpoint=mujoco_live" in out
+    assert "Profile: profile=explore endpoint=mujoco_live" in out
     assert (
         "Runtime: endpoint=mujoco_live data_source=mujoco_fastlio2_live "
         "runtime_contract=mujoco_fastlio2_live "
@@ -1120,7 +1120,7 @@ def test_show_config_json_exposes_public_runtime_metadata(monkeypatch, capsys):
     assert payload["runtime_endpoint"] == "thunder_field"
     assert payload["endpoint_data_source"] == "thunder_field"
     assert payload["runtime_contract"] == "thunder_field"
-    assert payload["endpoint_contract"] is None
+    assert payload["endpoint_contract"] == "thunder_field_dds_v1"
     assert payload["planner"] == "octoplanner3d"
     assert "_runtime_endpoint" not in payload
 
@@ -1188,13 +1188,13 @@ def test_runtime_contract_prints_canonical_manifest(monkeypatch, capsys):
     }
     assert payload["topics"]["cmd_vel"] == "/nav/cmd_vel"
     assert payload["runtime_data_flow_topics"]["thunder_field"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
-        "/nav/localization_health",
-        "/nav/localization_quality",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
+        "/slam/localization_health",
+        "/slam/localization_quality",
         "/nav/exploration_grid",
         "/nav/terrain_map_ext",
         "/exploration/way_point",
@@ -1203,7 +1203,10 @@ def test_runtime_contract_prints_canonical_manifest(monkeypatch, capsys):
         "/nav/frontier_candidate",
         "/nav/global_path",
         "/nav/way_point",
+        "/nav/terrain_map",
+        "/nav/traversability",
         "/nav/local_path",
+        "/nav/local_planner/control_hint",
         "/nav/cmd_vel",
         "/nav/added_obstacles",
         "/nav/check_obstacle",
@@ -1233,17 +1236,17 @@ def test_runtime_contract_default_prints_operator_summary(monkeypatch, capsys):
     assert "  endpoint_adapter" in out
     assert "Data sources:" in out
     assert (
-        "  thunder_field[hardware] source=/nav/lidar_scan,/nav/imu "
-        "normalized=/nav/lidar_scan,/nav/imu"
+        "  thunder_field[hardware] source=/lidar/raw_frame,/imu/raw "
+        "normalized=/lidar/raw_frame,/imu/raw"
     ) in out
     assert "Profile bindings:" in out
     assert "  nav->thunder_field mode=real_robot_saved_map_navigation" in out
     assert "Artifact formats:" in out
     assert "  tomogram path=tomogram.pickle type=pct_tomogram frame_role=map" in out
     assert "Adapter aliases:" in out
-    assert "  fastlio2 /cloud_registered->/nav/registered_cloud" in out
+    assert "  fastlio2 /cloud_registered->/slam/registered_cloud" in out
     assert "Adapter relays:" in out
-    assert "  cmu_unity /state_estimation->/nav/odometry" in out
+    assert "  cmu_unity /state_estimation->/slam/odometry" in out
     assert "/nav/cmd_vel->/cmd_vel(geometry_msgs/msg/TwistStamped)" in out
     assert "Algorithm interfaces:" in out
     assert "  fastlio_mapping[slam|" in out
@@ -1265,18 +1268,18 @@ def test_runtime_contract_writes_json_out(monkeypatch, tmp_path, capsys):
     payload = json.loads(out_path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "lingtu.runtime_interface.v1"
     assert payload["real_runtime_required_topic_frame_ids"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
-        "/nav/odometry",
-        "/nav/registered_cloud",
-        "/nav/map_cloud",
+        "/lidar/raw_frame",
+        "/imu/raw",
+        "/slam/odometry",
+        "/slam/registered_cloud",
+        "/slam/map_cloud",
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
     ]
     assert payload["real_runtime_required_endpoint_input_topics"] == [
-        "/nav/lidar_scan",
-        "/nav/imu",
+        "/lidar/raw_frame",
+        "/imu/raw",
     ]
 
 
@@ -1303,7 +1306,7 @@ def test_runtime_audit_prints_contract_gate(monkeypatch, capsys):
     assert '"source_frame_contracts": {' in out
     assert '"source_topic_contracts": {' in out
     assert '"src/drivers/sim/mujoco/sensors.py"' in out
-    assert '"sim/scripts/mujoco_live_gate.py"' in out
+    assert '"sim/scripts/mujoco/live_gate.py"' in out
     assert '"sim/scripts/saved_map_relocalize_runtime_gate.py"' in out
     assert '"scripts/monitor/feishu_monitor_bot.py"' in out
     assert '"required_thunder_field_topics": [' in out
@@ -1370,7 +1373,7 @@ def test_runtime_audit_writes_json_out(monkeypatch, tmp_path, capsys):
     assert payload["checks"]["source_frame_contracts"]["ok"] is True
     assert payload["checks"]["source_frame_contracts"]["matches"] == []
     assert (
-        "sim/scripts/mujoco_live_gate.py"
+        "sim/scripts/mujoco/live_gate.py"
         in payload["checks"]["source_frame_contracts"]["checked_files"]
     )
     assert (
@@ -1422,7 +1425,7 @@ def test_runtime_audit_source_frame_contracts_reject_direct_frame_constants(
 ):
     import cli.runtime_audit as audit_mod
 
-    source_root = tmp_path / "src" / "slam"
+    source_root = tmp_path / "src" / "localization"
     source_root.mkdir(parents=True)
     (source_root / "good.py").write_text(
         "FRAME_ID = topic_default_frame_id(TOPICS.odometry)\n"
@@ -1610,7 +1613,7 @@ def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(
     monkeypatch, tmp_path, capsys
 ):
     import cli.main as main_mod
-    import runtime.product_field_check as field_check_mod
+    import runtime.diagnostics.product_field_check as field_check_mod
 
     captured = {}
     out_path = tmp_path / "field_check.json"
@@ -2317,7 +2320,7 @@ def test_mujoco_live_endpoint_accepts_pct_moving_obstacle_action(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "pct-moving-obstacle",
     ]
     assert captured["env"]["LINGTU_PROFILE"] == "sim_mujoco_live"
@@ -2350,7 +2353,7 @@ def test_mujoco_live_endpoint_accepts_inspection_video_action(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "inspection-moving-obstacle-video",
     ]
     assert captured["env"]["LINGTU_PROFILE"] == "sim_mujoco_live"
@@ -2420,7 +2423,7 @@ def test_tare_product_task_endpoint_routes_to_mujoco_live_launcher(monkeypatch):
 
     assert captured["cmd"] == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "tare",
     ]
     assert (Path(captured["cwd"]) / "lingtu.py").exists()

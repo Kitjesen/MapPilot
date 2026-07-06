@@ -46,10 +46,21 @@ def test_nonlocal_module_transport_is_wrapped_for_module_ports(monkeypatch) -> N
 
     monkeypatch.setattr(factory_mod, "create_transport", fake_create_transport)
 
-    transport = module_transport_for_resolved_config({"module_transport": "lcm"})
+    transport = module_transport_for_resolved_config({"module_transport": "shm"})
 
-    assert calls == [TransportStrategy.LCM]
+    assert calls == [TransportStrategy.SHM]
     assert transport.backend_name == "fake-ipc"
+
+
+def test_lcm_module_transport_is_not_supported() -> None:
+    from runtime.blueprints.profile_builder import module_transport_for_resolved_config
+
+    try:
+        module_transport_for_resolved_config({"module_transport": "lcm"})
+    except ValueError as exc:
+        assert "Unknown strategy: lcm" in str(exc)
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("module_transport=lcm must stay outside ModulePort")
 
 
 def test_build_system_from_resolved_profile_honors_module_transport(monkeypatch) -> None:
@@ -71,7 +82,7 @@ def test_build_system_from_resolved_profile_honors_module_transport(monkeypatch)
 
     system = builder_mod.build_system_from_resolved_profile(
         "nav",
-        {"robot": "thunder", "module_transport": "lcm"},
+        {"robot": "thunder", "module_transport": "shm"},
     )
 
     assert system == "system"

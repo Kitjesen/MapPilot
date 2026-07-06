@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
@@ -214,7 +214,7 @@ def _runtime_switch_plan(*, ok: bool = True, dry_run: bool = True) -> dict:
 
 
 def test_product_field_check_passes_with_gateway_and_map_evidence():
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(),
@@ -275,7 +275,7 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
 
 
 def test_product_field_check_rejects_stateful_runtime_switch_preflight():
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     switch_plan = _runtime_switch_plan(dry_run=False)
 
@@ -295,8 +295,8 @@ def test_collect_product_field_check_defaults_to_active_map_provenance(
     monkeypatch,
     tmp_path,
 ):
-    import runtime.gateway_runtime_acceptance as acceptance_mod
-    from runtime.product_field_check import collect_product_field_check
+    import runtime.diagnostics.gateway_runtime_acceptance as acceptance_mod
+    from runtime.diagnostics.product_field_check import collect_product_field_check
 
     active_dir = _write_active_same_source_tomogram(tmp_path / "maps")
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path / "maps"))
@@ -323,7 +323,7 @@ def test_collect_product_field_check_defaults_to_active_map_provenance(
 
 
 def test_product_field_check_fails_field_mode_without_route_or_real_evidence():
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     acceptance = _gateway_acceptance()
     acceptance["checks"]["routecheck_latest"]["ok"] = False
@@ -340,7 +340,7 @@ def test_product_field_check_fails_field_mode_without_route_or_real_evidence():
 
 
 def test_product_field_check_fails_field_command_boundary_on_non_hardware_sink():
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     acceptance = _gateway_acceptance(ok=False)
     acceptance["blockers"] = [
@@ -362,7 +362,7 @@ def test_product_field_check_fails_field_command_boundary_on_non_hardware_sink()
 
 def test_product_field_check_formats_one_screen_summary():
     from cli.runtime_display import format_product_field_check
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(),
@@ -399,7 +399,7 @@ def test_product_field_check_formats_one_screen_summary():
 
 
 def test_product_field_check_field_mode_requires_algorithm_benchmark():
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(),
@@ -424,7 +424,7 @@ def test_product_field_check_field_mode_requires_algorithm_benchmark():
 
 
 def test_product_field_check_preserves_product_algorithm_profile():
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(mode="simulation"),
@@ -452,7 +452,7 @@ def test_product_field_check_preserves_product_algorithm_profile():
 
 
 def test_product_field_check_non_motion_keeps_algorithm_as_advisory():
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(mode="non_motion"),

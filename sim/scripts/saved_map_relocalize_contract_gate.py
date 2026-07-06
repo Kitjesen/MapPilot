@@ -56,8 +56,8 @@ def _collect_bridge_status(profile: str) -> dict[str, Any]:
 
 
 def run_gate() -> dict[str, Any]:
-    launch_path = ROOT / "launch/profiles/localizer_icp.launch.py"
-    launch_text = launch_path.read_text(encoding="utf-8")
+    localizer_service_path = ROOT / "scripts/deploy/s100p/localizer.service"
+    localizer_service_text = localizer_service_path.read_text(encoding="utf-8")
 
     contracts = {
         name: slam_backend_contract(name)
@@ -73,11 +73,11 @@ def run_gate() -> dict[str, Any]:
     localizer_status = _collect_bridge_status("localizer")
     super_lio_status = _collect_bridge_status("super_lio")
 
-    launch_services = {
-        "/slam/relocalize": "/slam/relocalize" in launch_text,
-        "/slam/relocalize_check": "/slam/relocalize_check" in launch_text,
-        "/slam/global_relocalize": "/slam/global_relocalize" in launch_text,
-        "/slam/saved_map_cloud": "/slam/saved_map_cloud" in launch_text,
+    localizer_services = {
+        "/slam/relocalize": "/slam/relocalize" in localizer_service_text,
+        "/slam/relocalize_check": "/slam/relocalize_check" in localizer_service_text,
+        "/slam/global_relocalize": "/slam/global_relocalize" in localizer_service_text,
+        "/slam/saved_map_cloud": "/slam/saved_map_cloud" in localizer_service_text,
     }
     unsupported_backends_block_saved_map_relocalize = all(
         not _bool(contracts[name]["saved_map_relocalization_supported"])
@@ -116,9 +116,9 @@ def run_gate() -> dict[str, Any]:
         blockers.append("localizer saved-map relocalization contract is not conservative and service-backed")
     if not unsupported_backends_block_saved_map_relocalize:
         blockers.append("non-localizer backend exposes saved-map relocalization")
-    if not all(launch_services.values()):
-        missing = [name for name, present in launch_services.items() if not present]
-        blockers.append(f"localizer launch remaps missing: {', '.join(missing)}")
+    if not all(localizer_services.values()):
+        missing = [name for name, present in localizer_services.items() if not present]
+        blockers.append(f"localizer service remaps missing: {', '.join(missing)}")
     if not nav_mode_ok:
         blockers.append("navigation mode does not force native DDS service chain")
     if not status_ok:
@@ -167,7 +167,7 @@ def run_gate() -> dict[str, Any]:
                 "wait_ready": localizer_switch.wait_ready,
             },
         },
-        "launch_services": launch_services,
+        "localizer_services": localizer_services,
         "bridge_status": {
             "localizer": {
                 "state": localizer_status.get("state"),

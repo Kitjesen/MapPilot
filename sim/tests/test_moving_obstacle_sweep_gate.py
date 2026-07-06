@@ -506,7 +506,7 @@ def test_moving_obstacle_sweep_run_matrix_collects_child_reports(tmp_path: Path)
     run_results = moving_obstacle_sweep_gate.run_matrix_cases(
         cases,
         child_run_root=tmp_path / "children",
-        launch_script=Path("sim/scripts/launch_mujoco_fastlio2_live.sh"),
+        launch_script=Path("sim/scripts/mujoco/launch_fastlio2_live.sh"),
         case_timeout_s=30.0,
         duration_s=20.0,
         runner=fake_runner,

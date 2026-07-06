@@ -209,9 +209,9 @@ class LCMEndpointService:
         if self._transport_factory is not None:
             return self._transport_factory()
 
-        from runtime.transport.factory import create_transport
+        from runtime.adapters.lcm.transport import LCMTransport
 
-        return create_transport("lcm")
+        return LCMTransport()
 
     def _ensure_transport(self) -> Any:
         self._transport = self._transport or self._create_default_transport()

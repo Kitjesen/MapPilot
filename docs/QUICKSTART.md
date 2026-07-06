@@ -28,16 +28,18 @@ uv sync --locked --extra dev                         # test/lint tooling
 After sync the `lingtu` console script (`lingtu_cli:main`) is available in the
 uv-managed environment and is equivalent to `uv run --locked python lingtu.py`.
 
-## Robot environment (S100P)
+## Robot environment (Thunder/S100P)
 
 ```bash
-# Once per shell; usually added to ~/.bashrc
-source /opt/ros/humble/setup.bash
-source ~/data/inovxio/lingtu/install/setup.bash   # only after `make build`
+# Native product path
+cd ~/data/SLAM/navigation
+bash scripts/lingtu status
 ```
 
-Only ROS 2 + the colcon overlay are sourced; LingTu does not require any
-extra `setup.bash` or env script.
+The field robot runs the product chain through native systemd services:
+`lingtu-livox-dds`, `lingtu-slam-dds`, `lingtu-nav-dds`, and `lingtu`.
+Do not source ROS 2 or a colcon overlay for the normal navigation path.
+ROS 2 setup is only for explicit compatibility checks.
 
 ## Profiles
 
@@ -63,15 +65,18 @@ The canonical profile source is `cli/profiles_data.py`.
 lingtu map
 ```
 
-Drive the robot manually around the area, then in the REPL:
+Drive the robot manually around the area, then save through the operations CLI
+or the Gateway:
 
 ```
-> map save building_a
+lingtu map save building_a
 ```
 
-`MapManagerModule` writes `map.pcd`, an offline DUFOMap pass cleans dynamic
-obstacles, and the gateway publishes a `tomogram.pickle` and an
-`occupancy.npz` for the planner. Override the map root with `NAV_MAP_DIR`.
+The map package must be treated as a directory, not one file. A complete
+navigation-ready map contains `map.pcd`, `poses.txt`, `metadata.json`,
+`octomap.ot`, and `occupancy.npz`. `map.pcd` proves SLAM saved points;
+`octomap.ot` plus `metadata.json` is the OctoPlanner3D artifact gate.
+`tomogram.pickle` is optional legacy/PCT data.
 
 ### 2. Navigate
 
@@ -82,7 +87,7 @@ lingtu nav
 Then in the REPL:
 
 ```
-> map use building_a       # set the active tomogram
+> map use building_a       # set the active map package
 > navigate 5 3             # x, y in map frame
 > go charging station      # natural-language instruction (semantic planner)
 > stop                     # zero cmd_vel + cancel mission
@@ -146,7 +151,7 @@ Common command-line overrides:
 
 ```bash
 lingtu nav --llm mock              # bypass real LLM
-lingtu nav --planner pct           # force legacy PCT experiment backend
+lingtu nav --planner pct           # explicit legacy/PCT experiment only
 lingtu nav --detector yoloe        # alternative detector
 lingtu sim --no-native             # disable C++ autonomy stack
 lingtu nav --no-semantic           # geometric only
@@ -173,7 +178,7 @@ codex mcp add --transport http lingtu http://192.168.66.13:8090/mcp
 
 | Symptom | Fix |
 |---------|-----|
-| `ros2: command not found` | `source /opt/ros/humble/setup.bash` |
+| `ros2: command not found` | Only relevant for explicit compatibility checks; native DDS navigation does not need ROS 2 sourced |
 | Port 5050 / 8090 already in use | `cli.runtime_extra.kill_residual_ports` runs `fuser -k` on startup; otherwise kill manually |
 | `No active map` | `lingtu map` first, then `map save <name>` and `map use <name>` |
 | Slow Path / LLM unavailable | Set `MOONSHOT_API_KEY` (Kimi), `DASHSCOPE_API_KEY` (Qwen), `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, or run with `--llm mock` |

@@ -11,7 +11,7 @@ def test_sim_runtime_entrypoints_use_profile_builder() -> None:
         "src/drivers/sim/mujoco/stack.py",
         "sim/scripts/run_semantic_full_stack.py",
         "sim/scripts/policy_nav_smoke.py",
-        "sim/scripts/record_policy_nav_video.py",
+        "sim/scripts/mujoco/record_policy_nav_video.py",
         "sim/validation/full_system.py",
     ):
         text = (ROOT / rel_path).read_text(encoding="utf-8-sig")

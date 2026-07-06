@@ -1,6 +1,7 @@
 #include "slam.hpp"
 
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
@@ -75,6 +76,18 @@ int main() {
     std::cerr << "missing_cloud_outputs\n";
     return 1;
   }
+
+  const auto map_dir =
+      std::filesystem::temp_directory_path() / "lingtu_fastlio2_mock_flow_map";
+  std::filesystem::remove_all(map_dir);
+  std::filesystem::create_directories(map_dir);
+  const auto save_status = backend->saveMap((map_dir / "map.pcd").string());
+  check(save_status.ok, "save_map_failed");
+  check(std::filesystem::exists(map_dir / "map.pcd"), "map_pcd_missing");
+  check(std::filesystem::exists(map_dir / "map.raw.pcd"), "raw_map_pcd_missing");
+  check(
+      std::filesystem::exists(map_dir / "map_optimization.json"),
+      "map_optimization_metadata_missing");
 
   std::cout << "fastlio2_mock_flow odometry stamp=" << outputs.stamp_s
             << " points=" << outputs.registered_cloud_body->points.size() << "\n";

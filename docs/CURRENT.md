@@ -25,7 +25,7 @@ For cleanup decisions and archive candidates, see `DOCS_TRIAGE.md`.
 
 | Location | How to use |
 | --- | --- |
-| `docs/archive/` | Historical context only. Recheck code before citing. |
+| `docs/archive/` | Placeholder only. Old snapshots were removed; use git history. |
 | `docs/superpowers/` | Work plans and old execution notes. Not product contract. |
 | `docs/07-testing/*AUDIT*.md` | Evidence snapshots. Date-bound, not architecture. |
 | `docs/plans/` | Forward-looking PRDs and migration plans. Not shipped behavior. |

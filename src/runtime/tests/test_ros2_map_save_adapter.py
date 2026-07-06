@@ -103,15 +103,26 @@ def test_ros2_map_save_adapter_delegates_to_legacy_services() -> None:
             save_patches=False,
             timeout_sec=4.0,
         )
+        slam_resp = adapter.save_slam_map(
+            "map_dir",
+            save_patches=True,
+            timeout_sec=5.0,
+        )
 
     nav.assert_called_once_with("map.pcd", timeout_sec=3.0)
-    pgo.assert_called_once_with(
-        "map_dir",
-        save_patches=False,
-        timeout_sec=4.0,
-    )
+    assert pgo.call_args_list[0].args == ("map_dir",)
+    assert pgo.call_args_list[0].kwargs == {
+        "save_patches": False,
+        "timeout_sec": 4.0,
+    }
+    assert pgo.call_args_list[1].args == ("map_dir",)
+    assert pgo.call_args_list[1].kwargs == {
+        "save_patches": True,
+        "timeout_sec": 5.0,
+    }
     assert nav_resp["source"] == "nav"
     assert pgo_resp["source"] == "pgo"
+    assert slam_resp["source"] == "pgo"
 
 
 def test_default_map_save_adapter_resolves_ros2_when_explicitly_selected(
@@ -128,6 +139,7 @@ def test_default_map_save_adapter_resolves_ros2_when_explicitly_selected(
         assert type(adapter).__module__ == "runtime.adapters.ros2.map_save"
         assert type(adapter).__name__ == "Ros2MapSaveAdapter"
         assert callable(adapter.save_nav_map)
+        assert callable(adapter.save_slam_map)
         assert callable(adapter.save_pgo_map)
         assert "native_slam" in list_plugins("map_save_adapter")
         assert "ros2" in list_plugins("map_save_adapter")

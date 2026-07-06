@@ -11,7 +11,7 @@ import pytest
 pytestmark = [pytest.mark.sim]
 
 from sim.scripts import server_sim_closure
-from sim.scripts.native_pct_mujoco_gate import (
+from sim.scripts.mujoco.native_pct_gate import (
     PctRoute,
     _build_safe_follow_path,
     _default_local_planner_path_folder,

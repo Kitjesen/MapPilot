@@ -489,7 +489,9 @@ class GatewayModule(Module, layer=6):
         # Frontend Topbar/Panel render from this state; no other code path
         # should invoke svc.ensure/stop directly (deprecated /slam/switch
         # forwards here).
-        self._session_mode: str = "idle"        # idle | mapping | navigating
+        self._session_mode: str = "idle"        # idle | mapping | navigating | exploring
+        self._session_product_session: str = "idle"
+        self._session_product_profile: str | None = None
         self._session_map: str | None = None    # active map name for navigating
         self._session_slam_profile: str = "stopped"
         self._session_since: float = time.time()
@@ -1805,6 +1807,8 @@ class GatewayModule(Module, layer=6):
         can_end = self._session_mode != "idle" and not self._session_pending
         return {
             "mode": self._session_mode,
+            "product_session": self._session_product_session,
+            "product_profile": self._session_product_profile,
             "slam_profile": slam_profile,
             "localization_backend": backend,
             "health_source": localization_status.get("health_source"),

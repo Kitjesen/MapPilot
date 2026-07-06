@@ -165,8 +165,14 @@ void IMUProcessor::checkIMUStationary(const Vec<IMUData> &batch)
     acc_var  /= n;
     gyro_var /= n;
 
-    if (acc_var  < m_config.imu_static_acc_thresh * m_config.imu_static_acc_thresh &&
-        gyro_var < m_config.imu_static_gyro_thresh * m_config.imu_static_gyro_thresh)
+    const double acc_thresh2 = m_config.imu_static_acc_thresh * m_config.imu_static_acc_thresh;
+    const double gyro_thresh2 = m_config.imu_static_gyro_thresh * m_config.imu_static_gyro_thresh;
+    const bool low_variance = acc_var < acc_thresh2 && gyro_var < gyro_thresh2;
+    const bool near_static_mean =
+        std::abs(acc_mean.norm() - State::gravity) < m_config.imu_static_acc_thresh &&
+        gyro_mean.norm() < m_config.imu_static_gyro_thresh;
+
+    if (low_variance && near_static_mean)
     {
         m_static_frame_count++;
         if (m_static_frame_count >= m_config.zupt_min_static_frames)

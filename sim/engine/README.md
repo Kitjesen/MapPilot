@@ -1,6 +1,6 @@
-# sim/engine — Simulation Platform Core
+# sim/engine - Simulation Platform Core
 
-`sim/engine` is the canonical simulation runtime runtime. Code here must stay
+`sim/engine` is the canonical simulation runtime. Code here must stay
 hardware-free: it can create synthetic worlds, MuJoCo engines, bridges, and
 scenario assets, but it must not start robot services, publish to real robot
 topics, or depend on field hardware being present.
@@ -10,11 +10,11 @@ topics, or depend on field hardware being present.
 | Path | Responsibility |
 | --- | --- |
 | `core/` | Engine abstractions: `SimEngine` (ABC), `SimWorld`, `WorldConfig`, `RobotConfig`, sensor configs (`CameraConfig`, `LidarConfig`, `IMUConfig`), and data types (`RobotState`, `CameraData`, `VelocityCommand`). |
-| `mujoco/` | MuJoCo engine implementation: `MuJoCoEngine` (physics stepping, ONNX policy → joint control), `MuJoCoCamera`, `MuJoCoLidar`, `PolicyRunner`. |
-| `bridge/` | Simulation ↔ ROS2 bridges: `SimROS2Bridge` (unified topic publisher), `GazeboBridgeConfig` (Gazebo topic mapping), `GazeboRuntimeAdapter` (Gazebo→LingTu topic normalization), `CmuUnityLingtuAdapter` (CMU TARE→LingTu relay). |
+| `mujoco/` | MuJoCo engine implementation: `MuJoCoEngine` (physics stepping, ONNX policy to joint control), `MuJoCoCamera`, `MuJoCoLidar`, `PolicyRunner`. |
+| `bridge/` | Simulation to ROS2 bridges: `SimROS2Bridge` (unified topic publisher), `GazeboBridgeConfig` (Gazebo topic mapping), `GazeboRuntimeAdapter` (Gazebo to LingTu topic normalization), `CmuUnityLingtuAdapter` (CMU TARE to LingTu relay). |
 | `scenarios/` | Test scenario builders: `NavigationScenario` (A-to-B), `SemanticNavScenario` (natural language instruction), plus asset generators for large-terrain, multi-floor, and corridor maps. |
-| `worlds/` | `WorldRegistry` — scene XML lookup, alias registration, empty-world fallback. Resolves paths under `sim/worlds/`. |
-| `cli.py` | CLI entry point (`python -m sim.engine.cli`) — engine/world/scenario selection. |
+| `worlds/` | `WorldRegistry` scene XML lookup, alias registration, empty-world fallback. Resolves paths under `sim/worlds/`. |
+| `cli.py` | CLI entry point (`python -m sim.engine.cli`) for engine/world/scenario selection. |
 
 ## Usage
 
@@ -48,6 +48,38 @@ python lingtu.py sim_gazebo           # Gazebo ROS-native simulation
 python lingtu.py sim_cmu_tare         # CMU Unity + external TARE
 ```
 
+## MuJoCo LiDAR Backend
+
+`lidar_backend="mujoco_lidar"` means LingTu uses the MuJoCo-LiDAR package
+source kept with the simulation LiDAR driver tree.
+
+```text
+src/drivers/sim/lidar/mujoco_lidar/
+```
+
+The LingTu wrapper and call chain are:
+
+```text
+src/drivers/sim/mujoco/driver.py
+  -> MuJoCoEngine.get_lidar_points()
+  -> sim/engine/mujoco/engine.py
+  -> MuJoCoLidar.scan()
+  -> sim/engine/mujoco/lidar.py
+  -> mujoco_lidar.MjLidarWrapper.trace_rays()
+```
+
+For local runs from the checkout, include LingTu `src` on `PYTHONPATH`; the
+top-level `mujoco_lidar` import is a compatibility entry that resolves to the
+driver-tree package above:
+
+```powershell
+$env:PYTHONPATH='D:\inovxio\brain\lingtu\src;D:\inovxio\brain\lingtu'
+```
+
+`src/drivers/sim/mujoco` stays as the Module/runtime adapter layer. The
+simulation engine and sensor implementation stay in `sim/engine` so driver
+code does not own MuJoCo physics or LiDAR ray-casting internals.
+
 ## Scenario Architecture
 
 Scenarios inherit from `Scenario` (ABC) and implement three methods:
@@ -65,7 +97,7 @@ class Scenario(ABC):
 ### Built-in scenarios
 
 | Scenario | Class | Success Condition |
-|----------|-------|-------------------|
+| --- | --- | --- |
 | `navigation` | `NavigationScenario` | Robot enters `goal_radius` around target (x, y) |
 | `semantic_nav` | `SemanticNavScenario` | Robot reaches target object matching natural language instruction |
 
@@ -75,20 +107,20 @@ Asset generators under `scenarios/` produce MJCF scene fragments for
 validation tests:
 
 | File | Purpose |
-|------|---------|
+| --- | --- |
 | `large_terrain_assets.py` | Large outdoor terrain with elevation variation |
 | `multifloor_assets.py` | Multi-floor building with stairs/ramps |
 | `nav_corridor_assets.py` | Corridor with obstacles for path planning tests |
 
 ### CLI flow
 
-```
+```text
 cli.py::main()
-  → _build_engine(engine_name, world_name, headless)   # MuJoCoEngine + WorldRegistry
-  → _build_scenario(scenario_name, scenario_args)       # Scenario subclass
-  → scenario.setup(engine)
-  → loop: engine.step() → scenario.is_complete() → timeout check
-  → _print_scenario_result(scenario, engine)
+  -> _build_engine(engine_name, world_name, headless)   # MuJoCoEngine + WorldRegistry
+  -> _build_scenario(scenario_name, scenario_args)      # Scenario subclass
+  -> scenario.setup(engine)
+  -> loop: engine.step() -> scenario.is_complete() -> timeout check
+  -> _print_scenario_result(scenario, engine)
 ```
 
 ## Bridge Architecture
@@ -97,12 +129,12 @@ Bridges convert simulation engine output into ROS2 messages so the navigation
 stack runs identically in sim and on real hardware:
 
 | Bridge | Backend | Topics |
-|--------|---------|--------|
+| --- | --- | --- |
 | `SimROS2Bridge` | MuJoCo direct | `/slam/odometry`, `/slam/registered_cloud`, `/camera/*`, TF |
 | `GazeboBridgeConfig` | Gazebo/GZ | Topic name mapping for `ros_gz_bridge` |
-| `GazeboRuntimeAdapter` | Gazebo ROS | `/lingtu/gazebo/raw/*` → `/nav/*` normalization |
-| `CmuUnityLingtuAdapter` | CMU Unity | External TARE topics → LingTu `/nav/*` + `/exploration/*` |
-| `GazeboCmdVelAdapter` | Gazebo | `TwistStamped` → `Twist` conversion for Gazebo diff-drive |
+| `GazeboRuntimeAdapter` | Gazebo ROS | `/lingtu/gazebo/raw/*` to `/nav/*` normalization |
+| `CmuUnityLingtuAdapter` | CMU Unity | External TARE topics to LingTu `/nav/*` + `/exploration/*` |
+| `GazeboCmdVelAdapter` | Gazebo | `TwistStamped` to `Twist` conversion for Gazebo diff-drive |
 
 ## Entrypoints
 
@@ -118,4 +150,3 @@ closure evidence must remain simulation-only and should preserve:
 - `simulation_only=true`
 - `real_robot_motion=false`
 - `cmd_vel_sent_to_hardware=false`
-

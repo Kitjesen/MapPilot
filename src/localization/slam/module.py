@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import importlib
+import json
 import math
+import os
 import struct
 import threading
 import time
@@ -67,6 +69,60 @@ def _sync_status(outputs: dict[str, Any]) -> dict[str, float | int]:
         "wait_count": int(outputs.get("sync_wait_count", 0)),
         "imu_rollback_count": int(outputs.get("imu_rollback_count", 0)),
         "lidar_rollback_count": int(outputs.get("lidar_rollback_count", 0)),
+    }
+
+
+def _map_optimization_status(outputs: dict[str, Any]) -> dict[str, Any]:
+    value = outputs.get("map_optimization")
+    if isinstance(value, dict):
+        normalized = dict(value)
+        if "refine_enabled" not in normalized:
+            normalized["refine_enabled"] = bool(
+                normalized.get("hba_refine_enabled", False)
+            )
+        if "refine_applied" not in normalized:
+            normalized["refine_applied"] = bool(
+                normalized.get("hba_refine_applied", False)
+            )
+        return normalized
+    return {
+        "status": str(outputs.get("map_optimization_status") or "not_run"),
+        "backend": str(outputs.get("map_optimization_backend") or ""),
+        "refine_backend": str(outputs.get("map_optimization_refine_backend") or ""),
+        "enabled": bool(outputs.get("map_optimization_enabled", False)),
+        "loop_closure_enabled": bool(
+            outputs.get("map_optimization_loop_closure_enabled", False)
+        ),
+        "loop_closure_applied": bool(
+            outputs.get("map_optimization_loop_closure_applied", False)
+        ),
+        "refine_enabled": bool(
+            outputs.get("map_optimization_refine_enabled")
+            or outputs.get("map_optimization_hba_refine_enabled", False)
+        ),
+        "refine_applied": bool(
+            outputs.get("map_optimization_refine_applied")
+            or outputs.get("map_optimization_hba_refine_applied", False)
+        ),
+        "hba_refine_enabled": bool(
+            outputs.get("map_optimization_hba_refine_enabled", False)
+        ),
+        "hba_refine_applied": bool(
+            outputs.get("map_optimization_hba_refine_applied", False)
+        ),
+        "patch_count": int(outputs.get("map_optimization_patch_count", 0)),
+        "pose_count": int(outputs.get("map_optimization_pose_count", 0)),
+        "optimized_pose_count": int(
+            outputs.get("map_optimization_optimized_pose_count", 0)
+        ),
+        "loop_count": int(outputs.get("map_optimization_loop_count", 0)),
+        "raw_map_points": int(outputs.get("map_optimization_raw_map_points", 0)),
+        "optimized_map_points": int(
+            outputs.get("map_optimization_optimized_map_points", 0)
+        ),
+        "loop_closure_error_m": float(
+            outputs.get("map_optimization_loop_error_m", -1.0)
+        ),
     }
 
 
@@ -422,6 +478,7 @@ class SlamModule(Module, layer=1):
             "saved_map_relocalization_supported": bool(
                 outputs.get("saved_map_relocalization_supported", True)
             ),
+            "map_optimization": _map_optimization_status(outputs),
             "buffers": _buffer_status(outputs),
             "sync": _sync_status(outputs),
             "input_queue": self._queue_snapshot(),
@@ -534,6 +591,25 @@ class _PythonSlamRunner:
         self.last_odom: dict[str, Any] | None = None
         self.pose_history: list[dict[str, Any]] = []
         self.last_map_pcd = ""
+        self.map_optimization: dict[str, Any] = {
+            "status": "not_run",
+            "backend": "python_contract_patch_pose_graph",
+            "refine_backend": "python_contract_voxel_refine",
+            "enabled": True,
+            "loop_closure_enabled": True,
+            "loop_closure_applied": False,
+            "refine_enabled": True,
+            "refine_applied": False,
+            "hba_refine_enabled": True,
+            "hba_refine_applied": False,
+            "patch_count": 0,
+            "pose_count": 0,
+            "optimized_pose_count": 0,
+            "loop_count": 0,
+            "raw_map_points": 0,
+            "optimized_map_points": 0,
+            "loop_closure_error_m": -1.0,
+        }
 
     def configure(self, config: dict[str, Any]) -> dict[str, Any]:
         self.backend = str(config.get("backend") or self.backend)
@@ -636,7 +712,9 @@ class _PythonSlamRunner:
     def saveMap(self, path: str) -> dict[str, Any]:
         pcd = _resolve_map_pcd(path)
         pcd.parent.mkdir(parents=True, exist_ok=True)
+        raw_pcd = pcd.parent / "map.raw.pcd"
         _write_empty_ascii_pcd(pcd)
+        _write_empty_ascii_pcd(raw_pcd)
         if self.pose_history:
             trajectory_path = pcd.parent / "trajectory.txt"
             trajectory_path.write_text(
@@ -654,12 +732,37 @@ class _PythonSlamRunner:
                     encoding="utf-8",
                 )
                 poses_txt = str(pcd.parent / "poses.txt")
+        patch_count = 1 if poses_txt else 0
+        self.map_optimization = {
+            "status": "python_contract_refined_no_loop",
+            "backend": "python_contract_patch_pose_graph",
+            "refine_backend": "python_contract_voxel_refine",
+            "enabled": True,
+            "loop_closure_enabled": True,
+            "loop_closure_applied": False,
+            "refine_enabled": True,
+            "refine_applied": patch_count > 0,
+            "hba_refine_enabled": True,
+            "hba_refine_applied": patch_count > 0,
+            "patch_count": patch_count,
+            "pose_count": patch_count,
+            "optimized_pose_count": 0,
+            "loop_count": 0,
+            "raw_map_points": 0,
+            "optimized_map_points": 0,
+            "loop_closure_error_m": -1.0,
+            "raw_map_path": str(raw_pcd),
+            "optimized_map_path": str(pcd),
+        }
+        _write_map_optimization_metadata(pcd.parent, self.map_optimization)
         self.map_loaded = True
         self.last_map_pcd = str(pcd)
         return {
             "ok": True,
             "message": "map_saved",
             "map_pcd": str(pcd),
+            "raw_map_pcd": str(raw_pcd),
+            "map_optimization": str(pcd.parent / "map_optimization.json"),
             "poses_txt": poses_txt,
             "trajectory_txt": str(pcd.parent / "trajectory.txt") if self.pose_history else "",
             "patches_dir": str(pcd.parent / "patches"),
@@ -705,6 +808,12 @@ class _PythonSlamRunner:
             "dropped_lidar_frames": self.dropped_lidar_frames,
             "dropped_imu_frames": self.dropped_imu_frames,
             "saved_map_relocalization_supported": True,
+            "map_optimization": dict(self.map_optimization),
+            "map_optimization_status": self.map_optimization.get("status", "not_run"),
+            "map_optimization_loop_count": self.map_optimization.get("loop_count", 0),
+            "map_optimization_optimized_pose_count": self.map_optimization.get(
+                "optimized_pose_count", 0
+            ),
         }
 
     def reset(self) -> dict[str, Any]:
@@ -723,6 +832,13 @@ def _load_runner(backend: str, mode: str, map_path: str) -> Any:
 
 
 def _load_native_slam_binding() -> Any | None:
+    if os.environ.get("LINGTU_DISABLE_NATIVE_SLAM_BINDING", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return None
     try:
         native = importlib.import_module("localization.slam._native")
     except Exception as exc:
@@ -996,6 +1112,17 @@ def _write_empty_ascii_pcd(path: Path) -> None:
                 "",
             ]
         ),
+        encoding="utf-8",
+    )
+
+
+def _write_map_optimization_metadata(map_dir: Path, payload: dict[str, Any]) -> None:
+    metadata = {
+        "schema_version": "lingtu.slam.map_optimization.v1",
+        **payload,
+    }
+    (map_dir / "map_optimization.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 

@@ -6,3 +6,4 @@
 
 -r requirements-core-portable.txt
 mujoco>=3.1
+mujoco-lidar>=0.3.3

@@ -67,7 +67,7 @@ Main implementation locations:
 - Service entry: `services/plan/factory.py:create_planner_service(...)`
   returns a `PlannerService` for `Navigation`.
 - Map-backed runtime: `services/plan/global_planner/service.py:GlobalPlanner`.
-  Thunder Lite/mapless runtime uses `services/plan/global_planner/direct.py`.
+  Thunder Lite/mapless runtime uses `services/plan/compat/direct.py`.
 - Backend registry key: `planner_backend`. Backend classes are constructed as
   `BackendCls(tomogram_path, obstacle_thr)`.
 - Backend function names are mandatory: `plan(start, goal)` and
@@ -85,7 +85,7 @@ Main implementation locations:
 | --- | --- | --- |
 | Mission execution | `mission/` | Goal handling, OctoPlanner3D/A*/PCT planning requests, waypoint tracking, recovery, mission FSM. |
 | Global planning dispatch | `services/plan/global_planner/service.py` | Select OctoPlanner3D/A*/PCT planner, validate paths, find safe nearby goals. |
-| Planner service boundary | `services/plan/` | `Navigation`'s planner boundary. `services/plan/factory.py` chooses map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`; `services/plan/global_planner/algorithm/direct_path.py` owns the Thunder Lite direct planner. |
+| Planner service boundary | `services/plan/` | `Navigation`'s planner boundary. `services/plan/factory.py` chooses map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`; `services/plan/compat/direct_path.py` owns the Thunder Lite direct planner. |
 | Maps | `maps/` | L2 map layers used by navigation, safety, gateway preview, and local autonomy. |
 | Safety | `safety/`, `services/geofence.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
 | Frontier exploration | `exploration/` | Wavefront frontier goals and traversability-enriched frontier previews. |
@@ -122,7 +122,7 @@ them just to make the tree look tidier.
 | Traversable frontier preview | `nav/exploration/traversable_frontier_module.py` | Optional navigation stack preview/inspection | Enriches wavefront candidates with traversability and optional semantic evidence, publishes ranked candidate dictionaries. | Not the TARE planner. |
 | Semantic frontier scoring | `decision/frontier_scorer.py` | `SemanticPlanner` and goal-resolution logic | Scores frontier candidates using language, grounding, uncertainty, and semantic context. | Not a Module that drives navigation goals by itself. |
 | TARE exploration | `nav/exploration/tare/` | `tare_explore` profile through the navigation exploration stack | Runs CMU TARE hierarchical exploration via native/adapter integration. | Not the wavefront explorer and not enabled in the `explore` profile. |
-| OctoPlanner3D/A*/PCT global planning | `nav/services/plan/global_planner/service.py`, OctoPlanner3D and legacy PCT/A* under `nav/services/plan/global_planner/algorithm/` | `Navigation` | Python dispatch plus headless OctoPlanner3D, pure-Python A*, and PCT compatibility planners. | Not an exploration policy. |
+| OctoPlanner3D/PCT global planning | `nav/services/plan/global_planner/service.py`, OctoPlanner3D and explicit PCT compatibility under `nav/services/plan/global_planner/algorithm/` | `Navigation` | Python dispatch plus headless OctoPlanner3D and explicit PCT compatibility planners. | Not an exploration policy. |
 
 Profile split:
 

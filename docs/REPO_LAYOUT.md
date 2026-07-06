@@ -36,7 +36,7 @@ where code belongs before adding a new file.
 | --- | --- |
 | `config/` | Robot, device, topic, endpoint, package configuration. |
 | `calibration/` | Camera, IMU, LiDAR, camera-LiDAR calibration tools. |
-| `sim/` | Simulation worlds, robots, scripts, validation, tests. |
+| `sim/` | Simulation engines, worlds, robots, assets, public script gates, validation, and tests. MuJoCo implementations live under `sim/scripts/mujoco/`; old `sim/scripts/<name>` entrypoints are compatibility wrappers. |
 | `scripts/` | Build, deploy, OTA, diagnostics, native/test wrappers plus ROS workspace compatibility, ROS2 compatibility perception demos, robot-side operations. |
 | `tools/` | Developer validation, benchmarks, offline analysis, one-shot packaging. |
 | `tests/` | Remaining integration/script tests outside package-owned tests. |

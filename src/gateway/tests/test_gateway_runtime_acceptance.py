@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -210,7 +210,7 @@ def _snapshots(
     mode: str = "field",
     real_evidence: dict | None = None,
 ) -> dict:
-    from runtime.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
+    from runtime.diagnostics.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
 
     simulation = mode == "simulation"
     runtime_contract = "mujoco_fastlio2_live" if simulation else "thunder_field"
@@ -321,7 +321,7 @@ def _snapshots(
 
 
 def test_gateway_runtime_acceptance_passes_non_motion_without_ros2_topic():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(_snapshots(), mode="non_motion")
 
@@ -341,7 +341,7 @@ def test_gateway_runtime_acceptance_passes_non_motion_without_ros2_topic():
 
 
 def test_gateway_runtime_acceptance_non_motion_exposes_top_level_sim_safety_flags():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(
         _snapshots(mode="simulation"),
@@ -355,7 +355,7 @@ def test_gateway_runtime_acceptance_non_motion_exposes_top_level_sim_safety_flag
 
 
 def test_gateway_runtime_acceptance_fetches_client_readiness_snapshot():
-    from runtime.gateway_runtime_acceptance import GATEWAY_ACCEPTANCE_ENDPOINTS
+    from runtime.diagnostics.gateway_runtime_acceptance import GATEWAY_ACCEPTANCE_ENDPOINTS
 
     assert GATEWAY_ACCEPTANCE_ENDPOINTS["readiness"] == "/api/v1/readiness"
 
@@ -363,7 +363,7 @@ def test_gateway_runtime_acceptance_fetches_client_readiness_snapshot():
 def test_gateway_runtime_acceptance_non_motion_uses_local_stub_when_gateway_is_down(
     monkeypatch,
 ):
-    import runtime.gateway_runtime_acceptance as acceptance_mod
+    import runtime.diagnostics.gateway_runtime_acceptance as acceptance_mod
 
     def _offline_fetch(base_url, name, path, timeout_sec):
         return acceptance_mod.GatewayFetchResult(
@@ -398,7 +398,7 @@ def test_gateway_runtime_acceptance_non_motion_uses_local_stub_when_gateway_is_d
 def test_gateway_runtime_acceptance_field_does_not_use_local_stub_when_gateway_is_down(
     monkeypatch,
 ):
-    import runtime.gateway_runtime_acceptance as acceptance_mod
+    import runtime.diagnostics.gateway_runtime_acceptance as acceptance_mod
 
     def _offline_fetch(base_url, name, path, timeout_sec):
         return acceptance_mod.GatewayFetchResult(
@@ -426,7 +426,7 @@ def test_gateway_runtime_acceptance_field_does_not_use_local_stub_when_gateway_i
 
 
 def test_gateway_runtime_acceptance_in_process_stub_stays_non_motion(monkeypatch):
-    import runtime.gateway_runtime_acceptance as acceptance_mod
+    import runtime.diagnostics.gateway_runtime_acceptance as acceptance_mod
     from runtime.utils.blackbox_recorder import BlackBoxRecorder
     from gateway.gateway_module import GatewayModule
 
@@ -458,7 +458,7 @@ def test_gateway_runtime_acceptance_in_process_stub_stays_non_motion(monkeypatch
 
 
 def test_gateway_runtime_acceptance_field_requires_live_samples():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(_snapshots(), mode="field")
 
@@ -473,7 +473,7 @@ def test_gateway_runtime_acceptance_field_requires_live_samples():
 
 
 def test_gateway_runtime_acceptance_field_passes_with_live_samples():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(
         _snapshots(live=True, real_evidence=_real_runtime_evidence_snapshot()),
@@ -491,7 +491,7 @@ def test_gateway_runtime_acceptance_field_passes_with_live_samples():
 
 
 def test_gateway_runtime_acceptance_field_rejects_partially_live_stage_tokens():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(
         live=True,
@@ -524,7 +524,7 @@ def test_gateway_runtime_acceptance_field_rejects_partially_live_stage_tokens():
 
 
 def test_gateway_runtime_acceptance_format_includes_stage_evidence():
-    from runtime.gateway_runtime_acceptance import (
+    from runtime.diagnostics.gateway_runtime_acceptance import (
         evaluate_gateway_runtime_acceptance,
         format_gateway_runtime_acceptance,
     )
@@ -544,7 +544,7 @@ def test_gateway_runtime_acceptance_format_includes_stage_evidence():
 
 
 def test_gateway_runtime_acceptance_simulation_passes_without_real_runtime_evidence():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(
         _snapshots(live=True, mode="simulation"),
@@ -558,7 +558,7 @@ def test_gateway_runtime_acceptance_simulation_passes_without_real_runtime_evide
 
 
 def test_gateway_runtime_acceptance_simulation_rejects_real_runtime_boundary():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(
         _snapshots(live=True, real_evidence=_real_runtime_evidence_snapshot()),
@@ -573,7 +573,7 @@ def test_gateway_runtime_acceptance_simulation_rejects_real_runtime_boundary():
 
 
 def test_gateway_runtime_acceptance_simulation_rejects_hardware_sink():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True, mode="simulation")
     snapshots["runtime_dataflow"]["runtime_boundary"][
@@ -589,7 +589,7 @@ def test_gateway_runtime_acceptance_simulation_rejects_hardware_sink():
 
 
 def test_gateway_runtime_acceptance_simulation_rejects_failed_routecheck():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True, mode="simulation")
     snapshots["routecheck_latest"]["latest"]["outcome"] = "fail"
@@ -606,7 +606,7 @@ def test_gateway_runtime_acceptance_simulation_rejects_failed_routecheck():
 
 
 def test_gateway_runtime_acceptance_field_rejects_routecheck_with_motion_publish():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(
         live=True,
@@ -627,7 +627,7 @@ def test_gateway_runtime_acceptance_field_rejects_routecheck_with_motion_publish
 
 
 def test_gateway_runtime_acceptance_non_motion_keeps_weak_routecheck_advisory():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     snapshots["routecheck_latest"]["published"].pop("stop_cmd")
@@ -642,7 +642,7 @@ def test_gateway_runtime_acceptance_non_motion_keeps_weak_routecheck_advisory():
 
 
 def test_gateway_runtime_acceptance_rejects_runtime_boundary_blockers():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     snapshots["runtime_dataflow"]["runtime_boundary"]["ok"] = False
@@ -659,7 +659,7 @@ def test_gateway_runtime_acceptance_rejects_runtime_boundary_blockers():
 
 
 def test_gateway_runtime_acceptance_requires_product_inspection_links():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True, real_evidence=_real_runtime_evidence_snapshot())
     links = snapshots["capabilities"]["links"]
@@ -689,7 +689,7 @@ def test_gateway_runtime_acceptance_requires_product_inspection_links():
 
 
 def test_gateway_runtime_acceptance_rejects_missing_subscribe_link_only():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True, real_evidence=_real_runtime_evidence_snapshot())
     snapshots["capabilities"]["links"].pop("runtime_dataflow_subscribe")
@@ -706,7 +706,7 @@ def test_gateway_runtime_acceptance_rejects_missing_subscribe_link_only():
 
 
 def test_gateway_runtime_acceptance_field_requires_real_runtime_evidence():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(_snapshots(live=True), mode="field")
 
@@ -717,7 +717,7 @@ def test_gateway_runtime_acceptance_field_requires_real_runtime_evidence():
 
 
 def test_gateway_runtime_acceptance_field_rejects_smoke_shape_without_real_evidence():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     evidence = _real_runtime_evidence_snapshot(ok=False)
     evidence.update(
@@ -750,7 +750,7 @@ def test_gateway_runtime_acceptance_field_rejects_smoke_shape_without_real_evide
 
 
 def test_gateway_runtime_acceptance_field_rejects_stale_real_runtime_evidence():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     payload = evaluate_gateway_runtime_acceptance(
         _snapshots(
@@ -765,7 +765,7 @@ def test_gateway_runtime_acceptance_field_rejects_stale_real_runtime_evidence():
 
 
 def test_gateway_runtime_acceptance_rejects_ros2_as_primary_boundary():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True)
     dataflow = snapshots["runtime_dataflow"]
@@ -793,7 +793,7 @@ def test_gateway_runtime_acceptance_rejects_ros2_as_primary_boundary():
 
 
 def test_gateway_runtime_acceptance_requires_gateway_sse_for_product_streams():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True, real_evidence=_real_runtime_evidence_snapshot())
     odom_topic = snapshots["runtime_dataflow"]["topics"][0]
@@ -814,7 +814,7 @@ def test_gateway_runtime_acceptance_requires_gateway_sse_for_product_streams():
 
 
 def test_gateway_runtime_acceptance_rejects_not_started_readiness_even_if_http_200():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     snapshots["readiness"] = {
@@ -836,7 +836,7 @@ def test_gateway_runtime_acceptance_rejects_not_started_readiness_even_if_http_2
 
 
 def test_gateway_runtime_acceptance_field_rejects_live_flag_without_module_samples():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(
         live=True,
@@ -866,7 +866,7 @@ def test_gateway_runtime_acceptance_field_rejects_live_flag_without_module_sampl
 
 
 def test_gateway_runtime_acceptance_field_rejects_gateway_only_live_sample():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(
         live=True,
@@ -886,7 +886,7 @@ def test_gateway_runtime_acceptance_field_rejects_gateway_only_live_sample():
 
 
 def test_gateway_runtime_acceptance_field_rejects_stale_module_sample():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(
         live=True,
@@ -904,7 +904,7 @@ def test_gateway_runtime_acceptance_field_rejects_stale_module_sample():
 
 
 def test_gateway_runtime_acceptance_rejects_incomplete_command_whitelist():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     snapshots["runtime_dataflow"]["control_boundary"]["command_interfaces"] = [
@@ -921,7 +921,7 @@ def test_gateway_runtime_acceptance_rejects_incomplete_command_whitelist():
 
 
 def test_gateway_runtime_acceptance_rejects_unexpected_command_interfaces():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     snapshots["runtime_dataflow"]["control_boundary"]["command_interfaces"].append(
@@ -940,7 +940,7 @@ def test_gateway_runtime_acceptance_rejects_unexpected_command_interfaces():
 
 
 def test_gateway_runtime_acceptance_rejects_missing_stage_evidence():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     snapshots["runtime_dataflow"].pop("stage_evidence")
@@ -954,7 +954,7 @@ def test_gateway_runtime_acceptance_rejects_missing_stage_evidence():
 
 
 def test_gateway_runtime_acceptance_rejects_missing_required_stage():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     snapshots["runtime_dataflow"]["stage_evidence"] = [
@@ -975,7 +975,7 @@ def test_gateway_runtime_acceptance_rejects_missing_required_stage():
 
 
 def test_gateway_runtime_acceptance_non_motion_keeps_stage_missing_inputs_advisory():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     stages = snapshots["runtime_dataflow"]["stage_evidence"]
@@ -1000,7 +1000,7 @@ def test_gateway_runtime_acceptance_non_motion_keeps_stage_missing_inputs_adviso
 
 
 def test_gateway_runtime_acceptance_field_rejects_stage_missing_inputs():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(
         live=True,
@@ -1022,7 +1022,7 @@ def test_gateway_runtime_acceptance_field_rejects_stage_missing_inputs():
 
 
 def test_gateway_runtime_acceptance_rejects_missing_tomogram_artifact():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots()
     stages = snapshots["runtime_dataflow"]["stage_evidence"]
@@ -1058,7 +1058,7 @@ def test_gateway_runtime_acceptance_rejects_missing_tomogram_artifact():
 
 
 def test_gateway_runtime_acceptance_field_rejects_non_live_required_stage():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(
         live=True,
@@ -1085,7 +1085,7 @@ def test_gateway_runtime_acceptance_field_rejects_non_live_required_stage():
 
 
 def test_gateway_runtime_acceptance_field_requires_live_traversable_frontier_preview():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True)
     dataflow = snapshots["runtime_dataflow"]
@@ -1116,7 +1116,7 @@ def test_gateway_runtime_acceptance_field_requires_live_traversable_frontier_pre
 
 
 def test_gateway_runtime_acceptance_rejects_frontier_preview_motion_publish():
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True)
     topics = {
@@ -1136,7 +1136,7 @@ def test_gateway_runtime_acceptance_rejects_frontier_preview_motion_publish():
 
 def test_gateway_runtime_acceptance_cli_writes_json(monkeypatch, tmp_path, capsys):
     import cli.main as main_mod
-    import runtime.gateway_runtime_acceptance as acceptance_mod
+    import runtime.diagnostics.gateway_runtime_acceptance as acceptance_mod
 
     out_path = tmp_path / "gateway_acceptance.json"
 
@@ -1186,7 +1186,7 @@ def test_gateway_runtime_acceptance_cli_exits_nonzero_on_blockers(
     monkeypatch, capsys
 ):
     import cli.main as main_mod
-    import runtime.gateway_runtime_acceptance as acceptance_mod
+    import runtime.diagnostics.gateway_runtime_acceptance as acceptance_mod
 
     def _fake_collect(*, gateway_url: str, timeout_sec: float, mode: str):
         return {

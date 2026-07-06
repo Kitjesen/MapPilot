@@ -371,6 +371,9 @@ class SessionStartRequest(BaseModel):
     mode: str | None = Field(default=None, max_length=32)
     map_name: str | None = Field(default=None, max_length=128)
     map: str | None = Field(default=None, max_length=128)
+    profile: str | None = Field(default=None, max_length=64)
+    product_profile: str | None = Field(default=None, max_length=64)
+    product_session: str | None = Field(default=None, max_length=64)
     slam_profile: str | None = Field(default=None, max_length=64)
     slam_backend: str | None = Field(default=None, max_length=64)
 
@@ -1553,6 +1556,8 @@ class NavigationStatusResponse(GatewayResponseModel):
 
 class SessionResponse(GatewayResponseModel):
     mode: str
+    product_session: str = "idle"
+    product_profile: str | None = None
     slam_profile: str = "stopped"
     localization_backend: str | None = None
     health_source: str | None = None

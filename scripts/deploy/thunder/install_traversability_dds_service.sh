@@ -16,7 +16,7 @@ sudo cp "${SCRIPT_DIR}/lingtu-traversability-dds.service" "${SYSTEMD_DIR}/${SERV
 sudo chmod 0644 "${SYSTEMD_DIR}/${SERVICE_NAME}"
 sudo systemctl daemon-reload
 
-if [ "${LINGTU_ENABLE_SERVICE:-0}" = "1" ]; then
+if [ "${LINGTU_ENABLE_SERVICE:-1}" = "1" ]; then
     sudo systemctl enable "${SERVICE_NAME}"
 fi
 

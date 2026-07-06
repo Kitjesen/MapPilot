@@ -46,16 +46,33 @@ def world_xyzi_to_sensor_xyzi(engine: Any, pts_xyzi_world: np.ndarray) -> np.nda
         raise ValueError(f"expected point cloud shape (N, >=3), got {pts.shape}")
 
     data = getattr(engine, "_data", None)
-    lidar_id = int(getattr(engine, "_lidar_body_id", 0))
-    if data is not None and lidar_id >= 0:
-        sensor_pos = np.asarray(data.xpos[lidar_id], dtype=np.float64)
-        sensor_rmat = np.asarray(data.xmat[lidar_id], dtype=np.float64).reshape(3, 3)
-    else:
-        state = engine.get_robot_state()
-        sensor_pos = np.asarray(state.position, dtype=np.float64)
-        sensor_rmat = quat_xyzw_to_matrix(
-            np.asarray(state.orientation, dtype=np.float64)
-        )
+    model = getattr(engine, "_model", None)
+    sensor_pos = None
+    sensor_rmat = None
+    if data is not None:
+        try:
+            import mujoco
+
+            lidar_cfg = getattr(engine, "_lidar_cfg", None)
+            site_name = str(getattr(lidar_cfg, "site_name", "") or "lidar_site")
+            site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+            if site_id >= 0:
+                sensor_pos = np.asarray(data.site_xpos[site_id], dtype=np.float64)
+                sensor_rmat = np.asarray(data.site_xmat[site_id], dtype=np.float64).reshape(3, 3)
+        except Exception:
+            sensor_pos = None
+            sensor_rmat = None
+    if sensor_pos is None or sensor_rmat is None:
+        lidar_id = int(getattr(engine, "_lidar_body_id", 0))
+        if data is not None and lidar_id >= 0:
+            sensor_pos = np.asarray(data.xpos[lidar_id], dtype=np.float64)
+            sensor_rmat = np.asarray(data.xmat[lidar_id], dtype=np.float64).reshape(3, 3)
+        else:
+            state = engine.get_robot_state()
+            sensor_pos = np.asarray(state.position, dtype=np.float64)
+            sensor_rmat = quat_xyzw_to_matrix(
+                np.asarray(state.orientation, dtype=np.float64)
+            )
     xyz_sensor = (pts[:, :3].astype(np.float64) - sensor_pos) @ sensor_rmat
     intensity = (
         pts[:, 3:4].astype(np.float32)
@@ -215,6 +232,47 @@ def make_livox_custom_msg(
     return msg
 
 
+def projected_gravity_body(state: Any) -> np.ndarray:
+    """Return the body-frame gravity direction as a unit vector."""
+
+    projected = np.asarray(
+        getattr(state, "imu_projected_gravity", ()),
+        dtype=np.float64,
+    ).reshape(-1)
+    if projected.shape[0] == 3 and np.isfinite(projected).all():
+        norm = float(np.linalg.norm(projected))
+        if norm > 1e-9:
+            return (projected / norm).astype(np.float64, copy=False)
+
+    gravity_world = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+    rot_body_to_world = quat_xyzw_to_matrix(np.asarray(state.orientation, dtype=np.float64))
+    return (rot_body_to_world.T @ gravity_world).astype(np.float64, copy=False)
+
+
+def sensor_specific_force_body(state: Any) -> np.ndarray:
+    """Return MuJoCo IMU accelerometer data as Fast-LIO specific force.
+
+    Dynamic MuJoCo policy mode exposes a proper accelerometer signal with
+    gravity magnitude already present. Kinematic mode advances poses with
+    ``mj_forward`` and its accelerometer can be near zero, so synthesize the
+    missing gravity term from the same state orientation instead of publishing
+    a non-physical zero-g IMU.
+    """
+
+    accel = np.asarray(
+        getattr(state, "imu_linear_acceleration", ()),
+        dtype=np.float64,
+    ).reshape(-1)
+    if accel.shape[0] != 3 or not np.isfinite(accel).all():
+        accel = np.zeros(3, dtype=np.float64)
+    else:
+        accel = accel.astype(np.float64, copy=True)
+
+    if float(np.linalg.norm(accel)) < 0.5 * 9.80665:
+        accel = accel - projected_gravity_body(state) * 9.80665
+    return accel.astype(np.float64, copy=False)
+
+
 def specific_force_body(
     state: Any,
     prev_velocity: np.ndarray | None,
@@ -223,8 +281,11 @@ def specific_force_body(
     mode: str = "finite_difference",
 ) -> np.ndarray:
     mode = str(mode or "finite_difference").strip().lower()
-    if mode not in {"finite_difference", "gravity_only"}:
+    if mode not in {"finite_difference", "gravity_only", "sensor"}:
         raise ValueError(f"unsupported imu acceleration mode: {mode}")
+
+    if mode == "sensor":
+        return sensor_specific_force_body(state)
 
     velocity = np.asarray(state.linear_velocity, dtype=np.float64)
     if mode == "gravity_only" or prev_velocity is None or dt <= 0.0:

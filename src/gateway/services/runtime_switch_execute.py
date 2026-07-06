@@ -238,6 +238,8 @@ def _execute_hot_switch(
             gw._mode = "autonomous"
             gw._runtime_product_profile = target_profile
             gw._runtime_product_mode = contract.product_mode
+            gw._session_product_profile = target_profile
+            gw._session_product_session = contract.product_session
             gw._runtime_switch_ts = time.time()
     finally:
         if callable(unfreeze):

@@ -14,8 +14,8 @@ itself, started by `lingtu.service`.
 
 ```bash
 # ~/.bashrc / ~/.zshrc
-alias lingtu='ssh sunrise@192.168.66.13 "bash ~/data/SLAM/navigation/scripts/lingtu"'
-alias lingwatch='ssh -t sunrise@192.168.66.13 "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
+alias lingtu='ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc "bash ~/data/SLAM/navigation/scripts/lingtu"'
+alias lingwatch='ssh -t -p 12346 sunrise@fe91fae6a6756695.natapp.cc "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
 ```
 
 After `source ~/.bashrc`:
@@ -33,7 +33,7 @@ lingwatch         # secondary screen, live refresh
 
 ```
 === Lingtu @ 17:26:52 ===
-[1] Session   mode=idle   map=corrected_20260406_224020   can_map=True
+[1] Session   mode=idle   product=idle   map=corrected_20260406_224020   can_map=True
 [2] SLAM      hz=10.0Hz   live_pts=0   loc=GOOD
 [3] Robot     xy=(1.2, -0.4)   z=0.05   yaw=12.3 deg   v=0.0 m/s   w=0.0 rad/s
 [4] Mission   state=IDLE   wp=0/0   replan=0   speed=1.0   deg=NONE
@@ -45,7 +45,8 @@ lingwatch         # secondary screen, live refresh
 
 | Section       | Field                  | Healthy                            | Bad                            |
 |---------------|------------------------|------------------------------------|--------------------------------|
-| [1] Session   | `mode`                 | `idle` / `mapping` / `navigating`  | -                              |
+| [1] Session   | `mode`                 | `idle` / `mapping` / `navigating` / `exploring` | -                              |
+| [1] Session   | `product_session`      | `teleop` / `teleop_avoid` / `mapping` / `tracking` / `navigation` / `inspection` / `exploration` | wrong product mode shown       |
 | [2] SLAM      | `hz`                   | 20-47 Hz (mapping), 10 Hz (nav)    | 0 Hz means service is down     |
 | [2] SLAM      | `loc`                  | `GOOD` / `OK`                      | `DEGRADED` / `LOST`            |
 | [3] Robot     | `xy`                   | within ~+-50 m indoors             | `ODOM DIVERGED` => IEKF blew   |
@@ -126,7 +127,24 @@ The optional goal `yaw` is in radians. It is forwarded to Gateway
 `/api/v1/goal` and published as the map-frame pose orientation; when omitted,
 the heading defaults to `0.0`.
 
-### `plan-preview` - offline tomogram planner gate
+### `mode switch` - product mode switch
+
+```bash
+lingtu mode switch teleop
+lingtu mode switch teleop_avoid --map lab_0423
+lingtu mode switch map
+lingtu mode switch tracking --map lab_0423
+lingtu mode switch nav --map lab_0423
+lingtu mode switch inspection --map lab_0423
+lingtu mode switch tare_explore
+```
+
+`mode` is the low-level Gateway session (`mapping`, `navigating`, or
+`exploring`). `product_session` is the operator-facing mode:
+`teleop`, `teleop_avoid`, `mapping`, `tracking`, `navigation`, `inspection`,
+or `exploration`.
+
+### `plan-preview` - no-motion global planner gate
 
 ```bash
 lingtu plan-preview --internal-only --strict
@@ -135,15 +153,15 @@ lingtu plan-preview --start -9.974 -8.141 0 --goal 2.826 -6.741 0 --strict
 
 This command is the safest planner check. It does not start `lingtu.service`,
 does not call Gateway, does not send `/api/v1/goal`, and does not publish
-`cmd_vel`. It loads `<map-root>/active/tomogram.pickle`, injects synthetic
+`cmd_vel`. For the product path it validates the active map package and
+OctoPlanner3D artifact gate (`octomap.ot` + `metadata.json`), injects synthetic
 odometry into `NavigationModule`, calls `preview_plan()`, prints JSON evidence,
 and exits.
 
 Use it before any real navigation session when validating that the active
-tomogram and planner runtime can produce a feasible global path. The output
-reports tomogram bounds, `last_pose.txt` bounds, PCT runtime library status,
-planner backend class/load errors, start/goal bounds, path point count,
-distance, per-segment spacing, and plan latency.
+OctoMap and planner runtime can produce a feasible global path. PCT/tomogram
+fields are legacy diagnostics and should not be used as product readiness
+evidence unless the profile explicitly selects PCT.
 
 ### Exploration profiles and Gateway contract
 
@@ -424,5 +442,5 @@ lingtu map end && sleep 2 && lingtu map start
   smoke, rollback, failure table, and route-validation gate
 
 - `docs/04-deployment/README.md` —deployment overview, service inventory
-- `docs/archive/05-specialized/dynamic_obstacle_removal.md` —DUFOMap Phase 1 + 2
-- `docs/archive/05-specialized/slam_drift_watchdog.md` —IEKF divergence watchdog
+- `docs/architecture/MAP_SERVICE_CONTRACT.md` - map artifacts and builder contract
+- `docs/03-development/TROUBLESHOOTING.md` - localization drift and recovery notes

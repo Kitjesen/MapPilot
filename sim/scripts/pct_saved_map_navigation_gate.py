@@ -578,7 +578,7 @@ def _build_source_report(
 def _run_native_gate(args: argparse.Namespace, *, source_report: Path, out_path: Path) -> dict[str, Any]:
     cmd = [
         sys.executable,
-        str(ROOT / "sim/scripts/native_pct_mujoco_gate.py"),
+        str(ROOT / "sim/scripts/mujoco/native_pct_gate.py"),
         "--source-report",
         str(source_report),
         "--route",
@@ -666,7 +666,7 @@ def _validate_source_identity(
     map_pcd: Path | None,
     scene_xml: Path,
 ) -> dict[str, Any]:
-    from sim.scripts.native_pct_mujoco_gate import (
+    from sim.scripts.mujoco.native_pct_gate import (
         _load_pct_route,
         _planner_contract,
         _source_map_artifacts,
@@ -813,7 +813,7 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
         if args.source_report is None:
             blockers.append("contract-only mode requires --source-report")
         else:
-            from sim.scripts.native_pct_mujoco_gate import (
+            from sim.scripts.mujoco.native_pct_gate import (
                 _load_pct_route,
                 _planner_contract,
                 _source_map_artifacts,

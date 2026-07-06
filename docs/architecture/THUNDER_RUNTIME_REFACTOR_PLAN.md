@@ -47,13 +47,14 @@ Product profiles answer: what should Thunder do?
 
 Owned by:
 
-- `src/runtime/blueprints/catalog/products.py`
+- `src/runtime/profiles/catalog/products.py`
 - `src/runtime/blueprints/products/thunder.py`
 
 Rules:
 
-- Use product names such as `thunder-lite`, `thunder-nav`, and
-  `thunder-explore`.
+- Use canonical product profiles such as `teleop`, `teleop_avoid`, `map`,
+  `tracking`, `nav`, `inspection`, and `tare_explore`. `thunder-lite`,
+  `thunder-nav`, and `thunder-explore` are compatibility aliases only.
 - Do not encode board names such as `s100p` into new product-facing APIs.
 - Keep robot presets split into canonical names and compatibility aliases.
   `thunder` and `thunder_remote` are canonical physical robot presets;
@@ -68,32 +69,39 @@ process or stack boundary?
 
 Owned by:
 
-- `src/runtime/blueprints/catalog/endpoints.py`
-- `src/runtime/blueprints/runtime_endpoint.py`
+- `src/runtime/profiles/catalog/endpoints.py`
+- `src/runtime/profiles/endpoints.py`
 
 Rules:
 
 - `module_transport` describes internal ModulePort connections.
 - `endpoint_transport` describes cross-stack or cross-process data exchange.
 - `thunder_lite` stays `local + local`.
-- `thunder_field` uses `local + lcm` and advertises the
-  `thunder_field_lcm_v1` endpoint contract.
+- `thunder_field` uses local Module wires plus typed DDS field services and
+  advertises the `thunder_field_dds_v1` endpoint contract.
 - Product-facing endpoint selectors should use aliases such as
   `thunder-field` or `field`; `real_s100p` and `s100p` remain compatibility
   aliases only.
-- `localization_adapter=lcm_endpoint` is the endpoint localization ingress for
-  Thunder LCM odometry, map cloud, registered cloud, and health streams.
-- `nav_out_adapter=lcm_nav_output` is the endpoint navigation egress for
-  Thunder LCM global path, local path, active waypoint, and muxed command
-  velocity streams.
+- `thunder_field`'s current catalog entry sets
+  `localization_adapter=cpp_slam_status` (C++ SLAM status/localization
+  ingress) and `native_navigation_endpoint=lingtu-nav-dds` (native DDS
+  goal/path/cmd_vel exchange); neither uses an LCM adapter.
+- LCM `nav_out_adapter`/`nav_in_adapter` Module implementations were removed;
+  `src/runtime/profiles/binding_policy.py` no longer has an
+  `navigation_output_uses_lcm`/`navigation_input_uses_lcm` resolution path
+  (only ROS2 nav-bridge selectors resolve there today). Native DDS
+  (`lingtu-nav-dds`) is the only in-graph-replacement path for endpoint
+  goal/path/cmd_vel exchange.
+- `localization_adapter=lcm_endpoint` remains a registered compat backend
+  (`src/runtime/adapters/lcm/localization_adapter.py`) for Thunder LCM
+  odometry, map cloud, registered cloud, and health streams, but no current
+  catalog endpoint selects it.
 - `command_output_mode=endpoint_only` means endpoint navigation does not keep an
   in-process `ThunderDriver`; the endpoint source owns hardware actuation.
-- `nav_in_adapter=lcm_nav_input` is the endpoint navigation command
-  ingress for Thunder LCM goal, cancel, and semantic instruction streams.
 - LCM payloads use a versioned JSON envelope for normal Module messages; high
   bandwidth streams such as point clouds should use explicit binary schemas.
-- ROS, LCM, simulator, and replay endpoints must be visible here, not hidden
-  inside normal modules.
+- ROS, LCM, DDS, simulator, and replay endpoints must be visible here, not
+  hidden inside normal modules.
 
 ### Module Layer
 
@@ -103,7 +111,10 @@ Owned by:
 
 - `src/runtime/`
 - `src/nav/`
-- `src/semantic/`
+- `src/decision/` (semantic planner, LLM, visual servo, goal resolution;
+  formerly `src/semantic/`)
+- `src/perception/` (detection, tracking, reconstruction, scene
+  understanding; formerly part of `src/semantic/`)
 - `src/memory/`
 - `src/drivers/`
 - `src/gateway/`
@@ -123,31 +134,45 @@ systems?
 Owned by:
 
 - `src/*/adapters/ros2/`
+- `src/runtime/adapters/dds/`
 - `src/runtime/adapters/lcm/`
+- `src/runtime/adapters/native/`
 - future endpoint-specific adapter packages
 
 Rules:
 
 - ROS imports live in compat code only.
 - Legacy import paths may remain as small shims while tests migrate.
-- LCM endpoint contracts live in compat code and must use product-neutral
-  schemas rather than ROS message type names.
-- LCM localization ingress is implemented by
-  `src/runtime/adapters/lcm/localization_adapter.py` and keeps the legacy
-  `SlamBridgeModule` blueprint alias only as a wiring compatibility name.
-- LCM path, waypoint, and velocity command egress is implemented by
-  `src/runtime/adapters/lcm/nav_output.py`. The product graph should expose it
-  as `nav.out`; legacy path bridge selector values are accepted only by the
-  binding policy and resolve to `lcm_nav_output`.
-- LCM goal, cancel, and semantic instruction ingress is implemented by
-  `src/runtime/adapters/lcm/nav_input.py`. The product graph should expose it
-  as `nav.in`; legacy command bridge selector values are accepted only by the
-  binding policy and resolve to `lcm_nav_input`.
-- Standalone Thunder endpoint processes should use
-  `src/runtime/adapters/lcm/endpoint_service.py` and the runnable
-  `src/runtime/adapters/lcm/endpoint_runner.py` entrypoint to publish normalized
-  sensor/localization streams and consume LingTu path/cmd_vel outputs without
-  importing the LCM package directly.
+- LCM and DDS endpoint contracts live in compat code and must use
+  product-neutral schemas rather than ROS message type names.
+- The canonical `thunder_field` localization ingress is
+  `CppSlamStatusAdapterModule` in `src/runtime/adapters/native/localization_adapter.py`
+  (`localization_adapter=cpp_slam_status`), consuming the typed
+  `lingtu-slam-dds` C++ service status/health stream.
+  `src/runtime/adapters/dds/localization_adapter.py` (`dds_endpoint` backend)
+  is a separate, generic typed-DDS localization/map bridge available for
+  other endpoint compositions. `src/runtime/adapters/lcm/localization_adapter.py`
+  keeps the legacy `SlamBridgeModule` blueprint alias and `lcm_endpoint`
+  backend only as a compat/smoke-test path; no current catalog endpoint
+  selects it.
+- The canonical `thunder_field` navigation goal/path/cmd_vel exchange is the
+  standalone native `lingtu-nav-dds` C++ service
+  (`native_navigation_endpoint=lingtu-nav-dds`), not a Python adapter module.
+- The LCM `nav.out` (global path, local path, active waypoint, muxed command
+  velocity egress) and `nav.in` (goal, cancel, semantic instruction ingress)
+  Module adapters described in earlier revisions of this plan
+  (`lcm_nav_output`, `lcm_nav_input`) have been removed; there is no
+  `src/runtime/adapters/lcm/nav_output.py` or `nav_input.py` in the current
+  tree, and `src/runtime/profiles/binding_policy.py` only resolves ROS2
+  nav-bridge selectors (`navigation_output_uses_ros2`,
+  `navigation_input_uses_ros2`) today, with no LCM equivalent. Native DDS is
+  the only supported in-graph replacement for endpoint nav egress/ingress.
+- Standalone Thunder endpoint processes should use the typed DDS C++ endpoint
+  binaries as the primary path. `src/runtime/adapters/lcm/endpoint_service.py`
+  and the runnable `src/runtime/adapters/lcm/endpoint_runner.py` entrypoint
+  remain available to publish normalized sensor/localization streams and
+  consume LingTu path/cmd_vel outputs for compatibility/smoke/replay checks
+  without importing the LCM package directly.
 - Endpoint sources must implement the
   `src/runtime/adapters/lcm/source.py` plugin protocol. Real hardware adapters and
   smoke/replay sources attach there, not inside product modules.
@@ -173,10 +198,11 @@ Rules:
 - Brainstem command sinks are no longer built into the driver adapter package.
   Field deployments should provide command sinks as endpoint `module:factory`
   sources outside the LingTu module graph.
-- Endpoint bridge module names should be transport-neutral and short in the
-  product graph: use `nav.in` and `nav.out` for navigation command ingress and
-  navigation output egress. Long class names stay hidden behind adapter code and
-  legacy aliases.
+- Historically, endpoint bridge module names were meant to be
+  transport-neutral and short in the product graph (`nav.in`/`nav.out` for
+  navigation command ingress/egress); this convention is moot now that
+  in-graph LCM nav adapters are removed and native DDS nav runs as a
+  standalone C++ service outside the Module graph.
 
 ## Deployment Targets
 
@@ -206,19 +232,26 @@ Contract:
   consumes canonical odometry, map cloud, health, path, and command topics.
 - Safety and command arbitration remain inside LingTu.
 - The resolved `thunder-nav` graph does not include `ThunderDriver` by
-  default. Final motion output is
-  `nav.velocity_mux.driver_cmd_vel -> nav.out.cmd_vel`, then the
-  endpoint source translates that command to the robot hardware.
+  default. Historically, final motion output was
+  `nav.velocity_mux.driver_cmd_vel -> nav.out.cmd_vel` through an in-graph LCM
+  `nav.out` adapter; that adapter has since been removed (see Compatibility
+  Layer above). The current `thunder_field` catalog entry instead routes
+  goal/path/cmd_vel through the standalone native `lingtu-nav-dds` C++
+  service, so no Python nav-egress module is wired in the graph at all.
 - The endpoint process runs separately through
-  `scripts/deploy/thunder/run_lcm_endpoint_service.py` or the
-  `lingtu-thunder-lcm-endpoint.service` systemd unit. Real sensor/SLAM
+  `scripts/deploy/thunder/run_dds_endpoint_service.py` and the
+  `lingtu-thunder-dds-endpoint.service` systemd unit (typed DDS, canonical for
+  field deployment). `scripts/deploy/thunder/run_lcm_endpoint_service.py`
+  (`python -m runtime.adapters.lcm.endpoint_runner`) remains available as a
+  standalone script for LCM compatibility/smoke/replay checks only; there is
+  no corresponding LCM systemd unit in the current tree. Real sensor/SLAM
   ownership attaches as a source plugin at this endpoint boundary, not inside
   normal LingTu modules.
 - The default endpoint command source is `thunder_brainstem`. It owns the
   Brainstem motion sink only. The default service now names the product source
   group `thunder_field`, which expands to that sink and optional configured
   no-ROS localization/sensor providers.
-- `lingtu-thunder-lcm-endpoint.service` uses `LINGTU_ENDPOINT_SOURCES` for the
+- `lingtu-thunder-dds-endpoint.service` uses `LINGTU_ENDPOINT_SOURCES` for the
   comma-separated endpoint source list and keeps `LINGTU_ENDPOINT_SOURCE` only
   as a compatibility fallback.
 - The service exposes `LINGTU_ENDPOINT_JSONL_PATH`,
@@ -227,9 +260,10 @@ Contract:
   LingTu module graph.
 - `tools/validate/validate_thunder_field_deployment.py` is the deployment
   gate for the default endpoint path. It checks the resolved `thunder-nav`
-  runtime spec, endpoint-only graph shape, LCM endpoint contract, systemd unit,
+  runtime spec, endpoint-only graph shape, `thunder_field_dds_v1` DDS
+  endpoint contract, the `lingtu-thunder-dds-endpoint.service` systemd unit,
   and deploy script defaults.
-- Cross-platform endpoint smoke test:
+- Cross-platform endpoint smoke test (LCM compat path, no ROS/DDS required):
   `python scripts/deploy/thunder/run_lcm_endpoint_service.py --transport local --source smoke --once --json`.
 
 ## Refactor Phases
@@ -245,30 +279,28 @@ Contract:
 
 - Move remaining ROS-facing implementations into `src/*/adapters/ros2/`.
 - Keep only temporary shim files at legacy paths.
-- Expand AST boundary checks so `nav`, `semantic`, `drivers`, and `gateway`
-  cannot import ROS directly.
+- Expand AST boundary checks so `nav`, `decision`, `perception`, `drivers`,
+  and `gateway` cannot import ROS directly.
 
-### Phase 3: Make LCM The Field Endpoint
+### Phase 3: Make Typed DDS The Field Endpoint
 
-- Keep generic LCM ModulePort traffic on the JSON envelope, not pickle.
-- Keep `thunder_field_lcm_v1` as the visible endpoint contract for Thunder
-  odometry, clouds, localization health, paths, active waypoint, command
-  velocity, goal, cancel, and semantic instruction streams.
-- Use `LCMLocalizationAdapterModule` for odometry, map cloud, registered cloud,
-  localization quality, and localization health ingress.
-- Use `LCMNavOutModule` for global path, local path, active
-  waypoint, and muxed command velocity egress.
+- Keep `thunder_field_dds_v1` as the visible endpoint contract for Thunder
+  odometry, clouds, localization health, traversability, goals, paths, and
+  command velocity.
+- Keep LCM endpoint code only for smoke/replay compatibility paths.
+- Use `CppSlamStatusAdapterModule` (`localization_adapter=cpp_slam_status`,
+  in `src/runtime/adapters/native/localization_adapter.py`) for C++ SLAM
+  status and localization ingress.
+- Use `lingtu-nav-dds` for native navigation goal/path/cmd_vel exchange.
 - Keep `command_output_mode=endpoint_only` for Thunder endpoints so the
   module graph has one command sink and no duplicate in-process hardware
   driver.
-- Use `LCMNavInModule` for goal, cancel, and semantic
-  instruction ingress.
-- Use `LCMEndpointService` as the standalone endpoint-side publisher/consumer
-  for Thunder LCM sensor, localization, map, path, waypoint, and cmd_vel
-  streams.
+- Use the typed DDS C++ endpoint binaries as the standalone endpoint-side
+  publisher/consumer for Thunder sensor, localization, map, path, waypoint, and
+  cmd_vel streams.
 - Use `python -m runtime.adapters.lcm.endpoint_runner` or
-  `scripts/deploy/thunder/run_lcm_endpoint_service.py` as the supervised
-  process entrypoint for that endpoint service.
+  `scripts/deploy/thunder/run_lcm_endpoint_service.py` only for compatibility
+  LCM endpoint checks.
 - Use `--source smoke` for no-ROS endpoint data-flow checks and
   `--source thunder_field` for the default product endpoint source group. Use
   `--source thunder_brainstem` or `--source jsonl` only when debugging those
@@ -298,7 +330,8 @@ Contract:
   `scripts/deploy/thunder/install_lite_service.sh` as the minimal no-ROS
   install target for `thunder-lite`.
 - Keep `scripts/deploy/thunder/install_services.sh` defaulting to
-  `lcm-endpoint`. Use `lite` for the minimal local service and
+  `field-cpp` (installs the DDS endpoint, SLAM DDS, traversability DDS, nav
+  DDS, and lingtu app services). Use `lite` for the minimal local service and
   `ros-compat` / `legacy` only when the old ROS service chain is explicitly
   required.
 - Keep `deploy_thunder.sh` on the lightweight runtime environment and skip the

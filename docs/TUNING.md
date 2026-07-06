@@ -76,8 +76,8 @@ python lingtu.py nav --planner pct
 
 ```bash
 python -m pytest src/runtime/tests/ -q
-ssh sunrise@192.168.66.13 'lingtu status'
-ssh sunrise@192.168.66.13 'lingtu health'
+ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'lingtu status'
+ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'lingtu health'
 ```
 
 Gateway config snapshot: `http://<robot>:5050/api/v1/config`.

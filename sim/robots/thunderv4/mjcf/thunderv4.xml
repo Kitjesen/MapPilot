@@ -218,6 +218,11 @@
     <gyro          name='angular-velocity'    site='imu' noise='0.005' cutoff='34.9'/>
     <velocimeter   name='linear-velocity'     site='imu' noise='0.001' cutoff='30'/>
     <accelerometer name='linear-acceleration' site='imu' noise='0.005' cutoff='157'/>
+    <framequat     name='lidar-orientation' objtype='site' noise='0.001' objname='lidar_site'/>
+    <framepos      name='lidar-position' objtype='site' noise='0.001' objname='lidar_site'/>
+    <gyro          name='lidar-angular-velocity' site='lidar_site' noise='0.005' cutoff='34.9'/>
+    <velocimeter   name='lidar-linear-velocity' site='lidar_site' noise='0.001' cutoff='30'/>
+    <accelerometer name='lidar-linear-acceleration' site='lidar_site' noise='0.005' cutoff='157'/>
     <magnetometer  name='magnetometer'        site='imu'/>
   </sensor>
 </mujoco>

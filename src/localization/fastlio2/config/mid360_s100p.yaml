@@ -57,6 +57,8 @@ nbg: 0.0001
 imu_init_num: 20
 near_search_num: 3
 ieskf_max_iter: 5
+max_update_velocity_mps: 3.0
+max_update_velocity_delta_mps: 1.0
 
 gravity_align: true
 esti_il: false

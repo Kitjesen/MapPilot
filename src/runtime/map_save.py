@@ -24,7 +24,7 @@ class MapSaveTimeout(MapSaveError):
 
 
 class MapSaveAdapter(Protocol):
-    """Adapter contract for live-map and PGO map-save operations."""
+    """Adapter contract for live-map and SLAM map-save operations."""
 
     def save_nav_map(
         self,
@@ -34,14 +34,14 @@ class MapSaveAdapter(Protocol):
     ) -> dict[str, Any]:
         """Save the current live navigation map to ``pcd_path``."""
 
-    def save_pgo_map(
+    def save_slam_map(
         self,
         file_path: str | Path,
         *,
         save_patches: bool = True,
         timeout_sec: float = 30.0,
     ) -> dict[str, Any]:
-        """Save the current PGO/SLAM map artifacts under ``file_path``."""
+        """Save the current SLAM map artifacts under ``file_path``."""
 
 
 def default_map_save_adapter() -> MapSaveAdapter:
@@ -105,6 +105,40 @@ def save_nav_map_with_adapter(
     return _result_dict(selected.save_nav_map(pcd_path, timeout_sec=timeout_sec))
 
 
+def save_slam_map_with_adapter(
+    adapter: MapSaveAdapter | Any | None,
+    file_path: str | Path,
+    *,
+    save_patches: bool = True,
+    timeout_sec: float = 30.0,
+) -> dict[str, Any]:
+    """Save a SLAM map through an injected or default adapter.
+
+    A plain callable is accepted for backward-compatible tests and older
+    blueprint injection points. New code should inject ``MapSaveAdapter``.
+    """
+
+    selected = adapter if adapter is not None else default_map_save_adapter()
+    save_method = getattr(selected, "save_slam_map", None)
+    if save_method is None:
+        # Legacy adapter compatibility. Product code should expose
+        # save_slam_map; ROS2 PGO adapters may still carry the old method name.
+        save_method = getattr(selected, "save_pgo_map", None)
+    if callable(selected) and save_method is None:
+        result = selected(
+            file_path,
+            save_patches=save_patches,
+            timeout_sec=timeout_sec,
+        )
+    else:
+        result = save_method(
+            file_path,
+            save_patches=save_patches,
+            timeout_sec=timeout_sec,
+        )
+    return _result_dict(result)
+
+
 def save_pgo_map_with_adapter(
     adapter: MapSaveAdapter | Any | None,
     file_path: str | Path,
@@ -112,23 +146,11 @@ def save_pgo_map_with_adapter(
     save_patches: bool = True,
     timeout_sec: float = 30.0,
 ) -> dict[str, Any]:
-    """Save a PGO map through an injected or default adapter.
+    """Compatibility alias for older call sites."""
 
-    A plain callable is accepted for backward-compatible tests and older
-    blueprint injection points. New code should inject ``MapSaveAdapter``.
-    """
-
-    selected = adapter if adapter is not None else default_map_save_adapter()
-    if callable(selected) and not callable(getattr(type(selected), "save_pgo_map", None)):
-        result = selected(
-            file_path,
-            save_patches=save_patches,
-            timeout_sec=timeout_sec,
-        )
-    else:
-        result = selected.save_pgo_map(
-            file_path,
-            save_patches=save_patches,
-            timeout_sec=timeout_sec,
-        )
-    return _result_dict(result)
+    return save_slam_map_with_adapter(
+        adapter,
+        file_path,
+        save_patches=save_patches,
+        timeout_sec=timeout_sec,
+    )

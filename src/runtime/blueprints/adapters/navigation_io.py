@@ -69,7 +69,7 @@ def wire_navigation_output_adapter(bp: Blueprint) -> Blueprint:
 def add_navigation_output_adapter(bp: Blueprint, **config) -> Blueprint:
     """Add only the navigation output adapter.
 
-    This is used by product modes that do not run NavigationModule but still
+    This is used by product modes that do not run Navigation but still
     need a command/path egress boundary, for example teleop and mapping.
     """
 

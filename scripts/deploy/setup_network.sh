@@ -285,18 +285,22 @@ OTHER_EOF
     cat > "$service_file" << SERVICE_EOF
 [Unit]
 Description=Navigation LiDAR Network Setup
-After=NetworkManager.service network-online.target
-Wants=network-online.target
+After=NetworkManager.service NetworkManager-wait-online.service network-online.target
+Wants=NetworkManager-wait-online.service network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/bash -c '\
+  set -e; \
   IFACE="${iface}"; \
-  nmcli device set \$IFACE managed no 2>/dev/null || true; \
-  ip addr add ${HOST_IP}/${SUBNET_MASK} dev \$IFACE 2>/dev/null || true; \
-  ip link set \$IFACE down; sleep 1; ip link set \$IFACE up; \
-  echo "nav-lidar-network: \$IFACE configured with ${HOST_IP}/${SUBNET_MASK}"'
+  for _ in \$(seq 1 30); do ip link show \$IFACE >/dev/null 2>&1 && break; sleep 1; done; \
+  ip link show \$IFACE >/dev/null; \
+  for _ in \$(seq 1 30); do ip -4 addr show dev \$IFACE | grep -q "inet " && break; sleep 1; done; \
+  ip link set \$IFACE up; \
+  ip addr replace ${HOST_IP}/${SUBNET_MASK} dev \$IFACE; \
+  ip route replace ${LIDAR_SUBNET} dev \$IFACE src ${HOST_IP}; \
+  echo "nav-lidar-network: \$IFACE configured with ${HOST_IP}/${SUBNET_MASK} and ${LIDAR_SUBNET}"'
 
 [Install]
 WantedBy=multi-user.target

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -111,7 +111,7 @@ def test_diagnostics_plugin_catalog_exposes_registered_backends():
     # ^ Cross-layer: gateway test imports from decision/perception for registry setup.
     #   Acceptable: test needs to register a semantic backend in the global
     #   registry so build_plugin_catalog() can detect it.  No production
-    #   dependency �?the import is for side-effect registration only.
+    #   dependency 锟?the import is for side-effect registration only.
 
     clear_diagnostics_cache()
 
@@ -3665,7 +3665,7 @@ def test_runtime_dataflow_topic_route_reports_unknown_selector(monkeypatch):
 def test_runtime_dataflow_reports_live_samples_for_field_topics(monkeypatch):
     import numpy as np
 
-    from runtime.gateway_runtime_acceptance import (
+    from runtime.diagnostics.gateway_runtime_acceptance import (
         FIELD_LIVE_TOPICS,
         FIELD_REQUIRED_LIVE_STAGE_NAMES,
     )
@@ -3723,7 +3723,7 @@ def test_runtime_dataflow_reports_live_samples_for_field_topics(monkeypatch):
 def test_runtime_dataflow_topic_route_answers_every_product_observable_stream_without_ros2(
     monkeypatch,
 ):
-    from runtime.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
+    from runtime.diagnostics.gateway_runtime_acceptance import PRODUCT_OBSERVABLE_TOPICS
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")

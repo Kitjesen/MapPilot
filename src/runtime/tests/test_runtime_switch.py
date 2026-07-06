@@ -219,7 +219,7 @@ def test_runtime_summary_reports_tare_endpoint_frame_override():
             "mujoco_live",
             "mujoco_fastlio2_live",
             "mujoco_fastlio2_live",
-            "sim/scripts/launch_mujoco_fastlio2_live.sh",
+            "sim/scripts/mujoco/launch_fastlio2_live.sh",
             ("gate",),
             ("video",),
         ),

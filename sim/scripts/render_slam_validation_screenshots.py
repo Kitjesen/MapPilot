@@ -23,7 +23,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from sim.scripts.mujoco_live_gate import _build_engine, _parse_start, _resolve_world, _scene_start
+from sim.scripts.mujoco.live_gate import _build_engine, _parse_start, _resolve_world, _scene_start
 
 
 def _save_rgb(path: Path, image: np.ndarray) -> None:

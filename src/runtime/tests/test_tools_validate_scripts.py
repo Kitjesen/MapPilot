@@ -42,3 +42,8 @@ def test_validate_thunder_lite_package_script_passes() -> None:
 def test_validate_thunder_field_deployment_script_passes() -> None:
     result = _run_validator("tools/validate/validate_thunder_field_deployment.py")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_validate_portable_lean_package_script_passes() -> None:
+    result = _run_validator("tools/validate/validate_portable_lean_package.py")
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -76,7 +76,7 @@ class NativeSlamMapSaveAdapter:
     ) -> dict[str, Any]:
         return self._save(pcd_path, timeout_sec=timeout_sec)
 
-    def save_pgo_map(
+    def save_slam_map(
         self,
         file_path: str | Path,
         *,
@@ -84,6 +84,19 @@ class NativeSlamMapSaveAdapter:
         timeout_sec: float = 30.0,
     ) -> dict[str, Any]:
         return self._save(file_path, timeout_sec=timeout_sec)
+
+    def save_pgo_map(
+        self,
+        file_path: str | Path,
+        *,
+        save_patches: bool = True,
+        timeout_sec: float = 30.0,
+    ) -> dict[str, Any]:
+        return self.save_slam_map(
+            file_path,
+            save_patches=save_patches,
+            timeout_sec=timeout_sec,
+        )
 
     def _save(self, path: str | Path, *, timeout_sec: float) -> dict[str, Any]:
         target = Path(path)

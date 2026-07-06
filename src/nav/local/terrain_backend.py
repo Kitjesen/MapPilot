@@ -35,18 +35,46 @@ def build_terrain_params(
 
             config_getter = get_config
         cfg = config_getter()
-        ta = cfg.raw.get("terrain_analysis", {})
+        ta = {
+            **cfg.raw.get("terrain", {}),
+            **cfg.raw.get("terrain_analysis", {}),
+        }
         if ta:
             for attr in [
                 "scan_voxel_size",
+                "terrain_voxel_size",
+                "terrain_voxel_half_width",
                 "decay_time",
                 "no_decay_dis",
+                "clearing_dis",
+                "use_sorting",
+                "quantile_z",
+                "consider_drop",
+                "limit_ground_lift",
+                "max_ground_lift",
+                "clear_dy_obs",
+                "min_dy_obs_dis",
+                "min_dy_obs_angle",
+                "min_dy_obs_rel_z",
+                "abs_dy_obs_rel_z_thre",
+                "min_dy_obs_vfov",
+                "max_dy_obs_vfov",
+                "min_dy_obs_point_num",
+                "min_out_of_fov_point_num",
                 "obstacle_height_thre",
+                "no_data_obstacle",
+                "no_data_block_skip_num",
+                "min_block_point_num",
                 "vehicle_height",
+                "voxel_point_update_thre",
+                "voxel_time_update_thre",
                 "min_rel_z",
                 "max_rel_z",
+                "dis_ratio_z",
+                "planar_voxel_size",
+                "planar_voxel_half_width",
             ]:
-                if attr in ta:
+                if attr in ta and hasattr(params, attr):
                     setattr(params, attr, ta[attr])
                     effective[attr] = getattr(params, attr)
     except ImportError:

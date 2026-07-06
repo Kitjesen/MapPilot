@@ -16,8 +16,8 @@ class RobotState:
     angular_velocity: np.ndarray  # [wx, wy, wz] world frame
     joint_positions: np.ndarray   # (16,) leg joint positions rad, MuJoCo order
     joint_velocities: np.ndarray  # (16,) leg joint velocities rad/s
-    imu_gyro: np.ndarray          # (3,) body-frame gyroscope rad/s
-    imu_projected_gravity: np.ndarray  # (3,) body-frame projected gravity (normalized)
+    imu_gyro: np.ndarray          # (3,) raw IMU-frame gyroscope rad/s
+    imu_projected_gravity: np.ndarray  # (3,) raw IMU-frame projected gravity (normalized)
     imu_linear_acceleration: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float64))
 
     def __post_init__(self):

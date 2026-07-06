@@ -574,7 +574,7 @@ def _start_live_feed(args: argparse.Namespace, run_dir: Path) -> subprocess.Pope
     drive_source = "nav_cmd_vel" if args.live_drive_source == "frontier" else "fixed"
     cmd = [
         python,
-        str(ROOT / "sim/scripts/mujoco_live_gate.py"),
+        str(ROOT / "sim/scripts/mujoco/live_gate.py"),
         "--world",
         args.world,
         "--duration",

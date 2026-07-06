@@ -141,9 +141,9 @@ class LCMLocalizationAdapterModule(Module, layer=1):
 
     @staticmethod
     def _create_default_transport() -> Any:
-        from runtime.transport.factory import create_transport
+        from runtime.adapters.lcm.transport import LCMTransport
 
-        return create_transport("lcm")
+        return LCMTransport()
 
     def _subscribe_binding(self, binding: LCMEndpointBinding) -> Any:
         transport = self._transport

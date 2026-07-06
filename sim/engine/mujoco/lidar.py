@@ -1,14 +1,14 @@
 """MuJoCo LiDAR wrapper.
 
-Production validation prefers mature backends:
+Production validation requires product LiDAR backends:
 
 * ``mujoco_lidar``: MuJoCo-LiDAR package wrapper, including
   Livox MID-360 scan-pattern support and optional CPU/Taichi/JAX/Warp backends.
 * ``ray_caster_lidar``: native ``mujoco.sensor.ray_caster_lidar`` plugin.
 
 The legacy local ``mj_multiRay`` implementation remains available only as an
-explicit development fallback. Strict gates should request a mature backend and
-set ``LidarConfig.require_mature_backend`` so fallback cannot pass silently.
+explicit development fallback. Product gates should set
+``LidarConfig.require_product_backend`` so fallback cannot pass silently.
 """
 
 from __future__ import annotations
@@ -26,7 +26,11 @@ _SIM_SENSORS = Path(__file__).resolve().parents[2] / "sensors"
 if str(_SIM_SENSORS) not in sys.path:
     sys.path.insert(0, str(_SIM_SENSORS))
 
-_MATURE_BACKENDS = {"mujoco_lidar", "ray_caster_lidar"}
+_MUJOCO_LIDAR_PARENT = Path(__file__).resolve().parents[3] / "src" / "drivers" / "sim" / "lidar"
+if _MUJOCO_LIDAR_PARENT.is_dir() and str(_MUJOCO_LIDAR_PARENT) not in sys.path:
+    sys.path.insert(0, str(_MUJOCO_LIDAR_PARENT))
+
+_PRODUCT_BACKENDS = {"mujoco_lidar", "ray_caster_lidar"}
 _BACKEND_ALIASES = {
     "": "auto",
     "auto": "auto",
@@ -66,7 +70,7 @@ class MuJoCoLidar:
         self._backend = ""
         self._backend_error = ""
         self._fallback_used = False
-        self._mature_backend = False
+        self._product_backend = False
 
         self._geomgroup = self._geomgroup_from_config(config)
         requested = self._normalize_backend(config.backend)
@@ -87,10 +91,10 @@ class MuJoCoLidar:
             detail = "; ".join(init_errors) or f"unsupported backend: {requested}"
             raise RuntimeError(f"MuJoCo LiDAR backend initialization failed: {detail}")
 
-        if bool(config.require_mature_backend) and self._backend not in _MATURE_BACKENDS:
+        if bool(config.require_product_backend) and self._backend not in _PRODUCT_BACKENDS:
             detail = "; ".join(init_errors) or self._backend_error or "legacy fallback selected"
             raise RuntimeError(
-                "Mature MuJoCo LiDAR backend required; "
+                "Product MuJoCo LiDAR backend required; "
                 f"selected {self._backend!r}. Details: {detail}"
             )
 
@@ -135,7 +139,7 @@ class MuJoCoLidar:
             self._backend_error = msg
             return False
         self._backend = backend
-        self._mature_backend = backend in _MATURE_BACKENDS
+        self._product_backend = backend in _PRODUCT_BACKENDS
         self._fallback_used = backend == "mj_multiray"
         self._backend_error = ""
         return True
@@ -285,9 +289,12 @@ class MuJoCoLidar:
                 "mujoco_lidar.scan_gen.LivoxGenerator('mid360')."
             ) from exc
 
-    def _next_pattern_angles(self) -> tuple[np.ndarray, np.ndarray]:
+    def _next_pattern_angles(self, sample_count: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         assert self._ray_angles is not None
-        samples = max(1, int(self._config.samples_per_frame))
+        samples = max(
+            1,
+            int(self._config.samples_per_frame if sample_count is None else sample_count),
+        )
         n_angles = len(self._ray_angles)
         start = int(getattr(self, "_ray_cursor", 0))
         indices = (np.arange(samples, dtype=np.int64) + start) % n_angles
@@ -303,21 +310,21 @@ class MuJoCoLidar:
             angles[:, 1].astype(np.float32, copy=False),
         )
 
-    def _next_pattern_dirs_local(self) -> np.ndarray:
-        theta, phi = self._next_pattern_angles()
+    def _next_pattern_dirs_local(self, sample_count: int | None = None) -> np.ndarray:
+        theta, phi = self._next_pattern_angles(sample_count)
         theta64 = theta.astype(np.float64, copy=False)
         phi64 = phi.astype(np.float64, copy=False)
         cp = np.cos(phi64)
         return np.column_stack([cp * np.cos(theta64), cp * np.sin(theta64), np.sin(phi64)])
 
-    def scan(self) -> np.ndarray:
+    def scan(self, sample_count: int | None = None) -> np.ndarray:
         """Perform one LiDAR scan.
 
         Returns:
             (N, 4) float32 XYZI point cloud in world frame.
         """
 
-        pts_xyz = self.scan_xyz()
+        pts_xyz = self.scan_xyz(sample_count)
         if len(pts_xyz) == 0:
             return np.zeros((0, 4), dtype=np.float32)
         return self._points_with_return_model(pts_xyz)
@@ -377,19 +384,19 @@ class MuJoCoLidar:
         ).astype(np.float32)
         return np.column_stack([pts, intensity]).astype(np.float32, copy=False)
 
-    def scan_xyz(self) -> np.ndarray:
+    def scan_xyz(self, sample_count: int | None = None) -> np.ndarray:
         """Return XYZ-only point cloud in world frame."""
 
         if self._backend == "mujoco_lidar":
-            return self._scan_mujoco_lidar()
+            return self._scan_mujoco_lidar(sample_count)
         if self._backend == "ray_caster_lidar":
             return self._scan_plugin()
-        return self._scan_fallback()
+        return self._scan_fallback(sample_count)
 
-    def _scan_mujoco_lidar(self) -> np.ndarray:
+    def _scan_mujoco_lidar(self, sample_count: int | None = None) -> np.ndarray:
         if self._mujoco_lidar is None:
             return np.zeros((0, 3), dtype=np.float32)
-        theta, phi = self._next_pattern_angles()
+        theta, phi = self._next_pattern_angles(sample_count)
         distances = np.asarray(
             self._mujoco_lidar.trace_rays(
                 self._data,
@@ -430,7 +437,7 @@ class MuJoCoLidar:
         valid = np.isfinite(pts).all(axis=1)
         return pts[valid]
 
-    def _scan_fallback(self) -> np.ndarray:
+    def _scan_fallback(self, sample_count: int | None = None) -> np.ndarray:
         """Legacy ``mj_multiRay`` scan used only when fallback is explicit/allowed."""
 
         import mujoco
@@ -440,7 +447,7 @@ class MuJoCoLidar:
         rmat = self._data.xmat[body_id].reshape(3, 3).copy()
 
         if self._ray_angles is not None:
-            dirs_local = self._next_pattern_dirs_local()
+            dirs_local = self._next_pattern_dirs_local(sample_count)
         else:
             ang = self._frame_idx * 0.628
             self._frame_idx += 1
@@ -497,14 +504,14 @@ class MuJoCoLidar:
 
         return {
             "backend": self._backend,
-            "mature_backend": bool(self._mature_backend),
-            "mature_lidar_backend_verified": bool(
-                self._mature_backend and not self._fallback_used
+            "product_backend": bool(self._product_backend),
+            "product_lidar_backend_verified": bool(
+                self._product_backend and not self._fallback_used
             ),
             "fallback_used": bool(self._fallback_used),
             "requested_backend": str(self._config.backend),
             "mujoco_lidar_backend": self._mujoco_lidar_impl,
-            "require_mature_backend": bool(self._config.require_mature_backend),
+            "require_product_backend": bool(self._config.require_product_backend),
             "allow_legacy_fallback": bool(self._config.allow_legacy_fallback),
             "site_name": str(self._config.site_name),
             "sensor_name": str(self._config.sensor_name),

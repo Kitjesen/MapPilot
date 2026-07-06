@@ -221,4 +221,4 @@ python lingtu.py stub
 - A separate "deploy" path. Today the workflow is
   `make build && lingtu <profile>` (optionally `--daemon`). On the S100P
   the `scripts/lingtu` shell wrapper is the operator's CLI; see
-  `docs/archive/AGENTS.md` and `docs/01-getting-started/`.
+  `AGENTS.md` and `docs/01-getting-started/`.

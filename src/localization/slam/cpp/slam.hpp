@@ -111,6 +111,10 @@ struct GnssSample {
 struct OdomSample {
   double stamp_s = 0.0;
   Pose3d odom_body;
+  bool has_velocity = false;
+  double vx = 0.0;
+  double vy = 0.0;
+  double vz = 0.0;
 };
 
 struct Cloud {
@@ -173,6 +177,43 @@ struct SlamOutputs {
   int lidar_buffer = 0;
   int dropped_lidar_frames = 0;
   int dropped_imu_frames = 0;
+
+  bool odom_prior_enabled = false;
+  bool odom_prior_active = false;
+  double odom_prior_age_s = -1.0;
+  double odom_prior_error_xy_m = -1.0;
+  int odom_prior_map_points = 0;
+
+  std::string map_optimization_status = "not_run";
+  std::string map_optimization_backend;
+  std::string map_optimization_refine_backend;
+  bool map_optimization_enabled = false;
+  bool map_optimization_loop_closure_enabled = false;
+  bool map_optimization_loop_closure_applied = false;
+  bool map_optimization_refine_enabled = false;
+  bool map_optimization_refine_applied = false;
+  bool map_optimization_hba_refine_enabled = false;
+  bool map_optimization_hba_refine_applied = false;
+  int map_optimization_patch_count = 0;
+  int map_optimization_pose_count = 0;
+  int map_optimization_optimized_pose_count = 0;
+  int map_optimization_loop_count = 0;
+  int map_optimization_raw_map_points = 0;
+  int map_optimization_optimized_map_points = 0;
+  double map_optimization_loop_error_m = -1.0;
+
+  double fastlio_velocity_x = 0.0;
+  double fastlio_velocity_y = 0.0;
+  double fastlio_velocity_z = 0.0;
+  bool fastlio_degeneracy_detected = false;
+  int fastlio_degenerate_dof_count = 0;
+  double fastlio_condition_number = 0.0;
+  double fastlio_min_eigenvalue = 0.0;
+  double fastlio_max_eigenvalue = 0.0;
+  double fastlio_effective_ratio = 0.0;
+  double fastlio_pos_cov_trace = 0.0;
+  int fastlio_iter_num = 0;
+  bool fastlio_converged = true;
 };
 
 class ISlamBackend {

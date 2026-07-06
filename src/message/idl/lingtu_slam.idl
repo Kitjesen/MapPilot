@@ -134,6 +134,10 @@ struct Float32 {
   float data;
 };
 
+struct Bool {
+  boolean data;
+};
+
 struct Text {
   string data;
 };

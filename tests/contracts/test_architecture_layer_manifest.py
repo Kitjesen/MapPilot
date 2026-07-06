@@ -156,7 +156,7 @@ def test_product_composition_does_not_import_runtime_bootstrap_surfaces() -> Non
     }
     violations: list[str] = []
 
-    for path in (SRC / "core" / "blueprints" / "products").rglob("*.py"):
+    for path in (SRC / "runtime" / "blueprints" / "products").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()

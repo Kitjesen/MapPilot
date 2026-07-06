@@ -29,11 +29,11 @@ def test_external_launch_context_uses_run_spec_command_and_overrides_env(tmp_pat
 
     assert context.command == (
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "video",
     )
     assert context.launcher_path == (
-        tmp_path / "sim/scripts/launch_mujoco_fastlio2_live.sh"
+        tmp_path / "sim/scripts/mujoco/launch_fastlio2_live.sh"
     ).resolve()
     assert context.env["KEEP_ME"] == "1"
     assert context.env["LINGTU_PROFILE"] == "explore"

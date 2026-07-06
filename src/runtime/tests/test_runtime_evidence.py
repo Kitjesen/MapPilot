@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pytest
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from runtime.runtime_evidence import (
+from runtime.diagnostics.runtime_evidence import (
     REAL_HARDWARE_COMMAND_SINK,
     REAL_RUNTIME_COLLECTOR_NAME,
     REAL_RUNTIME_CONTRACT,
@@ -62,7 +62,7 @@ from runtime.runtime_interface import (
 from runtime.runtime_interface import (
     REAL_RUNTIME_CONTRACT as INTERFACE_REAL_RUNTIME_CONTRACT,
 )
-from runtime.runtime_validation_gates import (
+from runtime.diagnostics.runtime_validation_gates import (
     REAL_RUNTIME_EVIDENCE_COLLECTOR_COMMAND,
     REAL_RUNTIME_EVIDENCE_COMMAND,
     REAL_RUNTIME_EVIDENCE_GATE_COMMAND,

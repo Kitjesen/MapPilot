@@ -83,7 +83,7 @@ SIMULATION_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     "sim_mujoco_live": dict(
         _desc="MuJoCo raw MID-360 + Fast-LIO live simulation",
         _default_robot="sim_endpoint",
-        _external_launcher="sim/scripts/launch_mujoco_fastlio2_live.sh",
+        _external_launcher="sim/scripts/mujoco/launch_fastlio2_live.sh",
         _runtime_contract="mujoco_fastlio2_live",
         slam_profile="none",
         llm="mock",
@@ -123,7 +123,7 @@ SIMULATION_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     "sim_mujoco_octo_live": dict(
         _desc="MuJoCo Fast-LIO + OctoPlanner3D closed-loop simulation",
         _default_robot="sim_endpoint",
-        _external_launcher="sim/scripts/launch_mujoco_fastlio2_live.sh",
+        _external_launcher="sim/scripts/mujoco/launch_fastlio2_live.sh",
         _runtime_contract="mujoco_fastlio2_live",
         slam_profile="none",
         llm="mock",
@@ -159,7 +159,7 @@ SIMULATION_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     "sim_mujoco_pct_live": dict(
         _desc="MuJoCo Fast-LIO + PCT closed-loop simulation",
         _default_robot="sim_endpoint",
-        _external_launcher="sim/scripts/launch_mujoco_fastlio2_live.sh",
+        _external_launcher="sim/scripts/mujoco/launch_fastlio2_live.sh",
         _runtime_contract="mujoco_fastlio2_live",
         slam_profile="none",
         llm="mock",

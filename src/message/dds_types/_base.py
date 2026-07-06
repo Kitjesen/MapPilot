@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - host may not have CycloneDDS Python
         float32 = float
         float64 = float
         int8 = int
+        boolean = bool
         sequence = list
         array = _Array()
 

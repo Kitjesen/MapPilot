@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Validate saved map artifact provenance for map.pcd/tomogram/occupancy."""
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     from runtime.same_source_map_artifacts import (
         validate_saved_map_artifact_dir,
     )
-    from runtime.runtime_validation_gates import runtime_validation_gates
+    from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
     from cli.runtime_display import format_saved_map_artifact_gate_payload
 
     payload = validate_saved_map_artifact_dir(

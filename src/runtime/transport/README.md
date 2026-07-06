@@ -1,6 +1,6 @@
 # Transport Backends
 
-This package owns inter-module and cross-process communication backends.
+This package owns inter-module communication backends.
 Modules must not depend on backend-specific message types. They publish normal
 Python objects through `In[T]` and `Out[T]`; adapters serialize at the boundary.
 
@@ -32,9 +32,7 @@ binary payload plus a versioned header/schema over protobuf `repeated` points.
 | --- | --- | --- |
 | `local` | Same process | Default for lightweight product profiles and tests. |
 | `shm` | Same host | High-bandwidth image/point-cloud IPC. |
-| `lcm` | Cross process / same LAN | Optional lightweight IPC. Requires the external `lcm` package only when selected. |
 | `dds` | Same host / LAN | CycloneDDS backend. Use typed adapters for product streams; generic transport is compatibility/testing only and rejects registered product topics. |
-| `dual` | Migration only | SHM plus DDS during compatibility transitions. |
 
 ## Typed DDS Endpoint
 
@@ -73,10 +71,13 @@ Validate the default Thunder endpoint deployment boundary:
 python tools/validate/validate_thunder_field_deployment.py
 ```
 
-## Legacy LCM Payloads
+## Legacy LCM Endpoint Payloads
 
-`lcm` uses `TransportAdapter` with the versioned JSON codec in
-`json_codec.py`. The envelope is readable outside Python and carries:
+The generic `runtime.transport.lcm` backend was removed. LCM is no longer a
+runtime transport strategy. If an old endpoint still needs LCM, it must stay in
+`runtime.adapters.lcm` and use the versioned endpoint codec there. The shared
+JSON envelope in `json_codec.py` remains available for explicit adapters and
+tests, and carries:
 
 - `format`: currently `lingtu.transport.json.v1`
 - `type`: the Python `runtime.msgs.*` type name when available
@@ -94,13 +95,9 @@ and semantic instructions.
 Schema-aware endpoint payloads live in
 `src/runtime/adapters/lcm/endpoint_codec.py`, including binary-safe point cloud and IMU
 envelopes. The endpoint localization input adapter is
-`src/runtime/adapters/lcm/localization_adapter.py`. Navigation output leaves
-through `nav.out`, implemented by `src/runtime/adapters/lcm/nav_output.py`;
-it publishes global paths, local paths, active waypoints, and the final
-`VelocityMux` command velocity after LingTu safety arbitration. Navigation
-input enters through `nav.in`, implemented by
-`src/runtime/adapters/lcm/nav_input.py`; it receives goals, mission cancels,
-and semantic instructions from the endpoint contract.
+`src/runtime/adapters/lcm/localization_adapter.py`. Navigation input/output must
+not use deleted Python `nav.in` / `nav.out` LCM modules on the Thunder field
+path. The product path is typed DDS plus native C++ endpoints.
 For `thunder_field`, the command output mode is `endpoint_only`: LingTu does
 not include an in-process `ThunderDriver` in the default field graph, and the
 endpoint source owns translation from DDS command velocity to robot hardware.
@@ -134,13 +131,14 @@ python tools/validate/validate_lcm_jsonl_feed.py /data/thunder/localization.json
 
 ## Boundary Rule
 
-LCM, DDS, and SHM details stay inside `runtime.transport` or explicit compatibility
-adapters. Product modules and `runtime.msgs` should not import `lcm`,
+DDS and SHM details stay inside `runtime.transport` or explicit compatibility
+adapters. LCM details stay in `runtime.adapters.lcm` only. Product modules and
+`runtime.msgs` should not import `lcm`,
 `cyclonedds`, or ROS message packages directly.
 
 Use explicit wires for cross-process links:
 
 ```python
 bp.wire("SlamBridgeModule", "map_cloud", "nav.terrain", "map_cloud", transport="shm")
-bp.wire("GatewayModule", "goal_pose", "nav.mission", "goal_pose", transport="lcm")
+bp.wire("GatewayModule", "goal_pose", "nav.mission", "goal_pose", transport="dds")
 ```

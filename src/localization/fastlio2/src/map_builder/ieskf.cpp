@@ -291,12 +291,20 @@ void IESKF::update()
     const bool update_rotation_too_large =
         m_max_update_rotation_rad > 0.0
         && update_delta.segment<3>(0).norm() > m_max_update_rotation_rad;
+    const bool velocity_too_large =
+        m_max_update_velocity_mps > 0.0
+        && m_x.v.norm() > m_max_update_velocity_mps;
+    const bool velocity_delta_too_large =
+        m_max_update_velocity_delta_mps > 0.0
+        && update_delta.segment<3>(12).norm() > m_max_update_velocity_delta_mps;
 
     // Pathological degeneracy: revert to IMU prediction entirely (eigenbasis
     // is numerically unreliable so OC projection cannot be trusted either).
     if (pathological
         || update_translation_too_large
         || update_rotation_too_large
+        || velocity_too_large
+        || velocity_delta_too_large
         || (m_reject_nonconverged_update && !m_degeneracy.converged)
         || (m_reject_degenerate_nonconverged_update
             && has_degeneracy

@@ -97,6 +97,7 @@ class RuntimeTopics:
     lidar_scan: str = "/lidar/raw_frame"
     imu: str = "/imu/raw"
 
+    odom_prior: str = "/slam/odom_prior"
     odometry: str = "/slam/odometry"
     registered_cloud: str = "/slam/registered_cloud"
     map_cloud: str = "/slam/map_cloud"
@@ -457,8 +458,8 @@ RUNTIME_DATA_FLOW = (
             "octoplanner3d_uses_headless_octomap_or_point_cloud;"
             "pct_uses_same_source_tomogram"
         ),
-        producer="NavigationModule_global_planner_service",
-        consumers=("LocalPlannerModule", "GatewayModule", "NAV_OUT"),
+        producer="Navigation_global_planner",
+        consumers=("LocalPlanner", "GatewayModule", "NAV_OUT"),
         frequency="on_goal_or_replan",
         transport_policy="direct_default_dds_or_local_when_nav_plan_transport_enabled",
     ),
@@ -476,8 +477,8 @@ RUNTIME_DATA_FLOW = (
         owner="lingtu_autonomy",
         frame_role="map_odom_body_local_terrain",
         map_dependency="live_terrain_maps_traversability_and_global_path",
-        producer="LocalPlannerModule_and_PathFollower",
-        consumers=("PathFollower", "SafetyRing", "CmdVelMux", "GatewayModule"),
+        producer="LocalPlanner_and_PathFollower",
+        consumers=("PathFollower", "SafetyRing", "VelocityMux", "GatewayModule"),
         frequency="local_plan_5_20hz_cmd_vel_20_50hz",
         transport_policy="direct_default_shm_for_external_cpp_local_planner_dds_for_low_rate_path_state",
     ),
@@ -489,7 +490,7 @@ RUNTIME_DATA_FLOW = (
         frame_role="odom_body_registered_cloud",
         map_dependency="current_registered_cloud_and_added_obstacles",
         producer="SafetyRing_or_dynamic_obstacle_gate",
-        consumers=("NavigationModule", "CmdVelMux", "GatewayModule"),
+        consumers=("Navigation", "VelocityMux", "GatewayModule"),
         frequency="10_50hz",
         transport_policy="direct_for_safety_path",
     ),
@@ -500,7 +501,7 @@ RUNTIME_DATA_FLOW = (
         owner="cmd_vel_mux_to_endpoint_sink",
         frame_role="body_twist",
         map_dependency="none",
-        producer="CmdVelMux",
+        producer="VelocityMux",
         consumers=("robot_driver_or_endpoint_command_sink",),
         frequency="20_50hz",
         transport_policy="direct_to_driver_endpoint_transport_only_at_hardware_boundary",
@@ -602,6 +603,37 @@ MESSAGE_FORMATS = {
             "lingtu.dds.OccupancyGrid on the same runtime topic."
         ),
     ),
+    "lingtu.dds.Bool": MessageFormat(
+        name="lingtu.dds.Bool",
+        ros_type="std_msgs/msg/Bool",
+        frame_role="unframed_control_flag",
+        required_fields=("data",),
+        note=(
+            "Native DDS boolean control flag. ROS/compat adapters mirror it as "
+            "std_msgs/msg/Bool instead of making the canonical runtime topic a "
+            "ROS topic."
+        ),
+    ),
+    "lingtu.dds.RelocalizationRequest": MessageFormat(
+        name="lingtu.dds.RelocalizationRequest",
+        ros_type="application/json",
+        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
+        required_fields=("command", "map_path", "guess"),
+        note=(
+            "Typed DDS request for native SLAM relocalization. ROS compatibility "
+            "mirrors it as JSON instead of treating the DDS type as a ROS message."
+        ),
+    ),
+    "lingtu.dds.RelocalizationResponse": MessageFormat(
+        name="lingtu.dds.RelocalizationResponse",
+        ros_type="application/json",
+        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
+        required_fields=("request_id", "success", "state", "quality"),
+        note=(
+            "Typed DDS response for native SLAM relocalization. ROS compatibility "
+            "mirrors it as JSON instead of treating the DDS type as a ROS message."
+        ),
+    ),
     "local_planner_control_hint": MessageFormat(
         name="local_planner_control_hint",
         ros_type="application/json",
@@ -662,8 +694,8 @@ TOPIC_FORMATS = {
     TOPICS.stop: ("std_msgs/msg/Bool",),
     TOPICS.slow_down: ("std_msgs/msg/Float32",),
     TOPICS.speed: ("std_msgs/msg/Float32",),
-    TOPICS.map_clearing: ("std_msgs/msg/Bool",),
-    TOPICS.cloud_clearing: ("std_msgs/msg/Bool",),
+    TOPICS.map_clearing: ("lingtu.dds.Bool",),
+    TOPICS.cloud_clearing: ("lingtu.dds.Bool",),
     TOPICS.added_obstacles: ("sensor_msgs/msg/PointCloud2",),
     TOPICS.check_obstacle: ("std_msgs/msg/Bool",),
     TOPICS.planner_status: ("std_msgs/msg/String",),

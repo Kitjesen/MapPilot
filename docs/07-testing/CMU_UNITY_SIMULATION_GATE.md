@@ -81,7 +81,7 @@ Pass requires:
   use the external TARE bridge;
 - LingTu TARE native remaps align scan, odometry, map, waypoint, runtime, and
   start/finish topics;
-- LingTu has a checked-in CMU Unity adapter launch profile and relay contract;
+- LingTu has a checked-in CMU Unity adapter with a matching relay contract;
 - `simulation_only=true`, `real_robot_motion=false`, and
   `cmd_vel_sent_to_hardware=false`.
 
@@ -96,13 +96,6 @@ Start the adapter in the same isolated ROS domain as the CMU Unity simulation:
 export ROS_DOMAIN_ID=73
 PYTHONPATH=src:. python3 -m sim.engine.bridge.cmu_unity_lingtu_adapter \
   --relay-cmd-vel-to-sim
-```
-
-or through launch:
-
-```bash
-ros2 launch launch/profiles/cmu_unity_lingtu_adapter.launch.py \
-  relay_cmd_vel_to_sim:=true
 ```
 
 Required relays:

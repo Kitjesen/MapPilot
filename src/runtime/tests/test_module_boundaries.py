@@ -146,7 +146,7 @@ def test_package_does_not_import_forbidden_layers_directly(
 def test_core_blueprints_do_not_import_cli_profile_surfaces() -> None:
     violations: list[str] = []
 
-    for path in (SRC / "core" / "blueprints").rglob("*.py"):
+    for path in (SRC / "runtime" / "blueprints").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()
@@ -168,7 +168,7 @@ def test_core_blueprints_do_not_import_cli_profile_surfaces() -> None:
 def test_core_blueprints_do_not_import_product_runtime_catalog() -> None:
     violations: list[str] = []
 
-    for path in (SRC / "core" / "blueprints").rglob("*.py"):
+    for path in (SRC / "runtime" / "blueprints").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()
@@ -187,7 +187,7 @@ def test_core_blueprints_do_not_import_product_runtime_catalog() -> None:
 def test_stack_factories_do_not_import_service_manager_directly() -> None:
     violations: list[str] = []
 
-    for path in (SRC / "core" / "blueprints" / "stacks").glob("*.py"):
+    for path in (SRC / "runtime" / "blueprints" / "stacks").glob("*.py"):
         if path.name == "__init__.py" or "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()
@@ -330,7 +330,7 @@ def test_native_module_helpers_are_limited_to_ros2_compat_adapters() -> None:
     violations: list[str] = []
 
     for path in SRC.rglob("*.py"):
-        if "__pycache__" in path.parts or _is_test_file(path) or _is_example_file(path):
+        if _is_scan_excluded_path(path) or _is_test_file(path) or _is_example_file(path):
             continue
         rel = path.relative_to(ROOT).as_posix()
         if rel in allowed or rel in {
@@ -456,12 +456,12 @@ def test_gateway_camera_route_does_not_embed_ros2_snapshot_script() -> None:
     assert "camera_snapshot_adapter" in text
 
 
-def test_lcm_imports_stay_in_core_transport_boundary() -> None:
-    allowed_paths = {"src/runtime/transport/lcm.py"}
+def test_lcm_imports_stay_in_legacy_endpoint_boundary() -> None:
+    allowed_paths = {"src/runtime/adapters/lcm/transport.py"}
     violations: list[str] = []
 
     for path in SRC.rglob("*.py"):
-        if "__pycache__" in path.parts or _is_test_file(path) or _is_example_file(path):
+        if _is_scan_excluded_path(path) or _is_test_file(path) or _is_example_file(path):
             continue
         rel = path.relative_to(ROOT).as_posix()
         try:
@@ -516,7 +516,7 @@ def test_core_has_no_ros2_context_compatibility_proxy() -> None:
 
     violations, scanned = validate_core_compat_boundaries()
 
-    assert not (SRC / "core" / "ros2_context.py").exists()
+    assert not (SRC / "runtime" / "ros2_context.py").exists()
     assert scanned > 0
     assert violations == [], "\n".join(violations)
     assert _is_forbidden_core_compat_import("runtime.adapters.ros2")
@@ -528,9 +528,8 @@ def test_product_runtime_paths_do_not_import_ros_modules() -> None:
     from tools.validate.validate_architecture_boundaries import _is_ros_import, _iter_imports
 
     product_paths = (
-        SRC / "core" / "blueprints" / "products",
-        SRC / "core" / "blueprints" / "catalog",
-        SRC / "core" / "runtime",
+        SRC / "runtime" / "blueprints" / "products",
+        SRC / "runtime" / "profiles",
     )
     violations: list[str] = []
 
@@ -596,7 +595,7 @@ def test_internal_code_uses_compat_ros2_nav_bridge_imports() -> None:
     violations: list[str] = []
 
     for path in SRC.rglob("*.py"):
-        if "__pycache__" in path.parts:
+        if _is_scan_excluded_path(path):
             continue
         rel = path.relative_to(ROOT).as_posix()
         if rel == self_file:

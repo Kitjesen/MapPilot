@@ -1,26 +1,16 @@
-# LingTu Plans
+# LingTu Current Plans
 
-This directory is for forward-looking product and architecture plans. A plan is
-not a source of truth until the implementation and tests land.
-
-## Current Plans
+This directory contains only active forward-looking plans. Shipped behavior
+lives in `docs/architecture/`, operator procedures live in `docs/04-deployment/`,
+and old snapshots live in git history.
 
 | Document | Scope |
 | --- | --- |
-| [`PRD-lingtu-enterprise-runtime-profiles.md`](./PRD-lingtu-enterprise-runtime-profiles.md) | Profile and runtime resolver productization. |
-| [`PRD-lingtu-native-slam-navigation-runtime.md`](./PRD-lingtu-native-slam-navigation-runtime.md) | Native SLAM/navigation runtime direction. |
-| [`PRD-map-bundle-global-planning-integration.md`](./PRD-map-bundle-global-planning-integration.md) | MapRecord bundle handoff into global planning. |
-| [`PRD-map-service-spatial-data-platform.md`](./PRD-map-service-spatial-data-platform.md) | MapService records, bundles, lifecycle events, and planner handoff. |
-| [`PRD-slam-transport-navigation-dataflow.md`](./PRD-slam-transport-navigation-dataflow.md) | SLAM, transport, and navigation dataflow. |
-| [`native-dds-map-planning-test-migration-plan.md`](./native-dds-map-planning-test-migration-plan.md) | Native DDS, pcd_to_octomap, global/local planning test and migration gates. |
-| [`octoplanner3d-map-artifact-closed-loop.md`](./octoplanner3d-map-artifact-closed-loop.md) | OctoPlanner3D map artifact loop. |
-| [`simulation-closure-plan.md`](./simulation-closure-plan.md) | Simulation validation closure plan. |
+| [`current-roadmap.md`](./current-roadmap.md) | Current product/runtime roadmap and remaining gates. |
 
 ## Rules
 
-- Put shipped architecture in `../architecture/`.
-- Put operator commands in `../04-deployment/` or `../QUICKSTART.md`.
-- Move completed or obsolete plans to `../archive/` when a current contract
-  replaces them.
-- Every new PRD should include problem, scope, non-goals, interfaces, acceptance
-  checks, and migration risks.
+- Do not keep stale PRDs here after a contract lands.
+- Do not copy historical architecture into `docs/archive/`; use git history.
+- Plans must name the product mode, runtime boundary, data contract, and the
+  check that proves completion.

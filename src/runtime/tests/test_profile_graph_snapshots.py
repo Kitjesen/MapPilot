@@ -92,19 +92,19 @@ SIMULATION_PROFILE_RUNTIME_MATRIX = {
     "sim_mujoco_live": {
         "data_source": "mujoco_fastlio2_live",
         "profile_contracts": ("mujoco_fastlio2_live",),
-        "external_launcher": "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "external_launcher": "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "runtime_contract": "mujoco_fastlio2_live",
     },
     "sim_mujoco_octo_live": {
         "data_source": "mujoco_fastlio2_live",
         "profile_contracts": ("mujoco_fastlio2_live",),
-        "external_launcher": "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "external_launcher": "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "runtime_contract": "mujoco_fastlio2_live",
     },
     "sim_mujoco_pct_live": {
         "data_source": "mujoco_fastlio2_live",
         "profile_contracts": ("mujoco_fastlio2_live",),
-        "external_launcher": "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "external_launcher": "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "runtime_contract": "mujoco_fastlio2_live",
     },
     "sim_gazebo": {
@@ -180,6 +180,25 @@ def test_product_modes_required_wires_are_contract_locked():
     for profile, contract in PRODUCT_MODE_CONTRACTS.items():
         wires = _wire_set(graph_for_profile(profile))
         assert contract.required_wires <= wires, profile
+
+
+def test_product_mode_contracts_lock_operator_session_vocabulary():
+    expected = {
+        "teleop": "teleop",
+        "teleop_avoid": "teleop_avoid",
+        "map": "mapping",
+        "tracking": "tracking",
+        "nav": "navigation",
+        "inspection": "inspection",
+        "tare_explore": "exploration",
+    }
+
+    assert {
+        profile: contract.product_session
+        for profile, contract in PRODUCT_MODE_CONTRACTS.items()
+    } == expected
+    for profile, contract in PRODUCT_MODE_CONTRACTS.items():
+        assert contract.as_dict()["product_session"] == expected[profile]
 
 
 def test_mapped_teleop_modes_wire_cmd_vel_collision_monitor():
@@ -568,10 +587,6 @@ _NAV_CONTRACT_PROFILES = (
     "portable_mujoco",
     "sim_gazebo",
     "sim_industrial",
-    "tracking",
-    "nav",
-    "inspection",
-    "explore",
 )
 
 
@@ -626,7 +641,8 @@ def test_navigation_compute_contract_forbids_role_drift_edges():
 
 
 def test_nav_profile_uses_slam_adapter_localization_health_edges():
-    wires = _wire_set(graph_for_profile("nav"))
+    graph = graph_for_profile("nav")
+    wires = _wire_set(graph)
 
     health = TOPICS.localization_health
     quality = TOPICS.localization_quality
@@ -641,11 +657,13 @@ def test_nav_profile_uses_slam_adapter_localization_health_edges():
     assert f"SlamAdapterModule.localization_status->GatewayModule.localization_status@{health}" in wires
     assert f"SlamAdapterModule.localization_quality->GatewayModule.localization_quality@{quality}" in wires
     assert "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf" in wires
-    assert "SlamAdapterModule.map_odom_tf->nav.local_planner.map_odom_tf" in wires
-    assert "SlamAdapterModule.map_odom_tf->nav.path_follower.map_odom_tf" in wires
     assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
-    assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
-    assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
+    if "nav.local_planner" in graph.modules:
+        assert "SlamAdapterModule.map_odom_tf->nav.local_planner.map_odom_tf" in wires
+        assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
+    if "nav.path_follower" in graph.modules:
+        assert "SlamAdapterModule.map_odom_tf->nav.path_follower.map_odom_tf" in wires
+        assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
 
 
 def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
@@ -670,7 +688,11 @@ def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
         assert config["native_navigation_endpoint"] == "lingtu-nav-dds"
         assert config["enable_nav_in"] is False
         assert config["enable_nav_out"] is False
+        assert config["enable_map_out"] is False
+        assert "nav.in" not in graph.modules
         assert "nav.out" not in graph.modules
+        assert "map.out" not in graph.modules
+        assert "nav.terrain" not in graph.modules
         assert "nav.local_planner" not in graph.modules
         assert "nav.path_follower" not in graph.modules
         assert "DeviceManager" not in graph.modules
@@ -684,6 +706,14 @@ def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
             not in wires
         )
         assert "nav.velocity_mux.driver_cmd_vel->ThunderDriver.cmd_vel" not in wires
+        assert "nav.mission.global_path->nav.local_planner.global_path" not in wires
+        assert "nav.mission.waypoint->nav.local_planner.waypoint" not in wires
+        assert "nav.terrain.terrain_map->nav.local_planner.terrain_map" not in wires
+        assert "nav.local_planner.local_path->nav.path_follower.local_path" not in wires
+        assert (
+            "nav.path_follower.cmd_vel->nav.velocity_mux.path_follower_cmd_vel"
+            not in wires
+        )
 
         has_mission_stack = "nav.mission" in graph.modules
         if has_mission_stack:
@@ -838,7 +868,7 @@ def test_sim_mujoco_live_profile_is_raw_fastlio_simulation_entry():
     assert config["robot"] == "sim_endpoint"
     assert config["slam_profile"] == "none"
     assert PROFILES["sim_mujoco_live"]["_external_launcher"] == (
-        "sim/scripts/launch_mujoco_fastlio2_live.sh"
+        "sim/scripts/mujoco/launch_fastlio2_live.sh"
     )
     assert PROFILES["sim_mujoco_live"]["_runtime_contract"] == "mujoco_fastlio2_live"
     assert config["planning_frame_id"] == "map"
@@ -877,7 +907,7 @@ def test_sim_mujoco_octo_live_profile_is_octoplanner3d_closed_loop_entry():
     assert config["robot"] == "sim_endpoint"
     assert config["slam_profile"] == "none"
     assert PROFILES["sim_mujoco_octo_live"]["_external_launcher"] == (
-        "sim/scripts/launch_mujoco_fastlio2_live.sh"
+        "sim/scripts/mujoco/launch_fastlio2_live.sh"
     )
     assert PROFILES["sim_mujoco_octo_live"]["_runtime_contract"] == "mujoco_fastlio2_live"
     assert config["planner"] == "octoplanner3d"
@@ -923,7 +953,7 @@ def test_product_explore_can_run_on_mujoco_live_endpoint():
     assert config["robot"] == "sim_endpoint"
     assert config["_runtime_endpoint"] == "mujoco_live"
     assert config["_endpoint_data_source"] == "mujoco_fastlio2_live"
-    assert config["_external_launcher"] == "sim/scripts/launch_mujoco_fastlio2_live.sh"
+    assert config["_external_launcher"] == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert config["_external_default_args"] == ("explore",)
     assert config["_external_record_args"] == ("video",)
     assert config["planning_frame_id"] == "map"
@@ -966,7 +996,7 @@ def test_runtime_run_spec_carries_endpoint_command_and_safety_boundary():
     assert spec.localization_source == "fastlio2_odometry"
     assert spec.mapping_source == "fastlio2_map_cloud"
     assert spec.lidar_extrinsic_profile == "mujoco_thunder_v3"
-    assert spec.launcher == "sim/scripts/launch_mujoco_fastlio2_live.sh"
+    assert spec.launcher == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert spec.launcher_args == ("video",)
     assert spec.env["LINGTU_PROFILE"] == "explore"
     assert spec.env["LINGTU_ENDPOINT"] == "mujoco_live"
@@ -978,7 +1008,7 @@ def test_runtime_run_spec_carries_endpoint_command_and_safety_boundary():
     assert spec.env["LINGTU_SIMULATION_ONLY"] == "1"
     assert spec.as_command() == [
         "bash",
-        "sim/scripts/launch_mujoco_fastlio2_live.sh",
+        "sim/scripts/mujoco/launch_fastlio2_live.sh",
         "video",
     ]
 
@@ -1042,7 +1072,7 @@ def test_product_tare_can_run_on_mujoco_live_endpoint():
     assert config["robot"] == "sim_endpoint"
     assert config["_runtime_endpoint"] == "mujoco_live"
     assert config["_endpoint_data_source"] == "mujoco_fastlio2_live"
-    assert config["_external_launcher"] == "sim/scripts/launch_mujoco_fastlio2_live.sh"
+    assert config["_external_launcher"] == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert config["_external_default_args"] == ("tare",)
     assert config["_external_record_args"] == ("tare-video",)
     assert config["planner"] == "octoplanner3d"
@@ -1263,11 +1293,14 @@ def test_navigation_profiles_use_localization_odometry_for_runtime_consumers():
 
         if has_mission_stack:
             assert f"{source}.odometry->nav.mission.odometry{odom_suffix}" in wires
-            assert f"{source}.odometry->nav.path_follower.odometry{odom_suffix}" in wires
-            assert f"{source}.odometry->nav.local_planner.odometry{odom_suffix}" in wires
-            assert f"{source}.map_cloud->nav.terrain.map_cloud{map_suffix}" in wires
             assert f"{source}.localization_status->nav.mission.localization_status{health_suffix}" in wires
-        else:
+        if "nav.path_follower" in graph.modules:
+            assert f"{source}.odometry->nav.path_follower.odometry{odom_suffix}" in wires
+        if "nav.local_planner" in graph.modules:
+            assert f"{source}.odometry->nav.local_planner.odometry{odom_suffix}" in wires
+        if "nav.terrain" in graph.modules:
+            assert f"{source}.map_cloud->nav.terrain.map_cloud{map_suffix}" in wires
+        if not has_mission_stack:
             # teleop_avoid / map contracts forbid nav.mission / local_planner /
             # path_follower; map_cloud feeds nav.maps directly instead of
             # going through the (absent) nav.terrain local-autonomy stage.
@@ -1293,11 +1326,13 @@ def test_super_lio_profiles_wire_adapter_localization_status_to_gateway():
             in wires
         )
         assert "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf" in wires
-        assert "SlamAdapterModule.map_odom_tf->nav.local_planner.map_odom_tf" in wires
-        assert "SlamAdapterModule.map_odom_tf->nav.path_follower.map_odom_tf" in wires
         assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
-        assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
-        assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
+        if "nav.local_planner" in graph.modules:
+            assert "SlamAdapterModule.map_odom_tf->nav.local_planner.map_odom_tf" in wires
+            assert "SlamAdapterModule.map_frame_jump_event->nav.local_planner.map_frame_jump_event" in wires
+        if "nav.path_follower" in graph.modules:
+            assert "SlamAdapterModule.map_odom_tf->nav.path_follower.map_odom_tf" in wires
+            assert "SlamAdapterModule.map_frame_jump_event->nav.path_follower.map_frame_jump_event" in wires
         assert not graph.dangling_wires(), profile
 
 
@@ -1354,11 +1389,12 @@ def test_tare_explore_product_graph_uses_lingtu_tare_policy():
     assert "VoxelGridModule" in graph.modules
     assert "ElevationMapModule" in graph.modules
     assert "TraversabilityCostModule" in graph.modules
-    assert "nav.terrain" in graph.modules
+    assert "nav.terrain" not in graph.modules
+    assert "nav.local_planner" not in graph.modules
+    assert "nav.path_follower" not in graph.modules
     assert "SlamAdapterModule.map_cloud->OccupancyGridModule.map_cloud@/slam/map_cloud" in wires
     assert "SlamAdapterModule.odometry->OccupancyGridModule.odometry@/slam/odometry" in wires
-    assert "SlamAdapterModule.map_cloud->nav.terrain.map_cloud@/slam/map_cloud" in wires
-    assert "SlamAdapterModule.odometry->nav.terrain.odometry@/slam/odometry" in wires
+    assert "SlamAdapterModule.map_cloud->nav.maps.map_cloud@/slam/map_cloud" in wires
     assert "TAREExplorerModule.exploration_goal->nav.mission.goal_pose" in wires
     assert "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid" in wires
 
@@ -1517,7 +1553,7 @@ def test_simulation_runtime_contracts_lock_simulator_boundary():
     assert fastlio.provider == "mujoco"
     assert fastlio.profile == "sim_mujoco_live"
     assert fastlio.world == "sim/worlds/mujoco/industrial_park_scene.xml"
-    assert fastlio.launch_script == "sim/scripts/launch_mujoco_fastlio2_live.sh"
+    assert fastlio.launch_script == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert fastlio.data_source_contract == "mujoco_fastlio2_live"
     assert set(fastlio.canonical_topics) == set(
         DATA_SOURCE_CONTRACTS["mujoco_fastlio2_live"].source_outputs

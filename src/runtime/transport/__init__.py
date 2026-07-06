@@ -19,15 +19,9 @@ _OPTIONAL_BACKENDS = {
     "SHMPublisher": ("shm", "SHMPublisher"),
     "SHMSubscriber": ("shm", "SHMSubscriber"),
     "SHMTransport": ("shm", "SHMTransport"),
-    "LCMPublisher": ("lcm", "LCMPublisher"),
-    "LCMSubscriber": ("lcm", "LCMSubscriber"),
-    "LCMTransport": ("lcm", "LCMTransport"),
     "DDSPublisher": ("dds", "DDSPublisher"),
     "DDSSubscriber": ("dds", "DDSSubscriber"),
     "DDSTransport": ("dds", "DDSTransport"),
-    "DualPublisher": ("dual", "DualPublisher"),
-    "DualSubscriber": ("dual", "DualSubscriber"),
-    "DualTransport": ("dual", "DualTransport"),
 }
 
 

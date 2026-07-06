@@ -38,6 +38,7 @@ namespace {
 constexpr char kMagic[4] = {'L', 'T', 'U', '1'};
 constexpr uint8_t kRecordCloud = 1;
 constexpr uint8_t kRecordImu = 2;
+constexpr uint8_t kRecordOdomPrior = 3;
 constexpr uint8_t kLineNumberDefault = 1;
 constexpr uint8_t kLineNumberMid360 = 4;
 constexpr uint8_t kLineNumberHap = 6;
@@ -75,11 +76,27 @@ struct WireImu {
   float acc_y;
   float acc_z;
 };
+
+struct WireOdomPrior {
+  double x;
+  double y;
+  double z;
+  double qx;
+  double qy;
+  double qz;
+  double qw;
+  double vx;
+  double vy;
+  double vz;
+  uint8_t has_velocity;
+  uint8_t reserved[7];
+};
 #pragma pack(pop)
 
 static_assert(sizeof(RecordHeader) == 28, "unexpected record header size");
 static_assert(sizeof(WirePoint) == 24, "unexpected point record size");
 static_assert(sizeof(WireImu) == 24, "unexpected imu record size");
+static_assert(sizeof(WireOdomPrior) == 88, "unexpected odom prior record size");
 
 std::mutex g_stdout_mutex;
 std::condition_variable g_quit_cv;
@@ -209,6 +226,14 @@ class DdsPublisher {
             nullptr,
             nullptr),
         "dds_create_topic(imu)");
+    odom_prior_topic_ = checked(
+        dds_create_topic(
+            participant_,
+            &lingtu_dds_Odometry_desc,
+            lingtu::message::kSlamOdomPrior.dds_topic.data(),
+            nullptr,
+            nullptr),
+        "dds_create_topic(odom_prior)");
     auto sensor_qos = sensor_qos_profile();
     lidar_writer_ = checked(
         dds_create_writer(publisher_, lidar_topic_, sensor_qos.get(), nullptr),
@@ -219,6 +244,9 @@ class DdsPublisher {
     imu_writer_ = checked(
         dds_create_writer(publisher_, imu_topic_, sensor_qos.get(), nullptr),
         "dds_create_writer(imu)");
+    odom_prior_writer_ = checked(
+        dds_create_writer(publisher_, odom_prior_topic_, sensor_qos.get(), nullptr),
+        "dds_create_writer(odom_prior)");
   }
 
   ~DdsPublisher() {
@@ -254,6 +282,26 @@ class DdsPublisher {
     msg.linear_acceleration.y = imu.acc_y;
     msg.linear_acceleration.z = imu.acc_z;
     checked(dds_write(imu_writer_, &msg), "dds_write(imu)");
+  }
+
+  void publish_odom_prior(uint64_t timestamp_ns, const WireOdomPrior& prior) {
+    std::lock_guard<std::mutex> lock(write_mutex_);
+    lingtu_dds_Odometry msg{};
+    fill_header(msg.header, timestamp_ns, odom_frame_);
+    msg.child_frame_id = const_cast<char*>(body_frame_.c_str());
+    msg.pose.pose.position.x = prior.x;
+    msg.pose.pose.position.y = prior.y;
+    msg.pose.pose.position.z = prior.z;
+    msg.pose.pose.orientation.x = prior.qx;
+    msg.pose.pose.orientation.y = prior.qy;
+    msg.pose.pose.orientation.z = prior.qz;
+    msg.pose.pose.orientation.w = prior.qw;
+    if (prior.has_velocity != 0) {
+      msg.twist.twist.linear.x = prior.vx;
+      msg.twist.twist.linear.y = prior.vy;
+      msg.twist.twist.linear.z = prior.vz;
+    }
+    checked(dds_write(odom_prior_writer_, &msg), "dds_write(odom_prior)");
   }
 
  private:
@@ -317,14 +365,18 @@ class DdsPublisher {
 
   std::string lidar_frame_;
   std::string imu_frame_;
+  std::string odom_frame_ = "odom";
+  std::string body_frame_ = "body";
   dds_entity_t participant_ = DDS_RETCODE_ERROR;
   dds_entity_t publisher_ = DDS_RETCODE_ERROR;
   dds_entity_t lidar_topic_ = DDS_RETCODE_ERROR;
   dds_entity_t raw_packet_topic_ = DDS_RETCODE_ERROR;
   dds_entity_t imu_topic_ = DDS_RETCODE_ERROR;
+  dds_entity_t odom_prior_topic_ = DDS_RETCODE_ERROR;
   dds_entity_t lidar_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t raw_packet_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t imu_writer_ = DDS_RETCODE_ERROR;
+  dds_entity_t odom_prior_writer_ = DDS_RETCODE_ERROR;
   std::mutex write_mutex_;
 };
 
@@ -372,6 +424,16 @@ bool emit_imu(uint64_t timestamp_ns, const WireImu& imu) {
   }
 #endif
   return write_record(kRecordImu, timestamp_ns, 1, &imu, sizeof(imu));
+}
+
+bool emit_odom_prior(uint64_t timestamp_ns, const WireOdomPrior& prior) {
+#if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
+  if (g_dds_publisher) {
+    g_dds_publisher->publish_odom_prior(timestamp_ns, prior);
+    return true;
+  }
+#endif
+  return write_record(kRecordOdomPrior, timestamp_ns, 1, &prior, sizeof(prior));
 }
 
 struct CloudBatch {
@@ -517,6 +579,19 @@ int run_stdin_records() {
         return 1;
       }
       if (!emit_imu(header.timestamp_ns, imu)) {
+        return 1;
+      }
+    } else if (header.record_type == kRecordOdomPrior) {
+      if (header.count != 1 || header.payload_bytes != sizeof(WireOdomPrior)) {
+        std::fprintf(stderr, "stdin odom prior payload size mismatch\n");
+        return 2;
+      }
+      WireOdomPrior prior{};
+      if (!read_exact(&prior, sizeof(prior))) {
+        std::fprintf(stderr, "stdin odom prior payload truncated\n");
+        return 1;
+      }
+      if (!emit_odom_prior(header.timestamp_ns, prior)) {
         return 1;
       }
     } else {

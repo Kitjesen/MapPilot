@@ -1,4 +1,4 @@
-"""Lightweight App/Web bootstrap contract for GatewayModule."""
+﻿"""Lightweight App/Web bootstrap contract for GatewayModule."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.runtime_validation_gates import runtime_validation_gates
+from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
 from gateway.services.media_status import build_media_status
 from gateway.services.runtime_status import (
     build_localization_status_from_parts,

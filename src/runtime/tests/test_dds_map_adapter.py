@@ -100,6 +100,10 @@ def _install_fake_dds_types(monkeypatch) -> None:
 def test_dds_topic_registry_covers_exploration_grid() -> None:
     assert dds_type_for_topic(TOPICS.exploration_grid).__name__ == "OccupancyGrid"
     assert dds_type_for_topic(TOPICS.traversability).__name__ == "OccupancyGrid"
+    assert dds_type_for_topic(TOPICS.terrain_map).__name__ == "PointCloud2"
+    assert dds_type_for_topic(TOPICS.terrain_map_ext).__name__ == "PointCloud2"
+    assert dds_type_for_topic(TOPICS.map_clearing).__name__ == "Bool"
+    assert dds_type_for_topic(TOPICS.cloud_clearing).__name__ == "Bool"
 
 
 def test_dds_map_out_publishes_typed_occupancy_grid(monkeypatch) -> None:

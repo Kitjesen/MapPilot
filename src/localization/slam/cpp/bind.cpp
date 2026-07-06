@@ -310,6 +310,13 @@ OdomSample odomFromDict(const nb::dict& raw) {
   OdomSample sample;
   sample.stamp_s = dictNumber(raw, "stamp_s", dictNumber(raw, "ts", 0.0));
   sample.odom_body = poseFromDict(raw);
+  if (PyObject* velocity = dictItem(raw.ptr(), "linear_velocity")) {
+    readVector3(velocity, sample.vx, sample.vy, sample.vz);
+    sample.has_velocity = true;
+  } else if (PyObject* velocity_odom = dictItem(raw.ptr(), "velocity")) {
+    readVector3(velocity_odom, sample.vx, sample.vy, sample.vz);
+    sample.has_velocity = true;
+  }
   return sample;
 }
 
@@ -623,6 +630,43 @@ class SlamRunner {
     result["lidar_buffer"_s] = out.lidar_buffer;
     result["dropped_lidar_frames"_s] = out.dropped_lidar_frames;
     result["dropped_imu_frames"_s] = out.dropped_imu_frames;
+    result["odom_prior_enabled"_s] = out.odom_prior_enabled;
+    result["odom_prior_active"_s] = out.odom_prior_active;
+    result["odom_prior_age_s"_s] = out.odom_prior_age_s;
+    result["odom_prior_error_xy_m"_s] = out.odom_prior_error_xy_m;
+    result["odom_prior_map_points"_s] = out.odom_prior_map_points;
+    nb::dict map_optimization;
+    map_optimization["status"_s] = out.map_optimization_status;
+    map_optimization["backend"_s] = out.map_optimization_backend;
+    map_optimization["refine_backend"_s] = out.map_optimization_refine_backend;
+    map_optimization["enabled"_s] = out.map_optimization_enabled;
+    map_optimization["loop_closure_enabled"_s] =
+        out.map_optimization_loop_closure_enabled;
+    map_optimization["loop_closure_applied"_s] =
+        out.map_optimization_loop_closure_applied;
+    map_optimization["refine_enabled"_s] =
+        out.map_optimization_refine_enabled;
+    map_optimization["refine_applied"_s] =
+        out.map_optimization_refine_applied;
+    map_optimization["hba_refine_enabled"_s] =
+        out.map_optimization_hba_refine_enabled;
+    map_optimization["hba_refine_applied"_s] =
+        out.map_optimization_hba_refine_applied;
+    map_optimization["patch_count"_s] = out.map_optimization_patch_count;
+    map_optimization["pose_count"_s] = out.map_optimization_pose_count;
+    map_optimization["optimized_pose_count"_s] =
+        out.map_optimization_optimized_pose_count;
+    map_optimization["loop_count"_s] = out.map_optimization_loop_count;
+    map_optimization["raw_map_points"_s] = out.map_optimization_raw_map_points;
+    map_optimization["optimized_map_points"_s] =
+        out.map_optimization_optimized_map_points;
+    map_optimization["loop_closure_error_m"_s] =
+        out.map_optimization_loop_error_m;
+    result["map_optimization"_s] = map_optimization;
+    result["map_optimization_status"_s] = out.map_optimization_status;
+    result["map_optimization_loop_count"_s] = out.map_optimization_loop_count;
+    result["map_optimization_optimized_pose_count"_s] =
+        out.map_optimization_optimized_pose_count;
     result["relocalization_supported"_s] = out.relocalization_supported;
     result["saved_map_relocalization_supported"_s] =
         out.saved_map_relocalization_supported;

@@ -18,6 +18,7 @@ _AUTH_PATHS = frozenset({"/api/v1/auth/login", "/api/v1/auth/check"})
 
 def register_auth_routes(app) -> None:
     from fastapi.exceptions import RequestValidationError
+    from fastapi.encoders import jsonable_encoder
     from fastapi.responses import JSONResponse
 
     app.router.routes[:] = [
@@ -67,5 +68,5 @@ def register_auth_routes(app) -> None:
     async def validation_error(req: FastAPIRequest, exc: RequestValidationError):
         return JSONResponse(
             status_code=422,
-            content={"error": "validation_error", "detail": exc.errors()},
+            content=jsonable_encoder({"error": "validation_error", "detail": exc.errors()}),
         )

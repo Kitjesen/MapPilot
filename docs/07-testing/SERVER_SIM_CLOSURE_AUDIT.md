@@ -128,7 +128,7 @@ python -m pytest src/runtime/tests/test_server_sim_closure.py -q
 Native PCT no-fallback runtime verification:
 
 ```bash
-PYTHONPATH=src:. python3 sim/scripts/native_pct_mujoco_gate.py \
+PYTHONPATH=src:. python3 sim/scripts/mujoco/native_pct_gate.py \
   --source-report artifacts/server_sim_closure/large_terrain/report.json \
   --route terrain_long \
   --planner pct \

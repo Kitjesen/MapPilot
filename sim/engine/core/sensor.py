@@ -72,12 +72,12 @@ class LidarConfig:
     intensity_max: float = 255.0
     fps: float = 10.0               # scan frequency Hz
 
-    # Backend selection. Strict/product gates should request `mujoco_lidar` or
-    # `ray_caster_lidar` and set `require_mature_backend=True` so legacy
-    # mj_multiRay cannot silently pass as a production LiDAR backend.
+    # Backend selection. Product gates should request `mujoco_lidar` or
+    # `ray_caster_lidar` and set `require_product_backend=True` so legacy
+    # mj_multiRay cannot silently pass as a product LiDAR backend.
     backend: str = "auto"  # auto | mujoco_lidar | ray_caster_lidar | mj_multiray
     mujoco_lidar_backend: str = "cpu"  # cpu | taichi | warp | jax
-    require_mature_backend: bool = False
+    require_product_backend: bool = False
     allow_legacy_fallback: bool = True
     site_name: str = "lidar_site"  # MuJoCo site used by MuJoCo-LiDAR/plugin paths
 

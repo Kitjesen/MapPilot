@@ -307,6 +307,22 @@ data_formats:
     ros_type: application/json
     frame_role: body
     required_fields: [heights, points_body, points_world, valid_mask]
+  lingtu.dds.Bool:
+    topic: /nav/map_clearing
+    ros_type: std_msgs/msg/Bool
+    frame_role: unframed_control_flag
+    required_fields: [data]
+    note: Native DDS Bool control flag; ROS/compat adapters mirror it as std_msgs/msg/Bool.
+  lingtu.dds.RelocalizationRequest:
+    topic: /slam/relocalization/request
+    ros_type: application/json
+    frame_role: map_or_odom
+    required_fields: [command, map_path, guess]
+  lingtu.dds.RelocalizationResponse:
+    topic: /slam/relocalization/response
+    ros_type: application/json
+    frame_role: map_or_odom
+    required_fields: [request_id, success, state, quality]
   traversable_frontier_candidates:
     topic: /nav/traversable_frontiers
     ros_type: application/json
@@ -341,6 +357,10 @@ topic_formats:
   - std_msgs/msg/String
   /slam/map_event:
   - std_msgs/msg/String
+  /slam/relocalization/request:
+  - lingtu.dds.RelocalizationRequest
+  /slam/relocalization/response:
+  - lingtu.dds.RelocalizationResponse
   /nav/exploration_grid:
   - nav_msgs/msg/OccupancyGrid
   /nav/traversable_frontiers:
@@ -383,9 +403,9 @@ topic_formats:
   /nav/speed:
   - std_msgs/msg/Float32
   /nav/map_clearing:
-  - std_msgs/msg/Bool
+  - lingtu.dds.Bool
   /nav/cloud_clearing:
-  - std_msgs/msg/Bool
+  - lingtu.dds.Bool
   /nav/added_obstacles:
   - sensor_msgs/msg/PointCloud2
   /nav/check_obstacle:
@@ -521,6 +541,10 @@ topic_ros_types:
   - std_msgs/msg/String
   /slam/map_event:
   - std_msgs/msg/String
+  /slam/relocalization/request:
+  - application/json
+  /slam/relocalization/response:
+  - application/json
   /nav/exploration_grid:
   - nav_msgs/msg/OccupancyGrid
   /nav/traversable_frontiers:

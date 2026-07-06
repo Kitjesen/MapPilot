@@ -30,6 +30,9 @@ inline constexpr TopicContract kTfStatic{
     "lingtu::dds::TFMessage"};
 inline constexpr TopicContract kImuRaw{
     "/imu/raw", "rt/imu/raw", "lingtu.dds.Imu", "lingtu::dds::Imu"};
+inline constexpr TopicContract kSlamOdomPrior{
+    "/slam/odom_prior", "rt/slam/odom_prior",
+    "lingtu.dds.Odometry", "lingtu::dds::Odometry"};
 inline constexpr TopicContract kSlamOdometry{
     "/slam/odometry", "rt/slam/odometry",
     "lingtu.dds.Odometry", "lingtu::dds::Odometry"};
@@ -86,6 +89,18 @@ inline constexpr TopicContract kNavSemanticInstruction{
 inline constexpr TopicContract kNavTraversability{
     "/nav/traversability", "rt/nav/traversability",
     "lingtu.dds.OccupancyGrid", "lingtu::dds::OccupancyGrid"};
+inline constexpr TopicContract kNavTerrainMap{
+    "/nav/terrain_map", "rt/nav/terrain_map",
+    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+inline constexpr TopicContract kNavTerrainMapExt{
+    "/nav/terrain_map_ext", "rt/nav/terrain_map_ext",
+    "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+inline constexpr TopicContract kNavMapClearing{
+    "/nav/map_clearing", "rt/nav/map_clearing",
+    "lingtu.dds.Bool", "lingtu::dds::Bool"};
+inline constexpr TopicContract kNavCloudClearing{
+    "/nav/cloud_clearing", "rt/nav/cloud_clearing",
+    "lingtu.dds.Bool", "lingtu::dds::Bool"};
 inline constexpr TopicContract kNavCmdVel{
     "/nav/cmd_vel", "rt/nav/cmd_vel",
     "lingtu.dds.TwistStamped", "lingtu::dds::TwistStamped"};
@@ -99,6 +114,7 @@ inline constexpr TopicContract kTopicContracts[] = {
     kLidarRawFrame,
     kLidarRawPacket,
     kImuRaw,
+    kSlamOdomPrior,
     kSlamOdometry,
     kSlamStateAtScan,
     kSlamRegisteredCloud,
@@ -118,6 +134,10 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavCancel,
     kNavSemanticInstruction,
     kNavTraversability,
+    kNavTerrainMap,
+    kNavTerrainMapExt,
+    kNavMapClearing,
+    kNavCloudClearing,
     kNavCmdVel,
     kNavExplorationGrid,
 };

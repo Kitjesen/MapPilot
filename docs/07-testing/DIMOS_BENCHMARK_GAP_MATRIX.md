@@ -410,7 +410,7 @@ For local source-report wiring checks that do not require ROS 2 or MuJoCo,
 `native_pct_mujoco_gate.py` also supports a contract-only mode:
 
 ```bash
-PYTHONPATH=src:. python3 sim/scripts/native_pct_mujoco_gate.py \
+PYTHONPATH=src:. python3 sim/scripts/mujoco/native_pct_gate.py \
   --contract-only \
   --strict \
   --source-report artifacts/server_sim_closure/large_terrain/report.json \
@@ -731,7 +731,7 @@ PYTHONPATH=src:. python3 sim/scripts/moving_obstacle_sweep_gate.py \
 Large loop command shape:
 
 ```bash
-bash sim/scripts/launch_mujoco_fastlio2_live.sh inspection-loop-video
+bash sim/scripts/mujoco/launch_fastlio2_live.sh inspection-loop-video
 
 PYTHONPATH=src:. python3 sim/scripts/large_loop_closure_gate.py \
   --report artifacts/server_sim_closure/mujoco_fastlio2_live/<inspection-loop-run>/report.json \

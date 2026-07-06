@@ -9,18 +9,32 @@ registration, tests, and external deployments may import them directly.
 
 | Need | Start here |
 | --- | --- |
-| How a goal becomes motion | `mission/navigation.py` -> `services/plan/global_planner/service.py` -> `mission/tracking/waypoint_tracker.py` |
+| Field native navigation data flow | `../message/idl/`, `services/endpoint/cpp/`, `services/plan/cpp/`, `kernel/include/nav_kernel/` |
+| Module/sim goal-to-motion flow | `mission/navigation.py` -> `services/plan/global_planner/service.py` -> `mission/tracking/waypoint_tracker.py` |
 | Why a plan is accepted or rejected | `services/plan/global_planner/service.py`, `services/safety/plan_safety.py`, `services/plan/global_planner/path_feasibility.py` |
 | What map artifact is loaded or saved | `services/maps.py`, `services/map_layers/map_artifact_builder.py` |
 | Live map layers | `services/map_layers/occupancy_grid_module.py`, `services/map_layers/voxel_grid_module.py`, `services/map_layers/esdf_module.py`, `services/map_layers/elevation_map_module.py`, `services/map_layers/traversability_cost_module.py` |
 | Safety stop or velocity ownership | `services/safety/safety_ring.py`, `services/safety/velocity_mux.py`, `services/geofence.py` |
 | Frontier exploration | `exploration/frontier_explorer_module.py`, `exploration/traversable_frontier_module.py` |
-| Thunder Lite / mapless navigation | `services/plan/factory.py`, `services/plan/global_planner/direct.py`, `services/plan/global_planner/algorithm/direct_path.py` |
+| Thunder Lite / mapless navigation | `services/plan/factory.py`, `services/plan/compat/direct.py`, `services/plan/compat/direct_path.py` |
 | C++ map/local planning hot paths | `kernel/include/nav_kernel/map_layers_core.hpp`, `services/plan/local_planner/cpp/`, `kernel/bindings/bindings.cpp` |
 
-## Main runtime chain
+## Main runtime chains
 
-The Module chain and the internal planner call are separate:
+The physical `thunder_field` chain is native C++ service + DDS. Python keeps
+the task, Gateway, map-management, semantic, and status layers around it, but
+does not own local planning, path following, or final `/nav/cmd_vel` publishing.
+
+```text
+lingtu-livox-dds
+  -> lingtu-slam-dds
+  -> lingtu-traversability-dds
+  -> lingtu-nav-dds
+  -> /nav/cmd_vel
+```
+
+The Python Module chain below remains for simulation, local-driver, tests, and
+compatibility profiles. Its Module chain and internal planner call are separate:
 
 ```text
 Gateway/MCP/CLI
@@ -63,8 +77,8 @@ Navigation._plan()
 | `services/plan/contracts.py` | Protocols for planner backends and planner services. `Navigation` should depend on this boundary, not a concrete planner. |
 | `services/plan/factory.py` | Creates either map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`. |
 | `services/plan/global_planner/service.py` | Map-backed global planner coordinator. Selects OctoPlanner3D by default, keeps PCT as an explicit legacy backend, validates map artifacts, and reports diagnostics. |
-| `services/plan/global_planner/direct.py` | Lightweight planner service for Thunder Lite/local runtimes that must avoid map-backed planner imports. |
-| `services/plan/global_planner/algorithm/direct_path.py` | Direct start-to-goal planner used by mapless mode. |
+| `services/plan/compat/direct.py` | Lightweight planner service for Thunder Lite/local runtimes that must avoid map-backed planner imports. |
+| `services/plan/compat/direct_path.py` | Direct start-to-goal planner used by mapless mode. |
 | `services/plan/global_planner/algorithm/octoplanner3d.py` | LingTu OctoPlanner3D runtime binding and planner registration. |
 | `services/plan/global_planner/algorithm/OctoPlanner3D/` | Full OctoPlanner3D algorithm source plus LingTu native headless bridge. |
 | `services/plan/global_planner/algorithm/pct/` | Long-term PCT algorithm, runtime loader, and vendored PCT planner sources. |

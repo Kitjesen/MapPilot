@@ -411,4 +411,4 @@ curl http://<robot>:5050/api/v1/health | jq '.slam'
 - `docs/03-development/PARAMETER_TUNING.md` 閳?tuning defaults and effects
 - `docs/04-deployment/README.md` 閳?service layout, deployment basics
 - `docs/04-deployment/lingtu_cli.md` 閳?operations CLI reference
-- `docs/archive/05-specialized/slam_drift_watchdog.md` 閳?drift watchdog internals
+- `docs/04-deployment/lingtu_cli.md` - localization restart and drift-watchdog operations

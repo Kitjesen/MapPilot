@@ -346,7 +346,9 @@ def test_map_save_adapter_seed_prefers_native_slam_by_default() -> None:
         seed_builtin_plugins(groups=("map_save_adapter",), reload_loaded=True)
 
         assert {"native_slam"} <= set(list_plugins("map_save_adapter"))
-        assert type(default_map_save_adapter()).__name__ == "NativeSlamMapSaveAdapter"
+        adapter = default_map_save_adapter()
+        assert type(adapter).__name__ == "NativeSlamMapSaveAdapter"
+        assert callable(adapter.save_slam_map)
     finally:
         restore(saved)
         _restore_import_state(seed_modules, modules_before)

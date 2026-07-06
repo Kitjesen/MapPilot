@@ -130,7 +130,7 @@ def build_engine(
     mid360_samples_per_frame: int = DEFAULT_MID360_SAMPLES_PER_FRAME,
     lidar_backend: str = "mujoco_lidar",
     mujoco_lidar_backend: str = "cpu",
-    require_mature_lidar_backend: bool = True,
+    require_product_lidar_backend: bool = True,
     allow_legacy_lidar_fallback: bool = False,
     policy_path: Path | str | None = None,
 ):
@@ -170,7 +170,7 @@ def build_engine(
             add_noise=True,
             backend=str(lidar_backend),
             mujoco_lidar_backend=str(mujoco_lidar_backend),
-            require_mature_backend=bool(require_mature_lidar_backend),
+            require_product_backend=bool(require_product_lidar_backend),
             allow_legacy_fallback=bool(allow_legacy_lidar_fallback),
             site_name="lidar_site",
             mid360_npy_path=str(pattern_path) if pattern_path is not None else None,

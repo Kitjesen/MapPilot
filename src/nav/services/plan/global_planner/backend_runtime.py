@@ -19,7 +19,7 @@ from nav.services.plan.contracts import (
 
 logger = logging.getLogger(__name__)
 
-_GLOBAL_PLANNERS = ("octoplanner3d", "pct", "direct")
+_GLOBAL_PLANNERS = ("octoplanner3d", "pct")
 
 _OCTOPLANNER3D_CONSTRAINT_KEYS = {
     "robot_radius",
@@ -85,12 +85,6 @@ def create_planner_backend(
         from nav.services.plan.global_planner.algorithm.pct.planner import PCTPlanner
 
         backend = PCTPlanner(map_path, obstacle_thr)
-    elif canonical == "direct":
-        from nav.services.plan.global_planner.algorithm.direct_path import (
-            DirectPathBackend,
-        )
-
-        backend = DirectPathBackend(map_path, obstacle_thr)
     else:
         raise ValueError(
             f"Unknown planner: '{canonical}'. Available: {list(_GLOBAL_PLANNERS)}"

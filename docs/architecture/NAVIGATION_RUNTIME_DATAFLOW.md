@@ -58,9 +58,14 @@ LingTu `/nav/cmd_vel` becomes DDS `rt/nav/cmd_vel`.
 | endpoint -> LingTu | `/nav/goal_pose` | `lingtu.dds.PoseStamped` | `PoseStamped` |
 | endpoint -> LingTu | `/nav/cancel` | `lingtu.dds.Text` | `str` |
 | endpoint -> LingTu | `/nav/semantic/instruction` | `lingtu.dds.Text` | `str` |
+| endpoint -> LingTu | `/nav/map_clearing` | `lingtu.dds.Bool` | clear map-derived terrain/planner caches |
+| endpoint -> LingTu | `/nav/cloud_clearing` | `lingtu.dds.Bool` | clear near-field cloud/terrain planner caches |
 | LingTu -> endpoint | `/nav/global_path` | `lingtu.dds.Path` | `Path` |
 | LingTu -> endpoint | `/nav/local_path` | `lingtu.dds.Path` | `Path` |
 | LingTu -> endpoint | `/nav/way_point` | `lingtu.dds.PoseStamped` | `PoseStamped` |
+| LingTu -> endpoint | `/nav/traversability` | `lingtu.dds.OccupancyGrid` | local risk grid |
+| LingTu -> endpoint | `/nav/terrain_map` | `lingtu.dds.PointCloud2` | terrain points `(x,y,z,height)` |
+| LingTu -> endpoint | `/nav/terrain_map_ext` | `lingtu.dds.PointCloud2` | extended terrain points `(x,y,z,height)` |
 | LingTu -> endpoint | `/nav/cmd_vel` | `lingtu.dds.TwistStamped` | `Twist` |
 
 ## Main Runtime Dataflow
@@ -100,8 +105,299 @@ LingTu `/nav/cmd_vel` becomes DDS `rt/nav/cmd_vel`.
 For the `thunder_field` product endpoint, the DDS navigation boundary is owned
 by the C++ `lingtu-nav-dds` service, not Python `nav.in` / `nav.out` adapters.
 It subscribes to `rt/nav/goal_pose`, `rt/slam/odometry`,
-`rt/slam/registered_cloud`, `rt/nav/traversability`, and publishes
-`rt/nav/global_path`, `rt/nav/local_path`, and `rt/nav/cmd_vel`.
+`rt/slam/registered_cloud`, `rt/nav/traversability`,
+`rt/nav/terrain_map`, and `rt/nav/terrain_map_ext`; it publishes
+`rt/nav/global_path`, `rt/nav/local_path`, `rt/nav/way_point`, and
+`rt/nav/cmd_vel`.
+
+## Sunrise Native Navigation Services
+
+This is the current robot-side service map for the sunrise board. These are
+systemd process boundaries, not necessarily one algorithm per service.
+
+| Service | Current state on 2026-07-05 | Responsibility | Inputs | Outputs | Required for `/nav/cmd_vel` |
+| --- | --- | --- | --- | --- | --- |
+| `nav-lidar-network.service` | active, exited | Configure LiDAR Ethernet (`eth1`, `192.168.1.5/24`) | none | LiDAR network reachable | yes |
+| `lingtu-livox-dds.service` | active | Livox MID-360 and IMU DDS producer | Livox hardware | `/lidar/raw_frame`, `/imu/raw` | yes |
+| `lingtu-slam-dds.service` | active | Native SLAM/localization DDS runtime | `/lidar/raw_frame`, `/imu/raw` | `/slam/odometry`, `/slam/registered_cloud`, `/slam/map_cloud`, `/tf`, localization health/quality | yes |
+| `lingtu-traversability-dds.service` | active, disabled | Native traversability grid producer | `/slam/odometry`, `/slam/registered_cloud` | `/nav/traversability` | yes for obstacle/risk-aware local planning |
+| `lingtu-nav-dds.service` | active | Native navigation endpoint: global planning, local planning, path following, DDS output | odometry, TF, goal, traversability, cloud, OctoMap | `/nav/global_path`, `/nav/local_path`, `/nav/way_point`, `/nav/cmd_vel` | yes |
+| `lingtu.service` | active | Python Gateway/API/MCP/task/status process | user/task commands, module state | Gateway `5050`, MCP, navigation command entry | yes for external command entry |
+| `lingtu-thunder-dds-endpoint.service` | inactive, disabled | Hardware command endpoint | `/nav/cmd_vel` | brainstem/hardware command | no for cmd_vel-only validation |
+| `robot-brainstem.service` | not found / inactive | Real robot low-level control bridge | hardware command | robot control | no for cmd_vel-only validation |
+| `can-setup.service` | failed | CAN interface setup | none | `can0..can3` available | no for cmd_vel-only validation |
+| `robot-camera.service` | not found / inactive | Camera source | Orbbec/camera hardware | camera streams | no for LiDAR-only navigation; needed for inspection |
+| `lingtu-thunder-lite.service` | not found / inactive | legacy/light Thunder path | mixed | mixed | no |
+
+The field navigation process is:
+
+```text
+nav-lidar-network
+  -> lingtu-livox-dds
+  -> lingtu-slam-dds
+  -> lingtu-traversability-dds
+  -> lingtu-nav-dds
+  -> /nav/cmd_vel
+```
+
+`lingtu-thunder-dds-endpoint`, `robot-brainstem`, and `can-setup` are below
+`/nav/cmd_vel`. They matter for real motion, not for proving the navigation
+stack can produce a speed command.
+
+## Native Traversability DDS
+
+`lingtu-traversability-dds.service` runs:
+
+```text
+/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds
+```
+
+The service subscribes:
+
+| Topic | Type | Use |
+| --- | --- | --- |
+| `/slam/odometry` | `lingtu.dds.Odometry` | current pose for map-frame cloud placement |
+| `/slam/registered_cloud` | `lingtu.dds.PointCloud2` | current registered scan |
+| `/nav/map_clearing` | `lingtu.dds.Bool` | clear accumulated terrain/map caches |
+| `/nav/cloud_clearing` | `lingtu.dds.Bool` | clear near-field terrain/cloud caches |
+
+The service publishes:
+
+| Topic | Type | Data |
+| --- | --- | --- |
+| `/nav/traversability` | `lingtu.dds.OccupancyGrid` | 2D fused obstacle/risk grid |
+| `/nav/terrain_map` | `lingtu.dds.PointCloud2` | terrain analysis cloud with fields `x,y,z,intensity`; `intensity` is height above ground |
+| `/nav/terrain_map_ext` | `lingtu.dds.PointCloud2` | same schema, consumed as the extended terrain source by local planning |
+
+The terrain cloud is now generated by `nav_kernel::TerrainAnalysisCore`, not by
+the older simplified z-quantile helper in the DDS service. Current runtime
+settings on sunrise:
+
+```text
+LINGTU_TRAVERSABILITY_PUBLISH_HZ=10
+LINGTU_TRAVERSABILITY_TICK_HZ=50
+LINGTU_TRAVERSABILITY_TERRAIN_CLEAR_DY_OBS=1
+LINGTU_TRAVERSABILITY_TERRAIN_NO_DATA_OBSTACLE=0
+LINGTU_TRAVERSABILITY_MAX_POINTS=20000
+```
+
+`LINGTU_TRAVERSABILITY_MAX_POINTS` limits the published terrain cloud before DDS
+write. This keeps `/nav/terrain_map(_ext)` fresh enough for `lingtu-nav-dds`
+while retaining the rolling terrain cache internally.
+
+## `lingtu-nav-dds` Internal Nodes
+
+`lingtu-nav-dds.service` runs one binary:
+
+```text
+/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint
+```
+
+That binary contains the native planning and command pipeline:
+
+| Internal node | Process | Responsibility | Inputs | Outputs |
+| --- | --- | --- | --- | --- |
+| Goal receiver | `lingtu_nav_native_endpoint` | Receive native navigation goals | `/nav/goal_pose` | internal goal |
+| OctoPlanner3D global planner | `lingtu_nav_native_endpoint` | Plan a 3D saved-map route | current `map` pose, goal, `octomap.ot` | internal global path |
+| Global path publisher | `lingtu_nav_native_endpoint` | Publish accepted global path | internal global path | `/nav/global_path` |
+| NavLoop target selector | `lingtu_nav_native_endpoint` | Pick the next lookahead target from global path | current pose, global path | internal target waypoint |
+| LocalPlannerCore | `lingtu_nav_native_endpoint` | Generate near-field local path | target, current pose, obstacle cloud, `/nav/traversability` | internal local path |
+| Local path publisher | `lingtu_nav_native_endpoint` | Publish the local path | internal local path | `/nav/local_path` |
+| PathFollowerCore | `lingtu_nav_native_endpoint` | Convert local path to velocity | local path, follower state | internal `cmd_vel` |
+| Waypoint publisher | `lingtu_nav_native_endpoint` | Publish current target waypoint | internal target waypoint | `/nav/way_point` |
+| CmdVel publisher | `lingtu_nav_native_endpoint` | Publish speed command when enabled | internal `cmd_vel`, `LINGTU_NAV_PUBLISH_CMD_VEL=1` | `/nav/cmd_vel` |
+
+Runtime order inside `lingtu_nav_native_endpoint`:
+
+```text
+/nav/goal_pose
+  -> OctoPlanner3D with octomap.ot
+  -> nav.setGlobalPath(...)
+  -> /nav/global_path
+  -> NavLoop::tick(...)
+  -> LocalPlannerCore::planFrame(...)
+  -> /nav/local_path
+  -> PathFollowerCore::computeControl(...)
+  -> /nav/cmd_vel
+```
+
+`NavLoop::tick(...)` only runs when both are true:
+
+```text
+map_body pose is available
+has_path == true
+```
+
+If `has_path=false`, the local planner and path follower do not enter an
+effective tick.
+
+## Motion Mock DDS
+
+For no-hardware validation, the build now includes:
+
+```text
+/opt/lingtu/current/build/nav_endpoint/lingtu_motion_mock_dds
+```
+
+It is not a field service. It is a manual test/simulation node for an isolated
+DDS domain.
+
+| Direction | Topic | Type | Behavior |
+| --- | --- | --- | --- |
+| subscribe | `/nav/cmd_vel` | `lingtu.dds.TwistStamped` | clamp and integrate body-frame `vx,vy,wz` |
+| publish | `/slam/odometry` | `lingtu.dds.Odometry` | simulated `odom -> body` pose |
+| publish | `/tf` | `lingtu.dds.TFMessage` | identity `map -> odom` |
+| file | status JSON | `lingtu.motion_mock.status.v1` | pose, last command, counters |
+
+The expected smoke topology is:
+
+```text
+domain 77:
+  lingtu_motion_mock_dds
+    -> /slam/odometry + /tf
+  lingtu_nav_native_endpoint
+    -> /nav/cmd_vel
+  lingtu_motion_mock_dds
+    -> integrated simulated pose
+```
+
+This proves navigation command generation and DDS communication without
+touching the real robot hardware endpoint.
+
+## Field Frames And TF
+
+Current field frame contract:
+
+| Frame | Meaning |
+| --- | --- |
+| `map` | saved/global map frame used by OctoPlanner3D and global paths |
+| `odom` | continuous local odometry frame |
+| `body` | normalized robot body frame |
+| `base_link` | body alias accepted at compatibility boundaries |
+| `lidar_link` | normalized LiDAR frame entering LingTu |
+| `livox_frame` | physical Livox frame before normalization |
+| `camera_link` | camera frame used by perception/inspection |
+
+Required TF links:
+
+| Link | Producer | Consumer | Required for |
+| --- | --- | --- | --- |
+| `map -> odom` | SLAM/localizer | `lingtu-nav-dds`, Gateway, evidence gates | converting odometry pose into map frame for saved-map planning |
+| `odom -> body` | SLAM/localizer | local planning, path following, Gateway | current robot pose and yaw |
+| `body -> lidar_link` | calibration/static TF from SLAM runtime | cloud normalization and evidence gates | aligning LiDAR points to body/map |
+| `body -> camera_link` | calibration/static TF | perception/inspection | camera geometry |
+
+Topic frame expectations:
+
+| Topic | Expected frame |
+| --- | --- |
+| `/lidar/raw_frame` | `lidar_link` |
+| `/imu/raw` | `lidar_link` |
+| `/slam/odometry` | header `odom`, child `body` |
+| `/slam/registered_cloud` | `body` |
+| `/slam/map_cloud` | `map` |
+| `/nav/traversability` | `map` or `odom` |
+| `/nav/global_path` | `map` |
+| `/nav/local_path` | `map`, `odom`, or `body` |
+| `/nav/way_point` | `map` or `odom` |
+| `/nav/cmd_vel` | `body` |
+
+Sunrise read-only evidence on 2026-07-05 observed these TF links as OK:
+
+| Evidence link | Observed | Samples | Status |
+| --- | --- | ---: | --- |
+| `map_to_odom` | `map -> odom` | 8 | OK |
+| `odom_to_body` | `odom -> body` | 8 | OK |
+| `body_to_lidar` | `body -> lidar_link` | 8 | OK |
+| `body_to_camera` | `body -> camera_link` | 8 | OK |
+
+The same evidence observed required topic frames as valid, including
+`/nav/local_path` in `body` frame, which is allowed by the runtime contract.
+Current TF is therefore not the blocker for cmd_vel-only validation.
+
+## Sunrise Status Snapshots
+
+### 2026-07-06 Terrain And Mock Update
+
+Live domain `0` after the terrain migration:
+
+```text
+lingtu-livox-dds.service active
+lingtu-slam-dds.service active
+lingtu-traversability-dds.service active
+lingtu-nav-dds.service active
+SLAM state = TRACKING
+relocalization_state = completed
+traversability publish_hz = 10
+terrain_points ~= 16k..20k after DDS publish limiting
+nav has_odom = true
+nav has_map_odom_tf = true
+nav has_traversability = true
+nav has_terrain_map_ext = true
+```
+
+A live-domain external path currently triggers local near-field safety:
+
+```text
+global_path_points = 2
+local_path_points > 0
+last_local.reason = near_field_stop
+last_local.cmd_vel = {"vx": 0, "vy": 0, "wz": 0}
+```
+
+That is a safety/local-environment result, not a DDS or path-follower transport
+failure. The endpoint still publishes `/nav/cmd_vel` messages; the value is zero
+because the local planner reports a near-field stop.
+
+Isolated domain `77` mock smoke:
+
+```text
+nav publish_cmd_vel = true
+nav last_local.reason = control_ready
+nav last_local.cmd_vel = {"vx": 0.3, "vy": 0, "wz": 0}
+nav cmd_vel_published = 30
+motion mock cmd_vel received = 84
+motion mock pose.x = 0.854793
+real_robot_motion = false
+cmd_vel_sent_to_hardware = false
+```
+
+This proves the route through `/nav/cmd_vel` and a simulated robot-motion
+consumer. It does not claim that the real Thunder brainstem/CAN outlet was used.
+
+### 2026-07-05 Status Snapshot
+
+Latest read-only status:
+
+```text
+has_odom=true
+has_map_odom_tf=true
+has_traversability=true
+publish_cmd_vel=false
+global_path_points=0
+local_path_points=0
+cmd_vel_published=0
+last_local.reason=not_seen
+```
+
+Interpretation:
+
+```text
+SLAM, TF, registered cloud, and traversability are online.
+No active global path is currently loaded.
+Because has_path=false, NavLoop::tick(...) is not effectively running.
+Because publish_cmd_vel=false, /nav/cmd_vel will not be published even if a
+local command is computed.
+```
+
+The next cmd_vel-only validation should ignore real motion and check only:
+
+```text
+/nav/goal_pose accepted
+  -> /nav/global_path non-empty
+  -> /nav/local_path non-empty
+  -> /nav/cmd_vel has non-zero samples
+```
 
 ## Core Runtime Types
 

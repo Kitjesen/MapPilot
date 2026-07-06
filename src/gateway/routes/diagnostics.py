@@ -1,4 +1,4 @@
-"""Diagnostic export routes for GatewayModule."""
+﻿"""Diagnostic export routes for GatewayModule."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from typing import Any
 
 from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 from runtime.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
-from runtime.dimos_gap import build_dimos_gap_report
-from runtime.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
+from runtime.diagnostics.dimos_gap import build_dimos_gap_report
+from runtime.diagnostics.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
 from gateway.schemas import AlgorithmBenchmarkLatestResponse
 from gateway.schemas import InspectionAcceptanceRequest
 from gateway.schemas import InspectionAcceptanceResponse
@@ -30,7 +30,7 @@ from gateway.schemas import RuntimeContractResponse
 
 # Simple TTL cache for expensive diagnostic builders.
 # Cache key: function name; cache value: (timestamp, result).
-# TTL is 5 seconds — diagnostics are read-only and stale-by-seconds is acceptable.
+# TTL is 5 seconds 鈥?diagnostics are read-only and stale-by-seconds is acceptable.
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_TTL = 5.0
 
@@ -1290,7 +1290,7 @@ def _inspection_map_gate(body: Any) -> dict[str, Any] | None:
                 map_dir = str(active_dir)
     if not map_dir:
         return None
-    from runtime.runtime_validation_gates import runtime_validation_gates
+    from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
     from runtime.same_source_map_artifacts import (
         validate_saved_map_artifact_dir,
     )
@@ -1308,7 +1308,7 @@ def _inspection_map_gate(body: Any) -> dict[str, Any] | None:
 
 
 def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> dict[str, Any]:
-    from runtime.inspection_acceptance import goal_candidate_body_for_target
+    from runtime.diagnostics.inspection_acceptance import goal_candidate_body_for_target
     from gateway.schemas import GoalCandidateRequest
     from gateway.services.control_commands import ControlCommandService
     from gateway.services.goal_builder import construct_goal_from_request
@@ -1381,8 +1381,8 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
 
 
 def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
-    from runtime.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
-    from runtime.product_field_check import build_product_field_check
+    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
+    from runtime.diagnostics.product_field_check import build_product_field_check
 
     gateway_acceptance = evaluate_gateway_runtime_acceptance(
         _gateway_acceptance_snapshots(gw),
@@ -1396,7 +1396,7 @@ def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, A
 
 
 def build_inspection_acceptance_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
-    from runtime.inspection_acceptance import (
+    from runtime.diagnostics.inspection_acceptance import (
         build_inspection_acceptance,
         inspection_targets_from_payload,
     )

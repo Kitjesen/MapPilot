@@ -9,6 +9,7 @@ Core logic sourced from nova_nav_bridge.py:
   - LiDAR scan wrapper
 """
 import os
+import math
 import tempfile
 import threading
 import time
@@ -119,6 +120,8 @@ class MuJoCoEngine(SimEngine):
         # Physics parameters
         self._physics_dt: float = 0.002   # read from model.opt.timestep
         self._control_dt: float = 0.02    # 50Hz policy
+        self._last_policy_update_sim_time: float = -self._control_dt
+        self._sensor_tick_residual_s: float = 0.0
 
         # Background physics thread
         self._stop_event = threading.Event()
@@ -517,6 +520,8 @@ class MuJoCoEngine(SimEngine):
         self._policy = _policy_backup  # restore policy
 
         self._sim_time = 0.0
+        self._last_policy_update_sim_time = -self._control_dt
+        self._sensor_tick_residual_s = 0.0
 
         # Reset policy history (use stabilized real sensor data)
         if self._policy is not None:
@@ -586,6 +591,7 @@ class MuJoCoEngine(SimEngine):
 
         # Run policy inference, write to ctrl
         self._step_policy()
+        self._last_policy_update_sim_time = self._sim_time
 
         # Physics stepping (policy_dt / physics_dt steps)
         n_sub = max(1, round(self._control_dt / self._physics_dt))
@@ -600,6 +606,41 @@ class MuJoCoEngine(SimEngine):
                 self._refresh_leg_torque_ctrl()
                 mujoco.mj_step(self._model, self._data)
         self._sim_time += self._control_dt
+
+        return self.get_robot_state()
+
+    def step_sensor_tick(
+        self,
+        cmd: Optional[VelocityCommand] = None,
+        dt_s: Optional[float] = None,
+    ) -> RobotState:
+        """Advance one simulated sensor sample while keeping policy at control rate."""
+        import mujoco
+
+        if cmd is not None:
+            self.set_cmd_vel(cmd)
+
+        target_dt = max(float(dt_s or self._physics_dt), self._physics_dt)
+        desired_steps = (target_dt + self._sensor_tick_residual_s) / self._physics_dt
+        n_sub = max(1, int(math.floor(desired_steps + 0.5)))
+        actual_dt = n_sub * self._physics_dt
+        self._sensor_tick_residual_s += target_dt - actual_dt
+
+        for _ in range(n_sub):
+            if self._sim_time - self._last_policy_update_sim_time >= self._control_dt - 1e-9:
+                self._watchdog_cmd_vel()
+                self._step_policy()
+                self._last_policy_update_sim_time = self._sim_time
+
+            if self._drive_mode == "kinematic":
+                self._apply_kinematic_cmd(integrate_dt=self._physics_dt)
+                mj_forward = getattr(mujoco, "mj_forward", None)
+                if callable(mj_forward):
+                    mj_forward(self._model, self._data)
+            else:
+                self._refresh_leg_torque_ctrl()
+                mujoco.mj_step(self._model, self._data)
+            self._sim_time += self._physics_dt
 
         return self.get_robot_state()
 
@@ -813,11 +854,19 @@ class MuJoCoEngine(SimEngine):
 
         return gyroscope.astype(np.float64), projected_gravity.astype(np.float64)
 
+    def _sensor_data(self, *names: str) -> Optional[np.ndarray]:
+        for name in names:
+            try:
+                data = np.asarray(self._data.sensor(name).data, dtype=np.float64)
+            except Exception:
+                continue
+            return data
+        return None
+
     def _get_sensor_imu(self) -> Optional[tuple[np.ndarray, np.ndarray]]:
-        try:
-            imu_quat = np.asarray(self._data.sensor("orientation").data, dtype=np.float64)
-            gyro_local = np.asarray(self._data.sensor("angular-velocity").data, dtype=np.float64)
-        except Exception:
+        imu_quat = self._sensor_data("lidar-orientation", "orientation")
+        gyro_local = self._sensor_data("lidar-angular-velocity", "angular-velocity")
+        if imu_quat is None or gyro_local is None:
             return None
         if imu_quat.size != 4 or gyro_local.size != 3:
             return None
@@ -827,21 +876,11 @@ class MuJoCoEngine(SimEngine):
         imu_R = self._quat_wxyz_to_mat(imu_quat)
         gravity_world = np.array([0.0, 0.0, -1.0], dtype=np.float64)
         projected_gravity = imu_R.T @ gravity_world
-
-        qadr = self._root_qposadr
-        base_quat = np.asarray(self._data.qpos[qadr + 3:qadr + 7], dtype=np.float64)
-        if base_quat.size != 4 or np.linalg.norm(base_quat) <= 1e-9:
-            base_R = imu_R
-        else:
-            base_R = self._quat_wxyz_to_mat(base_quat)
-        gyro_world = imu_R @ gyro_local
-        gyroscope = base_R.T @ gyro_world
-        return gyroscope.astype(np.float64), projected_gravity.astype(np.float64)
+        return gyro_local.astype(np.float64), projected_gravity.astype(np.float64)
 
     def _get_imu_linear_acceleration(self, projected_gravity: np.ndarray) -> np.ndarray:
-        try:
-            accel = np.asarray(self._data.sensor("linear-acceleration").data, dtype=np.float64)
-        except Exception:
+        accel = self._sensor_data("lidar-linear-acceleration", "linear-acceleration")
+        if accel is None:
             accel = -np.asarray(projected_gravity, dtype=np.float64) * 9.80665
         if accel.size != 3 or not np.isfinite(accel).all():
             return np.zeros(3, dtype=np.float64)
@@ -889,7 +928,7 @@ class MuJoCoEngine(SimEngine):
             return None
         return self._cameras[camera_name].render(self._data)
 
-    def get_lidar_points(self) -> np.ndarray:
+    def get_lidar_points(self, sample_count: Optional[int] = None) -> np.ndarray:
         """Read current LiDAR point cloud.
 
         Returns:
@@ -897,14 +936,15 @@ class MuJoCoEngine(SimEngine):
         """
         if self._lidar is None:
             return np.zeros((0, 4), dtype=np.float32)
-        return self._lidar.scan()
+        return self._lidar.scan(sample_count=sample_count)
 
     def get_lidar_backend_report(self) -> dict:
         """Return JSON-ready LiDAR backend evidence for validation reports."""
         if self._lidar is None:
             return {
                 "backend": "none",
-                "mature_backend": False,
+                "product_backend": False,
+                "product_lidar_backend_verified": False,
                 "fallback_used": False,
                 "error": "lidar_not_initialized",
             }
@@ -913,7 +953,8 @@ class MuJoCoEngine(SimEngine):
             return report()
         return {
             "backend": getattr(self._lidar, "backend", "unknown"),
-            "mature_backend": False,
+            "product_backend": False,
+            "product_lidar_backend_verified": False,
             "fallback_used": False,
             "error": "backend_report_unavailable",
         }

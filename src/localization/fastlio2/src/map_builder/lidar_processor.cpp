@@ -25,6 +25,8 @@ LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_co
         m_config.degeneracy_max_condition,
         m_config.max_update_translation_m,
         m_config.max_update_rotation_rad,
+        m_config.max_update_velocity_mps,
+        m_config.max_update_velocity_delta_mps,
         m_config.reject_nonconverged_update,
         m_config.reject_degenerate_nonconverged_update);
     m_kf->setLossFunction([&](State &s, SharedState &d)

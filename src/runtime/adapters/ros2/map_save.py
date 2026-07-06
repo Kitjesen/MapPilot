@@ -133,3 +133,16 @@ class Ros2MapSaveAdapter:
             save_patches=save_patches,
             timeout_sec=timeout_sec,
         )
+
+    def save_slam_map(
+        self,
+        file_path: str | Path,
+        *,
+        save_patches: bool = True,
+        timeout_sec: float = 30.0,
+    ) -> dict[str, Any]:
+        return self.save_pgo_map(
+            file_path,
+            save_patches=save_patches,
+            timeout_sec=timeout_sec,
+        )

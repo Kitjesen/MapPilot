@@ -47,7 +47,7 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
         },
         topic_allowed_frame_ids={
             "/nav/local_path": ("map", "odom", "body"),
-            "/nav/map_cloud": ("map",),
+            "/slam/map_cloud": ("map",),
             "/nav/cmd_vel": ("body",),
         },
         resolved_runtime_data_flow=(
@@ -209,13 +209,13 @@ def test_runtime_contract_manifest_summary_exposes_interfaces_flow_and_frames() 
     assert "  endpoint_adapter" in output
     assert "Data sources:" in output
     assert (
-        "  thunder_field[hardware] source=/nav/lidar_scan,/nav/imu "
-        "normalized=/nav/lidar_scan,/nav/imu"
+        "  thunder_field[hardware] source=/lidar/raw_frame,/imu/raw "
+        "normalized=/lidar/raw_frame,/imu/raw"
     ) in output
     assert "command=hardware_driver_after_cmd_vel_mux" in output
     assert (
-        "  mujoco_fastlio2_live[mujoco] source=/points_raw,/imu_raw "
-        "normalized=/points_raw,/imu_raw"
+        "  mujoco_fastlio2_live[mujoco] source=/lidar/raw_frame,/imu/raw "
+        "normalized=/lidar/raw_frame,/imu/raw"
     ) in output
     assert "Profile bindings:" in output
     assert "  nav->thunder_field mode=real_robot_saved_map_navigation" in output
@@ -230,13 +230,13 @@ def test_runtime_contract_manifest_summary_exposes_interfaces_flow_and_frames() 
     ) in output
     assert "Adapter aliases:" in output
     assert (
-        "  fastlio2 /cloud_registered->/nav/registered_cloud(registered_cloud),"
-        "/cloud_map->/nav/map_cloud(map_cloud),/Odometry->/nav/odometry(odometry)"
+        "  fastlio2 /cloud_registered->/slam/registered_cloud(registered_cloud),"
+        "/cloud_map->/slam/map_cloud(map_cloud),/Odometry->/slam/odometry(odometry)"
     ) in output
     assert "Adapter relays:" in output
     assert (
-        "  cmu_unity /state_estimation->/nav/odometry(odometry),"
-        "/state_estimation_at_scan->/nav/state_estimation_at_scan"
+        "  cmu_unity /state_estimation->/slam/odometry(odometry),"
+        "/state_estimation_at_scan->/slam/state_at_scan"
         "(state_estimation_at_scan)"
     ) in output
     assert "/nav/cmd_vel->/cmd_vel(geometry_msgs/msg/TwistStamped)" in output
@@ -393,7 +393,7 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
                 "frames": base_frames,
                 "frame_links": base_links,
                 "topic_allowed_frame_ids": {
-                    "/nav/map_cloud": ["map", "odom"],
+                    "/slam/map_cloud": ["map", "odom"],
                     "/nav/cmd_vel": ["body"],
                 },
                 "required_topic_frame_ids": [],
@@ -432,7 +432,7 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
                 "frames": base_frames,
                 "frame_links": base_links,
                 "topic_allowed_frame_ids": {
-                    "/nav/map_cloud": ["map"],
+                    "/slam/map_cloud": ["map"],
                     "/nav/cmd_vel": ["body"],
                 },
                 "required_topic_frame_ids": ["/nav/odometry", "/nav/cmd_vel"],

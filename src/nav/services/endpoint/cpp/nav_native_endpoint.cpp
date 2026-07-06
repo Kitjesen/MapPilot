@@ -1,5 +1,6 @@
 #include "message/cpp/dds_topics.hpp"
 #include "nav_loop.hpp"
+#include "nav_status_writer.hpp"
 #include "octoplanner3d_core.hpp"
 
 #include "dds/dds.h"
@@ -15,8 +16,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -27,7 +26,10 @@
 namespace {
 
 std::atomic_bool g_running{true};
-constexpr std::size_t kStatusPathPointLimit = 512;
+using lingtu::nav::endpoint::LocalDiagnostics;
+using lingtu::nav::endpoint::PlanDiagnostics;
+using lingtu::nav::endpoint::StatusWriterConfig;
+using lingtu::nav::endpoint::writeStatusSnapshot;
 
 void stopSignal(int) {
   g_running = false;
@@ -115,6 +117,7 @@ struct FieldOffsets {
   int y{-1};
   int z{-1};
   int height{-1};
+  int intensity{-1};
 };
 
 struct RigidTransform {
@@ -222,6 +225,8 @@ FieldOffsets fieldOffsets(const lingtu_dds_PointCloud2& msg) {
       offsets.z = static_cast<int>(field.offset);
     } else if (name == "height" || name == "terrain_height") {
       offsets.height = static_cast<int>(field.offset);
+    } else if (name == "intensity") {
+      offsets.intensity = static_cast<int>(field.offset);
     }
   }
   return offsets;
@@ -270,29 +275,70 @@ std::vector<float> cloudToXyzh(
     const float x = readFloat(base + offsets.x);
     const float y = readFloat(base + offsets.y);
     const float z = readFloat(base + offsets.z);
-    const float h = offsets.height >= 0 ? readFloat(base + offsets.height) : z;
+    const bool has_height = offsets.height >= 0 || offsets.intensity >= 0;
+    const int height_offset = offsets.height >= 0 ? offsets.height : offsets.intensity;
+    const float raw_height = has_height ? readFloat(base + height_offset) : 0.0f;
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
       continue;
     }
+    double world_z = z;
+    float height = z;
     if (map_frame) {
       out.push_back(x);
       out.push_back(y);
       out.push_back(z);
+      world_z = z;
     } else if (odom_frame && map_odom) {
       const auto p = transformPoint(*map_odom, {x, y, z});
       out.push_back(static_cast<float>(p.x));
       out.push_back(static_cast<float>(p.y));
       out.push_back(static_cast<float>(p.z));
+      world_z = p.z;
     } else {
       out.push_back(static_cast<float>(
           map_body->position.x + c * x - s * y));
       out.push_back(static_cast<float>(
           map_body->position.y + s * x + c * y));
       out.push_back(static_cast<float>(map_body->position.z + z));
+      world_z = map_body->position.z + z;
     }
-    out.push_back(std::isfinite(h) ? h : z);
+    if (has_height) {
+      height = raw_height;
+    } else if (map_body) {
+      height = static_cast<float>(world_z - map_body->position.z);
+    }
+    out.push_back(std::isfinite(height) ? height : z);
   }
   return out;
+}
+
+void appendXyzhCloud(
+    std::vector<float>& out,
+    const std::vector<float>& in,
+    std::size_t max_points) {
+  const std::size_t current_points = out.size() / 4;
+  if (max_points > 0 && current_points >= max_points) {
+    return;
+  }
+  const std::size_t input_points = in.size() / 4;
+  if (input_points == 0) {
+    return;
+  }
+  const std::size_t remaining = max_points == 0 ? input_points : max_points - current_points;
+  const std::size_t stride = remaining > 0 && input_points > remaining
+      ? static_cast<std::size_t>(std::ceil(static_cast<double>(input_points) / remaining))
+      : 1;
+  out.reserve(out.size() + std::min(input_points, remaining) * 4);
+  std::size_t added = 0;
+  for (std::size_t i = 0; i < input_points && (max_points == 0 || added < remaining);
+       i += stride) {
+    const std::size_t base = i * 4;
+    out.push_back(in[base + 0]);
+    out.push_back(in[base + 1]);
+    out.push_back(in[base + 2]);
+    out.push_back(in[base + 3]);
+    ++added;
+  }
 }
 
 nav_kernel::Pose toPose(const lingtu_dds_Odometry& msg) {
@@ -383,8 +429,12 @@ struct CliConfig {
   int domain_id{0};
   double tick_hz{20.0};
   double status_s{5.0};
+  double traversability_max_age_s{1.5};
+  double terrain_map_max_age_s{0.5};
   std::size_t max_obstacle_points{20000};
   bool publish_cmd_vel{true};
+  bool check_obstacle{true};
+  bool use_traversability_cost{false};
   std::string path_library_dir;
   std::string map_path;
   std::string status_file;
@@ -413,34 +463,6 @@ struct TraversabilityGrid {
   }
 };
 
-struct PlanDiagnostics {
-  bool seen{false};
-  bool accepted{false};
-  bool reached_goal{false};
-  std::string reason{"no_goal_received"};
-  std::size_t waypoints{0};
-  double goal_error_m{-1.0};
-  double elapsed_ms{0.0};
-  nav_kernel::Vec3 start{};
-  nav_kernel::Vec3 goal{};
-};
-
-struct LocalDiagnostics {
-  bool seen{false};
-  bool active{false};
-  bool goal_reached{false};
-  bool path_found{false};
-  bool near_field_stop{false};
-  std::string reason{"not_seen"};
-  int slow_down{0};
-  int recovery_state{0};
-  std::size_t target_index{0};
-  double target_distance_m{0.0};
-  std::size_t local_path_points{0};
-  nav_kernel::Vec3 target{};
-  nav_kernel::Twist cmd_vel{};
-};
-
 std::string envOrEmpty(const char* name) {
   const char* value = std::getenv(name);
   return value ? std::string(value) : std::string();
@@ -460,40 +482,8 @@ bool parseBool(const std::string& raw, const char* name) {
   throw std::runtime_error(std::string(name) + " expects true/false or 1/0");
 }
 
-std::string jsonEscape(const std::string& input) {
-  std::string out;
-  out.reserve(input.size() + 8);
-  for (const char c : input) {
-    switch (c) {
-      case '\\':
-        out += "\\\\";
-        break;
-      case '"':
-        out += "\\\"";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        out += c;
-        break;
-    }
-  }
-  return out;
-}
-
 std::string textData(const lingtu_dds_Text& msg) {
   return msg.data == nullptr ? std::string{} : std::string(msg.data);
-}
-
-void writeVec3Json(std::ostream& out, const nav_kernel::Vec3& point) {
-  out << "[" << point.x << ", " << point.y << ", " << point.z << "]";
 }
 
 double vecDistance(const nav_kernel::Vec3& a, const nav_kernel::Vec3& b) {
@@ -501,141 +491,6 @@ double vecDistance(const nav_kernel::Vec3& a, const nav_kernel::Vec3& b) {
   const double dy = a.y - b.y;
   const double dz = a.z - b.z;
   return std::sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-void writePathJson(std::ostream& out, const std::vector<nav_kernel::Vec3>& path) {
-  out << "[";
-  const std::size_t count = std::min(path.size(), kStatusPathPointLimit);
-  for (std::size_t i = 0; i < count; ++i) {
-    if (i > 0) {
-      out << ", ";
-    }
-    writeVec3Json(out, path[i]);
-  }
-  out << "]";
-}
-
-void writeStatusSnapshot(
-    const CliConfig& cfg,
-    double stamp_s,
-    bool has_odom,
-    bool has_map_odom_tf,
-    bool has_path,
-    bool has_traversability,
-    std::uint64_t odom_count,
-    std::uint64_t tf_count,
-    std::uint64_t goal_count,
-    std::uint64_t cancel_count,
-    std::uint64_t instruction_count,
-    std::uint64_t cloud_count,
-    std::uint64_t traversability_count,
-    std::uint64_t path_count,
-    std::uint64_t plan_fail_count,
-    std::uint64_t output_count,
-    std::uint64_t cmd_vel_count,
-    std::size_t obstacle_points,
-    const PlanDiagnostics& plan,
-    const LocalDiagnostics& local,
-    const std::vector<nav_kernel::Vec3>& global_path,
-    const std::vector<nav_kernel::Vec3>& local_path,
-    const std::string& last_instruction) {
-  if (cfg.status_file.empty()) {
-    return;
-  }
-  const std::filesystem::path path(cfg.status_file);
-  const auto parent = path.parent_path();
-  if (!parent.empty()) {
-    std::error_code ec;
-    std::filesystem::create_directories(parent, ec);
-  }
-  const std::filesystem::path tmp = path.string() + ".tmp";
-  std::ofstream out(tmp, std::ios::trunc);
-  if (!out) {
-    std::fprintf(stderr, "nav_native: failed to open status snapshot %s\n", tmp.string().c_str());
-    return;
-  }
-  out << "{\n"
-      << "  \"schema_version\": \"lingtu.nav.endpoint.status.v1\",\n"
-      << "  \"endpoint\": \"lingtu_nav_native_endpoint\",\n"
-      << "  \"stamp_s\": " << stamp_s << ",\n"
-      << "  \"domain_id\": " << cfg.domain_id << ",\n"
-      << "  \"tick_hz\": " << cfg.tick_hz << ",\n"
-      << "  \"publish_cmd_vel\": " << (cfg.publish_cmd_vel ? "true" : "false") << ",\n"
-      << "  \"semantic_instruction_supported\": false,\n"
-      << "  \"last_semantic_instruction\": \"" << jsonEscape(last_instruction) << "\",\n"
-      << "  \"active_octomap\": \"" << jsonEscape(cfg.map_path) << "\",\n"
-      << "  \"path_library\": \"" << jsonEscape(cfg.path_library_dir) << "\",\n"
-      << "  \"has_odom\": " << (has_odom ? "true" : "false") << ",\n"
-      << "  \"has_map_odom_tf\": " << (has_map_odom_tf ? "true" : "false") << ",\n"
-      << "  \"planning_frame_id\": \"map\",\n"
-      << "  \"odom_frame_id\": \"odom\",\n"
-      << "  \"active_path\": " << (has_path ? "true" : "false") << ",\n"
-      << "  \"has_traversability\": " << (has_traversability ? "true" : "false") << ",\n"
-      << "  \"obstacle_points\": " << obstacle_points << ",\n"
-      << "  \"global_path_points\": " << global_path.size() << ",\n"
-      << "  \"local_path_points\": " << local_path.size() << ",\n"
-      << "  \"global_path\": ";
-  writePathJson(out, global_path);
-  out << ",\n"
-      << "  \"local_path\": ";
-  writePathJson(out, local_path);
-  out << ",\n"
-      << "  \"last_plan\": {\n"
-      << "    \"seen\": " << (plan.seen ? "true" : "false") << ",\n"
-      << "    \"accepted\": " << (plan.accepted ? "true" : "false") << ",\n"
-      << "    \"reason\": \"" << jsonEscape(plan.reason) << "\",\n"
-      << "    \"reached_goal\": " << (plan.reached_goal ? "true" : "false") << ",\n"
-      << "    \"waypoints\": " << plan.waypoints << ",\n"
-      << "    \"goal_error_m\": " << plan.goal_error_m << ",\n"
-      << "    \"elapsed_ms\": " << plan.elapsed_ms << ",\n"
-      << "    \"start\": ";
-  writeVec3Json(out, plan.start);
-  out << ",\n"
-      << "    \"goal\": ";
-  writeVec3Json(out, plan.goal);
-  out << "\n"
-      << "  },\n"
-      << "  \"last_local\": {\n"
-      << "    \"seen\": " << (local.seen ? "true" : "false") << ",\n"
-      << "    \"active\": " << (local.active ? "true" : "false") << ",\n"
-      << "    \"goal_reached\": " << (local.goal_reached ? "true" : "false") << ",\n"
-      << "    \"path_found\": " << (local.path_found ? "true" : "false") << ",\n"
-      << "    \"near_field_stop\": " << (local.near_field_stop ? "true" : "false") << ",\n"
-      << "    \"reason\": \"" << jsonEscape(local.reason) << "\",\n"
-      << "    \"slow_down\": " << local.slow_down << ",\n"
-      << "    \"recovery_state\": " << local.recovery_state << ",\n"
-      << "    \"target_index\": " << local.target_index << ",\n"
-      << "    \"target_distance_m\": " << local.target_distance_m << ",\n"
-      << "    \"local_path_points\": " << local.local_path_points << ",\n"
-      << "    \"target\": ";
-  writeVec3Json(out, local.target);
-  out << ",\n"
-      << "    \"cmd_vel\": {"
-      << "\"vx\": " << local.cmd_vel.vx << ", "
-      << "\"vy\": " << local.cmd_vel.vy << ", "
-      << "\"wz\": " << local.cmd_vel.wz << "}\n"
-      << "  },\n"
-      << "  \"counters\": {\n"
-      << "    \"odom\": " << odom_count << ",\n"
-      << "    \"tf\": " << tf_count << ",\n"
-      << "    \"goals\": " << goal_count << ",\n"
-      << "    \"cancels\": " << cancel_count << ",\n"
-      << "    \"semantic_instructions\": " << instruction_count << ",\n"
-      << "    \"registered_clouds\": " << cloud_count << ",\n"
-      << "    \"traversability\": " << traversability_count << ",\n"
-      << "    \"paths\": " << path_count << ",\n"
-      << "    \"plan_fail\": " << plan_fail_count << ",\n"
-      << "    \"outputs\": " << output_count << ",\n"
-      << "    \"cmd_vel_published\": " << cmd_vel_count << "\n"
-      << "  }\n"
-      << "}\n";
-  out.close();
-  std::error_code ec;
-  std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    std::fprintf(stderr, "nav_native: failed to replace status snapshot %s: %s\n",
-                 path.string().c_str(), ec.message().c_str());
-  }
 }
 
 CliConfig parseArgs(int argc, char** argv) {
@@ -646,6 +501,26 @@ CliConfig parseArgs(int argc, char** argv) {
   const std::string publish_cmd_vel = envOrEmpty("LINGTU_NAV_PUBLISH_CMD_VEL");
   if (!publish_cmd_vel.empty()) {
     cfg.publish_cmd_vel = parseBool(publish_cmd_vel, "LINGTU_NAV_PUBLISH_CMD_VEL");
+  }
+  const std::string check_obstacle = envOrEmpty("LINGTU_NAV_CHECK_OBSTACLE");
+  if (!check_obstacle.empty()) {
+    cfg.check_obstacle = parseBool(check_obstacle, "LINGTU_NAV_CHECK_OBSTACLE");
+  }
+  const std::string use_traversability =
+      envOrEmpty("LINGTU_NAV_USE_TRAVERSABILITY_COST");
+  if (!use_traversability.empty()) {
+    cfg.use_traversability_cost =
+        parseBool(use_traversability, "LINGTU_NAV_USE_TRAVERSABILITY_COST");
+  }
+  const std::string traversability_max_age =
+      envOrEmpty("LINGTU_NAV_TRAVERSABILITY_MAX_AGE_S");
+  if (!traversability_max_age.empty()) {
+    cfg.traversability_max_age_s = std::stod(traversability_max_age);
+  }
+  const std::string terrain_map_max_age =
+      envOrEmpty("LINGTU_NAV_TERRAIN_MAP_MAX_AGE_S");
+  if (!terrain_map_max_age.empty()) {
+    cfg.terrain_map_max_age_s = std::stod(terrain_map_max_age);
   }
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -669,6 +544,14 @@ CliConfig parseArgs(int argc, char** argv) {
       cfg.map_path = next();
     } else if (arg == "--publish-cmd-vel") {
       cfg.publish_cmd_vel = parseBool(next(), "--publish-cmd-vel");
+    } else if (arg == "--check-obstacle") {
+      cfg.check_obstacle = parseBool(next(), "--check-obstacle");
+    } else if (arg == "--use-traversability-cost") {
+      cfg.use_traversability_cost = parseBool(next(), "--use-traversability-cost");
+    } else if (arg == "--traversability-max-age-s") {
+      cfg.traversability_max_age_s = std::stod(next());
+    } else if (arg == "--terrain-map-max-age-s") {
+      cfg.terrain_map_max_age_s = std::stod(next());
     } else if (arg == "--status-file") {
       cfg.status_file = next();
     } else if (arg == "--help" || arg == "-h") {
@@ -676,7 +559,9 @@ CliConfig parseArgs(int argc, char** argv) {
           "usage: lingtu_nav_native_endpoint --path-library DIR "
           "[--map octomap.ot] [--domain-id N] [--tick-hz HZ] "
           "[--max-obstacle-points N] [--publish-cmd-vel true|false] "
-          "[--status-file PATH]");
+          "[--check-obstacle true|false] "
+          "[--use-traversability-cost true|false] [--traversability-max-age-s S] "
+          "[--terrain-map-max-age-s S] [--status-file PATH]");
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -686,6 +571,8 @@ CliConfig parseArgs(int argc, char** argv) {
         "path library is required; pass --path-library or set LINGTU_LOCAL_PLANNER_PATHS");
   }
   cfg.tick_hz = std::max(1.0, cfg.tick_hz);
+  cfg.traversability_max_age_s = std::max(0.0, cfg.traversability_max_age_s);
+  cfg.terrain_map_max_age_s = std::max(0.0, cfg.terrain_map_max_age_s);
   return cfg;
 }
 
@@ -731,12 +618,30 @@ class DdsRuntime {
         lingtu::message::kSlamRegisteredCloud.dds_topic.data(),
         &lingtu_dds_PointCloud2_desc,
         "registered_cloud");
+    terrain_map_reader_ = reader(
+        lingtu::message::kNavTerrainMap.dds_topic.data(),
+        &lingtu_dds_PointCloud2_desc,
+        "terrain_map");
+    terrain_map_ext_reader_ = reader(
+        lingtu::message::kNavTerrainMapExt.dds_topic.data(),
+        &lingtu_dds_PointCloud2_desc,
+        "terrain_map_ext");
     global_path_reader_ = reader(
         lingtu::message::kNavGlobalPath.dds_topic.data(), &lingtu_dds_Path_desc, "global_path");
     traversability_reader_ = reader(
         lingtu::message::kNavTraversability.dds_topic.data(),
         &lingtu_dds_OccupancyGrid_desc,
         "traversability");
+    map_clearing_reader_ = reader(
+        lingtu::message::kNavMapClearing.dds_topic.data(),
+        &lingtu_dds_Bool_desc,
+        "map_clearing",
+        true);
+    cloud_clearing_reader_ = reader(
+        lingtu::message::kNavCloudClearing.dds_topic.data(),
+        &lingtu_dds_Bool_desc,
+        "cloud_clearing",
+        true);
     cancel_reader_ = reader(
         lingtu::message::kNavCancel.dds_topic.data(), &lingtu_dds_Text_desc, "cancel");
     instruction_reader_ = reader(
@@ -784,6 +689,18 @@ class DdsRuntime {
   }
 
   template <typename Handler>
+  void drainTerrainMap(Handler&& handler) {
+    drainReader<lingtu_dds_PointCloud2>(
+        terrain_map_reader_, lingtu_dds_PointCloud2_desc, std::forward<Handler>(handler));
+  }
+
+  template <typename Handler>
+  void drainTerrainMapExt(Handler&& handler) {
+    drainReader<lingtu_dds_PointCloud2>(
+        terrain_map_ext_reader_, lingtu_dds_PointCloud2_desc, std::forward<Handler>(handler));
+  }
+
+  template <typename Handler>
   void drainGlobalPath(Handler&& handler) {
     drainReader<lingtu_dds_Path>(
         global_path_reader_, lingtu_dds_Path_desc, std::forward<Handler>(handler));
@@ -793,6 +710,18 @@ class DdsRuntime {
   void drainTraversability(Handler&& handler) {
     drainReader<lingtu_dds_OccupancyGrid>(
         traversability_reader_, lingtu_dds_OccupancyGrid_desc, std::forward<Handler>(handler));
+  }
+
+  template <typename Handler>
+  void drainMapClearing(Handler&& handler) {
+    drainReader<lingtu_dds_Bool>(
+        map_clearing_reader_, lingtu_dds_Bool_desc, std::forward<Handler>(handler));
+  }
+
+  template <typename Handler>
+  void drainCloudClearing(Handler&& handler) {
+    drainReader<lingtu_dds_Bool>(
+        cloud_clearing_reader_, lingtu_dds_Bool_desc, std::forward<Handler>(handler));
   }
 
   template <typename Handler>
@@ -831,13 +760,23 @@ class DdsRuntime {
   dds_entity_t reader(
       const char* topic_name,
       const dds_topic_descriptor_t* desc,
-      const char* label) {
+      const char* label,
+      bool reliable = false) {
     const dds_entity_t topic = checked(
         dds_create_topic(participant_, desc, topic_name, nullptr, nullptr),
         (std::string("dds_create_topic(") + label + ")").c_str());
-    return checked(
-        dds_create_reader(subscriber_, topic, nullptr, nullptr),
+    dds_qos_t* qos = nullptr;
+    if (reliable) {
+      qos = dds_create_qos();
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+    }
+    const dds_entity_t entity = checked(
+        dds_create_reader(subscriber_, topic, qos, nullptr),
         (std::string("dds_create_reader(") + label + ")").c_str());
+    if (qos != nullptr) {
+      dds_delete_qos(qos);
+    }
+    return entity;
   }
 
   dds_entity_t writer(
@@ -859,8 +798,12 @@ class DdsRuntime {
   dds_entity_t tf_reader_{0};
   dds_entity_t goal_reader_{0};
   dds_entity_t cloud_reader_{0};
+  dds_entity_t terrain_map_reader_{0};
+  dds_entity_t terrain_map_ext_reader_{0};
   dds_entity_t global_path_reader_{0};
   dds_entity_t traversability_reader_{0};
+  dds_entity_t map_clearing_reader_{0};
+  dds_entity_t cloud_clearing_reader_{0};
   dds_entity_t cancel_reader_{0};
   dds_entity_t instruction_reader_{0};
   dds_entity_t global_path_writer_{0};
@@ -877,6 +820,16 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, stopSignal);
 
     const CliConfig cfg = parseArgs(argc, argv);
+    const StatusWriterConfig status_cfg{
+        cfg.domain_id,
+        cfg.tick_hz,
+        cfg.publish_cmd_vel,
+        cfg.check_obstacle,
+        cfg.use_traversability_cost,
+        cfg.path_library_dir,
+        cfg.map_path,
+        cfg.status_file,
+    };
     DdsRuntime dds(cfg.domain_id);
 
     lingtu::nav::plan::NavLoopConfig nav_config;
@@ -884,6 +837,7 @@ int main(int argc, char** argv) {
     nav_config.max_speed = 0.4;
     nav_config.local_planner.autonomySpeed = 0.4;
     nav_config.local_planner.maxSpeed = 1.0;
+    nav_config.local_planner.useTraversabilityCost = cfg.use_traversability_cost;
     nav_config.path_follower.maxSpeed = 0.4;
     nav_config.path_follower.maxAccel = 1.0;
 
@@ -896,7 +850,13 @@ int main(int argc, char** argv) {
     std::optional<nav_kernel::Pose> map_body;
     std::optional<RigidTransform> map_odom_tf;
     std::vector<float> obstacle_xyzh;
+    std::vector<float> terrain_xyzh;
+    std::vector<float> terrain_ext_xyzh;
+    std::vector<float> planner_terrain_xyzh;
     TraversabilityGrid traversability_grid;
+    double last_terrain_map_s = 0.0;
+    double last_terrain_ext_s = 0.0;
+    double last_traversability_s = 0.0;
     PlanDiagnostics last_plan;
     LocalDiagnostics last_local;
     std::vector<nav_kernel::Vec3> last_global_path;
@@ -908,14 +868,27 @@ int main(int argc, char** argv) {
     std::uint64_t tf_count = 0;
     std::uint64_t goal_count = 0;
     std::uint64_t cancel_count = 0;
+    std::uint64_t map_clearing_count = 0;
+    std::uint64_t cloud_clearing_count = 0;
     std::uint64_t instruction_count = 0;
     std::uint64_t cloud_count = 0;
+    std::uint64_t terrain_map_count = 0;
+    std::uint64_t terrain_map_ext_count = 0;
     std::uint64_t traversability_count = 0;
     std::uint64_t path_count = 0;
     std::uint64_t plan_fail_count = 0;
     std::uint64_t output_count = 0;
     std::uint64_t cmd_vel_count = 0;
     double next_status = nowSeconds() + cfg.status_s;
+    auto clear_planner_terrain_inputs = [&]() {
+      terrain_xyzh.clear();
+      terrain_ext_xyzh.clear();
+      planner_terrain_xyzh.clear();
+      traversability_grid = TraversabilityGrid{};
+      last_terrain_map_s = 0.0;
+      last_terrain_ext_s = 0.0;
+      last_traversability_s = 0.0;
+    };
 
     std::fprintf(
         stderr,
@@ -925,8 +898,12 @@ int main(int argc, char** argv) {
         cfg.path_library_dir.c_str());
     std::fprintf(
         stderr,
-        "nav_native: publish_cmd_vel=%d status_file=%s\n",
+        "nav_native: publish_cmd_vel=%d check_obstacle=%d use_traversability_cost=%d traversability_max_age_s=%.2f terrain_map_max_age_s=%.2f status_file=%s\n",
         cfg.publish_cmd_vel ? 1 : 0,
+        cfg.check_obstacle ? 1 : 0,
+        cfg.use_traversability_cost ? 1 : 0,
+        cfg.traversability_max_age_s,
+        cfg.terrain_map_max_age_s,
         cfg.status_file.empty() ? "(disabled)" : cfg.status_file.c_str());
     if (cfg.map_path.empty()) {
       std::fprintf(
@@ -1047,6 +1024,37 @@ int main(int argc, char** argv) {
         obstacle_xyzh = cloudToXyzh(msg, cfg.max_obstacle_points, map_body, map_odom_tf);
         ++cloud_count;
       });
+      dds.drainTerrainMap([&](const lingtu_dds_PointCloud2& msg) {
+        const auto xyzh = cloudToXyzh(msg, cfg.max_obstacle_points, map_body, map_odom_tf);
+        if (!xyzh.empty()) {
+          terrain_xyzh = std::move(xyzh);
+          last_terrain_map_s = nowSeconds();
+          ++terrain_map_count;
+        }
+      });
+      dds.drainTerrainMapExt([&](const lingtu_dds_PointCloud2& msg) {
+        const auto xyzh = cloudToXyzh(msg, cfg.max_obstacle_points, map_body, map_odom_tf);
+        if (!xyzh.empty()) {
+          terrain_ext_xyzh = std::move(xyzh);
+          last_terrain_ext_s = nowSeconds();
+          ++terrain_map_ext_count;
+        }
+      });
+      dds.drainMapClearing([&](const lingtu_dds_Bool& msg) {
+        if (!msg.data) {
+          return;
+        }
+        clear_planner_terrain_inputs();
+        ++map_clearing_count;
+      });
+      dds.drainCloudClearing([&](const lingtu_dds_Bool& msg) {
+        if (!msg.data) {
+          return;
+        }
+        clear_planner_terrain_inputs();
+        obstacle_xyzh.clear();
+        ++cloud_clearing_count;
+      });
       dds.drainGlobalPath([&](const lingtu_dds_Path& msg) {
         const auto path = toPath(msg);
         if (path.size() >= 2) {
@@ -1077,6 +1085,7 @@ int main(int argc, char** argv) {
         TraversabilityGrid grid = toTraversabilityGrid(msg);
         if (!grid.values.empty()) {
           traversability_grid = std::move(grid);
+          last_traversability_s = nowSeconds();
           ++traversability_count;
         }
       });
@@ -1107,12 +1116,49 @@ int main(int argc, char** argv) {
       });
 
       if (map_body && has_path) {
+        const double tick_now = nowSeconds();
+        const bool traversability_available = !traversability_grid.values.empty();
+        const bool traversability_fresh =
+            traversability_available &&
+            (last_traversability_s > 0.0) &&
+            (cfg.traversability_max_age_s <= 0.0 ||
+             tick_now - last_traversability_s <= cfg.traversability_max_age_s);
+        const auto traversability_view =
+            (cfg.check_obstacle && cfg.use_traversability_cost && traversability_fresh)
+                ? traversability_grid.view()
+                : lingtu::nav::plan::TraversabilityGridView{};
+        const bool terrain_map_fresh =
+            !terrain_xyzh.empty() &&
+            (last_terrain_map_s > 0.0) &&
+            (cfg.terrain_map_max_age_s <= 0.0 ||
+             tick_now - last_terrain_map_s <= cfg.terrain_map_max_age_s);
+        const bool terrain_ext_fresh =
+            !terrain_ext_xyzh.empty() &&
+            (last_terrain_ext_s > 0.0) &&
+            (cfg.terrain_map_max_age_s <= 0.0 ||
+             tick_now - last_terrain_ext_s <= cfg.terrain_map_max_age_s);
+        const std::vector<float>* planner_obstacles_ptr =
+            cfg.check_obstacle ? &obstacle_xyzh : nullptr;
+        if (cfg.check_obstacle && (terrain_map_fresh || terrain_ext_fresh)) {
+          planner_terrain_xyzh.clear();
+          if (terrain_map_fresh) {
+            appendXyzhCloud(planner_terrain_xyzh, terrain_xyzh, cfg.max_obstacle_points);
+          }
+          if (terrain_ext_fresh) {
+            appendXyzhCloud(planner_terrain_xyzh, terrain_ext_xyzh, cfg.max_obstacle_points);
+          }
+          if (!planner_terrain_xyzh.empty()) {
+            planner_obstacles_ptr = &planner_terrain_xyzh;
+          }
+        }
+        const bool has_planner_obstacles =
+            planner_obstacles_ptr != nullptr && !planner_obstacles_ptr->empty();
         const auto out = nav.tick(
             *map_body,
-            obstacle_xyzh.empty() ? nullptr : obstacle_xyzh.data(),
-            static_cast<int>(obstacle_xyzh.size() / 4),
-            nowSeconds(),
-            traversability_grid.view());
+            has_planner_obstacles ? planner_obstacles_ptr->data() : nullptr,
+            has_planner_obstacles ? static_cast<int>(planner_obstacles_ptr->size() / 4) : 0,
+            tick_now,
+            traversability_view);
         dds.writeLocalPath(out.local_path_map);
         last_local_path = out.local_path_map;
         last_local.seen = true;
@@ -1142,40 +1188,79 @@ int main(int argc, char** argv) {
       const double now = nowSeconds();
       if (cfg.status_s > 0.0 && now >= next_status) {
         next_status = now + cfg.status_s;
+        const bool traversability_available = !traversability_grid.values.empty();
+        const bool traversability_fresh =
+            traversability_available &&
+            (last_traversability_s > 0.0) &&
+            (cfg.traversability_max_age_s <= 0.0 ||
+             now - last_traversability_s <= cfg.traversability_max_age_s);
+        const bool terrain_map_fresh =
+            !terrain_xyzh.empty() &&
+            (last_terrain_map_s > 0.0) &&
+            (cfg.terrain_map_max_age_s <= 0.0 ||
+             now - last_terrain_map_s <= cfg.terrain_map_max_age_s);
+        const bool terrain_ext_fresh =
+            !terrain_ext_xyzh.empty() &&
+            (last_terrain_ext_s > 0.0) &&
+            (cfg.terrain_map_max_age_s <= 0.0 ||
+             now - last_terrain_ext_s <= cfg.terrain_map_max_age_s);
+        if (cfg.check_obstacle && (terrain_map_fresh || terrain_ext_fresh)) {
+          planner_terrain_xyzh.clear();
+          if (terrain_map_fresh) {
+            appendXyzhCloud(planner_terrain_xyzh, terrain_xyzh, cfg.max_obstacle_points);
+          }
+          if (terrain_ext_fresh) {
+            appendXyzhCloud(planner_terrain_xyzh, terrain_ext_xyzh, cfg.max_obstacle_points);
+          }
+        }
+        const std::size_t planner_obstacle_points =
+            !cfg.check_obstacle
+                ? 0
+                : (terrain_map_fresh || terrain_ext_fresh)
+                ? planner_terrain_xyzh.size() / 4
+                : obstacle_xyzh.size() / 4;
         std::fprintf(
             stderr,
-            "nav_native: odom=%llu goals=%llu cancels=%llu instructions=%llu registered_clouds=%llu traversability=%llu paths=%llu plan_fail=%llu outputs=%llu cmd_vel=%llu obstacle_points=%zu active=%d\n",
+            "nav_native: odom=%llu goals=%llu cancels=%llu instructions=%llu registered_clouds=%llu terrain_maps=%llu terrain_map_exts=%llu traversability=%llu paths=%llu plan_fail=%llu outputs=%llu cmd_vel=%llu obstacle_points=%zu active=%d\n",
             static_cast<unsigned long long>(odom_count),
             static_cast<unsigned long long>(goal_count),
             static_cast<unsigned long long>(cancel_count),
             static_cast<unsigned long long>(instruction_count),
             static_cast<unsigned long long>(cloud_count),
+            static_cast<unsigned long long>(terrain_map_count),
+            static_cast<unsigned long long>(terrain_map_ext_count),
             static_cast<unsigned long long>(traversability_count),
             static_cast<unsigned long long>(path_count),
             static_cast<unsigned long long>(plan_fail_count),
             static_cast<unsigned long long>(output_count),
             static_cast<unsigned long long>(cmd_vel_count),
-            obstacle_xyzh.size() / 4,
+            planner_obstacle_points,
             has_path ? 1 : 0);
         writeStatusSnapshot(
-            cfg,
+            status_cfg,
             now,
             map_body.has_value(),
             map_odom_tf.has_value(),
             has_path,
-            !traversability_grid.values.empty(),
+            cfg.check_obstacle && cfg.use_traversability_cost && traversability_fresh,
+            cfg.check_obstacle && terrain_map_fresh,
+            cfg.check_obstacle && terrain_ext_fresh,
             odom_count,
             tf_count,
             goal_count,
             cancel_count,
+            map_clearing_count,
+            cloud_clearing_count,
             instruction_count,
             cloud_count,
+            terrain_map_count,
+            terrain_map_ext_count,
             traversability_count,
             path_count,
             plan_fail_count,
             output_count,
             cmd_vel_count,
-            obstacle_xyzh.size() / 4,
+            planner_obstacle_points,
             last_plan,
             last_local,
             last_global_path,

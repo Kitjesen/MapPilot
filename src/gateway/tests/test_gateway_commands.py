@@ -1011,6 +1011,8 @@ def test_runtime_switch_endpoint_hot_executes_same_graph_without_subprocess(
     assert gateway.cmd_vel.msg_count == 1
     assert gateway.mode_cmd.msg_count == 1
     assert getattr(gateway, "_runtime_product_profile") == "inspection"
+    assert gateway._session_product_profile == "inspection"
+    assert gateway._session_product_session == "inspection"
     assert gateway._cmd_vel_mux.calls == ["freeze", "unfreeze"]
     assert gateway._mode == "autonomous"
 

@@ -11,7 +11,7 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from runtime.blueprints.simulation_contract import simulation_runtime_contract
+from runtime.contracts.simulation import simulation_runtime_contract
 from runtime.runtime_interface import resolved_runtime_data_flow
 from sim.scripts import server_sim_closure
 
@@ -1408,7 +1408,6 @@ def _complete_cmu_unity_report() -> dict:
             {"name": "lingtu_tare_explore_profile", "ok": True, "required": True},
             {"name": "lingtu_cmu_tare_profile", "ok": True, "required": True},
             {"name": "lingtu_cmu_adapter_exists", "ok": True, "required": True},
-            {"name": "lingtu_cmu_adapter_launch_exists", "ok": True, "required": True},
             {"name": "lingtu_cmu_adapter_relay_contract", "ok": True, "required": True},
             {"name": "lingtu_cmu_adapter_safety_contract", "ok": True, "required": True},
         ],
@@ -2030,8 +2029,8 @@ def test_server_sim_closure_native_pct_command_loads_ros_python_environment():
 
     assert "source /opt/ros/humble/setup.bash" in spec.command
     assert "/opt/ros/humble/local/lib/python3.10/dist-packages" in spec.command
-    assert "sim/scripts/native_pct_mujoco_gate.py" in spec.command
-    assert "sim/scripts/launch_mujoco_fastlio2_live.sh" not in spec.command
+    assert "sim/scripts/mujoco/native_pct_gate.py" in spec.command
+    assert "sim/scripts/mujoco/launch_fastlio2_live.sh" not in spec.command
     assert "--route terrain_short" in spec.command
     assert "--timeout-s 80" in spec.command
     assert "--near-field-stop-distance 0.35" in spec.command
@@ -2175,7 +2174,7 @@ def test_server_sim_closure_mujoco_tare_command_uses_live_tare_mode():
     spec = next(item for item in server_sim_closure.GATES if item.name == "mujoco_tare_exploration")
 
     assert "source /opt/ros/humble/setup.bash" in spec.command
-    assert "launch_mujoco_fastlio2_live.sh tare" in spec.command
+    assert "mujoco/launch_fastlio2_live.sh tare" in spec.command
     assert "server_sim_closure/mujoco_tare_exploration" in spec.command
     assert "industrial_park" in spec.command
     assert "LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM" in spec.command
@@ -4780,7 +4779,7 @@ def test_server_sim_closure_fastlio2_rejects_bad_runtime_data_flow(tmp_path: Pat
 
 
 def test_server_sim_closure_fastlio2_exception_report_keeps_sensor_contract(tmp_path: Path):
-    from sim.scripts.mujoco_live_gate import _gate_exception_report
+    from sim.scripts.mujoco.live_gate import _gate_exception_report
 
     report = _gate_exception_report(
         SimpleNamespace(
@@ -5955,7 +5954,7 @@ def test_server_sim_closure_classifies_moving_obstacle_preflight_blocker_as_envi
             "required_scan_time_profile": "physical_rolling",
             "required_live_nav_chain": True,
             "environment_blockers": [
-                "launch_script missing: sim/scripts/launch_mujoco_fastlio2_live.sh"
+                "launch_script missing: sim/scripts/mujoco/launch_fastlio2_live.sh"
             ],
             "artifact_blockers": [
                 "inspection_tomogram missing: artifacts/server_sim_closure/large_terrain/tomogram.pickle"
@@ -5963,7 +5962,7 @@ def test_server_sim_closure_classifies_moving_obstacle_preflight_blocker_as_envi
             "blocking_subsystems": ["environment_runtime", "artifact_contract"],
             "preflight": {"ok": False},
             "blockers": [
-                "launch_script missing: sim/scripts/launch_mujoco_fastlio2_live.sh",
+                "launch_script missing: sim/scripts/mujoco/launch_fastlio2_live.sh",
                 "inspection_tomogram missing: artifacts/server_sim_closure/large_terrain/tomogram.pickle",
             ],
         },
@@ -5978,7 +5977,7 @@ def test_server_sim_closure_classifies_moving_obstacle_preflight_blocker_as_envi
     assert summary["ok"] is False
     evidence = summary["gates"]["moving_obstacle_sweep"]["evidence"]
     assert evidence["environment_blockers"] == [
-        "launch_script missing: sim/scripts/launch_mujoco_fastlio2_live.sh"
+        "launch_script missing: sim/scripts/mujoco/launch_fastlio2_live.sh"
     ]
     assert evidence["artifact_blockers"] == [
         "inspection_tomogram missing: artifacts/server_sim_closure/large_terrain/tomogram.pickle"
@@ -6222,7 +6221,7 @@ def test_server_sim_closure_large_loop_closure_command_aggregates_runtime_report
     ) in spec.command
     assert "LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE=${LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE:-physical_rolling}" in spec.command
     assert "run_start=$(date +%s)" in spec.command
-    assert "launch_mujoco_fastlio2_live.sh inspection-loop-video;" in spec.command
+    assert "mujoco/launch_fastlio2_live.sh inspection-loop-video;" in spec.command
     assert "test -n \"$latest\" && test -f \"$latest/report.json\"" in spec.command
     assert "stat -c %Y \"$latest/report.json\"" in spec.command
     assert "stat -c %Y \"$latest/report.json\")\" -ge \"$run_start\" &&" in spec.command
@@ -6232,7 +6231,7 @@ def test_server_sim_closure_large_loop_closure_command_aggregates_runtime_report
 
 
 def test_mujoco_live_launcher_large_loop_defaults_close_in_live_planning_frame():
-    launcher = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(
+    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
         encoding="utf-8"
     )
 
@@ -6264,7 +6263,7 @@ def test_mujoco_live_launcher_large_loop_defaults_close_in_live_planning_frame()
 
 
 def test_mujoco_live_launcher_writes_red_report_when_runtime_report_missing():
-    launcher = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(
+    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
         encoding="utf-8"
     )
 
@@ -6950,7 +6949,7 @@ def test_server_sim_closure_next_actions_separate_runtime_blocker_from_missing_r
     ]
     assert actions["fastlio2_dynamic_inspection"]["category"] == "artifact_contract"
     assert actions["fastlio2_dynamic_inspection"]["action_type"] == "generate_missing_report"
-    assert "launch_mujoco_fastlio2_live.sh" in actions["fastlio2_dynamic_inspection"]["command"]
+    assert "mujoco/launch_fastlio2_live.sh" in actions["fastlio2_dynamic_inspection"]["command"]
     assert actions["fastlio2_dynamic_inspection"]["expected_report_path"].startswith(
         "artifacts/server_sim_closure/mujoco_fastlio2_live"
     )
@@ -7006,8 +7005,8 @@ def test_server_sim_closure_native_pct_missing_summary_lists_runtime_requirement
 
     command = summary["missing_required_commands"][0]
     assert command["name"] == "native_pct_mujoco"
-    assert "native_pct_mujoco_gate.py" in command["command"]
-    assert "launch_mujoco_fastlio2_live.sh" not in command["command"]
+    assert "mujoco/native_pct_gate.py" in command["command"]
+    assert "mujoco/launch_fastlio2_live.sh" not in command["command"]
     assert "--route terrain_short" in command["command"]
     assert "--timeout-s 80" in command["command"]
     assert "--near-field-stop-distance 0.35" in command["command"]
@@ -7911,13 +7910,13 @@ def test_server_sim_closure_fastlio2_dynamic_inspection_command_uses_pct_contrac
     moving_sweep = next(
         gate for gate in server_sim_closure.GATES if gate.name == "moving_obstacle_sweep"
     )
-    fastlio_gate = Path("sim/scripts/mujoco_live_gate.py").read_text(
+    fastlio_gate = Path("sim/scripts/mujoco/live_gate.py").read_text(
         encoding="utf-8"
     )
     fastlio_report = Path("sim/scripts/mujoco_live/report.py").read_text(
         encoding="utf-8"
     )
-    fastlio_launcher = Path("sim/scripts/launch_mujoco_fastlio2_live.sh").read_text(
+    fastlio_launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
         encoding="utf-8"
     )
 

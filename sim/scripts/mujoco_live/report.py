@@ -1,4 +1,4 @@
-"""Report and runtime-contract helpers for the MuJoCo live gate."""
+﻿"""Report and runtime-contract helpers for the MuJoCo live gate."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
-from runtime.runtime_evidence import validate_runtime_evidence
+from runtime.diagnostics.runtime_evidence import validate_runtime_evidence
 from runtime.runtime_interface import FRAME_LINKS, TOPICS, resolved_runtime_data_flow
 
 def _sha256_file(path: Path) -> str:
@@ -211,12 +211,12 @@ def _exception_lidar_source(args: argparse.Namespace) -> dict[str, Any]:
     mujoco_lidar_backend = str(getattr(args, "mujoco_lidar_backend", "") or "")
     backend_report = {
         "backend": "uninitialized",
-        "mature_backend": False,
-        "mature_lidar_backend_verified": False,
+        "product_backend": False,
+        "product_lidar_backend_verified": False,
         "fallback_used": False,
         "requested_backend": requested_backend,
         "mujoco_lidar_backend": mujoco_lidar_backend,
-        "require_mature_backend": True,
+        "require_product_backend": True,
         "allow_legacy_fallback": bool(
             getattr(args, "allow_legacy_lidar_fallback", False)
         ),
@@ -389,14 +389,14 @@ def _gate_exception_report(
     localization_algorithm = "removed"
     lidar_backend_report = {
         "backend": "uninitialized",
-        "mature_backend": False,
-        "mature_lidar_backend_verified": False,
+        "product_backend": False,
+        "product_lidar_backend_verified": False,
         "fallback_used": False,
         "requested_backend": str(getattr(args, "lidar_backend", "") or ""),
         "mujoco_lidar_backend": str(
             getattr(args, "mujoco_lidar_backend", "") or ""
         ),
-        "require_mature_backend": True,
+        "require_product_backend": True,
         "allow_legacy_fallback": bool(
             getattr(args, "allow_legacy_lidar_fallback", False)
         ),
@@ -414,7 +414,7 @@ def _gate_exception_report(
         "simulation_only": True,
         "hardware_output_forbidden": True,
         "checks": {
-            "mature_mujoco_lidar_backend": False,
+            "product_mujoco_lidar_backend": False,
             "raw_mujoco_lidar": False,
             "raw_mujoco_imu": False,
             "localization_odometry_and_map": False,
@@ -466,7 +466,7 @@ def _gate_exception_report(
         "runtime_evidence": _runtime_evidence_report(runtime_evidence),
         "hardware_safety": hardware_safety,
         "lidar_backend": lidar_backend_report,
-        "mature_lidar_backend_verified": False,
+        "product_lidar_backend_verified": False,
         "lidar_source": _exception_lidar_source(args),
         "args": vars(args),
     }

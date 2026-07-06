@@ -51,6 +51,8 @@ struct TerrainParams {
   // Dynamic obstacle
   bool clearDyObs = false;
   double minDyObsDis = 0.3;
+  double minDyObsAngle = 0.0;
+  double minDyObsRelZ = -0.5;
   double absDyObsRelZThre = 0.2;
   double minDyObsVFOV = -16.0;
   double maxDyObsVFOV = 16.0;
@@ -138,7 +140,7 @@ public:
     }
     if (noDataInited_ == 1) {
       double d = std::hypot(vx_ - vrecx_, vy_ - vrecy_);
-      if (d > p_.minDyObsDis) noDataInited_ = 2;
+      if (d >= p_.noDecayDis) noDataInited_ = 2;
     }
   }
 
@@ -380,6 +382,9 @@ private:
     int pw = planarVoxelWidth_;
     for (int i = 0; i < planarVoxelNum_; i++) {
       planarVoxelElev_[i] = 0;
+      planarVoxelEdge_[i] = 0;
+      planarVoxelDyObs_[i] = 0;
+      planarVoxelOutOfFov_[i] = 0;
       planarPointElev_[i].clear();
     }
 
@@ -398,6 +403,31 @@ private:
           if (nx >= 0 && nx < pw && ny >= 0 && ny < pw) {
             planarPointElev_[pw * nx + ny].push_back(pt.z);
           }
+        }
+      }
+
+      if (p_.clearDyObs && ix >= 0 && ix < pw && iy >= 0 && iy < pw) {
+        accumulateDynamicObstacleEvidence(pt, pw * ix + iy);
+      }
+    }
+
+    if (p_.clearDyObs) {
+      for (const auto& pt : cropped_) {
+        int ix = (int)((pt.x - vx_ + p_.planarVoxelSize / 2) / p_.planarVoxelSize) + p_.planarVoxelHalfWidth;
+        int iy = (int)((pt.y - vy_ + p_.planarVoxelSize / 2) / p_.planarVoxelSize) + p_.planarVoxelHalfWidth;
+        if (pt.x - vx_ + p_.planarVoxelSize / 2 < 0) ix--;
+        if (pt.y - vy_ + p_.planarVoxelSize / 2 < 0) iy--;
+        if (ix < 0 || ix >= pw || iy < 0 || iy >= pw) continue;
+
+        const float dx = pt.x - static_cast<float>(vx_);
+        const float dy = pt.y - static_cast<float>(vy_);
+        const float dz = pt.z - static_cast<float>(vz_);
+        const float dis = std::sqrt(dx * dx + dy * dy);
+        const float angle = std::atan2(
+            dz - static_cast<float>(p_.minDyObsRelZ),
+            std::max(dis, 1e-6f)) * 180.0f / static_cast<float>(M_PI);
+        if (angle > static_cast<float>(p_.minDyObsAngle)) {
+          planarVoxelDyObs_[pw * ix + iy] = 0;
         }
       }
     }
@@ -435,6 +465,7 @@ private:
   }
 
   TerrainResult generateResult(double relTime) {
+    (void)relTime;
     TerrainResult res;
     int pw = planarVoxelWidth_;
     res.map_width = pw;
@@ -454,6 +485,9 @@ private:
 
       if (ix >= 0 && ix < pw && iy >= 0 && iy < pw) {
         int vidx = pw * ix + iy;
+        if (p_.clearDyObs && planarVoxelDyObs_[vidx] >= p_.minDyObsPointNum) {
+          continue;
+        }
         float disZ = pt.z - planarVoxelElev_[vidx];
         if (p_.considerDrop) disZ = std::fabs(disZ);
 
@@ -467,7 +501,110 @@ private:
         }
       }
     }
+    appendNoDataObstacles(res);
     return res;
+  }
+
+  void accumulateDynamicObstacleEvidence(const Point4& pt, int voxel_idx) {
+    const float dx = pt.x - static_cast<float>(vx_);
+    const float dy = pt.y - static_cast<float>(vy_);
+    const float dz = pt.z - static_cast<float>(vz_);
+    const float dis = std::sqrt(dx * dx + dy * dy);
+    if (dis > static_cast<float>(p_.minDyObsDis)) {
+      const float angle = std::atan2(
+          dz - static_cast<float>(p_.minDyObsRelZ),
+          std::max(dis, 1e-6f)) * 180.0f / static_cast<float>(M_PI);
+      if (angle <= static_cast<float>(p_.minDyObsAngle)) {
+        return;
+      }
+      const float cy = std::cos(static_cast<float>(vyaw_));
+      const float sy = std::sin(static_cast<float>(vyaw_));
+      const float cp = std::cos(static_cast<float>(vpitch_));
+      const float sp = std::sin(static_cast<float>(vpitch_));
+      const float cr = std::cos(static_cast<float>(vroll_));
+      const float sr = std::sin(static_cast<float>(vroll_));
+      const float x2 = dx * cy + dy * sy;
+      const float y2 = -dx * sy + dy * cy;
+      const float z2 = dz;
+      const float x3 = x2 * cp - z2 * sp;
+      const float y3 = y2;
+      const float z3 = x2 * sp + z2 * cp;
+      const float x4 = x3;
+      const float y4 = y3 * cr + z3 * sr;
+      const float z4 = -y3 * sr + z3 * cr;
+      const float dis4 = std::sqrt(x4 * x4 + y4 * y4);
+      const float angle4 =
+          std::atan2(z4, std::max(dis4, 1e-6f)) * 180.0f / static_cast<float>(M_PI);
+      if ((angle4 > static_cast<float>(p_.minDyObsVFOV) &&
+           angle4 < static_cast<float>(p_.maxDyObsVFOV)) ||
+          std::fabs(z4) < static_cast<float>(p_.absDyObsRelZThre)) {
+        planarVoxelDyObs_[voxel_idx]++;
+      }
+    } else {
+      planarVoxelDyObs_[voxel_idx] += p_.minDyObsPointNum;
+    }
+  }
+
+  void appendNoDataObstacles(TerrainResult& res) {
+    if (!p_.noDataObstacle || noDataInited_ != 2) {
+      return;
+    }
+    const int pw = planarVoxelWidth_;
+    for (int i = 0; i < planarVoxelNum_; ++i) {
+      if (static_cast<int>(planarPointElev_[i].size()) < p_.minBlockPointNum) {
+        planarVoxelEdge_[i] = 1;
+      }
+    }
+    for (int skip = 0; skip < p_.noDataBlockSkipNum; ++skip) {
+      for (int i = 0; i < planarVoxelNum_; ++i) {
+        if (planarVoxelEdge_[i] < 1) {
+          continue;
+        }
+        const int ix = i / pw;
+        const int iy = i % pw;
+        bool edge_voxel = false;
+        for (int dx = -1; dx <= 1; ++dx) {
+          for (int dy = -1; dy <= 1; ++dy) {
+            const int nx = ix + dx;
+            const int ny = iy + dy;
+            if (nx >= 0 && nx < pw && ny >= 0 && ny < pw &&
+                planarVoxelEdge_[pw * nx + ny] < planarVoxelEdge_[i]) {
+              edge_voxel = true;
+            }
+          }
+        }
+        if (!edge_voxel) {
+          planarVoxelEdge_[i]++;
+        }
+      }
+    }
+    for (int i = 0; i < planarVoxelNum_; ++i) {
+      if (planarVoxelEdge_[i] <= p_.noDataBlockSkipNum) {
+        continue;
+      }
+      const int ix = i / pw;
+      const int iy = i % pw;
+      const float cx = static_cast<float>(
+          p_.planarVoxelSize * (ix - p_.planarVoxelHalfWidth) + vx_);
+      const float cy = static_cast<float>(
+          p_.planarVoxelSize * (iy - p_.planarVoxelHalfWidth) + vy_);
+      const float z = static_cast<float>(vz_);
+      const float h = static_cast<float>(p_.vehicleHeight);
+      const float d = static_cast<float>(p_.planarVoxelSize * 0.25);
+      appendTerrainPoint(res, cx - d, cy - d, z, h);
+      appendTerrainPoint(res, cx + d, cy - d, z, h);
+      appendTerrainPoint(res, cx + d, cy + d, z, h);
+      appendTerrainPoint(res, cx - d, cy + d, z, h);
+    }
+  }
+
+  static void appendTerrainPoint(
+      TerrainResult& res, float x, float y, float z, float height) {
+    res.terrain_points.push_back(x);
+    res.terrain_points.push_back(y);
+    res.terrain_points.push_back(z);
+    res.terrain_points.push_back(height);
+    res.n_points++;
   }
 };
 

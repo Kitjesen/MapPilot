@@ -33,14 +33,14 @@ layers:
       - src/runtime/runtime_policy.py
       - src/runtime/runtime_profiles.py
       - src/runtime/runtime_switch.py
-      - src/runtime/runtime_validation_gates.py
-      - src/runtime/runtime_evidence.py
+      - src/runtime/diagnostics/runtime_validation_gates.py
+      - src/runtime/diagnostics/runtime_evidence.py
       - src/runtime/algorithm_gates.py
       - src/runtime/backend_status.py
-      - src/runtime/efficiency_status.py
-      - src/runtime/product_field_check.py
-      - src/runtime/gateway_runtime_acceptance.py
-      - src/runtime/inspection_acceptance.py
+      - src/runtime/diagnostics/efficiency_status.py
+      - src/runtime/diagnostics/product_field_check.py
+      - src/runtime/diagnostics/gateway_runtime_acceptance.py
+      - src/runtime/diagnostics/inspection_acceptance.py
       - config/topic_contract.yaml
       - config/endpoints.yaml
       - config/devices.yaml
@@ -153,9 +153,9 @@ import_boundaries:
       - memory
   composition_exceptions:
     - runtime/blueprints/
-    - runtime/gateway_runtime_acceptance.py
+    - runtime/diagnostics/gateway_runtime_acceptance.py
     - runtime/msgs/scene.py
-    - runtime/product_field_check.py
+    - runtime/diagnostics/product_field_check.py
     - runtime/same_source_map_artifacts.py
     - nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/launch/system_launch.py
     - nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/
