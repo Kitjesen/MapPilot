@@ -242,6 +242,7 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
     assert payload["runtime"]["command_boundary"] == "PASS"
     assert payload["runtime"]["frontier_preview"] == "PASS"
     assert payload["runtime"]["runtime_switch"] == "PASS"
+    assert payload["runtime"]["runtime_graph"] == "PASS"
     assert payload["runtime"]["stages"] == "PASS"
     assert payload["stage_evidence"]["live_stages"] == [
         "slam_or_relayed_localization_map",
@@ -272,6 +273,8 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
     assert payload["runtime_switch"]["publishes"] == []
     assert payload["runtime_switch"]["from"]["endpoint"] == "mujoco_live"
     assert payload["runtime_switch"]["to"]["endpoint"] == "thunder_field"
+    assert payload["runtime_graph"]["ok"] is True
+    assert payload["runtime_graph"]["issues"] == []
 
 
 def test_product_field_check_rejects_stateful_runtime_switch_preflight():

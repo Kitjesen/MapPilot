@@ -1,0 +1,30 @@
+schema_version: lingtu.runtime_graph.endpoint.v1
+name: thunder_field
+runtime_class: native_dds_field
+summary: Physical Thunder field endpoint. Native services own sensors, SLAM, navigation endpoints, and driver output.
+simulation_only: false
+real_equivalent: true
+data_plane: native_dds
+profile_defaults:
+  runtime_endpoint: thunder_field
+  localization_adapter: cpp_slam_status
+  command_output_mode: endpoint_only
+native_services:
+  - lingtu-slam-dds.service
+  - lingtu-nav-dds.service
+source_topics:
+  - /lidar/raw_frame
+  - /imu/raw
+exposed_topics:
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /slam/localization_quality
+  - /nav/cmd_vel
+forbidden_modules:
+  - SimEndpointDriverModule
+  - SlamBridgeModule
+forbidden_claims:
+  - module_sim_real_equivalence
+  - ros2_bridge_required

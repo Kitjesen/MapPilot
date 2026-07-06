@@ -1,0 +1,21 @@
+schema_version: lingtu.runtime_graph.product.v1
+name: nav
+summary: Navigate against a saved map using native localization and command output.
+required_topics:
+  - /slam/odometry
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /nav/goal_pose
+  - /nav/cmd_vel
+required_capabilities:
+  - saved_map_relocalization
+  - global_planning
+  - local_planning
+  - cmd_vel_mux
+  - driver_command_output
+forbidden_modules:
+  - SimEndpointDriverModule
+  - SlamBridgeModule
+forbidden_claims:
+  - module_sim_real_equivalence
+  - ros2_bridge_required

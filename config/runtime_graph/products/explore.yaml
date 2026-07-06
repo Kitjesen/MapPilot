@@ -1,0 +1,22 @@
+schema_version: lingtu.runtime_graph.product.v1
+name: explore
+summary: Grow a map and navigate to exploration goals through the native runtime contract.
+required_topics:
+  - /lidar/raw_frame
+  - /imu/raw
+  - /slam/odometry
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /nav/goal_pose
+  - /nav/cmd_vel
+required_capabilities:
+  - native_slam_mapping
+  - frontier_or_tare_goal_source
+  - local_planning
+  - cmd_vel_mux
+forbidden_modules:
+  - SimEndpointDriverModule
+  - SlamBridgeModule
+forbidden_claims:
+  - module_sim_real_equivalence
+  - ros2_bridge_required

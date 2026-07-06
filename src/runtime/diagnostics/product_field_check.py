@@ -236,6 +236,33 @@ def _runtime_switch_preflight_status(
     }
 
 
+def _runtime_graph_status() -> dict[str, Any]:
+    try:
+        from runtime.graph import validate_runtime_graph
+    except Exception as exc:  # pragma: no cover - defensive diagnostic path
+        return {
+            "status": "FAIL",
+            "ok": False,
+            "issue_count": 1,
+            "issues": [
+                {
+                    "code": "runtime_graph_import_failed",
+                    "message": str(exc),
+                    "scope": "runtime_graph",
+                    "severity": "error",
+                }
+            ],
+        }
+
+    issues = validate_runtime_graph()
+    return {
+        "status": "PASS" if not issues else "FAIL",
+        "ok": not issues,
+        "issue_count": len(issues),
+        "issues": [issue.as_dict() for issue in issues],
+    }
+
+
 def _default_switch_plan_request(mode: str) -> dict[str, Any]:
     if mode == "field":
         return {
@@ -279,6 +306,7 @@ def build_product_field_check(
     )
     algorithm = _algorithm_benchmark_status(algorithm_gate, mode=mode)
     runtime_switch = _runtime_switch_preflight_status(switch_plan, mode=mode)
+    runtime_graph = _runtime_graph_status()
 
     command_boundary_ok = (
         dataflow.get("arbitrary_publish_supported") is False
@@ -318,6 +346,12 @@ def build_product_field_check(
     if switch_plan and runtime_switch["ok"] is not True:
         blockers.append("runtime switch preflight is not passing")
         blockers.extend(str(item) for item in runtime_switch["blockers"])
+    if runtime_graph["ok"] is not True:
+        blockers.append("runtime graph contract is not passing")
+        blockers.extend(
+            f"runtime_graph: {issue.get('code')}"
+            for issue in runtime_graph["issues"]
+        )
     advisories = [
         str(item)
         for item in (gateway_acceptance.get("advisories") or ())
@@ -353,6 +387,7 @@ def build_product_field_check(
                 unchecked=not bool(frontier_preview),
             ),
             "runtime_switch": runtime_switch["status"],
+            "runtime_graph": runtime_graph["status"],
             "ros2_topic_required": gateway_acceptance.get("ros2_topic_required"),
             "arbitrary_publish_supported": dataflow.get(
                 "arbitrary_publish_supported"
@@ -388,6 +423,7 @@ def build_product_field_check(
             "blockers": list(frontier_preview.get("blockers") or ()),
         },
         "runtime_switch": runtime_switch,
+        "runtime_graph": runtime_graph,
         "navigation": {
             "can_send_goal": _status(navigation.get("can_send_goal") is True),
             "route_preview": _status(routecheck.get("ok") is True),
@@ -434,6 +470,7 @@ def build_product_field_check(
             "runtime_switch_plan": (
                 "python lingtu.py switch-plan sim_mujoco_live explore"
             ),
+            "runtime_graph": "python -m pytest src/runtime/tests/test_runtime_graph_contract.py -q",
         },
     }
     return payload

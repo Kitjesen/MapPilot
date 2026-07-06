@@ -54,7 +54,7 @@ MujocoDriverModule odometry/map_cloud
 Use it for fast wiring, map-layer, local-planner, visual-servo, and semantic
 pipeline checks.
 
-### MuJoCo Live SLAM-Style Gates
+### MuJoCo Legacy Module Gates
 
 ```bash
 python lingtu.py sim_mujoco_live gate
@@ -64,8 +64,20 @@ python lingtu.py sim_mujoco_pct_live pct-moving-obstacle-video
 ```
 
 These profiles use external launchers and the `mujoco_fastlio2_live` contract.
-They validate simulated raw LiDAR/IMU and downstream SLAM/navigation behavior.
-They are simulation gates, not field proof.
+They validate legacy downstream Python Module wiring and video gates from
+normalized odometry/map-cloud evidence. They are simulation gates, not field
+proof or native DDS equivalence.
+
+### MuJoCo Native DDS Gate
+
+```bash
+python sim/scripts/mujoco/native_dds_sensors.py --lidar-backend mujoco_lidar
+```
+
+This is the real-equivalent simulation path: MuJoCo MID-360/IMU records feed
+the same native DDS sensor boundary used by the field robot, then native C++
+SLAM publishes `/slam/*` for map/nav/explore validation. Runtime Graph names
+this endpoint `mujoco_native_dds`.
 
 ### Product Tasks On Simulation Endpoints
 

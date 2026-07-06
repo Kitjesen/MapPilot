@@ -1,0 +1,20 @@
+schema_version: lingtu.runtime_graph.product.v1
+name: teleop_avoid
+summary: Teleoperation with live localization and costmap-based collision arbitration.
+required_topics:
+  - /slam/odometry
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /nav/cmd_vel
+required_capabilities:
+  - teleop
+  - traversability_costmap
+  - cmd_vel_mux
+forbidden_modules:
+  - SimEndpointDriverModule
+  - SlamBridgeModule
+  - nav.local_planner
+  - nav.path_follower
+forbidden_claims:
+  - autonomous_navigation
+  - module_sim_real_equivalence

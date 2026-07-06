@@ -1,0 +1,18 @@
+schema_version: lingtu.runtime_graph.endpoint.v1
+name: replay
+runtime_class: replay
+summary: No-actuation replay endpoint for log and rosbag evidence. It cannot prove live sensor or command closure.
+simulation_only: true
+real_equivalent: false
+data_plane: replay
+source_topics:
+  - /slam/odometry
+  - /slam/map_cloud
+exposed_topics:
+  - /slam/odometry
+  - /slam/map_cloud
+  - /slam/localization_health
+forbidden_claims:
+  - real_robot_motion
+  - live_sensor_mapping
+  - native_dds_raw_sensor_equivalence

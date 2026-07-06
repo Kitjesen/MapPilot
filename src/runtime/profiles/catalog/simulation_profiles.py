@@ -81,10 +81,15 @@ SIMULATION_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         planner_latency_budget_ms=250,
     ),
     "sim_mujoco_live": dict(
-        _desc="MuJoCo raw MID-360 + Fast-LIO live simulation",
+        _desc=(
+            "Legacy MuJoCo Module harness for downstream nav/map wiring; "
+            "not real-equivalent native DDS closure"
+        ),
         _default_robot="sim_endpoint",
         _external_launcher="sim/scripts/mujoco/launch_fastlio2_live.sh",
         _runtime_contract="mujoco_fastlio2_live",
+        _runtime_graph_role="module_sim_harness",
+        _real_equivalent=False,
         slam_profile="none",
         llm="mock",
         planner="octoplanner3d",
@@ -121,10 +126,15 @@ SIMULATION_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         gateway_port=DEFAULT_GATEWAY_PORT,
     ),
     "sim_mujoco_octo_live": dict(
-        _desc="MuJoCo Fast-LIO + OctoPlanner3D closed-loop simulation",
+        _desc=(
+            "Legacy MuJoCo Module harness for OctoPlanner3D downstream closure; "
+            "not real-equivalent native DDS closure"
+        ),
         _default_robot="sim_endpoint",
         _external_launcher="sim/scripts/mujoco/launch_fastlio2_live.sh",
         _runtime_contract="mujoco_fastlio2_live",
+        _runtime_graph_role="module_sim_harness",
+        _real_equivalent=False,
         slam_profile="none",
         llm="mock",
         planner="octoplanner3d",

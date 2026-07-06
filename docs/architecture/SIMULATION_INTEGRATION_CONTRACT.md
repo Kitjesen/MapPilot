@@ -323,12 +323,12 @@ Current boundaries:
 - `cmu_unity_external` relays CMU Unity state, scan, and terrain topics into
   `/nav/*`. It validates LingTu execution against external TARE waypoints; it
   does not validate LingTu Fast-LIO.
-- `mujoco_fastlio2_live` is the official MuJoCo raw-sensor Fast-LIO profile
-  behind `python lingtu.py sim_mujoco_live ...`. Its native source path is
-  `/points_raw + /imu_raw -> fastlio2 -> /Odometry + /cloud_registered +
-  /cloud_map`, and the gate must relay those outputs into `/nav/odometry`,
-  `/nav/registered_cloud`, and `/nav/map_cloud` before LingTu modules consume
-  them.
+- `mujoco_native_dds` is the real-equivalent MuJoCo endpoint. It must publish
+  MuJoCo MID-360/IMU records through the same native DDS sensor boundary as the
+  field robot: `/lidar/raw_frame + /imu/raw -> native C++ SLAM -> /slam/*`.
+- `sim_mujoco_live` / `mujoco_fastlio2_live` are legacy Module simulation
+  harnesses. They are useful for downstream map/navigation wiring and video
+  gates, but they must not be used as proof of native field-runtime closure.
 
 If a report uses simulator-provided `/state_estimation`, `/registered_scan`, or
 `/terrain_map_ext`, it must be described as an external simulation data source,
@@ -372,7 +372,8 @@ The adapter boundary is:
 | `gazebo_industrial` | Gazebo | LingTu frontier/TARE contract | LingTu navigation | LingTu navigation | LingTu navigation | LingTu `CmdVelMux` to Gazebo adapter | LingTu closed-loop smoke/demo evidence |
 | `cmu_unity_baseline` | CMU Unity | CMU TARE/FAR | CMU exploration stack | CMU `localPlanner` | CMU `pathFollower` | CMU path follower to Unity simulator | Reference effect only; not LingTu validation |
 | `cmu_unity_external` | CMU Unity | External CMU TARE waypoint source | LingTu navigation, optionally PCT when the gate requires it | LingTu navigation | LingTu path follower | LingTu adapter relay to CMU simulator | LingTu can ingest CMU/TARE waypoints and execute in simulation |
-| `mujoco_fastlio2_live` | MuJoCo raw LiDAR/IMU | LingTu frontier when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu path follower when `explore/video` is used | MuJoCo velocity adapter or fixed gate motion | Fast-LIO raw sensor to canonical `/nav/*`; optional live exploration/navigation gate |
+| `mujoco_native_dds` | MuJoCo MID-360/IMU through native DDS | LingTu frontier/TARE when enabled | LingTu navigation over native `/slam/*` contract | LingTu navigation | LingTu path follower | Native `/nav/cmd_vel` endpoint sink | Real-equivalent simulation endpoint; must share `/lidar/*`, `/imu/*`, `/slam/*`, `/nav/cmd_vel` with `thunder_field` |
+| `mujoco_fastlio2_live` | MuJoCo live harness | LingTu frontier when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu path follower when `explore/video` is used | MuJoCo velocity adapter or fixed gate motion | Legacy downstream Module wiring/video gate; not field-runtime proof |
 | `thunder_field` | Thunder MID-360/IMU | LingTu frontier or TARE profile | LingTu navigation/PCT | LingTu navigation | LingTu path follower | LingTu `CmdVelMux` to hardware driver | Thunder field runtime boundary; field readiness still requires robot-side evidence |
 
 Forbidden claims are part of the runtime contract:
@@ -382,6 +383,9 @@ Forbidden claims are part of the runtime contract:
 - `cmu_unity_external` must not be reported as CMU-baseline equivalence, pure
   LingTu exploration, "PCT executes TARE", LingTu Fast-LIO mapping, or
   real-robot readiness.
+- `sim_mujoco_live` / `mujoco_fastlio2_live` must not be reported as native DDS
+  raw-sensor equivalence or field-runtime readiness. Use the Runtime Graph
+  `mujoco_native_dds` endpoint for that claim.
 - PCT is a LingTu planner backend. TARE is an exploration strategy. A gate may
   prove that LingTu/PCT can plan on a same-source CMU map, but that is a
   separate planning claim from TARE exploration quality.

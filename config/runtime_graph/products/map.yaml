@@ -1,0 +1,18 @@
+schema_version: lingtu.runtime_graph.product.v1
+name: map
+summary: Build live map artifacts from native LiDAR-inertial SLAM output.
+required_topics:
+  - /lidar/raw_frame
+  - /imu/raw
+  - /slam/odometry
+  - /slam/map_cloud
+  - /slam/localization_health
+required_capabilities:
+  - native_slam_mapping
+  - map_artifact_save
+forbidden_modules:
+  - SimEndpointDriverModule
+  - SlamBridgeModule
+forbidden_claims:
+  - module_sim_real_equivalence
+  - ros2_bridge_required

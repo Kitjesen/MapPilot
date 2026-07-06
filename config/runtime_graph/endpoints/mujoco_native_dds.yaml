@@ -1,0 +1,28 @@
+schema_version: lingtu.runtime_graph.endpoint.v1
+name: mujoco_native_dds
+runtime_class: native_dds_sim
+summary: MuJoCo MID-360 and IMU publisher feeding the same native C++ SLAM DDS boundary as the field endpoint.
+simulation_only: true
+real_equivalent: true
+data_plane: native_dds
+launcher: sim/scripts/mujoco/native_dds_sensors.py
+sensor_publisher: livox_sdk2_stream --stdin-records --dds
+native_services:
+  - lingtu_slam_cyclone_runtime
+source_topics:
+  - /lidar/raw_frame
+  - /imu/raw
+exposed_topics:
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /slam/localization_quality
+  - /nav/cmd_vel
+forbidden_modules:
+  - SimEndpointDriverModule
+  - SlamBridgeModule
+forbidden_claims:
+  - module_sim_real_equivalence
+  - python_slam
+  - ros2_bridge_required

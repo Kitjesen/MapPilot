@@ -1,0 +1,118 @@
+schema_version: lingtu.runtime_graph.topics.v1
+
+native_contract_topics:
+  - /lidar/raw_frame
+  - /imu/raw
+  - /slam/odometry
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /nav/cmd_vel
+
+topics:
+  /lidar/raw_frame:
+    role: raw_lidar_points
+    frame: lidar_link
+    schema: livox_custom_or_pointcloud2
+    producer: endpoint_sensor
+    consumers:
+      - native_slam_runtime
+    real_equivalent_required: true
+
+  /imu/raw:
+    role: raw_imu
+    frame: lidar_link
+    schema: imu
+    producer: endpoint_sensor
+    consumers:
+      - native_slam_runtime
+    real_equivalent_required: true
+
+  /slam/odometry:
+    role: localization_pose
+    frame: odom
+    schema: odometry
+    producer: native_slam_runtime
+    consumers:
+      - maps
+      - navigation
+      - safety
+      - gateway
+    real_equivalent_required: true
+
+  /slam/registered_cloud:
+    role: registered_scan
+    frame: body
+    schema: pointcloud2
+    producer: native_slam_runtime
+    consumers:
+      - local_mapping
+      - diagnostics
+
+  /slam/map_cloud:
+    role: live_map_cloud
+    frame: map
+    schema: pointcloud2
+    producer: native_slam_runtime
+    consumers:
+      - maps
+      - gateway
+      - map_artifacts
+    real_equivalent_required: true
+
+  /slam/localization_health:
+    role: localization_health
+    frame: none
+    schema: localization_status
+    producer: native_slam_runtime
+    consumers:
+      - navigation
+      - safety
+      - gateway
+    real_equivalent_required: true
+
+  /slam/localization_quality:
+    role: localization_quality
+    frame: none
+    schema: float32_or_status_json
+    producer: native_slam_runtime
+    consumers:
+      - gateway
+      - diagnostics
+
+  /nav/goal_pose:
+    role: navigation_goal
+    frame: map
+    schema: pose_stamped
+    producer: gateway_or_mcp
+    consumers:
+      - native_nav_runtime
+      - navigation
+
+  /nav/global_path:
+    role: global_path
+    frame: map
+    schema: path
+    producer: global_planner
+    consumers:
+      - local_planner
+      - gateway
+
+  /nav/local_path:
+    role: local_path
+    frame: map
+    schema: path
+    producer: local_planner
+    consumers:
+      - path_follower
+      - safety
+      - gateway
+
+  /nav/cmd_vel:
+    role: velocity_command
+    frame: body
+    schema: twist
+    producer: cmd_vel_mux
+    consumers:
+      - driver_endpoint
+      - safety_monitor
+    real_equivalent_required: true
