@@ -43,8 +43,10 @@ ROS 2 setup is only for explicit compatibility checks.
 
 ## Profiles
 
-The canonical profile source is `cli/profiles_data.py`.
-`uv run --locked lingtu --list` lists what is currently registered.
+The canonical profile source is `src/runtime/profiles/catalog/`.
+`cli/profiles_data.py` is a compatibility export for CLI imports.
+`uv run --locked lingtu --list` lists product profiles.
+`uv run --locked lingtu --list --all` lists the full registered catalog.
 
 | Command | Purpose | Hardware |
 |---------|---------|----------|
@@ -52,7 +54,7 @@ The canonical profile source is `cli/profiles_data.py`.
 | `lingtu dev` | semantic pipeline, mock LLM | none |
 | `lingtu sim_nav` | pure-Python navigation sim | none |
 | `lingtu sim` | MuJoCo full stack | none (CPU MuJoCo) |
-| `lingtu map` | build a map with Fast-LIO2 + PGO | LiDAR + IMU |
+| `lingtu map` | build a map with native SLAM save + map optimization | LiDAR + IMU |
 | `lingtu nav` | navigate using a saved map (OctoPlanner3D planner) | LiDAR + IMU + camera |
 | `lingtu explore` | wavefront frontier exploration | LiDAR + IMU + camera |
 | `lingtu tare_explore` | ROS-free traversable frontier exploration with OctoPlanner3D | LiDAR + IMU + camera |
@@ -73,8 +75,11 @@ lingtu map save building_a
 ```
 
 The map package must be treated as a directory, not one file. A complete
-navigation-ready map contains `map.pcd`, `poses.txt`, `metadata.json`,
-`octomap.ot`, and `occupancy.npz`. `map.pcd` proves SLAM saved points;
+navigation-ready map may contain `map.pcd`, `map.raw.pcd`, `patches/*.pcd`,
+`poses.txt`, `map_optimization.json`, `metadata.json`, `octomap.ot`, and
+`occupancy.npz`. `map.pcd` is the optimized navigation map. `map.raw.pcd`
+keeps the raw SLAM/builder output. `patches/*.pcd` and `poses.txt` are the
+keyframe bundle used by native save-time optimization and occupancy raycasting.
 `octomap.ot` plus `metadata.json` is the OctoPlanner3D artifact gate.
 `tomogram.pickle` is optional legacy/PCT data.
 

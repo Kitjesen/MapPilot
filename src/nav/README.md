@@ -7,9 +7,25 @@ velocity arbitration. It should not import `decision/`, `perception/`, `drivers/
 
 For a file-by-file purpose index, start with `FILES.md`.
 
-## Runtime chain
+## Runtime chains
 
-The public Module chain is:
+The default physical `thunder_field` product path is a native endpoint chain:
+
+```text
+Gateway/MCP/CLI/SemanticPlanner
+  -> GoalService / nav.mission
+  -> native field endpoint boundary
+  -> lingtu-nav-dds
+  -> DDS /nav/cmd_vel
+```
+
+In that branch, Python owns goals, mission/status, map products, semantic
+coordination, and safety contracts. C++ `lingtu-nav-dds` owns the final field
+`/nav/cmd_vel` writer so the robot does not receive duplicate velocity
+commands.
+
+Simulation, local-driver, and compatibility profiles can still run the
+Module-owned local execution chain:
 
 ```text
 Gateway/MCP/CLI
@@ -91,7 +107,7 @@ Main implementation locations:
 | Frontier exploration | `exploration/` | Wavefront frontier goals and traversability-enriched frontier previews. |
 | IO adapter ports | Blueprint aliases `nav.in`, `nav.out`, `map.out` | Optional external control/visualization endpoints. Navigation output is unified under `nav.out`; map visualization leaves through `map.out`; ROS 2 implementations live under `nav/adapters/ros2/nav/`; `nav/` keeps no ROS runtime implementation. |
 | Navigation services | `services/` | Map lifecycle, goal commands, patrol routes, optional schedules, and geofence state. |
-| Map lifecycle | `services/maps.py` | Save/use/build/delete maps, including PGO/DUFOMap save-time cleanup. |
+| Map lifecycle | `services/maps.py` | Save/use/build/delete maps through the native map-save adapter, map optimization metadata, and artifact builders. |
 | C++ hot path | `kernel/` | Header-first local planner/path follower/terrain kernels plus nanobind binding and C++ tests. Pytest does not cover this directory. |
 
 ## Service set

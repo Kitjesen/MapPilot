@@ -1,224 +1,211 @@
 # Build Guide
 
-What to install on a fresh machine before LingTu can compile and start.
+This guide covers a fresh machine setup for LingTu. The default product path is
+native Python/C++ plus DDS services. ROS 2 is optional and only needed for
+explicit compatibility packages and replay checks.
 
 ## Prerequisites
 
-- Ubuntu 22.04 (aarch64 on the S100P; x86_64 supported for `dev` / `sim` /
-  CI)
-- ROS 2 Humble Desktop is optional. It is only required for legacy
-  ROS-compatible SLAM/service packages; the default LingTu Python/C++ runtime,
-  `nav_kernel`, and OctoPlanner3D builds do not need ROS2.
-- 鈮?8 GB RAM, 鈮?4 CPU cores
+- Ubuntu 22.04 on S100P/aarch64 for field deployment.
+- x86_64 Linux or Windows development hosts for framework, docs, and some
+  simulation work.
+- Python 3.10.12, matching `.python-version`.
+- At least 8 GB RAM and 4 CPU cores.
 
-`$NAV_DIR` below stands for the workspace root. On the S100P it is
-typically `/home/sunrise/data/inovxio/lingtu` (kept reachable as
-`~/data/SLAM/navigation` via symlink); on a dev machine it is wherever
-the repo was cloned.
+`$NAV_DIR` below means the repository root. On the robot it is usually:
 
-## System packages
-
-```bash
-sudo apt update && sudo apt install -y \
-    libpcl-dev \
-    libeigen3-dev \
-    libboost-all-dev \
-    libyaml-cpp-dev \
-    python3-pip \
-    git \
-    cmake
-
-pip3 install numpy scipy scikit-learn
+```text
+/home/sunrise/data/SLAM/navigation
 ```
 
-Optional system packages:
+## Python Environment
 
-| Package | Used by |
-|---------|---------|
-| `ros-humble-desktop`, `ros-humble-pcl-conversions`, `ros-humble-tf2-geometry-msgs` | Legacy ROS-compatible SLAM/services only |
-| `libgrpc++-dev`, `protobuf-compiler-grpc` | `remote_monitoring` (C++ gRPC gateway) |
-| `libssl-dev`, `libcurl4-openssl-dev` | OTA daemon |
-| `ros-humble-joy` | Physical joystick teleop |
+Preferred:
 
-## Third-party C++ libraries
+```bash
+cd $NAV_DIR
+uv sync --locked
+uv run --locked python lingtu.py --list
+```
 
-### 1. Sophus (Lie groups, required by SLAM)
+Install optional extras only for the profiles you need:
+
+```bash
+uv sync --locked --extra dev
+uv sync --locked --extra vision --extra ml --extra llm --extra nlp
+uv sync --locked --extra perception --extra vector
+```
+
+## System Packages
+
+Product/native build basics:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  git \
+  cmake \
+  build-essential \
+  python3-pip \
+  libeigen3-dev \
+  libboost-all-dev \
+  libpcl-dev \
+  libyaml-cpp-dev
+```
+
+Optional packages:
+
+| Package | Used By |
+| --- | --- |
+| `ros-humble-desktop`, `ros-humble-pcl-conversions`, `ros-humble-tf2-geometry-msgs` | legacy ROS-compatible SLAM/services only |
+| `cyclonedds-dev`, `cyclonedds-tools` | native DDS service builds and diagnostics |
+| `libgrpc++-dev`, `protobuf-compiler-grpc` | gRPC compatibility/monitoring surfaces |
+| `libssl-dev`, `libcurl4-openssl-dev` | OTA/service tooling |
+| `ros-humble-joy` | ROS joystick compatibility checks |
+
+## Third-Party Components
+
+### Sophus
+
+Required by SLAM/localization C++ code:
 
 ```bash
 cd ~
 git clone https://github.com/strasdat/Sophus.git
-cd Sophus && git checkout 1.22.10
-mkdir build && cd build
-cmake .. -DSOPHUS_USE_BASIC_LOGGING=ON
-make -j$(nproc) && sudo make install
+cd Sophus
+git checkout 1.22.10
+cmake -B build -DSOPHUS_USE_BASIC_LOGGING=ON
+cmake --build build -j
+sudo cmake --install build
 ```
 
-### 2. GTSAM 4.1.1 (PCT global planner, required)
+### Livox SDK2
 
-GTSAM is vendored under `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/`.
-
-```bash
-cd $NAV_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/gtsam-4.1.1
-mkdir build && cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=../install \
-    -DGTSAM_BUILD_TESTS=OFF \
-    -DGTSAM_WITH_TBB=OFF \
-    -DGTSAM_USE_SYSTEM_EIGEN=ON
-make -j$(nproc) && make install
-```
-
-Add the install prefix to `LD_LIBRARY_PATH`:
-
-```bash
-echo "export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:$NAV_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib" >> ~/.bashrc
-source ~/.bashrc
-```
-
-### 3. Livox SDK2 (LiDAR driver, required only when using a Livox lidar)
+Required only for real Livox hardware ingestion:
 
 ```bash
 cd ~
 git clone https://github.com/Livox-SDK/Livox-SDK2.git
-cd Livox-SDK2 && mkdir build && cd build
-cmake .. && make -j$(nproc) && sudo make install
-```
-
-### 4. libdatachannel (optional WebRTC video)
-
-```bash
-cd ~
-git clone https://github.com/nicknsy/libdatachannel.git
-cd libdatachannel
-git submodule update --init --recursive
-cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local
-cmake --build build -j$(nproc)
+cd Livox-SDK2
+cmake -B build
+cmake --build build -j
 sudo cmake --install build
 ```
 
-If `libdatachannel` is missing, `remote_monitoring` still builds but the
-WebRTC code path is disabled.
+### DUFOMap
 
-### 5. DUFOMap (dynamic obstacle removal, optional)
+Optional save-time cleanup helper:
 
-The Lingtu helper script `scripts/build/build_dufomap.sh` builds the DUFOMap
-binary used by the offline post-mapping cleaner; rerun it on first
-install.
+```bash
+cd $NAV_DIR
+bash scripts/build/build_dufomap.sh
+```
 
-### 6. TARE exploration
+### TARE
 
-The product `tare_explore` profile uses LingTu's in-process TARE policy and
-does not require the CMU TARE source tree, OR-Tools, or `tare_planner_node`.
-External CMU benchmark runs must provide their own CMU workspace.
+The product `tare_explore` profile uses LingTu's current exploration contract.
+External CMU TARE benchmark runs must provide their own external workspace and
+should be treated as compatibility/evaluation work.
 
-## Build the runtime
+## Product Build
 
-### Product default: native planner kernels, no ROS2
+Native navigation kernel:
 
 ```bash
 cd $NAV_DIR
 bash scripts/build/build_nav_kernel.sh --clean
-bash scripts/build/build_octoplanner3d.sh
-python -m pytest src/runtime/tests/test_terrain_local_planner_contract.py -q
-python lingtu.py runtime-audit
 ```
 
-`build_nav_kernel.sh` produces `_nav_kernel.so`, the nanobind backend used by
-`LocalPlannerModule` and `PathFollowerModule`. `build_octoplanner3d.sh`
-builds the headless C++ global-planner executable used by the product navigation
-profiles.
+OctoPlanner3D:
 
-### Native nav_kernel convenience target
+```bash
+bash scripts/build/build_octoplanner3d.sh
+```
+
+Convenience target:
 
 ```bash
 make nav_kernel
 ```
 
-### Subsets
+ROS compatibility workspace, only when needed:
 
 ```bash
-# Local autonomy kernel without ROS2
-bash scripts/build/build_nav_kernel.sh --clean
-
-# Product global planner only, no ROS2 workspace needed
-bash scripts/build/build_octoplanner3d.sh
-
-# ROS compatibility workspace only
 bash scripts/build/build_ros_workspace.sh
 ```
 
-`make build` remains a compatibility shortcut for the ROS/colcon workspace.
-Do not use it as the default product build unless you are intentionally working
-on ROS-backed SLAM/service packages.
+Do not treat `make build` or a sourced ROS/colcon overlay as the default
+product build. Use it only when working on ROS-backed compatibility packages.
 
 ## Tests
 
+Framework tests, no ROS 2 or hardware:
+
 ```bash
-# Framework tests 鈥?Python only, no ROS2, no hardware
 python -m pytest src/runtime/tests/ -q
+```
 
-# ROS compatibility tests
-make test
+Focused product contract tests:
 
-# Standalone C++ nav_kernel tests
-cd src/nav/kernel && mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
-./test_path_follower_core
-./test_benchmark
+```bash
+python -m pytest src/localization/tests/test_native_slam_contract.py -q
+python -m pytest sim/tests/test_mujoco_saved_map_quality_gate.py -q
+```
 
-# Standalone C++ local planner tests
-cd ../../services/plan/local_planner/cpp
+C++ nav kernel:
+
+```bash
+cd src/nav/kernel
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/test_path_follower_core
+./build/test_benchmark
+```
+
+C++ local planner:
+
+```bash
+cd src/nav/services/plan/local_planner/cpp
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
-cmake --build build -j$(nproc)
+cmake --build build -j
 ./build/test_local_planner_core
 ```
 
-## Verifying the build
+ROS compatibility tests:
 
 ```bash
-# Product global planner wrapper is available
-python3 -c "from nav.services.plan.global_planner.backends.octoplanner3d.backend import OctoPlanner3DBackend; print('Success')"
-
-# Optional ROS2 compatibility nodes are discoverable after the ROS workspace build
-ros2 pkg list | grep -E "fastlio2|remote_monitoring"
-
-# `lingtu` CLI is on PATH after `pip install -e .`
-lingtu --version
-lingtu --list
-
-# Stub profile builds the full Module graph without hardware
-python lingtu.py stub
+make test
 ```
 
-## Common errors
+## Verification
+
+```bash
+python lingtu.py --list
+python lingtu.py stub
+python lingtu.py runtime-audit
+```
+
+On the robot:
+
+```bash
+bash scripts/lingtu status
+bash scripts/lingtu svc status
+```
+
+## Common Errors
 
 | Symptom | Fix |
-|---------|-----|
-| `GTSAM not found` | `ls $NAV_DIR/src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib/libgtsam.so.4` and re-run the install step |
-| `libgtsam.so.4: cannot open shared object file` | `LD_LIBRARY_PATH` is missing the GTSAM install prefix; re-source `~/.bashrc` |
-| `ModuleNotFoundError: planner_py` | PCT legacy compatibility was not built; prefer OctoPlanner3D for product runtime, or run the explicit PCT compatibility setup before parity tests. |
-| `Livox SDK2 not found` | `ls /usr/local/lib/liblivox_lidar_sdk_shared.so`, rerun the SDK install |
-| Sophus complains about `fmt` | re-run `cmake .. -DSOPHUS_USE_BASIC_LOGGING=ON` and rebuild |
-| `ele_planner.so` import fails on x86 | Expected for legacy PCT native binaries. Use the default `octoplanner3d` backend on dev machines, or `--planner pct` only when validating PCT compatibility. |
+| --- | --- |
+| `ModuleNotFoundError: runtime` | Set `PYTHONPATH=src:.` or run through `uv run --locked`. |
+| `Livox SDK2 not found` | Build/install Livox SDK2 and verify `/usr/local/lib/liblivox_lidar_sdk_shared.so`. |
+| `Sophus`/`fmt` build errors | Rebuild Sophus with `-DSOPHUS_USE_BASIC_LOGGING=ON`. |
+| `planner_py` missing | PCT compatibility was not built; prefer `octoplanner3d` for product runtime. |
+| `_nav_kernel` import fails | Re-run `scripts/build/build_nav_kernel.sh --clean`. |
+| `ros2: command not found` | Normal for product builds; only ROS compatibility work needs ROS 2. |
 
-## Approximate build times
+## Scope
 
-| Package | Dependencies | Time |
-|---------|--------------|------|
-| `nav_kernel` | Eigen, nanobind | ~30 s |
-| `octoplanner3d` | CMake, OctoMap artifact | ~1 min |
-| `pct_planner` compatibility | GTSAM, pybind11 | ~1 min |
-| `remote_monitoring` | gRPC, libdatachannel (optional) | ~1 min |
-| `fastlio2` | Sophus, Livox SDK2 | ~2 min |
-| GTSAM 4.1.1 | Boost, Eigen | ~10 min (one-time) |
-| `ota_daemon` | gRPC, yaml-cpp, OpenSSL, CURL | ~30 s |
-
-## What this guide deliberately does **not** cover
-
-- `navigation_run.launch.py`, `navigation_bringup.launch.py`,
-  `launch/subsystems/`, `scripts/legacy/`, `scripts/services/`, and any
-  systemd service installer that referred to those paths 鈥?they were
-  deleted and are no longer relevant.
-- A separate "deploy" path. Today the workflow is
-  `make build && lingtu <profile>` (optionally `--daemon`). On the S100P
-  the `scripts/lingtu` shell wrapper is the operator's CLI; see
-  `AGENTS.md` and `docs/01-getting-started/`.
+This guide deliberately does not cover removed launch files, deleted service
+installers, or legacy root-level navigation facades. Use `scripts/lingtu` for
+field operations and the architecture documents under `docs/architecture/` for
+runtime contracts.

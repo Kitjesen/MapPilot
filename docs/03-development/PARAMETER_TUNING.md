@@ -1,255 +1,230 @@
 # Parameter Tuning Guide
 
-Detailed tuning notes for the four performance-critical layers. The runtime entry is
-`python lingtu.py <profile>` (managed by `lingtu.service`); all parameters are read from
-`config/robot_config.yaml` at module start. There are no per-launch XML files in the current
-codebase 閳?restart the service to pick up changes.
+LingTu reads runtime parameters from `config/robot_config.yaml` at module
+startup. Restart the relevant service or profile after changing config.
 
-For a one-page cheat sheet see `docs/TUNING.md`. For symptom-based diagnostics see
-`TROUBLESHOOTING.md`.
+For field operation commands, see
+`docs/04-deployment/lingtu_cli.md`. For architecture boundaries, see
+`docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md`.
 
----
+## Path Follower
 
-## 1. Path Follower (`local_planner.path_follower.*`)
+Implementation:
 
-Implementation: `src/nav/kernel/include/nav_kernel/path_follower_core.hpp` (C++, called via
-the private `_nav_kernel` nanobind extension). Wired to `PathFollowerModule` in
-`src/nav/local/path_follower.py`.
+- C++ core: `src/nav/kernel/include/nav_kernel/path_follower_core.hpp`
+- Module wrapper: `src/nav/local/path_follower.py`
 
-### Speed and acceleration
+Key parameters:
 
 ```yaml
 path_follower:
-  max_speed: 1.0          # m/s, ceiling for autonomous mode
-  max_accel: 1.0          # m/s^2
-```
-
-Indoor: 0.6-1.0 m/s. Outdoor open: 1.5-3.0 m/s. Start at 0.5 m/s for first run.
-Higher `max_accel` is more responsive but jerkier.
-
-### Adaptive lookahead
-
-```yaml
-path_follower:
-  base_look_ahead: 0.3    # m at 0 velocity
-  look_ahead_ratio: 0.5   # extra m per m/s
+  max_speed: 1.0
+  max_accel: 1.0
+  base_look_ahead: 0.3
+  look_ahead_ratio: 0.5
   min_look_ahead: 0.2
   max_look_ahead: 2.0
+  yaw_rate_gain: 7.5
+  max_yaw_rate: 45.0
 ```
 
-Formula: `L = base + ratio * speed`. At 2 m/s -> L = 1.3 m.
+Guidance:
 
-| Symptom                   | Adjust                                                            |
-|---------------------------|-------------------------------------------------------------------|
-| Oscillation, overshoot    | `base_look_ahead` too small -> raise +0.1                         |
-| Cuts corners              | `look_ahead_ratio` too large -> drop -0.1                         |
+| Symptom | Adjustment |
+| --- | --- |
+| robot oscillates | raise `base_look_ahead` by 0.1, lower `yaw_rate_gain` |
+| cuts corners | lower `look_ahead_ratio`, lower speed in tight spaces |
+| turns too slowly | raise `yaw_rate_gain`, check `max_yaw_rate` clamp |
+| jerky acceleration | lower `max_accel` |
 
-### Turning
+Start indoor tests at 0.5-0.8 m/s. Increase only after odometry, costmap, and
+safety state are stable.
 
-```yaml
-path_follower:
-  yaw_rate_gain: 7.5      # P-gain
-  max_yaw_rate: 45.0      # deg/s safety limit
-```
+## Local Planner
 
-Sluggish: 10-15. Oscillating: 5-7. `max_yaw_rate` is a clamp, not a gain.
+Implementation:
 
----
+- C++ core: `src/nav/services/plan/local_planner/cpp/`
+- Module wrapper: `src/nav/local/local_planner.py`
+- Hot path backend: `nav_kernel` / nanobind
 
-## 2. Local Planner (`local_planner.*`)
-
-Implementation: `src/nav/services/plan/local_planner/cpp/local_planner.hpp`. Module:
-`src/nav/services/plan/local_planner/service.py`. Builds a CSR sparse
-candidate-path bank, scores 36 rotations in OpenMP, picks lowest-cost free path.
-
-### Obstacle handling
+Key parameters:
 
 ```yaml
 local_planner:
-  laser_voxel_size: 0.1        # m, point cloud downsample
-  obstacle_height_thre: 0.2    # m, points above ground that count as obstacles
-```
-
-Smaller voxel = finer detail, more CPU. On S100P aarch64, 0.1 is the sweet spot.
-
-### Planning horizon
-
-```yaml
-local_planner:
-  min_path_range: 2.5     # m, MUST be >= path_follower.max_look_ahead
-  adjacent_range: 3.5     # m, obstacle consideration radius
+  laser_voxel_size: 0.1
+  obstacle_height_thre: 0.2
+  min_path_range: 2.5
+  adjacent_range: 3.5
   path_scale: 1.0
   min_path_scale: 0.75
   path_scale_step: 0.25
   path_range_step: 0.5
+  dir_weight: 0.02
+  slope_weight: 0.0
+  point_per_path_thre: 2
+  use_cost: true
 ```
 
-`adjacent_range` controls the local point-cloud crop. `path_scale*` changes the
-candidate-path bank scale, while `path_range_step` shortens the horizon after a
-blocked attempt. Keep `min_path_range` large enough for the follower lookahead.
+Guidance:
 
-### Cost weights
+| Symptom | Adjustment |
+| --- | --- |
+| misses thin obstacles | lower `laser_voxel_size`, lower `point_per_path_thre` |
+| too conservative | lower `adjacent_range`, raise `point_per_path_thre` carefully |
+| ignores slopes | enable/raise `slope_weight` |
+| follower outruns planner | keep `min_path_range >= path_follower.max_look_ahead` |
 
-```yaml
-local_planner:
-  dir_weight: 0.02        # higher -> prefers straight path
-  slope_weight: 0.0       # 0 disables; 3-6 for outdoor slopes
-  point_per_path_thre: 2  # obstacle hits before a path is blocked
-  use_cost: true          # enable terrain cost (requires terrain analysis)
-```
+Use `LocalPlannerModule.health()["local_planner"]["effective_params"]` to
+verify the active backend received the expected values.
 
-`slope_weight` was added so outdoor courses penalize ramps; defaults to 0 indoor.
-The `nanobind` backend reports the applied values under
-`LocalPlannerModule.health()["local_planner"]["effective_params"]`; use that
-instead of assuming the YAML reached the active backend.
+## Terrain Analysis
 
----
+Implementation:
 
-## 3. Terrain Analysis (`terrain.*`)
+- C++ core: `src/nav/kernel/include/nav_kernel/terrain_core.hpp`
+- Module wrapper: `src/nav/local/terrain.py`
 
-Implementation: `src/nav/kernel/include/nav_kernel/terrain_core.hpp`. Module:
-`src/nav/local/terrain.py`. Maintains a rolling voxel grid centered on the robot.
-
-### Voxel configuration
+Key parameters:
 
 ```yaml
 terrain:
-  scan_voxel_size: 0.1    # m, scan downsample
-  terrain_voxel_size: 1.0 # m, rolling map resolution
+  scan_voxel_size: 0.1
+  terrain_voxel_size: 1.0
+  decay_time: 10.0
+  no_decay_dis: 2.0
+  ground_height_thre: 0.1
+  dis_ratio_z: 0.1
 ```
 
-### Temporal filtering
+Guidance:
 
-```yaml
-terrain:
-  decay_time: 10.0        # s, how long to remember an obstacle
-  no_decay_dis: 2.0       # m, points within this radius never decay
+| Environment | Adjustment |
+| --- | --- |
+| static indoor | longer `decay_time`, smaller `scan_voxel_size` if CPU allows |
+| crowded indoor | shorter `decay_time` |
+| uneven outdoor | tune `ground_height_thre` and enable slope cost in local planner |
+
+## Global Planner
+
+Primary backend:
+
+- `octoplanner3d`: default product global planner.
+
+Compatibility/experiment backends:
+
+- `pct`: legacy/manual experiment when explicitly selected.
+- `astar`: deterministic tests and old comparisons.
+
+Product navigation should use saved-map artifacts:
+
+```text
+map.pcd
+metadata.json
+octomap.ot
+occupancy.npz
 ```
 
-Static scenes: `decay_time: 30`. Crowded scenes: `decay_time: 5`.
+If the planner returns no path:
 
-### Ground detection
+1. Confirm the goal is inside the loaded map.
+2. Run `lingtu plan-preview --internal-only --strict`.
+3. Check `octomap.ot` and `metadata.json`.
+4. Rebuild map artifacts from `lingtu map save <name>` or the Gateway map API.
+5. Lower traversability/cost strictness only after map artifacts are healthy.
 
-```yaml
-terrain:
-  ground_height_thre: 0.1 # m, points below = ground
-  dis_ratio_z: 0.1        # extra Z tolerance per meter of distance
+## SLAM And Saved Map Quality
+
+Map quality problems usually come from one of these layers:
+
+1. LiDAR hit geometry or scan density.
+2. LiDAR/IMU timestamp alignment.
+3. LiDAR-to-body extrinsics.
+4. SLAM odometry drift or motion mismatch.
+5. Patch poses and save-time optimization.
+6. 2D projection or height-slice filters.
+
+Inspect:
+
+```text
+map.raw.pcd
+map.pcd
+patches/*.pcd
+poses.txt
+map_optimization.json
+occupancy.npz
+octomap.ot
 ```
 
----
-
-## 4. Global Planner
-
-Primary backends registered in `runtime.registry` (`src/runtime/registry.py`):
-
-- **`octoplanner3d`** - headless C++ 3D planner, default in product, simulation,
-  development, map, navigation, and exploration profiles.
-- **`pct`** - C++ PCT planner (`ele_planner.so`), selectable via `--planner pct`
-  for compatibility or experiments.
-- **`astar`** - legacy pure Python backend kept for deterministic unit tests and
-  old benchmark comparison only.
-
-PCT tuning: `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/config/params.yaml`.
-
-```yaml
-w_traversability: 1.0
-w_smoothness: 0.2
-w_length: 0.1
-trajectory_resolution: 0.1
-max_iterations: 100
-convergence_threshold: 0.01
-```
-
-Off-road -> raise `w_traversability`. Smoother paths -> raise `w_smoothness`.
-
----
+For MuJoCo, remember that simulated odometry priors and ground truth are
+diagnostic tools only. Product localization still needs the real SLAM chain.
 
 ## Common Scenarios
 
-### Robot too slow
+### Robot Too Slow
 
 1. Raise `path_follower.max_speed`.
-2. Verify `safety_ring` is not throttling -> `lingtu log error | grep safety`.
-3. Check terrain analysis is publishing 閳?`lingtu status` `[2] SLAM hz`.
+2. Check `safety_ring` is not throttling.
+3. Confirm localization health and costmap freshness.
+4. Verify the active velocity source in `CmdVelMux`.
 
-### Robot cuts corners
+### Robot Cuts Corners
 
 1. Raise `path_follower.base_look_ahead` to 0.4-0.5.
-2. Drop `look_ahead_ratio` to 0.3-0.4.
-3. Raise `yaw_rate_gain` for sharper turns.
-4. Drop `max_speed` in tight spaces.
+2. Lower `look_ahead_ratio` to 0.3-0.4.
+3. Lower speed in tight spaces.
 
-### Robot oscillates
+### Robot Oscillates
 
-1. Drop `yaw_rate_gain` to 5-6.
-2. Raise `base_look_ahead` to 0.4.
-3. Check `/Odometry` rate (`ros2 topic hz /Odometry`, expect ~100 Hz).
-4. Smooth terrain map: `scan_voxel_size: 0.15`.
+1. Lower `yaw_rate_gain` to 5-6.
+2. Raise `base_look_ahead`.
+3. Check odometry rate and delay.
+4. Smooth local terrain with a slightly larger `scan_voxel_size`.
 
-### Global planner returns empty path
+### Planner Returns Empty Path
 
-1. Goal outside loaded map 閳?check `lingtu status` `[1] Session map=`.
-2. Drop `w_traversability` (too picky on cost).
-3. Rebuild tomogram (`lingtu map save <name>` then `build_tomogram` POST 閳?see
-   `docs/04-deployment/lingtu_cli.md`).
+1. Check active map and goal coordinates.
+2. Run `lingtu plan-preview --internal-only --strict`.
+3. Rebuild `octomap.ot` and `occupancy.npz`.
+4. Treat `tomogram.pickle` as legacy/PCT unless the profile explicitly selects
+   PCT.
 
----
+## Inspecting Live Values
 
-## Verifying live values
-
-The `_nav_kernel` C++ modules don't expose ROS2 parameters. Inspect via the Gateway:
+Gateway:
 
 ```bash
 curl http://192.168.66.13:5050/api/v1/config | jq '.local_planner'
 curl http://192.168.66.13:5050/api/v1/config | jq '.path_follower'
+curl http://192.168.66.13:5050/api/v1/health | jq '.'
 ```
 
-For framework-side modules, REPL:
+REPL:
 
 ```bash
 python lingtu.py nav
 > config local_planner
 > module PathFollowerModule
+> teleop status
 ```
 
----
+Robot operations CLI:
 
-## Performance vs Safety
+```bash
+bash scripts/lingtu status
+bash scripts/lingtu plan-preview --internal-only --strict
+```
 
-| Parameter                       | Conservative | Aggressive |
-|---------------------------------|--------------|------------|
-| `path_follower.max_speed`       | 0.5 m/s      | 2.0 m/s    |
-| `path_follower.max_accel`       | 0.5 m/s^2    | 2.0 m/s^2  |
-| `local_planner.laser_voxel_size`| 0.05 m       | 0.2 m      |
-| `local_planner.adjacent_range`  | 5.0 m        | 2.0 m      |
-| `terrain.decay_time`            | 30 s         | 3 s        |
-| `local_planner.obstacle_height_thre` | 0.1 m   | 0.3 m      |
+## Safety Baselines
 
-Start conservative; relax once odometry health is verified for the environment.
+| Parameter | Conservative | Aggressive |
+| --- | ---: | ---: |
+| `path_follower.max_speed` | 0.5 m/s | 2.0 m/s |
+| `path_follower.max_accel` | 0.5 m/s2 | 2.0 m/s2 |
+| `local_planner.laser_voxel_size` | 0.05 m | 0.2 m |
+| `local_planner.adjacent_range` | 5.0 m | 2.0 m |
+| `terrain.decay_time` | 30 s | 3 s |
+| `local_planner.obstacle_height_thre` | 0.1 m | 0.3 m |
 
----
-
-## Stuck Detection (`waypoint_tracker.py`)
-
-Implementation: `src/nav/mission/tracking/waypoint_tracker.py`. Periodic check of robot displacement
-inside a sliding window.
-
-| Key                       | Default | Indoor | Outdoor |
-|---------------------------|---------|--------|---------|
-| `robot.stuck_timeout`     | 10.0 s  | 8.0    | 15.0    |
-| `robot.stuck_dist_thre`   | 0.15 m  | 0.10   | 0.20    |
-
-Behavior:
-1. At 50% of `stuck_timeout` -> `WARN_STUCK` event.
-2. At 100% -> `STUCK` event, recovery cmd_vel published via `CmdVelMux` (priority 60).
-3. Reverse-motion detection: if commanded forward but actually moving backward, the
-   timeout is compressed to at most 3 s.
-4. Recovery requires 3 consecutive frames of |v| > 0.05 m/s before clearing the flag.
-
----
-
-## Related
-
-- `docs/TUNING.md` 閳?one-page cheat sheet
-- `docs/03-development/TROUBLESHOOTING.md` 閳?diagnostics
-- `docs/04-deployment/lingtu_cli.md` 閳?`lingtu` operations CLI
+Start conservative. Relax only after odometry, map, and safety health are
+verified for the environment.

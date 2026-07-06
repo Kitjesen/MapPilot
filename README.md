@@ -112,8 +112,9 @@ adapter and its metadata gate.
 ## Profile Catalog
 
 The canonical profile catalog lives in `src/runtime/profiles/catalog/`.
-Use `python lingtu.py --list` or `uv run --locked python lingtu.py --list` to
-see the registered profiles on the current checkout.
+Use `python lingtu.py --list` for product profiles and
+`python lingtu.py --list --all` for the full registered catalog on the current
+checkout.
 
 | Profile | Primary Use |
 | --- | --- |
@@ -148,6 +149,7 @@ scripts should prefer the canonical profile names.
 ```bash
 # Local checkout
 python lingtu.py --list
+python lingtu.py --list --all
 python lingtu.py stub
 python lingtu.py sim
 
