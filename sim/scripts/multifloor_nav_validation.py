@@ -654,7 +654,7 @@ def run_global_planner(
         path, plan_ms = svc.plan(
             np.asarray(start, dtype=float),
             np.asarray(goal, dtype=float),
-            safe_goal_tolerance=safe_goal_tolerance,
+            safe_goal_tolerance=float(safe_goal_tolerance),
         )
         plan_report = _service_plan_report(svc)
         pts = _path_points(path)
@@ -1927,6 +1927,8 @@ def _plan_to_frontier_goal(
                 start=start,
                 goal=goal,
                 downsample_dist=downsample_dist,
+                # Frontier centroids straddle known/unknown space by definition;
+                # let the planner project onto the nearest reachable free cell.
                 safe_goal_tolerance=1.2,
             )
         plan["frontier_goal"] = list(raw_goal)

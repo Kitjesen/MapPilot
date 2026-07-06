@@ -590,6 +590,7 @@ class PathFollower(Module, layer=2):
 
         robot = np.array([self._robot_x, self._robot_y])
         dists = np.linalg.norm(self._path_points - robot, axis=1)
+        goal_dist = float(dists[-1])
         # Find lookahead point: search forward from the closest path point so
         # far-away points *behind* the robot (e.g. near the path start once the
         # robot approaches the end) are never selected as the target. Without
@@ -606,7 +607,7 @@ class PathFollower(Module, layer=2):
         dy = target[1] - self._robot_y
         dist = math.hypot(dx, dy)
 
-        if dist < self._goal_tolerance:
+        if goal_dist < self._goal_tolerance or dist < self._goal_tolerance:
             self._smooth_vx *= 0.5  # decay to zero
             self._smooth_wz *= 0.5
             if abs(self._smooth_vx) < 0.01:

@@ -9,7 +9,9 @@
 # For the existing no-ROS Thunder Lite runtime, requirements-lite.txt currently
 # mirrors requirements-core-portable.txt.
 #
-# NOTE: numpy limited to <2.0 for ele_planner.so compatibility (requires numpy 1.x)
+# NOTE: numpy is limited to <2.0 only on aarch64 for ele_planner.so compatibility
+# (requires numpy 1.x ABI). Windows/x86/Python 3.13+ can use numpy 2.x wheels;
+# do not install experimental MINGW numpy 1.x builds on development machines.
 #
 # Optional extras (pip install lingtu[<group>]):
 #   core-portable / portable / lite - marker extras for minimal runtime
@@ -32,7 +34,8 @@
 #   pip install -e '.[all]'
 
 # Core
-numpy>=1.24,<2.0
+numpy>=1.24,<2.0; platform_machine == "aarch64"
+numpy>=1.24; platform_machine != "aarch64"
 scipy>=1.10
 PyYAML>=6.0
 pydantic>=2.0

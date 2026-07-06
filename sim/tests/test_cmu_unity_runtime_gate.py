@@ -101,7 +101,15 @@ def _complete_runtime_metrics():
                     {"t": 0.0, "xy": [0.0, 0.0]},
                     {"t": 60.0, "xy": [0.12, 0.0]},
                 ],
-            }
+            },
+            "/nav/state_estimation_at_scan": {
+                "samples": 5,
+                "delta_m": 0.12,
+                "history": [
+                    {"t": 0.0, "xy": [0.0, 0.0]},
+                    {"t": 60.0, "xy": [0.12, 0.0]},
+                ],
+            },
         },
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
