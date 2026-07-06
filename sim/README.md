@@ -8,7 +8,7 @@ Simulation can validate software wiring and algorithm contracts. It does not
 prove field readiness by itself. Claims about S100P/sunrise deployment require
 field runtime evidence.
 
-## Root Contract
+## Stable Root Contract
 
 | Path | Purpose |
 | --- | --- |
@@ -27,10 +27,9 @@ field runtime evidence.
 | `tests/` | Simulation integration and filesystem contract tests |
 | `launch/` | Legacy ROS launch/smoke compatibility files |
 
-`sim/scripts/mujoco/` is the canonical location for MuJoCo script
-implementations. Older `sim/scripts/<name>.py` files are compatibility
-wrappers only when profiles, deploy scripts, or field notes still reference
-them.
+`sim/scripts/mujoco/*` holds the canonical MuJoCo script implementations.
+Older `sim/scripts/<name>.py` files are compatibility wrappers only when
+profiles, deploy scripts, or field notes still reference them.
 
 ## Runtime Paths
 
@@ -128,6 +127,7 @@ Important artifacts:
 | `map.raw.pcd` | raw SLAM/builder output |
 | `patches/*.pcd` | keyframe or scan patches |
 | `poses.txt` | patch poses |
+| `trajectory.txt` | per-keyframe odometry path written by native save-map |
 | `map_optimization.json` | loop/refine status and point counts |
 | `occupancy.npz` | 2D occupancy/cost artifact |
 | `octomap.ot` | OctoPlanner3D artifact |
@@ -142,7 +142,46 @@ PYTHONPATH=src:. python sim/scripts/mujoco/saved_map_quality_gate.py \
 PYTHONPATH=src:. python sim/scripts/mujoco/saved_map_plan_gate.py \
   --map-source mujoco_lidar \
   --json-out artifacts/mujoco_saved_map_plan/report.json
+
+PYTHONPATH=src:. python sim/scripts/mujoco/saved_map_tracking_gate.py \
+  --scene-preset corridor \
+  --converter "${LINGTU_MAP_ARTIFACT_CONVERTER}" \
+  --planner-executable "${LINGTU_OCTOPLANNER3D_EXECUTABLE}" \
+  --json-out artifacts/mujoco_saved_map_tracking/report.json \
+  --strict
 ```
+
+### Continuous Mapping Quality Gate (3–5 min)
+
+Short endpoint motion gates are necessary but not sufficient for sim radar
+mapping acceptance. Use the continuous gate when claiming long-run stability:
+
+```bash
+PYTHONPATH=src:. python sim/scripts/mujoco/continuous_mapping_quality_gate.py \
+  --world industrial_park \
+  --duration 180 \
+  --domain-id 231 \
+  --drive-profile box_explore \
+  --run-dir artifacts/mujoco_continuous_mapping_gate_<timestamp>
+```
+
+The gate orchestrates one isolated native DDS session (bridge + SLAM runtime +
+periodic status sampling + native `save-map`) and fails unless bridge,
+continuity, scale convergence, and saved-map quality all pass.
+
+Sunrise remote runner:
+
+```bash
+python sim/scripts/run_sunrise_continuous_mapping_gate.py \
+  --host 192.168.66.13 \
+  --duration 180 \
+  --domain-id 231
+```
+
+Keep isolated `--domain-id` in **`200–232`**. Production robot SLAM uses domain
+`0`. See
+[2026-07-06 continuous mapping field run](../docs/07-testing/field-runs/2026-07-06-mujoco-continuous-mapping-gate.md)
+for the first 180 s verdict matrix and remaining scale-drift blocker.
 
 When a top-down map looks thick, smeared, or duplicated, inspect these in order:
 
@@ -222,6 +261,7 @@ Fast contract tests:
 ```bash
 python -m pytest sim/tests/test_mujoco_saved_map_quality_gate.py -q
 python -m pytest sim/tests/test_mujoco_live_ground_truth_gate.py -q
+python -m pytest sim/tests/test_continuous_mapping_quality_gate.py -q
 ```
 
 Broader compatibility tests:

@@ -15,7 +15,7 @@ algorithms.
 | MCP tool server | `mcp_server.py` |
 | request and response schemas | `schemas.py` |
 | route helper logic | `services/` |
-| dashboard templates and static assets | `templates/`, `map_dashboard.py` |
+| dashboard templates and static assets | `templates/` |
 | optional visualization bridge | `rerun_bridge_module.py` |
 | auth helpers | `auth.py` |
 

@@ -384,6 +384,7 @@ TEST(LocalPlannerCore, TraversabilityGridTriggersNearFieldStop) {
   LocalPlannerParams p;
   p.checkObstacle = true;
   p.useTraversabilityCost = true;
+  p.traversabilityNearFieldStop = true;
   p.nearFieldStopDis = 0.6;
   p.pathScaleBySpeed = false;
   p.pathRangeBySpeed = false;
@@ -394,11 +395,61 @@ TEST(LocalPlannerCore, TraversabilityGridTriggersNearFieldStop) {
   planner.setGoal(5, 0);
 
   std::vector<float> riskGrid(5 * 5, 0.0f);
-  riskGrid[2 * 5 + 0] = 95.0f;
-  riskGrid[2 * 5 + 1] = 95.0f;
+  riskGrid[2 * 5 + 2] = 95.0f;
+  riskGrid[2 * 5 + 3] = 95.0f;
   planner.setTraversabilityGrid(riskGrid.data(), 5, 5, 0.25, 0.0, -0.5);
 
   auto result = planner.plan(nullptr, 0, 0.0);
+
+  EXPECT_TRUE(result.nearFieldStop);
+}
+
+TEST(LocalPlannerCore, FootprintPointsDoNotTriggerNearFieldStop) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_footprint_filter_fixture");
+
+  LocalPlannerParams p;
+  p.vehicleLength = 1.0;
+  p.vehicleWidth = 0.6;
+  p.checkObstacle = true;
+  p.useTraversabilityCost = false;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  std::vector<float> cloud = {
+      0.45f, -0.20f, 0.45f, 0.45f,
+      0.48f, -0.10f, 0.50f, 0.50f};
+
+  auto result = planner.plan(cloud.data(), static_cast<int>(cloud.size() / 4), 0.0);
+
+  EXPECT_FALSE(result.nearFieldStop);
+  EXPECT_TRUE(result.pathFound);
+}
+
+TEST(LocalPlannerCore, ObstacleAheadOfFootprintTriggersNearFieldStop) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_front_edge_stop_fixture");
+
+  LocalPlannerParams p;
+  p.vehicleLength = 1.0;
+  p.vehicleWidth = 0.6;
+  p.checkObstacle = true;
+  p.useTraversabilityCost = false;
+  p.nearFieldStopDis = 0.6;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  std::vector<float> cloud = {0.72f, 0.0f, 0.45f, 0.45f};
+
+  auto result = planner.plan(cloud.data(), static_cast<int>(cloud.size() / 4), 0.0);
 
   EXPECT_TRUE(result.nearFieldStop);
 }

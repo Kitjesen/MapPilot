@@ -461,7 +461,7 @@ RUNTIME_DATA_FLOW = (
         producer="Navigation_global_planner",
         consumers=("LocalPlanner", "GatewayModule", "NAV_OUT"),
         frequency="on_goal_or_replan",
-        transport_policy="direct_default_dds_or_local_when_nav_plan_transport_enabled",
+        transport_policy="direct_in_process_module_chain; typed_dds_endpoint_for_process_boundary",
     ),
     RuntimeDataFlowStage(
         name="local_planning_and_following",

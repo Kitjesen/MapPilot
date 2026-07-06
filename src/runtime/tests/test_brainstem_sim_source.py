@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from runtime.adapters.lcm.endpoint_service import LCMEndpointEvent
-from runtime.adapters.lcm.sources.brainstem import ThunderBrainstemSource
-from runtime.adapters.lcm.sources.brainstem_sim import BrainstemSimSource, create
+from runtime.adapters.endpoint_sources.brainstem import ThunderBrainstemSource
+from runtime.adapters.endpoint_sources.brainstem_sim import BrainstemSimSource, create
+from runtime.adapters.endpoint_sources.types import EndpointEvent
 from runtime.msgs.geometry import Twist, Vector3
 from runtime.runtime_interface import TOPICS
 
@@ -84,7 +84,7 @@ def test_brainstem_sim_direct_cmd_vel_moves_kinematic_feedback() -> None:
     source.start(service)
     try:
         source.on_lingtu_message(
-            LCMEndpointEvent(
+            EndpointEvent(
                 topic=TOPICS.cmd_vel,
                 channel="LINGTU_NAV_CMD_VEL",
                 schema="lingtu.geometry.twist.v1",
@@ -125,11 +125,9 @@ def test_brainstem_sim_factory_can_disable_grpc_for_local_smoke(monkeypatch) -> 
 def test_endpoint_runners_load_brainstem_sim_builtin(monkeypatch) -> None:
     monkeypatch.setenv("LINGTU_BRAINSTEM_SIM_START_GRPC", "0")
 
-    from runtime.adapters.dds.endpoint_runner import _load_source as load_dds_source
-    from runtime.adapters.lcm.endpoint_runner import _load_source as load_lcm_source
+    from runtime.endpoints.dds.endpoint_runner import _load_source as load_dds_source
 
     assert load_dds_source("brainstem_sim").health()["name"] == "brainstem_sim"
-    assert load_lcm_source("builtin:brainstem_sim").health()["name"] == "brainstem_sim"
 
 
 def test_brainstem_sink_stop_tolerates_safe_stop_future_timeout(monkeypatch) -> None:
@@ -184,7 +182,7 @@ def test_brainstem_sim_accepts_real_brainstem_walk_grpc() -> None:
         assert sink.health()["connected"] is True
 
         sink.on_lingtu_message(
-            LCMEndpointEvent(
+            EndpointEvent(
                 topic=TOPICS.cmd_vel,
                 channel="LINGTU_NAV_CMD_VEL",
                 schema="lingtu.geometry.twist.v1",

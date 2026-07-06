@@ -133,12 +133,12 @@ def test_large_terrain_assets_can_align_map_products_to_start_odom_frame(tmp_pat
     assert _builder_cell(tomo, 18.90, 11.00) < 49.9
 
 
-def test_large_terrain_astar_route_uses_central_gate(tmp_path):
+def test_large_terrain_octoplanner3d_route_uses_central_gate(tmp_path):
     assets = build_large_terrain_assets(tmp_path)
     route = _route(assets, "terrain_long")
 
     svc = GlobalPlanner(
-        planner_name="astar",
+        planner_name="octoplanner3d",
         tomogram=str(assets.tomogram),
         downsample_dist=0.2,
         obstacle_thr=49.9,
@@ -165,12 +165,12 @@ def test_large_terrain_astar_route_uses_central_gate(tmp_path):
     assert routed >= route.min_routed_distance_m
 
 
-def test_large_terrain_complex_slalom_has_safe_astar_route(tmp_path):
+def test_large_terrain_complex_slalom_has_safe_octoplanner3d_route(tmp_path):
     assets = build_large_terrain_assets(tmp_path)
     route = _route(assets, "terrain_complex_slalom")
 
     svc = GlobalPlanner(
-        planner_name="astar",
+        planner_name="octoplanner3d",
         tomogram=str(assets.tomogram),
         downsample_dist=0.2,
         obstacle_thr=49.9,
@@ -333,7 +333,7 @@ def test_large_terrain_validation_rejects_path_that_does_not_reach_goal(
 
     monkeypatch.setattr(mod, "GlobalPlanner", PartialPathService)
 
-    report = mod.run_validation(tmp_path, routes=("terrain_short",), planners=("astar",))
+    report = mod.run_validation(tmp_path, routes=("terrain_short",), planners=("octoplanner3d",))
 
     plan = report["cases"][0]["planning"][0]
     assert plan["feasible"] is True
@@ -364,7 +364,7 @@ def test_large_terrain_validation_records_effective_global_planner_when_service_
         def plan(self, start, goal, safe_goal_tolerance=0.0):
             self.last_plan_report = {
                 "primary_planner": self._planner_name,
-                "selected_planner": "astar",
+                "selected_planner": "octoplanner3d",
                 "fallback_reason": "pct path_safety failed",
                 "policy": "fallback_astar",
                 "rejected_plans": [
@@ -385,7 +385,7 @@ def test_large_terrain_validation_records_effective_global_planner_when_service_
     plan = report["cases"][0]["planning"][0]
     assert plan["planner"] == "pct"
     assert plan["planner_requested"] == "pct"
-    assert plan["selected_planner"] == "astar"
+    assert plan["selected_planner"] == "octoplanner3d"
     assert plan["fallback_reason"] == "pct path_safety failed"
     assert plan["plan_safety_policy"] == "fallback_astar"
     assert plan["rejected_plans"][0]["planner"] == "pct"
@@ -445,7 +445,7 @@ def test_large_terrain_validation_records_safe_fallback_selection(tmp_path, monk
         def __init__(self, planner_name: str, tomogram: str, obstacle_thr: float, downsample_dist: float) -> None:
             self._planner_name = planner_name
             self._inner = RealService(
-                planner_name="astar",
+                planner_name="octoplanner3d",
                 tomogram=tomogram,
                 obstacle_thr=obstacle_thr,
                 downsample_dist=downsample_dist,
@@ -457,7 +457,7 @@ def test_large_terrain_validation_records_safe_fallback_selection(tmp_path, monk
             )()
 
         def setup(self) -> None:
-            if self._planner_name == "astar":
+            if self._planner_name == "octoplanner3d":
                 self._inner.setup()
                 self._backend = self._inner._backend
 
@@ -469,14 +469,14 @@ def test_large_terrain_validation_records_safe_fallback_selection(tmp_path, monk
     monkeypatch.setattr(mod, "GlobalPlanner", MixedService)
     monkeypatch.setattr(mod, "_pct_runtime_evidence", lambda: {"ok": True, "missing": []})
 
-    report = mod.run_validation(tmp_path, routes=("terrain_long",), planners=("pct", "astar"))
+    report = mod.run_validation(tmp_path, routes=("terrain_long",), planners=("pct", "octoplanner3d"))
 
     case = report["cases"][0]
     assert case["ok"] is False
     assert case["planning"][0]["planner"] == "pct"
     assert case["planning"][0]["route_ok"] is False
-    assert case["planning"][1]["planner"] == "astar"
+    assert case["planning"][1]["planner"] == "octoplanner3d"
     assert case["planning"][1]["route_ok"] is True
     assert case["selection"]["primary_planner"] == "pct"
-    assert case["selection"]["selected_planner"] == "astar"
+    assert case["selection"]["selected_planner"] == "octoplanner3d"
     assert case["selection"]["fallback_used"] is True

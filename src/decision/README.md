@@ -17,7 +17,7 @@ cancels, and task status.
 | `modules/` | Runtime `Module` entrypoints used by blueprints and plugin registration. |
 | `goal_resolution/` | Fast/slow target grounding, AdaCoT routing, SG-Nav reasoning, tokenizer helpers. |
 | `llm/` | LLM clients, backend registry, and prompt builders. |
-| `tasking/` | Agent loop, task decomposition, action execution, planner state, and service wrappers. |
+| `tasking/` | Agent loop, task decomposition, action execution, and service wrappers. |
 | `exploration/` | Frontier types, scoring, semantic uncertainty, and exploration strategy helpers. |
 | `vision/` | BBox navigation, person tracking, OSNet Re-ID, VLM bbox and scene queries. |
 | `resource/` | Static decision resources. |
@@ -27,13 +27,20 @@ cancels, and task status.
 
 | Module | File | Runtime role |
 | --- | --- | --- |
-| `SemanticPlannerModule` | `modules/semantic_planner_module.py` | Converts user/agent instructions into goals, plans, cancels, and servo targets. |
+| `SemanticPlannerModule` | `modules/semantic_planner_module.py` | Production entry point. Converts user/agent instructions into goals, plans, cancels, and servo targets; internally owns goal resolution, task decomposition, action execution, and frontier scoring. |
 | `VisualServoModule` | `modules/visual_servo_module.py` | Converts visual targets into far `goal_pose` or near `cmd_vel`. |
-| `LLMModule` | `modules/llm_module.py` | Multi-backend LLM wrapper exposed as a Module. |
-| `GoalResolverModule` | `modules/goal_resolver_module.py` | Thin Module around fast/slow goal resolution. |
-| `TaskDecomposerModule` | `modules/task_decomposer_module.py` | Turns natural-language tasks into ordered sub-goals. |
-| `ActionExecutorModule` | `modules/action_executor_module.py` | Executes decomposed subtasks and recovery decisions. |
-| `FrontierModule` | `modules/frontier_module.py` | Module wrapper around frontier-scoring exploration helpers. |
+| `LLMModule` | `modules/llm_module.py` | Multi-backend LLM wrapper exposed as a Module; stacked by `planner()` but not currently consumed by `SemanticPlannerModule`, which builds its own LLM client. |
+
+Legacy/test-only wrapper Modules (not added by any stack factory or product
+blueprint; superseded by `SemanticPlannerModule`, which calls the underlying
+helpers directly). Kept only because their own tests still exercise them:
+
+| Module | File | Superseded by |
+| --- | --- | --- |
+| `GoalResolverModule` | `modules/goal_resolver_module.py` | `SemanticPlannerModule` + `goal_resolution/goal_resolver.py` |
+| `TaskDecomposerModule` | `modules/task_decomposer_module.py` | `SemanticPlannerModule` + `tasking/task_decomposer.py` |
+| `ActionExecutorModule` | `modules/action_executor_module.py` | `SemanticPlannerModule` + `tasking/action_executor.py` |
+| `FrontierModule` | `modules/frontier_module.py` | `SemanticPlannerModule` + `exploration/frontier_scorer.py` |
 
 ## Algorithm Use
 

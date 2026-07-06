@@ -100,7 +100,7 @@ def test_compose_full_stack_modules_can_disable_endpoint_host_services() -> None
         config={
             "enable_device_manager": False,
             "enable_robot_driver": False,
-            "localization_adapter": "lcm_endpoint",
+            "localization_adapter": "dds_endpoint",
             "manage_session_services": False,
         },
     )
@@ -162,7 +162,7 @@ def test_compose_full_stack_modules_can_disable_local_lidar_driver() -> None:
             "enable_device_manager": False,
             "enable_robot_driver": False,
             "enable_lidar": False,
-            "localization_adapter": "lcm_endpoint",
+            "localization_adapter": "dds_endpoint",
         },
     )
     names = _entry_names(bp)

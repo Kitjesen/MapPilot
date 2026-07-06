@@ -71,7 +71,7 @@ class WtrtkSim:
         Parameters
         ----------
         gnss
-            ``GnssModule`` instance â€?its ``inject_fix`` will be called.
+            ``GnssModule`` instance; its ``inject_fix`` will be called.
         origin_lla
             Reference WGS84 origin ``(lat_deg, lon_deg, alt_m)``.
         get_body_xy
@@ -88,7 +88,7 @@ class WtrtkSim:
             Reported satellite count in GnssFix.
         loss_windows
             Time windows (since simulator start) during which GNSS
-            degrades to NO_FIX â€?simulates tunnels, trees, underpasses.
+            degrades to NO_FIX - simulates tunnels, trees, underpasses.
         seed
             RNG seed for reproducible noise.
         """
@@ -138,7 +138,7 @@ class WtrtkSim:
         while self._running:
             try:
                 self._publish_once()
-            except Exception:  # noqa: BLE001 â€?sim loop must not crash
+            except Exception:  # noqa: BLE001 - sim loop must not crash
                 pass
             time.sleep(period)
 
@@ -169,7 +169,7 @@ class WtrtkSim:
         y_n = y + self._rng.gauss(0, sigma)
         z_n = z + self._rng.gauss(0, sigma * 1.5)  # vertical typically worse
 
-        # Local ENU â†?WGS84 (inverse of GnssModule's forward transform)
+        # Local ENU -> WGS84 (inverse of GnssModule's forward transform)
         lat, lon = self._enu_to_lla(x_n, y_n)
         alt = self._origin_alt + z_n
 
@@ -177,7 +177,7 @@ class WtrtkSim:
         covariance = (
             var, 0.0, 0.0,
             0.0, var, 0.0,
-            0.0, 0.0, var * 2.25,  # 1.5 sigma vertical â†?2.25 variance
+            0.0, 0.0, var * 2.25,  # 1.5 sigma vertical -> 2.25 variance
         )
 
         fix = GnssFix(

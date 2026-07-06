@@ -4,6 +4,9 @@ This guide covers a fresh machine setup for LingTu. The default product path is
 native Python/C++ plus DDS services. ROS 2 is optional and only needed for
 explicit compatibility packages and replay checks.
 
+Product default: native planner kernels, no ROS2.
+ROS 2 Humble Desktop is optional and only needed for compatibility services.
+
 ## Prerequisites
 
 - Ubuntu 22.04 on S100P/aarch64 for field deployment.

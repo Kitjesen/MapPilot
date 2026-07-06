@@ -197,8 +197,6 @@ def localization_adapter_for_config(
         if endpoint_contract is not None
         else endpoint_contract_for_config(config, default="")
     )
-    if str(resolved_transport).lower() == "lcm" and resolved_contract:
-        return "lcm_endpoint"
     if str(resolved_transport).lower() == "dds":
         return "dds_endpoint"
     return ""

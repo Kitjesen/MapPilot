@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import sys
 
-from lingtu_sdk import LingTuClient
-from lingtu_sdk.mcp import LingTuMCP
+from lingtu.sdk import LingTuClient
+from lingtu.sdk.mcp import LingTuMCP
 
 
 def main(host: str = "127.0.0.1") -> None:

@@ -63,9 +63,9 @@ def test_ros_frame_contract_documents_body_base_link_alias():
     assert "map -> odom -> body" in doc
     assert "base_link == body" in doc
     assert "`world`" in doc
-    assert "/nav/map_cloud" in doc
+    assert "/slam/map_cloud" in doc
     assert "never body-relative points" in doc
-    assert "`/nav/odometry`" in doc
+    assert "`/slam/odometry`" in doc
     assert "`map` or `odom`" in doc
     assert "odom` is allowed only when an adapter transforms it" not in doc
 
@@ -91,10 +91,10 @@ def test_ros_frame_contract_topic_frame_table_mirrors_runtime_contract():
         assert row in doc
 
     assert (
-        "`/nav/map_cloud` and `/nav/global_path` are deliberately stricter "
+        "`/slam/map_cloud` and `/nav/global_path` are deliberately stricter "
         "on real"
     ) in doc
-    assert "real S100P evidence must reject `/nav/map_cloud` outside `map`" in doc
+    assert "real S100P evidence must reject `/slam/map_cloud` outside `map`" in doc
 
 
 def test_simulation_contract_documents_switch_dataflow_and_frame_boundary():
@@ -154,8 +154,8 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     assert FRAMES.real_lidar == "livox_frame"
     assert TOPICS.raw_lidar_points == "/points_raw"
     assert TOPICS.raw_imu == "/imu_raw"
-    assert TOPICS.registered_cloud == "/nav/registered_cloud"
-    assert TOPICS.map_cloud == "/nav/map_cloud"
+    assert TOPICS.registered_cloud == "/slam/registered_cloud"
+    assert TOPICS.map_cloud == "/slam/map_cloud"
     assert MESSAGE_FORMATS["raw_timed_pointcloud2"].required_fields == (
         "x",
         "y",
@@ -842,12 +842,12 @@ def test_gazebo_bridge_config_exposes_lingtu_runtime_topics():
     assert cfg.required_lingtu_topics() == {
         "cmd_vel": "/nav/cmd_vel",
         "gazebo_cmd_vel_ros_input": "/lingtu/gazebo/cmd_vel",
-        "odometry": "/nav/odometry",
-        "map_cloud": "/nav/map_cloud",
+        "odometry": "/slam/odometry",
+        "map_cloud": "/slam/map_cloud",
         "terrain_map": "/nav/terrain_map",
         "terrain_map_ext": "/nav/terrain_map_ext",
-        "cumulative_map_cloud": "/nav/cumulative_map_cloud",
-        "registered_cloud": "/nav/registered_cloud",
+        "cumulative_map_cloud": "/slam/cumulative_map_cloud",
+        "registered_cloud": "/slam/registered_cloud",
         "color_image": "/camera/color/image_raw",
         "depth_image": "/camera/depth/image_raw",
         "camera_info": "/camera/color/camera_info",
@@ -1144,9 +1144,9 @@ def test_tf_contract_smoke_is_read_only_and_checks_runtime_chain():
     smoke = _read("sim/scripts/tf_contract_smoke.py")
 
     assert "map->odom->body" in smoke
-    assert '"/nav/odometry"' in smoke
-    assert '"/nav/map_cloud"' in smoke
-    assert '"/nav/registered_cloud"' in smoke
+    assert '"/slam/odometry"' in smoke
+    assert '"/slam/map_cloud"' in smoke
+    assert '"/slam/registered_cloud"' in smoke
     assert '"/camera/color/image_raw"' in smoke
     assert '"lingtu.gazebo_runtime_smoke.v1"' in smoke
     assert "--require-sensors" in smoke
@@ -1210,7 +1210,7 @@ def test_gazebo_line_global_planner_is_gazebo_only_and_read_only_control():
 
     assert "Gazebo grid global planner" in planner
     assert '"/nav/goal_pose"' in planner
-    assert '"/nav/odometry"' in planner
+    assert '"/slam/odometry"' in planner
     assert '"/nav/exploration_grid"' in planner
     assert '"/nav/global_path"' in planner
     assert "create_publisher(Path" in planner
@@ -1233,11 +1233,11 @@ def test_rviz_demo_defaults_to_filtered_product_view():
     assert "Name: LiveOdomCloud" in rviz
     assert "Name: ExplorationOccupancyGrid" in rviz
     assert "Topic:\n        Value: /nav/exploration_grid" in rviz
-    assert "Topic: /nav/map_cloud" in rviz
+    assert "Topic: /slam/map_cloud" in rviz
     assert "Name: CumulativeMapCloud" in rviz
-    assert "Topic: /nav/cumulative_map_cloud" in rviz
+    assert "Topic: /slam/cumulative_map_cloud" in rviz
     assert "Name: RegisteredCloud" in rviz
-    assert "Topic: /nav/registered_cloud" in rviz
+    assert "Topic: /slam/registered_cloud" in rviz
     assert "Size (Pixels): 1" in rviz
     assert "Alpha: 0.75" in rviz
     assert "Alpha: 0.35" in rviz
@@ -1263,7 +1263,7 @@ def test_gazebo_nav_loop_gate_publishes_only_goal_and_checks_motion():
     assert '"/nav/global_path"' in smoke
     assert '"/nav/local_path"' in smoke
     assert '"/nav/cmd_vel"' in smoke
-    assert '"/nav/odometry"' in smoke
+    assert '"/slam/odometry"' in smoke
     assert "cmd_vel_sent_to_hardware" in smoke
     assert "require_forward_progress" in smoke
     assert "odom_delta_x_m" in smoke
@@ -1409,6 +1409,6 @@ def test_gazebo_industrial_demo_uses_lingtu_module_stack_navigation():
     assert "cmu_style_terrain_topics" in gate
     assert "frontier_gate_requested" in gate
     assert "frontier_exploration_from_gazebo_lidar_occupancy" in gate
-    assert '"/nav/map_cloud"' in passthrough
+    assert '"/slam/map_cloud"' in passthrough
     assert '"/nav/terrain_map"' in passthrough
     assert '"/nav/terrain_map_ext"' in passthrough

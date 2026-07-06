@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState, memo } from 'react'
+import { useRef, useEffect, useCallback, useState, memo, type ReactNode } from 'react'
 import {
   Compass, Grid3x3, Navigation, Route, Target, Bot, Layers as LayersIcon,
   PanelLeftClose, PanelLeftOpen, Save, Trash2, StopCircle, Pencil, X,
@@ -106,6 +106,24 @@ function parseWorkbenchBounds(text: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+function numericMetric(data: Record<string, unknown>, key: string): number | undefined {
+  const value = data[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function formatHz(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} Hz` : '—'
+}
+
+function formatCount(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.round(value).toLocaleString() : '—'
+}
+
 function formatPlanPreviewFailure(
   preview: PlanPreviewResponse | null | undefined,
   reasons: string[] = [],
@@ -114,6 +132,26 @@ function formatPlanPreviewFailure(
   const safety = formatPlanSafetySummary(preview)
   const reason = reasons.slice(0, 3).join(' / ') || error || preview?.error || 'plan preview rejected'
   return safety ? `${reason} (${safety})` : reason
+}
+
+interface LayerButtonProps {
+  active:  boolean
+  icon:    ReactNode
+  label:   string
+  onClick: () => void
+}
+
+function LayerButton({ active, icon, label, onClick }: LayerButtonProps) {
+  return (
+    <button
+      type="button"
+      className={active ? styles.layerBtnActive : styles.layerBtn}
+      onClick={onClick}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  )
 }
 
 function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
@@ -138,12 +176,12 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
   const [drawerOpen, setDrawerOpen] = useState(true)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [layers, setLayers] = useState<Layers>({
-    grid: true, cloud: true, trail: true, path: true, goal: true, robot: true, costmap: true, slope: false,
+    grid: true, cloud: true, trail: true, path: true, goal: true, robot: true, costmap: false, slope: false,
   })
   const [maps, setMaps] = useState<MapInfo[]>([])
-  // Default 0.12 (12cm sphere per point) — with ~18k points in a room-scale
-  // scene this gives a visually dense cloud. User can shrink via slider.
-  const [pointSize, setPointSize] = useState(0.12)
+  // Default 0.32 keeps the live registered cloud visible when the current
+  // frame only carries a few thousand points. User can shrink via slider.
+  const [pointSize, setPointSize] = useState(0.32)
   const [savedMapFlat, setSavedMapFlat] = useState<number[] | undefined>(undefined)
   const [relocOpen, setRelocOpen] = useState(false)
   const [relocDropOpen, setRelocDropOpen] = useState(false)
@@ -224,6 +262,10 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
   const hasGoal      = missionState === 'EXECUTING' || missionState === 'PLANNING'
   const slamMode     = sseState.slamStatus?.mode ?? '—'
   const slamHz       = sseState.slamStatus?.slam_hz ?? 0
+  const slamDiag = sseState.slamDiag?.data ?? {}
+  const processedScanHz = numericMetric(slamDiag, 'processed_scan_hz') ?? slamHz
+  const lidarInputHz = numericMetric(slamDiag, 'lidar_input_hz')
+  const displayedMapPoints = numericMetric(slamDiag, 'map_points') ?? sseState.slamStatus?.map_points
   const session = sseState.session
   const localizationBackend = session?.localization_backend ?? session?.slam_profile ?? sseState.slamStatus?.mode ?? 'unknown'
   const savedMapRelocalizeSupported =
@@ -840,19 +882,20 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
     }
   }
 
-  const toggleLayer = (key: keyof Layers) =>
+  const toggleLayer = useCallback((key: keyof Layers) => {
     setLayers(prev => ({ ...prev, [key]: !prev[key] }))
+  }, [])
 
-  const LayerBtn = ({
+  const LayerBtn = useCallback(({
     k, icon, label,
-  }: { k: keyof Layers; icon: React.ReactNode; label: string }) => (
-    <button
-      className={layers[k] ? styles.layerBtnActive : styles.layerBtn}
+  }: { k: keyof Layers; icon: ReactNode; label: string }) => (
+    <LayerButton
+      active={layers[k]}
+      icon={icon}
+      label={label}
       onClick={() => toggleLayer(k)}
-    >
-      {icon} {label}
-    </button>
-  )
+    />
+  ), [layers, toggleLayer])
 
   return (
     <div className={styles.sceneView}>
@@ -1380,16 +1423,18 @@ function SceneViewComponent({ sseState, showToast }: SceneViewProps) {
                 {slamMode === 'localizer' && <span className={styles.slamDot} />}
               </button>
             </div>
-            <div className={styles.statGrid}>
+            <div className={`${styles.statGrid} ${styles.statGridThree}`}>
               <div className={styles.statItem}>
-                <span className={styles.statLabel}>频率</span>
-                <span className={styles.statValue}>{slamHz.toFixed(1)} Hz</span>
+                <span className={styles.statLabel}>SLAM</span>
+                <span className={styles.statValue}>{formatHz(processedScanHz)}</span>
               </div>
               <div className={styles.statItem}>
-                <span className={styles.statLabel}>点云</span>
-                <span className={styles.statValue}>
-                  {sseState.slamStatus?.map_points?.toLocaleString() ?? '—'}
-                </span>
+                <span className={styles.statLabel}>LiDAR</span>
+                <span className={styles.statValue}>{formatHz(lidarInputHz)}</span>
+              </div>
+              <div className={styles.statItem}>
+                <span className={styles.statLabel}>点数</span>
+                <span className={styles.statValue}>{formatCount(displayedMapPoints)}</span>
               </div>
             </div>
 

@@ -116,16 +116,12 @@ def sensor_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             "raw_scan",
             "SlamModule",
             "lidar_raw_scan",
-            transport="dds",
-            topic=TOPICS.raw_lidar_points,
         ),
         WireSpec(
             source,
             "imu",
             "SlamModule",
             "lidar_imu",
-            transport="dds",
-            topic=TOPICS.raw_imu,
         ),
     )
 

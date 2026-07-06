@@ -15,7 +15,7 @@ from runtime.blueprints.stacks._registry import (
     optional_stack_module,
     stack_module,
 )
-from runtime.blueprints.adapters.perception_gateway import camera_bridge_module
+from runtime.adapters.perception_gateway import camera_bridge_module
 
 logger = logging.getLogger(__name__)
 _NATIVE_CAMERA_DRIVERS = {"MujocoDriverModule"}  # Only MuJoCo has built-in camera

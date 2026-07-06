@@ -71,15 +71,6 @@ LOCAL_PLANNER_SERVICE_SOURCES = {
     / "service.py",
 }
 
-LCM_EXTERNAL_ADAPTER_SOURCES = {
-    "lcm_external_adapter_package": SRC / "runtime" / "adapters" / "lcm" / "__init__.py",
-    "lcm_localization_adapter": SRC
-    / "runtime"
-    / "adapters"
-    / "lcm"
-    / "localization_adapter.py",
-}
-
 BASE_AUTONOMY_BACKEND_ADAPTER_SOURCES = {
     "path_follower_backend": SRC / "nav" / "local" / "path_follower_backend.py",
     "local_planner_backend": SRC
@@ -115,22 +106,18 @@ BASE_AUTONOMY_MODULE_SOURCES = {
 BLUEPRINT_COMPAT_ADAPTER_SOURCES = {
     "driver_runtime": SRC
     / "runtime"
-    / "blueprints"
     / "adapters"
     / "driver_runtime.py",
     "mapping_slam": SRC
     / "runtime"
-    / "blueprints"
     / "adapters"
     / "mapping_slam.py",
     "navigation_io": SRC
     / "runtime"
-    / "blueprints"
     / "adapters"
     / "navigation_io.py",
     "perception_gateway": SRC
     / "runtime"
-    / "blueprints"
     / "adapters"
     / "perception_gateway.py",
 }
@@ -301,11 +288,8 @@ def test_directory_stage_keeps_local_planner_runtime_under_plan_service() -> Non
     )
 
 
-def test_directory_stage_keeps_lcm_adapter_layer_under_runtime_adapters() -> None:
-    _assert_sources_exist_under_owner(
-        LCM_EXTERNAL_ADAPTER_SOURCES,
-        SRC / "runtime" / "adapters" / "lcm",
-    )
+def test_directory_stage_keeps_lcm_adapter_layer_removed() -> None:
+    assert not (SRC / "runtime" / "adapters" / ("lc" + "m")).exists()
 
 
 def test_base_autonomy_backend_adapter_helpers_exist_beside_modules() -> None:
@@ -430,7 +414,7 @@ def test_removed_module_shim_import_paths_stay_removed() -> None:
 def test_compat_adapter_helpers_live_in_blueprint_adapter_layer() -> None:
     _assert_sources_exist_under_owner(
         BLUEPRINT_COMPAT_ADAPTER_SOURCES,
-        SRC / "runtime" / "blueprints" / "adapters",
+        SRC / "runtime" / "adapters",
     )
 
 

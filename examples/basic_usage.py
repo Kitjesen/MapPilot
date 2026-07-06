@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sys
 
-from lingtu_sdk import LingTuClient
+from lingtu.sdk import LingTuClient
 
 
 def main(host: str = "127.0.0.1") -> None:

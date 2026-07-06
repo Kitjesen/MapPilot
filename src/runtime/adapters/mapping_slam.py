@@ -49,7 +49,7 @@ def localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
     if not adapter or adapter in {"auto", "default"}:
         raise ImportError(
             "Localization adapter must be explicit; choose 'cpp_slam_status', "
-            "'lcm_endpoint', or explicit 'ros2_slam_bridge' compatibility"
+            "'dds_endpoint', or explicit 'ros2_slam_bridge' compatibility"
         )
     if adapter in {"cpp_slam_status", "native_slam_status"}:
         preferred = (("localization_adapter", "cpp_slam_status"),)
@@ -61,11 +61,6 @@ def localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
         fallback_module = "runtime.adapters.dds.localization_adapter"
         fallback_class = "DDSLocalizationAdapterModule"
         seed_group = "slam"
-    elif adapter in {"lcm", "lcm_endpoint", "thunder_field_lcm_v1"}:
-        preferred = (("localization_adapter", "lcm_endpoint"),)
-        fallback_module = "runtime.adapters.lcm.localization_adapter"
-        fallback_class = "LCMLocalizationAdapterModule"
-        seed_group = "slam_lcm"
     elif adapter not in {"ros2", "ros2_slam_bridge"}:
         preferred = (("localization_adapter", adapter),)
         fallback_module = ""

@@ -56,11 +56,11 @@ def test_lcm_module_transport_is_not_supported() -> None:
     from runtime.blueprints.profile_builder import module_transport_for_resolved_config
 
     try:
-        module_transport_for_resolved_config({"module_transport": "lcm"})
+        module_transport_for_resolved_config({"module_transport": "zmq"})
     except ValueError as exc:
-        assert "Unknown strategy: lcm" in str(exc)
+        assert "Unknown strategy: zmq" in str(exc)
     else:  # pragma: no cover - defensive assertion
-        raise AssertionError("module_transport=lcm must stay outside ModulePort")
+        raise AssertionError("unsupported module_transport must stay outside ModulePort")
 
 
 def test_build_system_from_resolved_profile_honors_module_transport(monkeypatch) -> None:

@@ -107,6 +107,29 @@ class _IntermediatePathPlanner(_RecordingPlanner):
         return [start.copy(), mid, goal.copy()], 0.0
 
 
+class _DetourPathPlanner(_RecordingPlanner):
+    """Path with off-axis waypoints spread beyond the tracker's forward-prune
+    search window (5), so the final goal is never visible to
+    ``_advance_to_nearest_forward`` from the second waypoint onward. Used to
+    exercise goal-proximity completion in isolation from the tracker's own
+    forward-pruning + multi-waypoint catch-up (see WaypointTracker.update).
+    """
+    def plan(self, start: np.ndarray, goal: np.ndarray, **kwargs):
+        self.plan_calls += 1
+        self.safe_goal_tolerances.append(kwargs.get("safe_goal_tolerance"))
+        start = np.asarray(start, dtype=float)
+        goal = np.asarray(goal, dtype=float)
+        detours = [
+            np.array([
+                start[0] + (goal[0] - start[0]) * frac,
+                start[1] + (goal[1] - start[1]) * frac + 3.0,
+                float(goal[2]),
+            ], dtype=float)
+            for frac in (1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6)
+        ]
+        return [start.copy(), *detours, goal.copy()], 0.0
+
+
 class _ProjectedStartPlanner(_RecordingPlanner):
     def plan(self, start: np.ndarray, goal: np.ndarray, **kwargs):
         self.plan_calls += 1
@@ -485,7 +508,7 @@ def test_navigation_goal_proximity_completion_is_disabled_by_default():
         final_waypoint_threshold=0.2,
     )
     assert nav._complete_path_on_goal_proximity is False
-    nav._planner_svc = _IntermediatePathPlanner()
+    nav._planner_svc = _DetourPathPlanner()
     events: list[dict] = []
     nav.adapter_status._add_callback(events.append)
 
@@ -506,7 +529,12 @@ def test_navigation_goal_proximity_completion_is_disabled_by_default():
     ))
 
     assert nav._state == "EXECUTING"
-    assert nav._tracker.wp_index == 1
+    # Forward-pruning still snaps ahead to the nearest in-window detour
+    # waypoint (the final goal sits outside the 5-wide search window from
+    # here), but that detour is far from the robot so it must not be
+    # marked "reached" -- and with the feature off, proximity to the
+    # actual goal must not short-circuit the path either.
+    assert nav._tracker.wp_index == 5
     assert not any(
         event.get("event") == "goal_proximity_path_complete"
         for event in events
@@ -521,7 +549,7 @@ def test_navigation_goal_proximity_completion_advances_patrol_when_enabled():
     )
     assert nav._complete_path_on_goal_proximity is True
     assert nav._goal_proximity_completion_threshold == 0.25
-    planner = _IntermediatePathPlanner()
+    planner = _DetourPathPlanner()
     nav._planner_svc = planner
     events: list[dict] = []
     nav.adapter_status._add_callback(events.append)
@@ -555,7 +583,10 @@ def test_navigation_goal_proximity_completion_advances_patrol_when_enabled():
     ]
     assert proximity_events
     assert proximity_events[-1]["distance_to_goal_m"] == 0.05
-    assert proximity_events[-1]["waypoint_index"] == 1
+    # Forward-pruning has already snapped the tracker ahead to the nearest
+    # in-window detour waypoint (index 5); goal-proximity completion fires
+    # independently of that, based on direct distance to the mission goal.
+    assert proximity_events[-1]["waypoint_index"] == 5
 
 
 def test_navigation_accepts_map_frame_odometry_without_frame_mismatch_report():
@@ -1251,8 +1282,15 @@ def test_navigation_preview_rejects_non_map_odometry_frame():
 
 
 def test_external_strategy_path_reanchors_near_current_odometry():
+    # Tight waypoint thresholds keep this test focused on re-anchoring
+    # geometry: with the default 1.5m threshold, WaypointTracker's
+    # multi-waypoint catch-up (see WaypointTracker.update) would consume
+    # this whole ~1m-spaced fixture path in a single update() call before
+    # the mission ever reaches EXECUTING.
     nav = Navigation(external_strategy_path_control=True,
         external_strategy_start_tolerance_m=1.0,
+        waypoint_threshold=0.05,
+        final_waypoint_threshold=0.05,
     )
     global_paths: list[list[np.ndarray]] = []
     waypoints: list[PoseStamped] = []

@@ -23,7 +23,6 @@ core-portable = []
 portable = []
 sim-mujoco = ["mujoco>=3.2", "mujoco-lidar>=0.3.3"]
 endpoint-portable = []
-endpoint-lcm = ["lcm"]
 # Optional native PCL plugin marker. The runtime looks for a separately built
 # `lingtu_pcl_ops` wheel/module and falls back to NumPy when it is absent.
 pcl-ops = []
@@ -159,7 +158,6 @@ known-first-party = [
 "third_party/*" = ["D", "B", "S"]
 "calibration/**" = ["W191", "E731", "F821"]
 "docs/**" = ["E702", "E701"]
-"src/gateway/map_dashboard.py" = ["E501"]
 # E501 in test files with embedded shell scripts or \uXXXX docstrings
 "src/runtime/tests/test_deployment_service_contracts.py" = ["E501"]
 "src/decision/tests/test_fast_slow_benchmark.py" = ["E501"]

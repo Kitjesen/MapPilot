@@ -345,7 +345,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--drive-profile",
-        choices=["arc", "box_explore"],
+        choices=["arc", "box_explore", "box_explore_gentle"],
         default="arc",
         help=(
             "Kinematic command profile. arc preserves the historical constant "
@@ -369,6 +369,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--require-slam-output",
         action="store_true",
         help="Fail unless native C++ SLAM publishes odometry, map cloud, and health.",
+    )
+    parser.add_argument(
+        "--motion-log",
+        default="",
+        help=(
+            "Optional JSONL path for periodic MuJoCo ground-truth pose samples. "
+            "Each line carries the sensor-clock timestamp so continuous gates "
+            "can join simulator truth against the native SLAM trajectory."
+        ),
     )
     parser.add_argument("--json-out", default="")
     return parser
@@ -465,19 +474,29 @@ def _drive_command_for_profile(
     name = str(profile or "arc").strip().lower()
     if name == "arc":
         return float(drive_vx), float(drive_vy), float(drive_wz)
-    if name != "box_explore":
-        raise ValueError(f"unknown drive profile: {profile}")
-
-    forward_vx = max(abs(float(drive_vx)), 0.10)
-    turn_wz = math.copysign(max(abs(float(drive_wz)), 0.35), float(drive_wz) if drive_wz else 1.0)
-    phase_s = max(0.0, float(elapsed_s)) % 24.0
-    if phase_s < 7.5:
-        return forward_vx, 0.0, 0.0
-    if phase_s < 12.0:
+    if name == "box_explore_gentle":
+        forward_vx = max(abs(float(drive_vx)), 0.10)
+        turn_wz = math.copysign(max(abs(float(drive_wz)), 0.20), float(drive_wz) if drive_wz else 1.0)
+        phase_s = max(0.0, float(elapsed_s)) % 28.0
+        if phase_s < 9.0:
+            return forward_vx, 0.0, 0.0
+        if phase_s < 13.0:
+            return 0.0, 0.0, turn_wz
+        if phase_s < 22.0:
+            return forward_vx, 0.0, 0.0
         return 0.0, 0.0, turn_wz
-    if phase_s < 19.5:
-        return forward_vx, 0.0, 0.0
-    return 0.0, 0.0, turn_wz
+    if name == "box_explore":
+        forward_vx = max(abs(float(drive_vx)), 0.10)
+        turn_wz = math.copysign(max(abs(float(drive_wz)), 0.35), float(drive_wz) if drive_wz else 1.0)
+        phase_s = max(0.0, float(elapsed_s)) % 24.0
+        if phase_s < 7.5:
+            return forward_vx, 0.0, 0.0
+        if phase_s < 12.0:
+            return 0.0, 0.0, turn_wz
+        if phase_s < 19.5:
+            return forward_vx, 0.0, 0.0
+        return 0.0, 0.0, turn_wz
+    raise ValueError(f"unknown drive profile: {profile}")
 
 
 class SimulatedHardwareClock:
@@ -1013,6 +1032,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     publisher_path = _resolve_publisher_bin(str(args.publisher_bin or ""))
     publisher = _start_native_publisher(args)
 
+    motion_log_path = str(getattr(args, "motion_log", "") or "")
+    motion_log_stream = None
+    motion_log_samples = 0
+    if motion_log_path:
+        log_path = Path(motion_log_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        motion_log_stream = log_path.open("w", encoding="utf-8")
+
     engine = None
     try:
         policy_path = _resolve_policy_path_for_drive(str(args.drive_mode), str(args.policy_path or ""))
@@ -1223,6 +1250,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 _write_native_scan(publisher.stdin, scan)
                 sensor_counts[TOPICS.lidar_scan] += 1
                 sequence += 1
+                if motion_log_stream is not None:
+                    motion_log_stream.write(
+                        json.dumps(
+                            {
+                                "t": float(sensor_ts_s),
+                                "sim_time_s": float(sim_time_s),
+                                "x": float(position[0]),
+                                "y": float(position[1]),
+                                "z": float(position[2]),
+                                "yaw": float(yaw),
+                                "driving": bool(driving),
+                            },
+                            ensure_ascii=True,
+                        )
+                        + "\n"
+                    )
+                    motion_log_samples += 1
+                    if motion_log_samples % 20 == 0:
+                        motion_log_stream.flush()
                 if unified_sim_hardware_clock:
                     next_lidar_sim_s += lidar_period_s
                     while next_lidar_sim_s <= sim_time_s - 1e-9:
@@ -1237,6 +1283,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 time.sleep(max(0.0, imu_period_s - (time.monotonic() - loop_start)))
     finally:
+        if motion_log_stream is not None:
+            motion_log_stream.close()
         if publisher.stdin is not None:
             publisher.stdin.close()
         try:
@@ -1338,6 +1386,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["lidar_timestamp_clock"] = str(args.lidar_timestamp_clock or args.timestamp_clock)
     report["clock_profile"] = "sim_hardware" if unified_sim_hardware_clock else "legacy_split_or_wall"
     report["sim_hardware_realtime_factor"] = float(args.sim_hardware_realtime_factor)
+    report["motion_log"] = motion_log_path
+    report["motion_log_samples"] = int(motion_log_samples)
     return report
 
 

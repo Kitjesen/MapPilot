@@ -33,7 +33,6 @@ FORBIDDEN_IMPORT_ROOTS = {
     "fastapi",
     "torch",
     "brainstem_api",
-    "lcm",
 }
 
 

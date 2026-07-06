@@ -68,9 +68,8 @@ HEAVY_FEATURE_PACK = frozenset(
     }
 )
 ROBOT_OPTIONAL = frozenset({"brainstem-api", "grpc", "grpcio", "protobuf"})
-ENDPOINT_OPTIONAL = frozenset({"lcm"})
-FORBIDDEN_BASE_DEPS = ROS_COMPAT_ONLY | HEAVY_FEATURE_PACK | ROBOT_OPTIONAL | ENDPOINT_OPTIONAL | SIM_MUJOCO_DEPS
-FORBIDDEN_TOP_LEVEL_IMPORTS = ROS_COMPAT_ONLY | HEAVY_FEATURE_PACK | ROBOT_OPTIONAL | ENDPOINT_OPTIONAL
+FORBIDDEN_BASE_DEPS = ROS_COMPAT_ONLY | HEAVY_FEATURE_PACK | ROBOT_OPTIONAL | SIM_MUJOCO_DEPS
+FORBIDDEN_TOP_LEVEL_IMPORTS = ROS_COMPAT_ONLY | HEAVY_FEATURE_PACK | ROBOT_OPTIONAL
 EMPTY_PORTABLE_OPTIONAL_GROUPS = frozenset(
     {
         "lite",
@@ -85,7 +84,6 @@ EMPTY_PORTABLE_OPTIONAL_GROUPS = frozenset(
 REQUIRED_OPTIONAL_GROUPS = EMPTY_PORTABLE_OPTIONAL_GROUPS | frozenset(
     {
         "sim-mujoco",
-        "endpoint-lcm",
         "thunder",
         "robot-thunder",
         "gateway",
@@ -101,7 +99,6 @@ REQUIRED_OPTIONAL_GROUPS = EMPTY_PORTABLE_OPTIONAL_GROUPS | frozenset(
 )
 OPTIONAL_GROUP_ALLOWED_DEPS = {
     "sim-mujoco": SIM_MUJOCO_DEPS,
-    "endpoint-lcm": ENDPOINT_OPTIONAL,
     "thunder": frozenset({"brainstem-api"}),
     "robot-thunder": frozenset({"brainstem-api"}),
 }

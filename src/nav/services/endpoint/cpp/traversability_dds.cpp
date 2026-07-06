@@ -18,6 +18,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -602,6 +603,7 @@ void writeStatus(
   if (!out) {
     return;
   }
+  out << std::fixed << std::setprecision(6);
   out << "{\n"
       << "  \"schema_version\": \"lingtu.traversability.status.v1\",\n"
       << "  \"endpoint\": \"lingtu_traversability_dds\",\n"

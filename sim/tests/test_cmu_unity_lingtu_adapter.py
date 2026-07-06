@@ -13,6 +13,7 @@ np = import_numpy_or_skip()
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from runtime.runtime_interface import TOPICS
 from sim.engine.bridge import cmu_unity_lingtu_adapter as adapter
 
 
@@ -23,16 +24,16 @@ def _relay_map(relay_cmd_vel_to_sim: bool = True) -> dict[str, str]:
 def test_cmu_unity_adapter_maps_cmu_sensor_and_exploration_topics_to_lingtu():
     relays = _relay_map()
 
-    assert relays["/state_estimation->/nav/odometry"] == "nav_msgs/msg/Odometry"
+    assert relays[f"/state_estimation->{TOPICS.odometry}"] == "nav_msgs/msg/Odometry"
     assert (
-        relays["/state_estimation_at_scan->/nav/state_estimation_at_scan"]
+        relays[f"/state_estimation_at_scan->{TOPICS.state_estimation_at_scan}"]
         == "nav_msgs/msg/Odometry"
     )
-    assert "/registered_scan->/nav/registered_cloud" not in relays
-    assert relays["/registered_scan->/nav/map_cloud"] == "sensor_msgs/msg/PointCloud2"
-    assert relays["/terrain_map->/nav/terrain_map"] == "sensor_msgs/msg/PointCloud2"
+    assert f"/registered_scan->{TOPICS.registered_cloud}" not in relays
+    assert relays[f"/registered_scan->{TOPICS.map_cloud}"] == "sensor_msgs/msg/PointCloud2"
+    assert relays[f"/terrain_map->{TOPICS.terrain_map}"] == "sensor_msgs/msg/PointCloud2"
     assert (
-        relays["/terrain_map_ext->/nav/terrain_map_ext"]
+        relays[f"/terrain_map_ext->{TOPICS.terrain_map_ext}"]
         == "sensor_msgs/msg/PointCloud2"
     )
     assert (
@@ -70,8 +71,8 @@ def test_cmu_unity_adapter_requires_explicit_cmd_vel_relay():
 def test_cmu_unity_adapter_required_relay_contract_excludes_optional_paths():
     required = adapter.required_relay_contract(relay_cmd_vel_to_sim=True)
 
-    assert required["/state_estimation->/nav/odometry"] == "nav_msgs/msg/Odometry"
-    assert required["/registered_scan->/nav/map_cloud"] == "sensor_msgs/msg/PointCloud2"
+    assert required[f"/state_estimation->{TOPICS.odometry}"] == "nav_msgs/msg/Odometry"
+    assert required[f"/registered_scan->{TOPICS.map_cloud}"] == "sensor_msgs/msg/PointCloud2"
     assert required["/nav/cmd_vel->/cmd_vel"] == "geometry_msgs/msg/TwistStamped"
     assert "/global_path->/exploration/global_path" not in required
     assert "/local_path->/exploration/local_path" not in required
@@ -87,8 +88,8 @@ def test_cmu_unity_adapter_can_replace_full_registered_scan_with_local_cloud():
         )
     }
 
-    assert "/registered_scan->/nav/registered_cloud" not in relays
-    assert relays["/registered_scan->/nav/map_cloud"] == "sensor_msgs/msg/PointCloud2"
+    assert f"/registered_scan->{TOPICS.registered_cloud}" not in relays
+    assert relays[f"/registered_scan->{TOPICS.map_cloud}"] == "sensor_msgs/msg/PointCloud2"
     assert relays["/nav/cmd_vel->/cmd_vel"] == "geometry_msgs/msg/TwistStamped"
 
 
@@ -101,7 +102,7 @@ def test_cmu_unity_adapter_legacy_full_registered_relay_is_explicit_opt_in():
         )
     }
 
-    assert relays["/registered_scan->/nav/registered_cloud"] == "sensor_msgs/msg/PointCloud2"
+    assert relays[f"/registered_scan->{TOPICS.registered_cloud}"] == "sensor_msgs/msg/PointCloud2"
 
 
 def test_cmu_unity_adapter_recrops_cached_registered_scan_by_default():

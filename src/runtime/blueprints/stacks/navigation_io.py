@@ -12,7 +12,7 @@ def add_navigation_io_adapter_stack(bp: Blueprint, **config) -> Blueprint:
     if not navigation_io_adapters_enabled(config):
         return bp
 
-    from runtime.blueprints.adapters.navigation_io import (
+    from runtime.adapters.navigation_io import (
         add_navigation_io_adapters,
     )
 
@@ -22,7 +22,7 @@ def add_navigation_io_adapter_stack(bp: Blueprint, **config) -> Blueprint:
 def wire_navigation_output_adapter_stack(bp: Blueprint) -> Blueprint:
     """Wire navigation outputs after optional local autonomy modules exist."""
 
-    from runtime.blueprints.adapters.navigation_io import (
+    from runtime.adapters.navigation_io import (
         wire_navigation_output_adapter,
     )
 

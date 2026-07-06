@@ -7,6 +7,8 @@ and legacy compatibility paths explicit.
 The product runtime is not a ROS 2 graph. The field path is native DDS plus
 LingTu Modules. ROS 2 code remains only where a compatibility adapter or
 isolated algorithm check explicitly says so.
+ROS2 Humble is optional for compatibility services; it is not required for the
+default Thunder field runtime.
 
 ## Current Product Contract
 

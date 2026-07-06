@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.adapters.dds.contracts import (
+from runtime.endpoints.dds.contracts import (
     DDS_PAYLOAD_FORMAT,
     THUNDER_FIELD_DDS_CONTRACT,
     THUNDER_FIELD_DDS_CONTRACT_NAME,

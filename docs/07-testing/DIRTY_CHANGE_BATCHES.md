@@ -282,7 +282,7 @@ git add \
   src/nav/tests/local/test_path_follower_module_backends.py \
   src/nav/tests/local/test_pure_language_fallback_contract.py \
   src/nav/tests/planning_backends/test_octoplanner3d_backend.py \
-  src/nav/tests/test_cmd_vel_mux_contract.py \
+  src/nav/tests/test_velocity_mux_contract.py \
   src/nav/tests/test_global_planner_contracts.py \
   src/nav/tests/test_nav_modules.py \
   src/nav/tests/test_navigation_frame_contract.py \
@@ -301,7 +301,7 @@ python -m pytest \
   src/nav/tests/local/test_path_follower_module_backends.py \
   src/nav/tests/local/test_pure_language_fallback_contract.py \
   src/nav/tests/planning_backends/test_octoplanner3d_backend.py \
-  src/nav/tests/test_cmd_vel_mux_contract.py \
+  src/nav/tests/test_velocity_mux_contract.py \
   src/nav/tests/test_global_planner_contracts.py \
   src/nav/tests/test_nav_modules.py \
   src/nav/tests/test_navigation_frame_contract.py \

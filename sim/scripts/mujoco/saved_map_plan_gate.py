@@ -247,6 +247,18 @@ def write_ascii_pcd(path: Path, points: list[tuple[float, float, float]]) -> Non
     path.write_text(header + "\n" + body + "\n", encoding="ascii")
 
 
+def jsonable_path(path: list[Any], *, max_points: int | None = None) -> list[list[float]]:
+    """Return planner path points as JSON-safe xyz triples."""
+
+    limited = path if max_points is None else path[: max(0, int(max_points))]
+    out: list[list[float]] = []
+    for point in limited:
+        values = [float(v) for v in point[:3]]
+        if len(values) == 3 and all(math.isfinite(v) for v in values):
+            out.append(values)
+    return out
+
+
 def filter_points_to_scene(
     points: list[tuple[float, float, float]],
     *,
@@ -535,6 +547,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             "ok": bool(path) and bool(planner._last_plan_reached_goal),
             "available": planner.available,
             "path_count": len(path),
+            "path": jsonable_path(path),
             "reached_goal": bool(planner._last_plan_reached_goal),
             "error": planner._last_plan_error,
             "diagnostics": planner._last_plan_diagnostics,

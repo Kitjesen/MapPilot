@@ -10,5 +10,5 @@ This package provides the memory layer for the robot: short-term episodic buffer
 - **`vector_memory_module.py`** — CLIP + ChromaDB vector search: stores embedding-indexed observations for semantic similarity retrieval.
 - **`mission_logger_module.py`** — Mission logger: serializes complete mission state (goals, path, events) to disk for post-hoc replay.
 - **`temporal_memory_module.py`** — Temporal memory: time-windowed state buffer with decay; short-term working memory for recent events.
-- **`topological_module.py`** — Topological graph: connectivity graph of explored areas; supports frontier-based exploration targets.
+- **`topological_module.py`** — Topological graph: connectivity graph of explored areas; supports frontier-based exploration targets. Registered via `@register` but **not** added by the `memory()` stack factory, so it is not on the production path today. `semantic_mapper_module.py`'s `TopologySemGraph` is the room-level topology that is actually wired in.
 - **`_odom_mixin.py`** — Shared odometry mixin: provides odometry integration helpers for memory modules that need pose interpolation.

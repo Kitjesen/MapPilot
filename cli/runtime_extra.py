@@ -186,7 +186,7 @@ def _uses_non_ros_localization_adapter(cfg: dict) -> bool:
         or cfg.get("_localization_adapter")
         or ""
     ).lower()
-    if adapter == "lcm_endpoint":
+    if adapter in {"dds_endpoint", "cpp_slam_status", "native_slam_status"}:
         return True
 
     endpoint_transport = str(
@@ -199,7 +199,7 @@ def _uses_non_ros_localization_adapter(cfg: dict) -> bool:
         or cfg.get("_endpoint_contract")
         or ""
     )
-    return endpoint_transport == "lcm" and bool(endpoint_contract)
+    return endpoint_transport == "dds" and bool(endpoint_contract)
 
 
 def _ros_setup_path() -> str:
@@ -235,7 +235,7 @@ def preflight(profile_name: str, cfg: dict) -> None:
             f"  {T.yellow('!')} Windows local FastLIO2 has no supported portable "
             "runtime; the previous portable-lio endpoint was removed."
         )
-        print("    Use the field LCM localization endpoint, or run ROS2 compatibility on Linux.")
+        print("    Use the field DDS localization endpoint, or run ROS2 compatibility on Linux.")
 
     if nav_kernel_backend_required(
         cfg,

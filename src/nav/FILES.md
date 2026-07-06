@@ -199,7 +199,7 @@ Safety services own reflex stop, plan safety, and velocity arbitration.
 | `test_planning_service_factory.py` | Planner service factory and mapless-vs-map-backed import boundary. |
 | `test_lite_planner_backend.py` | DirectPath backend behavior. |
 | `test_path_feasibility.py` | Ground path feasibility checks. |
-| `test_cmd_vel_mux_contract.py` | Velocity mux priority/timeout contract. |
+| `test_velocity_mux_contract.py` | Velocity mux priority/timeout contract. |
 | `test_safety_ring_contract.py` | Safety ring public contract. |
 | `test_geofence.py` | Geofence command and intrusion behavior. |
 | `test_patrol.py` | Patrol route storage and dispatch behavior. |

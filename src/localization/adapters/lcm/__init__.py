@@ -1,1 +1,0 @@
-"""Localization LCM adapter package."""

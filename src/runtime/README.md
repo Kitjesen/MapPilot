@@ -125,8 +125,6 @@ Known compatibility candidates include:
 
 - `native_module.py`, `native_install.py`: legacy native/ROS process helpers
 - `adapters/ros2/`: ROS 2 compatibility boundary only
-- `adapters/lcm/`, `transport/lcm.py`: replay/dev compatibility, not field
-  default
 - `dds.py`, `adapters/dds/*`: Python DDS utilities that must not become the
   Thunder field control loop while the native C++ DDS endpoints own that path
 

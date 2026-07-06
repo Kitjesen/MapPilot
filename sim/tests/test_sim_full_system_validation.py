@@ -76,7 +76,7 @@ def test_navigation_blueprint_validation_uses_static_profile_graph(monkeypatch):
 def test_navigation_blueprint_validation_passes_runtime_parity_when_available(
     monkeypatch,
 ):
-    from runtime.blueprints.profile_graph import WireEdge
+    from runtime.introspection.profile_graph import WireEdge
 
     required_edges = (
         WireEdge("MujocoDriverModule", "odometry", "nav.mission", "odometry"),
@@ -120,7 +120,7 @@ def test_navigation_blueprint_validation_passes_runtime_parity_when_available(
 
     monkeypatch.setattr(full_system_module, "_NUMPY_IMPORT_SAFE", True)
     monkeypatch.setattr(
-        "runtime.blueprints.profile_graph.graph_for_profile",
+        "runtime.introspection.profile_graph.graph_for_profile",
         fake_graph_for_profile,
     )
 
@@ -132,7 +132,7 @@ def test_navigation_blueprint_validation_passes_runtime_parity_when_available(
 
 
 def test_navigation_blueprint_runtime_internal_import_error_fails(monkeypatch):
-    from runtime.blueprints.profile_graph import WireEdge
+    from runtime.introspection.profile_graph import WireEdge
 
     required_edges = (
         WireEdge("MujocoDriverModule", "odometry", "nav.mission", "odometry"),
@@ -181,7 +181,7 @@ def test_navigation_blueprint_runtime_internal_import_error_fails(monkeypatch):
 
     monkeypatch.setattr(full_system_module, "_NUMPY_IMPORT_SAFE", True)
     monkeypatch.setattr(
-        "runtime.blueprints.profile_graph.graph_for_profile",
+        "runtime.introspection.profile_graph.graph_for_profile",
         fake_graph_for_profile,
     )
 
@@ -189,7 +189,7 @@ def test_navigation_blueprint_runtime_internal_import_error_fails(monkeypatch):
 
     assert check.status == FAIL
     assert check.evidence["runtime_parity"]["status"] == FAIL
-    assert check.evidence["runtime_parity"]["missing_module"] == "core"
+    assert check.evidence["runtime_parity"]["missing_module"] == "runtime"
 
 
 def test_default_validation_requires_navigation_runtime_parity(monkeypatch):
@@ -608,4 +608,4 @@ def test_timed_keeps_internal_missing_module_as_failure():
     check = _timed("internal_import_check", "architecture", missing_internal_module)
 
     assert check.status == FAIL
-    assert check.evidence["missing_module"] == "core"
+    assert check.evidence["missing_module"] == "runtime"

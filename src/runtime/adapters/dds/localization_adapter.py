@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from message.dds_codec import (
+    coerce_health_payload as _coerce_health_payload,
+    from_dds_imu as _from_dds_imu,
+    from_dds_lidar_scan as _from_dds_lidar_scan,
+    from_dds_odometry as _from_dds_odometry,
+    from_dds_pointcloud2 as _from_dds_pointcloud2,
+)
 from runtime.backend_status import BackendStatus
 from runtime.module import Module
-from runtime.msgs.geometry import Pose, Quaternion, Transform, Twist, Vector3
+from runtime.msgs.geometry import Quaternion, Transform, Vector3
 from runtime.msgs.gnss import GnssOdom
 from runtime.msgs.nav import Odometry
-from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from runtime.stream import In, Out
 from runtime.tf import FrameTree, TF_STATIC_TOPIC, TF_TOPIC, iter_tf_transforms
 from runtime.transport.abc import TopicConfig
@@ -345,106 +350,3 @@ class DDSLocalizationAdapterModule(Module, layer=1):
                 "ts": transform.ts,
             }
         )
-
-
-def _stamp_seconds(header: Any) -> float:
-    stamp = getattr(header, "stamp", None)
-    return float(getattr(stamp, "sec", 0.0)) + float(getattr(stamp, "nanosec", 0.0)) * 1e-9
-
-
-def _from_dds_odometry(msg: Any) -> Odometry:
-    pose = msg.pose.pose
-    twist = msg.twist.twist
-    position = pose.position
-    orientation = pose.orientation
-    return Odometry(
-        pose=Pose(
-            position=Vector3(position.x, position.y, position.z),
-            orientation=Quaternion(orientation.x, orientation.y, orientation.z, orientation.w),
-        ),
-        twist=Twist(
-            linear=Vector3(twist.linear.x, twist.linear.y, twist.linear.z),
-            angular=Vector3(twist.angular.x, twist.angular.y, twist.angular.z),
-        ),
-        ts=_stamp_seconds(msg.header),
-        frame_id=str(getattr(msg.header, "frame_id", "") or topic_default_frame_id(TOPICS.odometry)),
-        child_frame_id=str(getattr(msg, "child_frame_id", "") or body_frame_id()),
-    )
-
-
-def _from_dds_pointcloud2(msg: Any) -> PointCloud2:
-    n = int(getattr(msg, "width", 0)) * int(getattr(msg, "height", 0))
-    step = int(getattr(msg, "point_step", 0))
-    if n <= 0:
-        return PointCloud2(points=np.zeros((0, 3), dtype=np.float32), frame_id=_frame_id(msg))
-    if step < 12:
-        raise ValueError(f"PointCloud2 point_step too small: {step}")
-    raw = np.frombuffer(bytes(getattr(msg, "data", b"")), dtype=np.uint8).reshape(n, step)
-    fields = {str(getattr(field, "name", "")): int(getattr(field, "offset", 0)) for field in getattr(msg, "fields", [])}
-    x_off = fields.get("x", 0)
-    y_off = fields.get("y", 4)
-    z_off = fields.get("z", 8)
-    cols = [
-        raw[:, x_off : x_off + 4].copy().view(np.float32).reshape(n),
-        raw[:, y_off : y_off + 4].copy().view(np.float32).reshape(n),
-        raw[:, z_off : z_off + 4].copy().view(np.float32).reshape(n),
-    ]
-    intensity_off = fields.get("intensity")
-    if intensity_off is not None and intensity_off + 4 <= step:
-        cols.append(raw[:, intensity_off : intensity_off + 4].copy().view(np.float32).reshape(n))
-    points = np.stack(cols, axis=1).astype(np.float32, copy=False)
-    return PointCloud2(
-        points=points,
-        ts=_stamp_seconds(msg.header),
-        frame_id=_frame_id(msg),
-        height=int(getattr(msg, "height", 1) or 1),
-        width=int(getattr(msg, "width", n) or n),
-        is_bigendian=bool(getattr(msg, "is_bigendian", False)),
-        is_dense=bool(getattr(msg, "is_dense", True)),
-    )
-
-
-def _from_dds_lidar_scan(msg: Any) -> PointCloud2 | None:
-    if hasattr(msg, "points") and hasattr(msg, "timebase"):
-        from message.dds_types.livox import livox_msg_to_numpy
-
-        points = livox_msg_to_numpy(msg)
-        if points is None:
-            return None
-        return PointCloud2(
-            points=points,
-            ts=float(getattr(msg, "timebase", 0) or 0) * 1e-9,
-            frame_id=_frame_id(msg),
-        )
-    return _from_dds_pointcloud2(msg)
-
-
-def _from_dds_imu(msg: Any) -> Imu:
-    orientation = msg.orientation
-    angular = msg.angular_velocity
-    linear = msg.linear_acceleration
-    return Imu(
-        orientation=Quaternion(orientation.x, orientation.y, orientation.z, orientation.w),
-        orientation_covariance=list(getattr(msg, "orientation_covariance", [0.0] * 9)),
-        angular_velocity=Vector3(angular.x, angular.y, angular.z),
-        angular_velocity_covariance=list(getattr(msg, "angular_velocity_covariance", [0.0] * 9)),
-        linear_acceleration=Vector3(linear.x, linear.y, linear.z),
-        linear_acceleration_covariance=list(getattr(msg, "linear_acceleration_covariance", [0.0] * 9)),
-        ts=_stamp_seconds(msg.header),
-        frame_id=_frame_id(msg, default="imu_link"),
-    )
-
-
-def _coerce_health_payload(msg: Any) -> Mapping[str, Any] | str:
-    data = getattr(msg, "data", msg)
-    if isinstance(data, Mapping):
-        return data
-    text = str(data or "")
-    if text.startswith("{"):
-        return json.loads(text)
-    return text
-
-
-def _frame_id(msg: Any, *, default: str = "") -> str:
-    header = getattr(msg, "header", None)
-    return str(getattr(header, "frame_id", "") or default)

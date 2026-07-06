@@ -43,19 +43,6 @@ from .wires.slam import (
 from .wires.types import WireSpec, wire_key
 
 
-def normalize_nav_plan_transport(value: object | None) -> object | None:
-    """Normalize the optional local-planner execution boundary transport."""
-
-    if value is None:
-        return None
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"", "callback", "direct", "inprocess", "in_process", "none"}:
-            return None
-        return text
-    return value
-
-
 def _wire_if_present(bp: Blueprint, graph: ModuleGraph, names: set[str], spec: WireSpec) -> None:
     if (
         spec.out_module in names
@@ -105,7 +92,6 @@ def full_stack_wire_specs(
     enable_semantic: bool = True,
     safety_stop_wiring: bool = True,
     cmd_vel_mux_collision_monitor: bool = False,
-    nav_plan_transport: object | None = None,
 ) -> tuple[WireSpec, ...]:
     """Return module-name-filtered full-stack wire specs.
 
@@ -115,7 +101,6 @@ def full_stack_wire_specs(
     """
 
     names = set(module_names)
-    nav_plan_transport = normalize_nav_plan_transport(nav_plan_transport)
     ctx = build_wiring_context(
         names,
         robot=robot,
@@ -149,7 +134,7 @@ def full_stack_wire_specs(
     specs.extend(recorder_specs(ctx))
     specs.extend(safety_status_specs())
     specs.extend(gateway_status_specs())
-    specs.extend(navigation_execution_specs(local_planner_transport=nav_plan_transport))
+    specs.extend(navigation_execution_specs())
     specs.extend(visual_servo_specs())
     specs.extend(teleop_media_specs(ctx))
     if cmd_vel_mux_collision_monitor:
@@ -174,11 +159,9 @@ def apply_full_stack_wires(
     enable_semantic: bool = True,
     safety_stop_wiring: bool = True,
     cmd_vel_mux_collision_monitor: bool = False,
-    nav_plan_transport: object | None = None,
 ) -> Blueprint:
     """Apply explicit cross-stack wires to a composed full-stack Blueprint."""
 
-    nav_plan_transport = normalize_nav_plan_transport(nav_plan_transport)
     graph = bp.export_graph()
     names = set(graph.module_names)
     required_wire_keys: set[tuple[str, str, str, str]] = set()
@@ -204,7 +187,6 @@ def apply_full_stack_wires(
         enable_semantic=enable_semantic,
         safety_stop_wiring=safety_stop_wiring,
         cmd_vel_mux_collision_monitor=cmd_vel_mux_collision_monitor,
-        nav_plan_transport=nav_plan_transport,
     ):
         key = wire_key(spec)
         if key in seen:

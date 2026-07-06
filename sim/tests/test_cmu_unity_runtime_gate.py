@@ -94,7 +94,7 @@ def _complete_runtime_metrics():
             "nonzero_times_sec": [10.0, 20.0, 30.0],
         },
         "odometry": {
-            "/nav/odometry": {
+            "/slam/odometry": {
                 "samples": 5,
                 "delta_m": 0.12,
                 "history": [
@@ -124,7 +124,7 @@ def _complete_runtime_metrics():
                         {"t": 60.0, "area_m2": 1.625},
                     ],
                 },
-                "/nav/registered_cloud": {
+                "/slam/registered_cloud": {
                     "samples": 2,
                     "area_delta_m2": 0.625,
                     "history": [
@@ -132,7 +132,7 @@ def _complete_runtime_metrics():
                         {"t": 60.0, "area_m2": 1.625},
                     ],
                 },
-                "/nav/map_cloud": {
+                "/slam/map_cloud": {
                     "samples": 2,
                     "area_delta_m2": 0.625,
                     "history": [
@@ -206,10 +206,10 @@ def test_runtime_sampler_records_cmd_components_and_motion_progress():
         )
     )
 
-    sampler.on_odom("/nav/odometry", odom0)
+    sampler.on_odom("/slam/odometry", odom0)
     sampler.on_waypoint("/nav/way_point", waypoint)
     sampler.on_cmd_vel(cmd)
-    sampler.on_odom("/nav/odometry", odom1)
+    sampler.on_odom("/slam/odometry", odom1)
     report = sampler.report()
 
     assert report["cmd_vel"]["nonzero_samples"] == 1
@@ -327,7 +327,7 @@ def test_evaluate_report_treats_existing_gateway_session_as_success():
         "waypoints": {"/nav/way_point": {"samples": 2, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "paths": {},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.7}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.7}},
         "motion_progress": {},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
@@ -335,7 +335,7 @@ def test_evaluate_report_treats_existing_gateway_session_as_success():
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -362,7 +362,7 @@ def test_evaluate_report_can_require_motion_progress_to_nav_waypoint():
         "waypoints": {"/nav/way_point": {"samples": 2, "frames": ["map"], "last": [2.0, 0.0, 0.75]}},
         "paths": {},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.7}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.7}},
         "motion_progress": {
             "/nav/way_point": {"segments": [], "best_delta_toward_m": 0.35}
         },
@@ -372,7 +372,7 @@ def test_evaluate_report_can_require_motion_progress_to_nav_waypoint():
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -395,7 +395,7 @@ def test_evaluate_report_rejects_motion_away_from_nav_waypoint():
         "waypoints": {"/nav/way_point": {"samples": 2, "frames": ["map"], "last": [2.0, 0.0, 0.75]}},
         "paths": {},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.7}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.7}},
         "motion_progress": {
             "/nav/way_point": {"segments": [], "best_delta_toward_m": 0.0}
         },
@@ -405,7 +405,7 @@ def test_evaluate_report_rejects_motion_away_from_nav_waypoint():
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -427,7 +427,7 @@ def test_evaluate_report_rejects_static_late_runtime_activity():
     metrics = _complete_runtime_metrics()
     metrics["duration_sec"] = 300.0
     metrics["cmd_vel"]["nonzero_times_sec"] = [5.0, 10.0, 15.0]
-    metrics["odometry"]["/nav/odometry"]["history"] = [
+    metrics["odometry"]["/slam/odometry"]["history"] = [
         {"t": 0.0, "xy": [0.0, 0.0]},
         {"t": 120.0, "xy": [1.0, 0.0]},
         {"t": 250.0, "xy": [1.0, 0.0]},
@@ -462,8 +462,8 @@ def test_evaluate_report_accepts_sustained_late_runtime_activity():
     metrics = _complete_runtime_metrics()
     metrics["duration_sec"] = 300.0
     metrics["cmd_vel"]["nonzero_times_sec"] = [210.0, 230.0, 250.0]
-    metrics["odometry"]["/nav/odometry"]["delta_m"] = 1.2
-    metrics["odometry"]["/nav/odometry"]["history"] = [
+    metrics["odometry"]["/slam/odometry"]["delta_m"] = 1.2
+    metrics["odometry"]["/slam/odometry"]["history"] = [
         {"t": 0.0, "xy": [0.0, 0.0]},
         {"t": 190.0, "xy": [0.0, 0.0]},
         {"t": 240.0, "xy": [0.4, 0.0]},
@@ -510,8 +510,8 @@ def test_evaluate_report_warns_on_flat_late_map_when_motion_and_paths_are_live()
         },
     }
     metrics["cmd_vel"]["nonzero_times_sec"] = [210.0, 230.0, 250.0]
-    metrics["odometry"]["/nav/odometry"]["delta_m"] = 1.2
-    metrics["odometry"]["/nav/odometry"]["history"] = [
+    metrics["odometry"]["/slam/odometry"]["delta_m"] = 1.2
+    metrics["odometry"]["/slam/odometry"]["history"] = [
         {"t": 0.0, "xy": [0.0, 0.0]},
         {"t": 190.0, "xy": [0.0, 0.0]},
         {"t": 240.0, "xy": [0.4, 0.0]},
@@ -552,14 +552,14 @@ def test_evaluate_report_passes_complete_runtime_metrics():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map": {"area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
@@ -590,7 +590,7 @@ def test_evaluate_report_passes_complete_runtime_metrics():
     assert report["cmd_vel_sent_to_hardware"] is False
     assert report["cmd_vel_exclusive_to_lingtu"] is True
     assert report["scan_requirements"]["/registered_scan"]["ok"] is True
-    assert report["scan_requirements"]["/nav/registered_cloud"]["ok"] is True
+    assert report["scan_requirements"]["/slam/registered_cloud"]["ok"] is True
     assert report["map_requirements"]["/nav/terrain_map_ext"]["ok"] is True
     assert report["planner_diagnostics"]["available"] is True
     assert report["planner_diagnostics"]["fallback_used"] is True
@@ -658,14 +658,14 @@ def test_evaluate_report_defaults_to_extended_lingtu_map_topic_growth():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/registered_scan",
             "best_cells_delta": 100,
             "best_area_delta_m2": 6.25,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 6.25},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 6.25},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 6.25},
                 "/nav/terrain_map": {"area_delta_m2": 0.0},
                 "/nav/terrain_map_ext": {"area_delta_m2": 1.0},
             },
@@ -685,14 +685,14 @@ def test_evaluate_report_can_require_base_lingtu_map_topic_growth():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/registered_scan",
             "best_cells_delta": 100,
             "best_area_delta_m2": 6.25,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 6.25},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 6.25},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 6.25},
                 "/nav/terrain_map": {"area_delta_m2": 0.0},
                 "/nav/terrain_map_ext": {"area_delta_m2": 1.0},
             },
@@ -717,14 +717,14 @@ def test_evaluate_report_accepts_lingtu_nav_waypoint_topic():
         "waypoints": {"/nav/way_point": {"samples": 2, "frames": ["map"], "last": [2.0, 1.0, 0.75]}},
         "paths": {},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map": {"area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
@@ -751,14 +751,14 @@ def test_evaluate_report_can_require_unique_nav_waypoints():
         },
         "paths": {},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -788,14 +788,14 @@ def test_evaluate_report_rejects_static_waypoint_when_unique_waypoints_required(
         },
         "paths": {},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -821,14 +821,14 @@ def test_evaluate_report_can_require_global_and_local_path_topics():
             "/nav/local_path": {"samples": 1, "nonempty_samples": 1, "max_poses": 3},
         },
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map": {"area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
@@ -875,14 +875,14 @@ def test_evaluate_report_can_require_tare_strategy_path_topics():
             "/nav/local_path": {"samples": 1, "nonempty_samples": 1, "max_poses": 3},
         },
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -930,8 +930,8 @@ def test_evaluate_report_rejects_one_target_tare_run_that_stalls_late():
         "/nav/local_path": {"samples": 1, "nonempty_samples": 1, "max_poses": 3},
     }
     metrics["cmd_vel"]["nonzero_times_sec"] = [10.0, 20.0, 30.0]
-    metrics["odometry"]["/nav/odometry"]["delta_m"] = 1.0
-    metrics["odometry"]["/nav/odometry"]["history"] = [
+    metrics["odometry"]["/slam/odometry"]["delta_m"] = 1.0
+    metrics["odometry"]["/slam/odometry"]["history"] = [
         {"t": 0.0, "xy": [0.0, 0.0]},
         {"t": 120.0, "xy": [1.0, 0.0]},
         {"t": 220.0, "xy": [1.0, 0.0]},
@@ -990,8 +990,8 @@ def test_evaluate_report_records_frontier_no_gain_stall_observation():
         165.0,
         170.0,
     ]
-    metrics["odometry"]["/nav/odometry"]["delta_m"] = 1.0
-    metrics["odometry"]["/nav/odometry"]["history"] = [
+    metrics["odometry"]["/slam/odometry"]["delta_m"] = 1.0
+    metrics["odometry"]["/slam/odometry"]["history"] = [
         {"t": 0.0, "xy": [0.0, 0.0]},
         {"t": 121.0, "xy": [0.0, 0.0]},
         {"t": 180.0, "xy": [0.75, 0.0]},
@@ -1081,7 +1081,7 @@ def test_evaluate_report_rejects_default_domain_and_missing_motion():
     metrics = {
         "waypoints": {"/way_point": {"samples": 0}},
         "cmd_vel": {"samples": 0, "nonzero_samples": 0, "max_norm": 0.0},
-        "odometry": {"/nav/odometry": {"samples": 1, "delta_m": 0.0}},
+        "odometry": {"/slam/odometry": {"samples": 1, "delta_m": 0.0}},
         "cloud_coverage": {"best_area_delta_m2": 0.0, "topics": {}},
         "hardware_safety": {
             "topics": {"/cmd_vel": ["/thunder_driver"]},
@@ -1102,14 +1102,14 @@ def test_evaluate_report_can_require_planner_diagnostics():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map": {"area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
@@ -1159,7 +1159,7 @@ def test_evaluate_report_emits_cmu_runtime_contract_evidence():
     assert report["runtime_contract"]["ok"] is True
     assert report["runtime_contract"]["definition"]["provider"] == "cmu_unity"
     assert report["runtime_contract"]["topic_evidence"]["/nav/cmd_vel"]["nonzero_samples"] == 3
-    assert report["runtime_contract"]["topic_evidence"]["/nav/map_cloud"]["ok"] is True
+    assert report["runtime_contract"]["topic_evidence"]["/slam/map_cloud"]["ok"] is True
     assert report["runtime_contract"]["topic_evidence"]["/nav/global_path"]["ok"] is True
     assert report["runtime_contract"]["publisher_identity"]["publishers"]["/cmd_vel"] == [
         "/lingtu_cmu_unity_adapter"
@@ -1236,14 +1236,14 @@ def test_evaluate_report_can_reject_planner_fallback_when_required():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map": {"area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
@@ -1344,14 +1344,14 @@ def test_evaluate_report_rejects_gateway_navigation_failure():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -1383,14 +1383,14 @@ def test_evaluate_report_records_direct_goal_fallback_from_gateway():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },
         },
@@ -1429,7 +1429,7 @@ def test_evaluate_report_rejects_missing_cmu_scan_topics():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
@@ -1447,7 +1447,7 @@ def test_evaluate_report_rejects_missing_cmu_scan_topics():
 
     assert report["ok"] is False
     assert report["scan_requirements"]["/registered_scan"]["ok"] is False
-    assert report["scan_requirements"]["/nav/registered_cloud"]["ok"] is False
+    assert report["scan_requirements"]["/slam/registered_cloud"]["ok"] is False
     assert "/registered_scan samples below threshold" in report["blockers"]
     assert "/nav/registered_cloud samples below threshold" in report["blockers"]
 
@@ -1456,14 +1456,14 @@ def test_evaluate_report_rejects_foreign_cmd_vel_publisher():
     metrics = {
         "waypoints": {"/way_point": {"samples": 1, "frames": ["map"], "last": [1.0, 0.0, 0.75]}},
         "cmd_vel": {"samples": 5, "nonzero_samples": 3, "max_norm": 0.2},
-        "odometry": {"/nav/odometry": {"samples": 5, "delta_m": 0.12}},
+        "odometry": {"/slam/odometry": {"samples": 5, "delta_m": 0.12}},
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
             "best_cells_delta": 10,
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map": {"area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"area_delta_m2": 0.625},
             },

@@ -10,6 +10,7 @@
   flex-shrink: 0;
   gap: var(--s-3);
   z-index: 10;
+  overflow: hidden;
 }
 
 .left {
@@ -17,7 +18,8 @@
   align-items: center;
   gap: var(--s-2);
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .sep {
@@ -32,6 +34,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  flex: 1 1 auto;
   min-width: 0;
   max-width: min(560px, 48vw);
   overflow-x: auto;
@@ -186,17 +189,21 @@
 .center {
   display: flex;
   align-items: center;
-  gap: var(--s-3);
-  flex: 1;
+  gap: clamp(6px, 0.75vw, var(--s-3));
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: min(760px, 42vw);
   overflow: hidden;
-  justify-content: center;
+  justify-content: flex-end;
 }
 
 .stat {
   display: flex;
   align-items: baseline;
   gap: 6px;
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .statLabel {
@@ -205,6 +212,7 @@
   color: var(--t-overline-color);
   text-transform: uppercase;
   letter-spacing: var(--t-overline-track);
+  white-space: nowrap;
 }
 
 .statValue {
@@ -214,6 +222,15 @@
   color: var(--t-value-color);
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--t-value-track);
+  white-space: nowrap;
+}
+
+.mapValue {
+  display: inline-block;
+  max-width: clamp(72px, 8vw, 140px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
 .navExecuting { color: var(--accent); }
@@ -236,6 +253,7 @@
   width: 1px;
   height: 14px;
   background: var(--border);
+  flex: 0 0 auto;
 }
 
 .estop {
@@ -256,7 +274,8 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  min-width: 140px;
+  flex: 0 0 auto;
+  min-width: 0;
   justify-content: flex-end;
 }
 
@@ -295,3 +314,24 @@
 .slamFastlio2  { color: var(--warn); }
 .slamLocalizer { color: var(--accent); }
 .slamStop      { color: var(--text-faint); }
+
+@media (max-width: 1180px) {
+  .center {
+    display: none;
+  }
+
+  .tabs {
+    max-width: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .miniPip,
+  .sep {
+    display: none;
+  }
+
+  .logo {
+    font-size: 15px;
+  }
+}

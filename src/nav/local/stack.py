@@ -1,12 +1,13 @@
-"""AutonomyModule -convenience wrapper for the 3 autonomy sub-modules.
+"""add_autonomy_stack() -convenience wrapper for the 3 autonomy sub-modules.
 
-Instead of a monolithic black box, the autonomy stack is now 3 independent Modules:
+The autonomy stack is 3 independent Modules, each independently pluggable via
+Registry:
   - Terrain:       traversability analysis (In: odometry, map_cloud -Out: terrain_map)
   - LocalPlanner:  obstacle avoidance (In: terrain_map, waypoint -Out: local_path)
   - PathFollower:  path tracking (In: local_path -Out: cmd_vel)
 
-Each is independently pluggable via Registry. AutonomyModule remains as a convenience
-to add all 3 at once with a single blueprint call.
+`add_autonomy_stack()` is a convenience function that adds all 3 at once with a
+single blueprint call; there is no wrapper Module class.
 
 Usage::
 

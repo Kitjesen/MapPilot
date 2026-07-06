@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -2118,7 +2118,7 @@ def test_navigation_status_requires_canonical_velocity_mux_runtime_id():
         gateway._odom = {"x": 1.0, "y": 2.0}
         gateway._mission = {"state": "IDLE"}
         gateway._localization_status = {"state": "TRACKING", "confidence": 0.9}
-    gateway._all_modules = {"navigation.VelocityMux": FakeVelocityMux()}
+    gateway._all_modules = {"unrelated_key": FakeVelocityMux()}
 
     payload = build_navigation_status(gateway)
 

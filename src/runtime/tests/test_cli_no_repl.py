@@ -207,7 +207,7 @@ def test_lite_preflight_stays_on_lite_lifecycle_without_runtime_extra() -> None:
             {"enable_ros2_rerun_bridge": True},
             "enable_ros2_rerun_bridge must be false",
         ),
-        ({"module_transport": "lcm"}, "module_transport must be local"),
+        ({"module_transport": "zmq"}, "module_transport must be local"),
     ],
 )
 def test_lite_preflight_rejects_field_runtime_lifecycle_overrides(
@@ -292,7 +292,7 @@ def test_fastlio2_preflight_reports_no_windows_portable_endpoint(
     assert "/opt/ros/humble" not in output
 
 
-def test_lcm_endpoint_preflight_skips_ubuntu_ros2_guidance(
+def test_dds_endpoint_preflight_skips_ubuntu_ros2_guidance(
     monkeypatch,
     capsys,
 ) -> None:
@@ -308,8 +308,9 @@ def test_lcm_endpoint_preflight_skips_ubuntu_ros2_guidance(
         "map",
         {
             "slam_profile": "fastlio2",
-            "localization_adapter": "lcm_endpoint",
-            "_endpoint_contract": "thunder_field_lcm_v1",
+            "localization_adapter": "dds_endpoint",
+            "_endpoint_transport": "dds",
+            "_endpoint_contract": "thunder_field_dds_v1",
             "enable_native": False,
             "enable_gateway": False,
         },

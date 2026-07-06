@@ -1,4 +1,4 @@
-﻿# ============================================================
+# ============================================================
 # LingTu .gitignore 鈥?2026-05-31 cleaned
 # ============================================================
 
@@ -61,7 +61,7 @@ src/libc++.dll
 *.out
 src/nav/core/build/
 src/nav/core/build_nb*/
-src/slam/fastlio2/portable/build/
+src/localization/fastlio2/portable/build/
 src/nav/kernel/build_py/
 src/nav/kernel/build_nb*/
 src/localization/slam/cpp/build*/

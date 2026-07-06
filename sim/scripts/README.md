@@ -14,7 +14,10 @@ Use these paths for new commands, docs, and tests:
 | `mujoco/live_gate.py` | MuJoCo live LiDAR/IMU simulation gate |
 | `mujoco/native_dds_sensors.py` | MuJoCo native DDS sensor publisher gate |
 | `mujoco/saved_map_plan_gate.py` | Same-source saved-map planning gate |
+| `mujoco/saved_map_tracking_gate.py` | Saved-map global path plus MuJoCo tracking gate |
 | `mujoco/saved_map_quality_gate.py` | Saved-map PCD/plan quality gate |
+| `mujoco/continuous_mapping_quality_gate.py` | 3–5 min continuous native DDS mapping gate (bridge + continuity + scale + map quality) |
+| `run_sunrise_continuous_mapping_gate.py` | SSH runner for the continuous mapping gate on sunrise |
 | `mujoco/native_pct_gate.py` | Native PCT + MuJoCo gate |
 | `mujoco/navigation_audit.py` | MuJoCo navigation wiring audit |
 | `mujoco/record_policy_nav_video.py` | Policy navigation video recorder |
@@ -69,6 +72,7 @@ Use the safety class before running a script:
 - `mujoco/live_gate.py` - MuJoCo live LiDAR/IMU plus Fast-LIO2 simulation gate.
 - `policy_nav_smoke.py` - Current product-style simulated motion smoke: OctoPlanner is the configured global planner, LocalPlanner runs the nanobind backend, PathFollower runs nav_kernel, and commands stay inside the MuJoCo policy driver through nav.velocity_mux.
 - `mujoco/native_pct_gate.py` - Legacy compatibility coverage for native PCT plus ROS2 local planner/path follower into MuJoCo simulation. `--contract-only` validates the PCT source-report/no-fallback/same-source artifact contract without launching ROS2 or MuJoCo; it also emits `command_generation` with source-report fingerprint and the localPlanner/pathFollower command contract. This is a compatibility wiring check, not the current product local-autonomy runtime.
+- `mujoco/saved_map_tracking_gate.py` - Current native saved-map tracking check: builds/loads `map.pcd` and `octomap.ot`, runs OctoPlanner3D, feeds the global path through `lingtu_nav_kernel.LocalPlanner` and `lingtu_nav_kernel.compute_control`, then applies the resulting cmd_vel to a MuJoCo kinematic robot. It is simulated motion only and never connects to robot hardware.
 - `gazebo_runtime_gate.py` - Gazebo runtime simulation gate; requires ROS2 isolated simulation and records frontier post-pass no-gain/stall observation evidence.
 - `pct_saved_map_navigation_gate.py` - Saved-map PCT navigation gate. `--contract-only --source-report <json>` checks relocalization/source-report/map/tomogram binding, including same-source hash identity, without running PCT preview or MuJoCo motion; it is a saved-map wiring check, not full navigation evidence.
 - `saved_map_relocalize_contract_gate.py` / `saved_map_relocalize_runtime_gate.py` - Saved-map relocalization gates. `saved_map_relocalize_runtime_gate.py --preflight-only` checks saved-map assets, localizer config, host markers, and ROS 2 Python importability without launching MuJoCo/Fast-LIO/localizer processes.

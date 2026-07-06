@@ -19,9 +19,12 @@ from runtime.msgs.nav import Odometry
 from runtime.msgs.nav import Path as NavPath
 from runtime.msgs.sensor import Imu, PointCloud2
 
-from ..contracts import LCM_PAYLOAD_FORMAT, LCMEndpointBinding
-from ..endpoint_codec import loads_endpoint_message
-from ..endpoint_service import LCMEndpointEvent, LCMEndpointService
+from runtime.adapters.endpoint_sources.types import EndpointEvent, EndpointService
+
+from runtime.adapters.endpoint_sources.endpoint_codec import (
+    ENDPOINT_PAYLOAD_FORMAT,
+    loads_endpoint_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +52,7 @@ class JsonlEndpointSource:
         self._rate_hz = max(0.0, float(rate_hz))
         self._shell = bool(shell)
         self._encoding = str(encoding or "utf-8-sig")
-        self._service: LCMEndpointService | None = None
+        self._service: EndpointService | None = None
         self._process: subprocess.Popen[str] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -61,7 +64,7 @@ class JsonlEndpointSource:
         self._last_publish_ts = 0.0
         self._last_receive_ts = 0.0
 
-    def start(self, service: LCMEndpointService) -> None:
+    def start(self, service: EndpointService) -> None:
         """Attach to the endpoint service and begin publishing JSONL records."""
 
         if self._started:
@@ -102,7 +105,7 @@ class JsonlEndpointSource:
         self._service = None
         self._started = False
 
-    def on_lingtu_message(self, event: LCMEndpointEvent) -> None:
+    def on_lingtu_message(self, event: EndpointEvent) -> None:
         """Record LingTu-to-endpoint outputs observed by this source."""
 
         self._received[event.topic] += 1
@@ -245,14 +248,14 @@ def create(**overrides: Any) -> JsonlEndpointSource:
     )
 
 
-def message_from_record(binding: LCMEndpointBinding, record: Mapping[str, Any]) -> Any:
+def message_from_record(binding: Any, record: Mapping[str, Any]) -> Any:
     """Build the contract message represented by a JSONL record."""
 
-    if record.get("format") == LCM_PAYLOAD_FORMAT and "payload" in record:
+    if record.get("format") == ENDPOINT_PAYLOAD_FORMAT and "payload" in record:
         return loads_endpoint_message(binding, json.dumps(record).encode("utf-8"))
     if "payload" in record:
         envelope = {
-            "format": LCM_PAYLOAD_FORMAT,
+            "format": ENDPOINT_PAYLOAD_FORMAT,
             "topic": binding.topic,
             "schema": str(record.get("schema") or binding.schema),
             "payload": record["payload"],
@@ -265,7 +268,7 @@ def message_from_record(binding: LCMEndpointBinding, record: Mapping[str, Any]) 
     raise ValueError(f"jsonl endpoint record for {binding.topic} missing payload/message")
 
 
-def _message_from_record(binding: LCMEndpointBinding, record: Mapping[str, Any]) -> Any:
+def _message_from_record(binding: Any, record: Mapping[str, Any]) -> Any:
     """Backward-compatible private wrapper for older imports."""
 
     return message_from_record(binding, record)
@@ -276,26 +279,41 @@ def _message_from_plain_payload(schema: str, payload: Any) -> Any:
 
     if schema in {
         "lingtu.sensor.point_cloud2.v1",
+        "lingtu.dds.LivoxFrame",
+        "lingtu.dds.PointCloud2",
         "sensor_msgs/msg/PointCloud2",
         "livox_ros_driver2/msg/CustomMsg",
     }:
         return _point_cloud_from_plain_payload(payload)
-    if schema in {"lingtu.sensor.imu.v1", "sensor_msgs/msg/Imu"}:
+    if schema in {"lingtu.sensor.imu.v1", "lingtu.dds.Imu", "sensor_msgs/msg/Imu"}:
         return _imu_from_plain_payload(payload)
-    if schema in {"lingtu.nav.odometry.v1", "nav_msgs/msg/Odometry"}:
+    if schema in {"lingtu.nav.odometry.v1", "lingtu.dds.Odometry", "nav_msgs/msg/Odometry"}:
         return Odometry.from_dict(dict(payload or {}))
-    if schema in {"lingtu.nav.path.v1", "nav_msgs/msg/Path"}:
+    if schema in {"lingtu.nav.path.v1", "lingtu.dds.Path", "nav_msgs/msg/Path"}:
         return NavPath.from_dict(dict(payload or {}))
     if schema in {
         "lingtu.geometry.pose_stamped.v1",
+        "lingtu.dds.PoseStamped",
         "geometry_msgs/msg/PoseStamped",
     }:
         return PoseStamped.from_dict(dict(payload or {}))
-    if schema in {"lingtu.geometry.twist.v1", "geometry_msgs/msg/TwistStamped"}:
+    if schema in {
+        "lingtu.geometry.twist.v1",
+        "lingtu.dds.TwistStamped",
+        "geometry_msgs/msg/TwistStamped",
+    }:
         return Twist.from_dict(dict(payload or {}))
-    if schema in {"lingtu.status.localization_quality.v1", "std_msgs/msg/Float32"}:
+    if schema in {
+        "lingtu.status.localization_quality.v1",
+        "lingtu.dds.Float32",
+        "std_msgs/msg/Float32",
+    }:
         return float(payload)
-    if schema in {"lingtu.status.localization_health.v1", "std_msgs/msg/String"}:
+    if schema in {
+        "lingtu.status.localization_health.v1",
+        "lingtu.dds.Text",
+        "std_msgs/msg/String",
+    }:
         if isinstance(payload, Mapping):
             return dict(payload)
         return str(payload or "")

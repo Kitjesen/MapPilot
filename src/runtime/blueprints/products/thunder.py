@@ -280,11 +280,6 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             )
 
     driver_module = _driver_name(robot)
-    nav_plan_transport = (
-        cfg.get("nav_plan_transport")
-        if "nav_plan_transport" in cfg
-        else cfg.get("local_planner_transport")
-    )
     if run_startup_checks:
         _run_startup_preflight(
             enable_semantic=enable_semantic,
@@ -321,7 +316,6 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             bp,
             driver_module=driver_module,
             safety_stop_wiring=bool(cfg.get("safety_stop_wiring", True)),
-            nav_plan_transport=nav_plan_transport,
         )
     else:
         from runtime.blueprints.full_stack_wiring import apply_full_stack_wires
@@ -361,7 +355,6 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             cmd_vel_mux_collision_monitor=bool(
                 cfg.get("cmd_vel_mux_collision_monitor", False)
             ),
-            nav_plan_transport=nav_plan_transport,
         )
 
     if enable_swap:

@@ -4,7 +4,7 @@ import json
 
 
 def test_dds_endpoint_runner_fail_closed_on_missing_python_dds(monkeypatch, capsys) -> None:
-    from runtime.adapters.dds import endpoint_runner
+    from runtime.endpoints.dds import endpoint_runner
 
     def _raise_missing(_args):
         raise ImportError("cyclonedds-python is not installed")
@@ -26,7 +26,7 @@ def test_dds_endpoint_runner_fail_closed_on_missing_python_dds(monkeypatch, caps
 
 
 def test_dds_endpoint_runner_does_not_fail_closed_other_errors(monkeypatch, capsys) -> None:
-    from runtime.adapters.dds import endpoint_runner
+    from runtime.endpoints.dds import endpoint_runner
 
     def _raise_runtime(_args):
         raise RuntimeError("brainstem unavailable")

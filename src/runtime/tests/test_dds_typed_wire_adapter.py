@@ -136,7 +136,7 @@ def test_livox_raw_frame_round_trips_through_registered_dds_payload(monkeypatch)
 
 
 def test_dds_endpoint_service_accepts_livox_point_frame() -> None:
-    from runtime.adapters.dds.endpoint_service import _to_dds_livox_custom_msg
+    from message.dds_codec import to_dds_livox_custom_msg
 
     points = np.zeros(1, dtype=POINT_DTYPE)
     points["x"] = [1.0]
@@ -149,7 +149,7 @@ def test_dds_endpoint_service_accepts_livox_point_frame() -> None:
     frame = LivoxPointFrame(points=points, timestamp_ns=1_000_000_000, sequence=5)
     frame.frame_id = "lidar_link"
 
-    msg = _to_dds_livox_custom_msg(frame)
+    msg = to_dds_livox_custom_msg(frame)
 
     assert msg.header.frame_id == "lidar_link"
     assert msg.timebase == 1_000_000_000

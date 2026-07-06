@@ -56,6 +56,16 @@ const SESSION_MODE_ZH: Record<string, string> = {
   navigating: '巡航',
 }
 
+function numericMetric(data: Record<string, unknown>, key: string): number | undefined {
+  const value = data[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
 export function Topbar({ sseState, activeTab, onTabChange }: TopbarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const estop = sseState.safetyState?.estop ?? false
@@ -92,7 +102,9 @@ export function Topbar({ sseState, activeTab, onTabChange }: TopbarProps) {
     sessMode === 'navigating' ? styles.slamLocalizer
     : sessMode === 'mapping' ? styles.slamFastlio2
     : styles.slamStop
-  const slamHz = sseState.slamStatus?.slam_hz ?? 0
+  const slamDiag = sseState.slamDiag?.data ?? {}
+  const slamHz = numericMetric(slamDiag, 'processed_scan_hz') ?? sseState.slamStatus?.slam_hz ?? 0
+  const lidarHz = numericMetric(slamDiag, 'lidar_input_hz')
   const hasCloud = !!sseState.mapCloud
   const slamPipClass = slamHz > 3 ? styles.pipGood : slamHz > 0 ? styles.pipWarn : styles.pipBad
   const cloudPipClass = hasCloud ? styles.pipGood : styles.pipBad
@@ -149,7 +161,7 @@ export function Topbar({ sseState, activeTab, onTabChange }: TopbarProps) {
         </span>
         <span
           className={`${styles.miniPip} ${slamPipClass}`}
-          title={`SLAM ${slamHz.toFixed(1)} Hz · ${slamMode ?? '—'}`}
+          title={`SLAM ${slamHz.toFixed(1)} Hz${lidarHz ? ` · LiDAR ${lidarHz.toFixed(1)} Hz` : ''} · ${slamMode ?? '—'}`}
         >
           SLAM
         </span>
@@ -196,7 +208,7 @@ export function Topbar({ sseState, activeTab, onTabChange }: TopbarProps) {
         <span className={styles.divider} />
         <span className={styles.stat} title={`激活地图: ${activeMap}`}>
           <span className={styles.statLabel}>地图</span>
-          <span className={styles.statValue} style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeMap}</span>
+          <span className={`${styles.statValue} ${styles.mapValue}`}>{activeMap}</span>
         </span>
         <span className={styles.divider} />
         <span className={styles.stat} title="ICP 对齐分数（低=好；>0.3 告警）">

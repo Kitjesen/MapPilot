@@ -7,11 +7,11 @@ launch files or ROS PCT planner nodes from here.
 Current navigation flow:
 
   goal_pose + odometry + map
-    -> NavigationModule
-    -> GlobalPlannerService
+    -> Navigation
+    -> GlobalPlanner
     -> planner backend
     -> global_path / waypoint
-    -> LocalPlannerModule
+    -> LocalPlanner
 
 Product backend:
 
@@ -28,5 +28,5 @@ tree.
 
 Useful checks:
 
-  python -m pytest src/nav/tests/planning_backends/test_pct_backend.py -q
+  python -m pytest src/nav/tests/planning_backends/test_pct_planner.py -q
   python -m pytest src/nav/tests/planning_backends/test_pct_planner_wrapper_static.py -q

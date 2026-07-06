@@ -44,7 +44,7 @@ def test_blueprint_exports_portable_module_graph_without_building_modules():
             "frames",
             "SinkModule",
             "frames_in",
-            transport="lcm",
+            transport="dds",
             topic="/source/frames",
         )
         .auto_wire()
@@ -58,7 +58,7 @@ def test_blueprint_exports_portable_module_graph_without_building_modules():
     assert graph.module_names == ("Source", "SinkModule")
     assert graph.dangling_wires() == ()
     assert graph.explicit_wires[0].as_snapshot() == (
-        "Source.frames->SinkModule.frames_in[lcm]@/source/frames"
+        "Source.frames->SinkModule.frames_in[dds]@/source/frames"
     )
     assert manifest["schema_version"] == "lingtu.module_graph.v1"
     assert manifest["modules"][0]["config"] == {
@@ -68,6 +68,8 @@ def test_blueprint_exports_portable_module_graph_without_building_modules():
     assert manifest["auto_wire"] is True
     assert manifest["global_config"] == {"n_workers": 2, "runtime": "portable"}
     assert manifest["explicit_wires"][0]["topic"] == "/source/frames"
+    assert manifest["explicit_wires"][0]["delivery"] == "dds"
+    assert manifest["explicit_wires"][0]["transport"] == "dds"
 
 
 def test_module_graph_export_does_not_instantiate_modules():
@@ -103,6 +105,41 @@ def test_module_graph_manifest_is_json_ready_for_object_transport():
 
     assert manifest["explicit_wires"][0]["transport"] == "object_transport"
     json.dumps(manifest)
+
+
+def test_blueprint_wire_accepts_delivery_alias_for_transport():
+    bp = Blueprint().add(SourceModule, alias="Source").add(SinkModule)
+    bp.wire(
+        "Source",
+        "frames",
+        "SinkModule",
+        "frames_in",
+        delivery="local",
+        topic="/source/frames",
+    )
+
+    manifest = bp.export_graph().to_manifest()
+
+    assert manifest["explicit_wires"][0]["delivery"] == "local"
+    assert manifest["explicit_wires"][0]["transport"] == "local"
+
+
+def test_blueprint_wire_rejects_conflicting_delivery_and_transport():
+    bp = Blueprint().add(SourceModule, alias="Source").add(SinkModule)
+
+    try:
+        bp.wire(
+            "Source",
+            "frames",
+            "SinkModule",
+            "frames_in",
+            transport="dds",
+            delivery="shm",
+        )
+    except ValueError as exc:
+        assert "conflicting delivery and transport" in str(exc)
+    else:
+        raise AssertionError("conflicting delivery/transport should fail")
 
 
 def test_profile_wire_edge_preserves_string_transport_name():

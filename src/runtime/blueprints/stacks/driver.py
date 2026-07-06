@@ -23,7 +23,7 @@ import logging
 from typing import Any
 
 from runtime.blueprint import Blueprint
-from runtime.blueprints.adapters.driver_runtime import (
+from runtime.adapters.driver_runtime import (
     ensure_driver_runtime_registered,
     seed_driver_plugins_for_runtime,
 )

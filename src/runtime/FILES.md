@@ -107,7 +107,6 @@ not become product behavior.
 | `native_module.py` | Legacy native/ROS process wrapper |
 | `native_install.py` | Legacy install-layout helper |
 | `adapters/ros2/` | ROS 2 compatibility adapters only |
-| `adapters/lcm/`, `transport/lcm.py` | Legacy/replay transport compatibility |
 | `dds.py`, `adapters/dds/` | Python DDS utilities; field control loop belongs to native C++ DDS services |
 | `runtime_policy.py` | Runtime policy checks |
 | `runtime_switch.py` | Runtime override/switch support |

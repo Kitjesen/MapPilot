@@ -258,6 +258,64 @@ the next live pass:
 | Gateway `5050` | reachable; `/api/v1/health` returns `status=ok`, `map_points=8134`, `has_odom=true` |
 | MCP `8090` | TCP reachable |
 | Brainstem `13145` | TCP reachable |
+
+## 2026-07-07 Local Audit Correction
+
+This pass rechecked the repository state after the native DDS cleanup work. It
+does not replace the historical no-motion field evidence above; it records the
+current local code contract and the remaining live-board proof needed before
+claiming another field closure.
+
+Important correction:
+
+- The historical July 4-5 no-motion runs used `publish_cmd_vel=false` and
+  proved no velocity output.
+- The current local Thunder service template now sets
+  `LINGTU_NAV_PUBLISH_CMD_VEL=1` in
+  `scripts/deploy/thunder/lingtu-nav-dds.service`.
+- Therefore future field claims must read the live board's effective systemd
+  environment and status snapshot before saying velocity output is disabled or
+  enabled. The local template alone is not live-board proof.
+
+Native nav endpoint ownership is now explicit in the status snapshot:
+
+| Field | Meaning |
+| --- | --- |
+| `navigation_compute_owner` | `lingtu_nav_native_endpoint` owns field global planning, local planning, and path-following compute. |
+| `local_path_role` | `/nav/local_path` is DDS telemetry/preview output for Gateway/UI/audit and optional external observers. |
+| `path_follower_role` | PathFollower is embedded inside the C++ endpoint before the command gate. |
+| `cmd_vel_role` | `/nav/cmd_vel` is the final navigation command output when `publish_cmd_vel=true`. |
+
+This resolves the earlier ambiguity that `/nav/local_path` needed a separate
+always-on consumer before motor output. In the field native path it does not: the
+consumer is internal to `lingtu_nav_native_endpoint`, and the externally
+observable proof is `last_local.cmd_vel` plus the `cmd_vel_published` counter.
+
+Current code-level native field chain:
+
+```text
+Livox DDS
+  -> Fast-LIO2 SLAM DDS
+  -> C++ Traversability DDS
+  -> C++ native nav endpoint
+     -> OctoPlanner3D global path
+     -> C++ LocalPlanner local path
+     -> embedded PathFollower cmd_vel
+     -> /nav/cmd_vel only when publish_cmd_vel=true
+```
+
+Live board revalidation was not completed in this local audit because SSH
+password auth was not available to the Codex process. Required next live proof:
+
+```text
+systemctl cat lingtu-nav-dds.service
+systemctl show lingtu-nav-dds.service -p Environment
+cat /dev/shm/lingtu/nav_endpoint_status.json
+```
+
+The next acceptance note must include those three outputs, plus one no-motion
+goal with `global_path_points > 0`, `local_path_points > 0`, and an explicit
+`cmd_vel_published` count.
 | SSH login | success as `sunrise`, host `ubuntu` |
 
 Robot services were active:
@@ -990,3 +1048,62 @@ Important remaining interpretation:
   Real issues of the same visual kind usually come from timestamp skew,
   incorrect `time_diff_lidar_to_imu`, wrong LiDAR-IMU extrinsic calibration, or
   degenerate mapping geometry.
+
+## 2026-07-06 Continuous Mapping Quality Gate
+
+The short-window sensor-conditioned closure above is necessary but not
+sufficient. A dedicated 3–5 minute gate now checks bridge continuity, scale
+convergence against MuJoCo ground truth (`sim_motion.jsonl` vs saved
+`trajectory.txt`), and saved-map quality in one isolated session.
+
+Gate script:
+
+```bash
+python3 sim/scripts/mujoco/continuous_mapping_quality_gate.py \
+  --duration 180 \
+  --domain-id 231 \
+  --drive-profile box_explore
+```
+
+Sunrise runner:
+
+```bash
+python sim/scripts/run_sunrise_continuous_mapping_gate.py \
+  --host 192.168.66.13 \
+  --duration 180 \
+  --domain-id 231
+```
+
+First 180 s result on domain **232** (`box_explore`, policy sensor-conditioned
+bridge):
+
+| Group | Result | Notes |
+| --- | --- | --- |
+| Bridge | pass | endpoint ratio `1.19`, yaw error `0.024 rad` |
+| Continuity tracking | pass | zero drops/rollbacks, `TRACKING` throughout |
+| Continuity rates | fail (first run) | status under-reported Hz under CPU backlog; gate now also checks bridge published counts |
+| Convergence | fail | cumulative path ratio **5.04**; max window ratio **8.17** |
+| ATE (rigid 2D) | pass | RMSE `0.12 m`, max `0.45 m` |
+| Map quality | pass | aligned near **98.6%** |
+
+Artifact:
+
+```text
+artifacts/sunrise_mujoco_continuous_mapping_gate_20260706_231109/
+```
+
+Verdict matrix and follow-up actions:
+[2026-07-06-mujoco-continuous-mapping-gate.md](./2026-07-06-mujoco-continuous-mapping-gate.md).
+
+Current status:
+
+- MuJoCo raw LiDAR/IMU -> native DDS -> Fast-LIO2 transport is closed.
+- 30 s local mapping can pass endpoint ratio and map-quality gates.
+- 180–240 s loop-like `box_explore` trajectories still fail continuous scale
+  convergence even when saved-map geometry looks good after loop closure.
+- Do not approve full sim mapping acceptance until cumulative/window path ratios
+  stay within gate bounds for the full drive duration.
+
+Domain constraint: keep isolated MuJoCo gates on CycloneDDS domains **`200–232`**
+(default **`231`**). Domain **234** fails on sunrise with multicast port out of
+range. Production robot SLAM remains on domain **`0`**.

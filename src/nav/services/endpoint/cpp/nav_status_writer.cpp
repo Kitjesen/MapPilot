@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <ostream>
 
 namespace lingtu::nav::endpoint {
@@ -102,6 +103,7 @@ void writeStatusSnapshot(
     std::fprintf(stderr, "nav_native: failed to open status snapshot %s\n", tmp.string().c_str());
     return;
   }
+  out << std::fixed << std::setprecision(6);
   out << "{\n"
       << "  \"schema_version\": \"lingtu.nav.endpoint.status.v1\",\n"
       << "  \"endpoint\": \"lingtu_nav_native_endpoint\",\n"
@@ -114,6 +116,10 @@ void writeStatusSnapshot(
       << (cfg.use_traversability_cost ? "true" : "false") << ",\n"
       << "  \"semantic_instruction_supported\": false,\n"
       << "  \"last_semantic_instruction\": \"" << jsonEscape(last_instruction) << "\",\n"
+      << "  \"navigation_compute_owner\": \"lingtu_nav_native_endpoint\",\n"
+      << "  \"local_path_role\": \"dds_telemetry_and_preview\",\n"
+      << "  \"path_follower_role\": \"embedded_before_cmd_vel_gate\",\n"
+      << "  \"cmd_vel_role\": \"final_navigation_command_output_when_enabled\",\n"
       << "  \"active_octomap\": \"" << jsonEscape(cfg.map_path) << "\",\n"
       << "  \"path_library\": \"" << jsonEscape(cfg.path_library_dir) << "\",\n"
       << "  \"has_odom\": " << (has_odom ? "true" : "false") << ",\n"

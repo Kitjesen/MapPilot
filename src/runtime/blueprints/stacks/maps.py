@@ -6,8 +6,8 @@ import logging
 import os
 
 from runtime.blueprint import Blueprint
+from runtime.adapters.mapping_slam import map_output_adapter_module
 from runtime.blueprints.stacks._registry import stack_module
-from runtime.blueprints.adapters.mapping_slam import map_output_adapter_module
 from runtime.blueprints.wires.mapping import map_output_specs
 from runtime.blueprints.wires.context import MAP_OUT
 from runtime.blueprints.wires.types import wire_present_specs

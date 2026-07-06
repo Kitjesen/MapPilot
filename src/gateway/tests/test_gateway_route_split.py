@@ -37,6 +37,7 @@ def test_auth_routes_register_expected_paths():
 
 def test_realtime_routes_register_expected_websockets():
     from fastapi import FastAPI
+    from starlette.websockets import WebSocket
 
     from gateway.routes.realtime import register_realtime_routes
 
@@ -48,6 +49,9 @@ def test_realtime_routes_register_expected_websockets():
     assert "/ws/teleop" in paths
     assert "/ws/camera" in paths
     assert "/ws/cloud" in paths
+    for route in app.routes:
+        if getattr(route, "path", "") in {"/ws/teleop", "/ws/camera", "/ws/cloud"}:
+            assert route.endpoint.__annotations__.get("ws") is WebSocket
 
 
 def test_realtime_teleop_camera_stream_is_legacy_opt_in():

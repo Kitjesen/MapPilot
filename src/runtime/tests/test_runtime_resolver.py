@@ -253,7 +253,10 @@ def test_resolver_cli_metadata_mode_keeps_launch_contracts_not_selection_key() -
         include_profile_metadata=True,
     )
 
-    assert config["_desc"] == "MuJoCo raw MID-360 + Fast-LIO live simulation"
+    assert config["_desc"] == (
+        "Legacy MuJoCo Module harness for downstream nav/map wiring; "
+        "not real-equivalent native DDS closure"
+    )
     assert config["_external_launcher"] == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert config["_runtime_contract"] == "mujoco_fastlio2_live"
     assert "_default_robot" not in config

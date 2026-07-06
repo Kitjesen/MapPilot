@@ -12,6 +12,7 @@
  * 先以 placeholder 方式进入二级菜单,显示"敬请期待"并给出后端对接的 hint.
  */
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X, Settings, Cpu, Wrench, Activity, Info, Package,
   Download, RefreshCw, Terminal, Power,
@@ -62,10 +63,10 @@ export function SettingsMenu({ open, onClose }: SettingsMenuProps) {
 
   if (!open) return null
 
-  return (
+  const content = (
     <>
       <div className={styles.backdrop} onClick={onClose} />
-      <aside ref={panelRef} className={styles.panel} role="dialog" aria-label="设置">
+      <aside ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-label="设置">
         <div className={styles.panelHeader}>
           <div className={styles.panelTitle}>
             <Settings size={14} /> {sectionTitle(section)}
@@ -93,6 +94,8 @@ export function SettingsMenu({ open, onClose }: SettingsMenuProps) {
       {modal === 'about' && <AboutModal onClose={() => setModal(null)} />}
     </>
   )
+
+  return createPortal(content, document.body)
 }
 
 function sectionTitle(s: Section): string {

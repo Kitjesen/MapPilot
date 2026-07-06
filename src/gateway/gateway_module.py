@@ -434,7 +434,7 @@ class GatewayModule(Module, layer=6):
         # Lazy TemporalStore handle -shared file with TemporalMemoryModule
         self._temporal_store: Any = None
 
-        # Costmap SSE throttle (publish at ~2Hz regardless of OccupancyGridModule rate)
+        # Costmap SSE throttle (publish at ~2Hz regardless of TraversabilityCostModule rate)
         self._costmap_throttle: int = 0
 
         # SceneGraph SSE throttle (~2Hz)
@@ -2317,13 +2317,14 @@ class GatewayModule(Module, layer=6):
             logger.debug("_on_local_path: failed to build points: %s", e)
 
     def _on_costmap(self, cm: dict) -> None:
-        """Throttle OccupancyGridModule costmap to ~2 Hz and push as SSE.
+        """Throttle TraversabilityCostModule fused_cost to ~2 Hz and push as SSE.
 
-        Costmap is generated in odom frame (OccupancyGridModule). When
-        navigating, shift the grid origin into map frame so it overlays the
-        saved map base layer. Grid cells stay axis-aligned - if map->odom has
-        significant yaw, cells will be slightly skewed; acceptable for
-        short-term ICP tracking (yaw error typically < 5 deg).
+        Costmap is generated in odom frame (TraversabilityCostModule, fused
+        from OccupancyGridModule/ESDF/elevation). When navigating, shift the
+        grid origin into map frame so it overlays the saved map base layer.
+        Grid cells stay axis-aligned - if map->odom has significant yaw, cells
+        will be slightly skewed; acceptable for short-term ICP tracking (yaw
+        error typically < 5 deg).
         """
         self._costmap_throttle += 1
         if self._costmap_throttle % 5 != 0:
@@ -2339,11 +2340,12 @@ class GatewayModule(Module, layer=6):
             rows = int(g.shape[0])
             cols = int(g.shape[1]) if g.ndim >= 2 else rows
             origin = [float(v) for v in cm.get("origin", [0.0, 0.0])]
-            # OccupancyGridModule now ingests map-frame odom (SlamBridge applies
-            # TF before publish), so its grid.origin is already map-frame -no
-            # Gateway re-transform. Re-applying TF here double-shifted and
-            # caused costmap to orbit the robot each time the localizer
-            # refined map->odom. Leave yaw=0 since no rotation left to apply.
+            # OccupancyGridModule (the upstream source fused into this costmap)
+            # now ingests map-frame odom (SlamBridge applies TF before
+            # publish), so grid.origin is already map-frame -no Gateway
+            # re-transform. Re-applying TF here double-shifted and caused
+            # costmap to orbit the robot each time the localizer refined
+            # map->odom. Leave yaw=0 since no rotation left to apply.
             yaw = 0.0
             self.push_event({
                 "type":       "costmap",

@@ -15,8 +15,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from lingtu_sdk import AsyncLingTuClient
-from lingtu_sdk.mcp import LingTuMCP
+from lingtu.sdk import AsyncLingTuClient
+from lingtu.sdk.mcp import LingTuMCP
 
 
 async def main(host: str = "127.0.0.1") -> None:

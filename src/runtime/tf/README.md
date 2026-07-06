@@ -5,7 +5,7 @@ ROS-free transform support for normal LingTu modules.
 ## Where It Is Used
 
 - `src/localization/adapters/ros2/slam_bridge.py`: parses ROS/DDS-shaped `/tf` messages and feeds `map -> odom`.
-- `src/runtime/adapters/lcm/localization_adapter.py`: feeds `map -> odom` from LCM localization health.
+- DDS localization adapters feed `map -> odom` from endpoint localization health.
 - `src/localization/portable/localization_adapter.py`: installs static `map -> odom` identity for portable runs.
 - `src/gateway/gateway_module.py`: caches `map -> odom` for viewer/map-cloud alignment.
 - `src/gateway/routes/diagnostics.py`: exposes `FrameTree.snapshot()` in frame diagnostics.

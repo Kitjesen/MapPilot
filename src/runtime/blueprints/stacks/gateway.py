@@ -12,8 +12,8 @@ from __future__ import annotations
 import logging
 
 from runtime.blueprint import Blueprint
+from runtime.adapters.perception_gateway import rerun_bridge_module
 from runtime.blueprints.stacks._registry import optional_stack_module, stack_module
-from runtime.blueprints.adapters.perception_gateway import rerun_bridge_module
 
 logger = logging.getLogger(__name__)
 

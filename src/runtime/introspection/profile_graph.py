@@ -69,7 +69,7 @@ class WireEdge:
 
     @classmethod
     def from_blueprint_spec(cls, spec: Any) -> "WireEdge":
-        transport = getattr(spec, "transport", None)
+        transport = getattr(spec, "delivery_spec", getattr(spec, "transport", None))
         if isinstance(transport, str):
             pass
         elif transport is not None:
@@ -90,7 +90,7 @@ class WireEdge:
             out_port=spec.out_port,
             in_module=spec.in_module,
             in_port=spec.in_port,
-            transport=spec.transport,
+            transport=getattr(spec, "delivery", None) or getattr(spec, "transport", None),
             topic=getattr(spec, "topic", None),
         )
 
@@ -430,11 +430,6 @@ def graph_for_profile(
                 safety_stop_wiring=bool(config.get("safety_stop_wiring", True)),
                 cmd_vel_mux_collision_monitor=bool(
                     config.get("cmd_vel_mux_collision_monitor", False)
-                ),
-                nav_plan_transport=(
-                    config.get("nav_plan_transport")
-                    if "nav_plan_transport" in config
-                    else config.get("local_planner_transport")
                 ),
             )
         ),

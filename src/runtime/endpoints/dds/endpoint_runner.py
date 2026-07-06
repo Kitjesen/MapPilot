@@ -11,8 +11,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from runtime.adapters.dds.contracts import THUNDER_FIELD_DDS_CONTRACT_NAME
-from runtime.adapters.dds.endpoint_service import DDSEndpointEvent, DDSEndpointService
+from runtime.endpoints.dds.contracts import THUNDER_FIELD_DDS_CONTRACT_NAME
+from runtime.endpoints.dds.endpoint_service import DDSEndpointEvent, DDSEndpointService
 
 logger = logging.getLogger(__name__)
 
@@ -210,16 +210,16 @@ def _jsonl_source_configured() -> bool:
 
 def _load_source(spec: str) -> Any:
     builtins = {
-        "smoke": "runtime.adapters.lcm.sources.smoke:create",
-        "builtin:smoke": "runtime.adapters.lcm.sources.smoke:create",
-        "jsonl": "runtime.adapters.lcm.sources.jsonl:create",
-        "builtin:jsonl": "runtime.adapters.lcm.sources.jsonl:create",
-        "thunder_brainstem": "runtime.adapters.lcm.sources.brainstem:create",
-        "brainstem": "runtime.adapters.lcm.sources.brainstem:create",
-        "builtin:thunder_brainstem": "runtime.adapters.lcm.sources.brainstem:create",
-        "brainstem_sim": "runtime.adapters.lcm.sources.brainstem_sim:create",
-        "builtin:brainstem_sim": "runtime.adapters.lcm.sources.brainstem_sim:create",
-        "mujoco_brainstem_sim": "runtime.adapters.lcm.sources.brainstem_sim:create",
+        "smoke": "runtime.adapters.endpoint_sources.smoke:create",
+        "builtin:smoke": "runtime.adapters.endpoint_sources.smoke:create",
+        "jsonl": "runtime.adapters.endpoint_sources.jsonl:create",
+        "builtin:jsonl": "runtime.adapters.endpoint_sources.jsonl:create",
+        "thunder_brainstem": "runtime.adapters.endpoint_sources.brainstem:create",
+        "brainstem": "runtime.adapters.endpoint_sources.brainstem:create",
+        "builtin:thunder_brainstem": "runtime.adapters.endpoint_sources.brainstem:create",
+        "brainstem_sim": "runtime.adapters.endpoint_sources.brainstem_sim:create",
+        "builtin:brainstem_sim": "runtime.adapters.endpoint_sources.brainstem_sim:create",
+        "mujoco_brainstem_sim": "runtime.adapters.endpoint_sources.brainstem_sim:create",
     }
     target = builtins.get(spec, spec)
     module_name, sep, factory_name = target.partition(":")

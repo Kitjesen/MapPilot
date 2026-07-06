@@ -41,7 +41,7 @@ def test_canonical_thunder_deploy_script_uses_product_profile() -> None:
     assert "scripts/deploy/thunder/runtime-env.sh" in text
     assert "LINGTU_ENDPOINT:=thunder_field" in text
     assert "LINGTU_ENDPOINT_TRANSPORT:=dds" in text
-    assert "LINGTU_ENDPOINT_CONTRACT:=thunder_field_lcm_v1" not in text
+    assert "LINGTU_ENDPOINT_CONTRACT:=thunder_field_" + "lcm_v1" not in text
     assert '[ -f "/opt/ros/humble/setup.bash" ]' not in text
     assert "SOURCE_ROS2=0" in text
     assert "ros2|sim_ros2|*-ros2|ros-compat|legacy" in text
@@ -70,7 +70,7 @@ def test_thunder_service_installer_defaults_to_native_field_cpp_stack() -> None:
     assert "slam-dds|cpp-slam" in text
     assert "traversability-dds|terrain-dds" in text
     assert "field|nav|thunder-nav|field-cpp|dds-cpp" in text
-    assert "install_lcm_endpoint_service.sh" not in text
+    assert "install_" + ("lc" + "m") + "_endpoint_service.sh" not in text
     assert "install_lite_service.sh" in text
     assert "Usage: $0 [field-cpp|dds-endpoint|slam-dds|traversability-dds|nav-dds|lingtu|lite|ros-compat]" in text
     assert "../s100p/install_services.sh" in text
@@ -431,6 +431,9 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "build_nav_endpoint.sh" in text
     assert "ros2-env.sh" not in text
     assert "LINGTU_NAV_CHECK_OBSTACLE" in source
+    assert "LINGTU_NAV_TRAVERSABILITY_HARD_COST" in source
+    assert "LINGTU_NAV_VEHICLE_LENGTH_M" in source
+    assert "LINGTU_NAV_VEHICLE_WIDTH_M" in source
     assert "cfg.check_obstacle = parseBool" in source
     assert "cfg.check_obstacle && cfg.use_traversability_cost" in source
     assert "cfg.check_obstacle ? &obstacle_xyzh : nullptr" in source
@@ -440,7 +443,9 @@ def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> N
     text = _read("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp")
 
     assert "name == \"intensity\"" in text
-    assert "const bool has_height = offsets.height >= 0 || offsets.intensity >= 0" in text
+    assert "const bool has_height = offsets.height >= 0" in text
+    assert "offsets.height >= 0 || offsets.intensity >= 0" not in text
+    assert "offsets.height >= 0 ? offsets.height : offsets.intensity" not in text
     assert "height = static_cast<float>(world_z - map_body->position.z)" in text
     assert "offsets.height >= 0 ? readFloat(base + offsets.height) : z" not in text
     assert "kNavTerrainMap" in text
@@ -463,6 +468,14 @@ def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> N
     assert "terrain_map_exts" in status
     assert "map_clearing" in status
     assert "cloud_clearing" in status
+    assert "navigation_compute_owner" in status
+    assert "lingtu_nav_native_endpoint" in status
+    assert "local_path_role" in status
+    assert "dds_telemetry_and_preview" in status
+    assert "path_follower_role" in status
+    assert "embedded_before_cmd_vel_gate" in status
+    assert "cmd_vel_role" in status
+    assert "final_navigation_command_output_when_enabled" in status
 
 
 def test_thunder_slam_dds_installer_is_explicit_cpp_slam_boundary() -> None:

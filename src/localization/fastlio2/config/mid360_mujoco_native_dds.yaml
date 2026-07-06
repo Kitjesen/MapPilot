@@ -50,9 +50,14 @@ nbg: 0.0001
 imu_init_num: 20
 near_search_num: 3
 ieskf_max_iter: 5
-max_update_translation_m: 0.5
+# Per-scan pose/velocity step guards. IMPORTANT: max_update_velocity_mps rejects the
+# entire LiDAR update when |v| exceeds the cap (see ieskf.cpp). Lowering it below
+# IMU-predicted speed causes reject loops and runaway odometry. Keep absolute
+# velocity cap high; tune delta/translation and ZUPT instead for MuJoCo policy.
+max_update_translation_m: 0.35
+max_update_rotation_rad: 0.35
 max_update_velocity_mps: 3.0
-max_update_velocity_delta_mps: 1.0
+max_update_velocity_delta_mps: 0.35
 reject_nonconverged_update: false
 reject_degenerate_nonconverged_update: true
 
@@ -68,11 +73,14 @@ t_il: [0.0, 0.0, 0.0]
 
 lidar_cov_inv: 1000.0
 
-imu_static_acc_thresh: 0.25
-imu_static_gyro_thresh: 0.02
-zupt_min_static_frames: 5
-zupt_sigma_v: 0.02
-zupt_sigma_pos: 0.1
+# ZUPT triggers when IMU variance and mean look static (see imu_processor.cpp).
+# box_explore turn phases keep gyro above imu_static_gyro_thresh, so ZUPT mainly
+# clamps residual velocity during vx=0 phase gaps and forward crawl segments.
+imu_static_acc_thresh: 0.22
+imu_static_gyro_thresh: 0.022
+zupt_min_static_frames: 6
+zupt_sigma_v: 0.015
+zupt_sigma_pos: 0.08
 
 vertical_velocity_constraint_enabled: true
 vertical_velocity_sigma_v: 0.05

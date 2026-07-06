@@ -13,7 +13,7 @@ Memory 层为机器人提供场景理解、空间记忆、事件追溯和语义�
 | `tagged_locations_module.py` | 地标位置：命名/模糊匹配 Tag 位置 |
 | `vector_memory_module.py` | 向量记忆：CLIP + ChromaDB 语义向量检索，备用 numpy 暴力搜索 |
 | `temporal_memory_module.py` | 时序记忆 |
-| `topological_module.py` | 拓扑图记忆 |
+| `topological_module.py` | 拓扑图记忆（已注册但**未**加入 `memory()` stack factory，当前非生产路径；场景级拓扑由 `semantic_mapper_module.py` 的 `TopologySemGraph` 负责） |
 | `mission_logger_module.py` | 任务日志记录 |
 
 ## knowledge/

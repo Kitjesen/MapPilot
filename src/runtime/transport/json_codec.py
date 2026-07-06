@@ -2,7 +2,7 @@
 
 This codec is intentionally small and conservative. It uses message
 ``to_dict`` / ``from_dict`` helpers when available and wraps the payload in a
-versioned envelope so LCM endpoints do not depend on Python pickle.
+versioned envelope so endpoint replay paths do not depend on Python pickle.
 """
 
 from __future__ import annotations
@@ -72,13 +72,6 @@ def dumps_topic_message(topic: str, msg: Any) -> bytes:
 def message_schema(topic: str | None, msg: Any) -> str:
     """Return the stable schema name for one transport message."""
 
-    if topic:
-        try:
-            from runtime.adapters.lcm.contracts import THUNDER_FIELD_LCM_CONTRACT
-
-            return THUNDER_FIELD_LCM_CONTRACT.binding_for_topic(topic).schema
-        except (ImportError, KeyError, AttributeError):
-            pass
     return _type_name(msg)
 
 

@@ -55,7 +55,7 @@ Main implementation locations:
 | Navigation | `src/nav/mission/navigation.py` | Mission FSM, global planning call, waypoint dispatch. |
 | PlannerService | `src/nav/services/plan/contracts.py` | Internal planner interface consumed by `Navigation`. |
 | GlobalPlanner | `src/nav/services/plan/global_planner/service.py` | Map-backed global planning coordinator. |
-| LocalPlanner | `src/nav/local/local_planner.py` | Local obstacle-avoidance Module around `nav_kernel`. |
+| LocalPlanner | `src/nav/services/plan/local_planner/service.py` | Local obstacle-avoidance Module around `nav_kernel`. |
 | PathFollower | `src/nav/local/path_follower.py` | Converts `local_path` into velocity commands. |
 | VelocityMux | `src/nav/services/safety/velocity_mux.py` | Final velocity arbiter before the driver. |
 | nav_kernel C++ | `src/nav/kernel/include/nav_kernel/` | Hot-path local planner, terrain, and path follower kernels. |
@@ -102,7 +102,7 @@ Main implementation locations:
 | Mission execution | `mission/` | Goal handling, OctoPlanner3D/A*/PCT planning requests, waypoint tracking, recovery, mission FSM. |
 | Global planning dispatch | `services/plan/global_planner/service.py` | Select OctoPlanner3D/A*/PCT planner, validate paths, find safe nearby goals. |
 | Planner service boundary | `services/plan/` | `Navigation`'s planner boundary. `services/plan/factory.py` chooses map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`; `services/plan/compat/direct_path.py` owns the Thunder Lite direct planner. |
-| Maps | `maps/` | L2 map layers used by navigation, safety, gateway preview, and local autonomy. |
+| Maps | `services/map_layers/`, `services/maps.py` | L2 realtime map layers plus the saved-map lifecycle service used by navigation, safety, gateway preview, and local autonomy. |
 | Safety | `safety/`, `services/geofence.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
 | Frontier exploration | `exploration/` | Wavefront frontier goals and traversability-enriched frontier previews. |
 | IO adapter ports | Blueprint aliases `nav.in`, `nav.out`, `map.out` | Optional external control/visualization endpoints. Navigation output is unified under `nav.out`; map visualization leaves through `map.out`; ROS 2 implementations live under `nav/adapters/ros2/nav/`; `nav/` keeps no ROS runtime implementation. |

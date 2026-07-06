@@ -12,7 +12,7 @@ from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu, PointCloud2
 
-from ..endpoint_service import LCMEndpointEvent, LCMEndpointService
+from runtime.adapters.endpoint_sources.types import EndpointEvent, EndpointService
 
 
 class SmokeEndpointSource:
@@ -32,7 +32,7 @@ class SmokeEndpointSource:
         self._last_publish_ts = 0.0
         self._last_receive_ts = 0.0
 
-    def start(self, service: LCMEndpointService) -> None:
+    def start(self, service: EndpointService) -> None:
         """Publish a single sensor/localization snapshot into LingTu."""
 
         now = time.time()
@@ -94,7 +94,7 @@ class SmokeEndpointSource:
 
         self._started = False
 
-    def on_lingtu_message(self, event: LCMEndpointEvent) -> None:
+    def on_lingtu_message(self, event: EndpointEvent) -> None:
         """Record LingTu-to-endpoint events observed during smoke tests."""
 
         self._received[event.topic] += 1

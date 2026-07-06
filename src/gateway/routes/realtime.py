@@ -1,13 +1,13 @@
 """WebSocket route registration for GatewayModule."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
 
 from runtime.msgs.geometry import Twist
 from gateway.services.safety_status import safety_stop_active
+from starlette.websockets import WebSocket as StarletteWebSocket
+from starlette.websockets import WebSocketDisconnect as StarletteWebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +27,6 @@ def _camera_stream_requested(query_params) -> bool:
 
 
 def register_realtime_routes(app, gw) -> None:
-    from starlette.websockets import WebSocket as StarletteWebSocket
-    from starlette.websockets import WebSocketDisconnect as StarletteWebSocketDisconnect
-
     async def send_bytes_or_disconnect(
         ws: StarletteWebSocket,
         payload: bytes,

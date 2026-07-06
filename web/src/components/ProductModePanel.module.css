@@ -50,6 +50,7 @@
 }
 
 .layout {
+  flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.72fr);

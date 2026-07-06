@@ -294,9 +294,9 @@ def to_dds_message(topic: str, msg: Any) -> Any:
         from message.dds_types.livox import livox_frame_to_msg
 
         return livox_frame_to_msg(msg)
-    from runtime.adapters.dds.endpoint_service import _to_dds_message
+    from message.dds_codec import to_dds_message as convert
 
-    return _to_dds_message(topic, msg)
+    return convert(topic, msg)
 
 
 def from_dds_message(topic: str, msg: Any) -> Any:
@@ -311,9 +311,9 @@ def from_dds_message(topic: str, msg: Any) -> Any:
         from message.dds_types.imu import dds_imu_to_imu
 
         return dds_imu_to_imu(msg)
-    from runtime.adapters.dds.endpoint_service import _from_dds_message
+    from message.dds_codec import from_dds_message as convert
 
-    return _from_dds_message(topic, msg)
+    return convert(topic, msg)
 
 
 def dds_topic_name(topic: str, *, typed: bool) -> str:

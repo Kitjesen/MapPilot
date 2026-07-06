@@ -59,6 +59,7 @@ class GraphWireSpec:
     in_port: str
     transport: str | None = None
     topic: str | None = None
+    delivery: str | None = None
 
     def as_snapshot(self) -> str:
         wire = f"{self.out_module}.{self.out_port}->{self.in_module}.{self.in_port}"
@@ -74,6 +75,7 @@ class GraphWireSpec:
             "out_port": self.out_port,
             "in_module": self.in_module,
             "in_port": self.in_port,
+            "delivery": self.delivery or self.transport,
             "transport": self.transport,
             "topic": self.topic,
         }
@@ -149,8 +151,9 @@ class ModuleGraph:
                 out_port=wire.out_port,
                 in_module=wire.in_module,
                 in_port=wire.in_port,
-                transport=_transport_name(getattr(wire, "transport", None)),
+                transport=_transport_name(getattr(wire, "delivery_spec", None)),
                 topic=_topic_name(getattr(wire, "topic", None)),
+                delivery=_transport_name(getattr(wire, "delivery_spec", None)),
             )
             for wire in getattr(blueprint, "_wires", ())
         )

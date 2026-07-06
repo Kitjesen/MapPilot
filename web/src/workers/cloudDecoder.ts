@@ -24,7 +24,7 @@
 
 const MAGIC = 0x44_4c_43_50 // "PCLD" little-endian (P=0x50, C=0x43, L=0x4c, D=0x44)
 const HEADER = 28
-const Z_FLOOR = -0.2
+const Z_FLOOR = -0.5
 const Z_CEIL = 2.8
 
 let seq = 0

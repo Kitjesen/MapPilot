@@ -1,4 +1,4 @@
-﻿# Localization
+# Localization
 
 `src/localization` is the localization domain. It owns pose sources and localization health, not navigation decisions.
 
@@ -28,8 +28,14 @@
 - `slam/module.py`: native Python Module boundary for downstream consumers.
 - `slam/cpp/`: ROS-free C++ `ISlamBackend` contract shared by Fast-LIO2 and
   Point-LIO backends.
+- `runtime/adapters/native/localization_adapter.py` (`CppSlamStatusAdapterModule`):
+  the default product path for real saved-map navigation. Ingests C++ SLAM
+  status/localization over the native field endpoint (`localization_adapter=
+  "cpp_slam_status"`); no ROS2 dependency.
 - `bridge.py`: thin compatibility facade for the ROS2-backed localization bridge.
-- `adapters/ros2/slam_bridge.py`: ROS2/DDS compatibility bridge implementation.
+- `adapters/ros2/slam_bridge.py`: ROS2/DDS compatibility bridge implementation,
+  used only when a profile explicitly opts into `localization_adapter=
+  "ros2_slam_bridge"`.
 - `gnss_module.py`, `gnss_serial_driver.py`, `ntrip_client_module.py`: GNSS/RTK input and correction support.
 - `localizer/`: ICP localizer native package.
 - `fastlio2/`, `pointlio/`: native LIO packages kept as algorithm assets.

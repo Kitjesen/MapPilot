@@ -1,21 +1,6 @@
-"""Typed CycloneDDS endpoint adapters for production field boundaries."""
+"""DDS-backed Module graph adapters.
 
-from .contracts import (
-    DDSEndpointBinding,
-    DDSEndpointContract,
-    THUNDER_FIELD_DDS_CONTRACT,
-    THUNDER_FIELD_DDS_CONTRACT_NAME,
-    binding_for_topic,
-    endpoint_contract,
-    endpoint_contract_names,
-)
+Typed DDS product endpoint contracts live under :mod:`runtime.endpoints.dds`.
+"""
 
-__all__ = [
-    "DDSEndpointBinding",
-    "DDSEndpointContract",
-    "THUNDER_FIELD_DDS_CONTRACT",
-    "THUNDER_FIELD_DDS_CONTRACT_NAME",
-    "binding_for_topic",
-    "endpoint_contract",
-    "endpoint_contract_names",
-]
+__all__: list[str] = []

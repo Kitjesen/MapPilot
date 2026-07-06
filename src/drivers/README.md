@@ -9,6 +9,7 @@ simulation boundary, not a planning layer.
 | --- | --- |
 | `real/` | Real robot and sensor backends, including Thunder, camera, GNSS, and Livox sources. |
 | `sim/` | Simulation drivers and endpoint-backed simulation adapters. |
+| `adapters/ros2/` | Declared ROS2 compat boundary (for example `livox_driver.py`). ROS2 imports outside this boundary are not allowed. |
 
 Root files stay minimal. Runtime driver code lives under `real/` or `sim/`;
 driver tests live under `tests/drivers/`.

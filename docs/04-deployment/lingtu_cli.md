@@ -27,6 +27,15 @@ lingtu status
 lingwatch
 ```
 
+Common read-only diagnostics:
+
+```bash
+lingtu doctor                   # read-only service/Gateway/dataflow diagnostics
+lingtu doctor --ros2            # explicit ROS2 compatibility diagnostics
+```
+
+The default doctor path checks Gateway readiness, health, localization, navigation, state, and camera snapshot without requiring ROS topic inspection.
+
 ## Product Runtime
 
 The normal field runtime is native DDS:
@@ -158,6 +167,14 @@ Before sending a field goal, check:
 
 - `relocalization_state=completed` when relocalization is requested.
 - `map_odom_tf.valid=true`.
+
+## That-nav Parity Gate
+
+That-nav parity gate is the no-motion system acceptance flow for saved-map
+navigation. It validates the native/Gateway service state, dataflow evidence,
+active map artifacts, OctoPlanner3D preview, relocalization, and native nav
+endpoint status before any controlled motion check is allowed.
+It does not send motion commands by default.
 - active map has `map.pcd`, `metadata.json`, and `octomap.ot`.
 - safety state is not STOP/ESTOP.
 

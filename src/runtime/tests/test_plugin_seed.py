@@ -46,7 +46,6 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
                 "autonomy",
                 "slam",
                 "slam_ros2",
-                "slam_lcm",
                 "exploration",
                 "exploration_ros2",
                 "perception",
@@ -66,11 +65,10 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "planner_backend",
             "navigation",
             "navigation_ros2",
-            "autonomy",
-            "slam",
-            "slam_ros2",
-            "slam_lcm",
-            "exploration",
+                "autonomy",
+                "slam",
+                "slam_ros2",
+                "exploration",
             "exploration_ros2",
             "perception",
             "reconstruction",
@@ -276,7 +274,7 @@ def test_builtin_plugin_seed_default_groups_skip_optional_runtime_surfaces():
         assert "lcm_nav_input" not in list_plugins("navigation")
         assert "lcm_nav_output" not in list_plugins("navigation")
         assert "ros2_slam_bridge" not in list_plugins("localization_adapter")
-        assert "lcm_endpoint" not in list_plugins("localization_adapter")
+        assert "removed_endpoint" not in list_plugins("localization_adapter")
         assert list_plugins("map_save_adapter") == []
         assert list_plugins("planner_backend") == ["octoplanner3d"]
         assert {"ring", "cmd_vel_mux", "geofence"} <= set(list_plugins("safety"))

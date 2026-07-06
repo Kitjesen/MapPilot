@@ -6,7 +6,7 @@ Python objects through `In[T]` and `Out[T]`; adapters serialize at the boundary.
 
 ## Communication Plan
 
-Use the smallest transport that matches the seam:
+Use the smallest delivery mode that matches the seam:
 
 | Seam | Default |
 | --- | --- |
@@ -34,10 +34,29 @@ binary payload plus a versioned header/schema over protobuf `repeated` points.
 | `shm` | Same host | High-bandwidth image/point-cloud IPC. |
 | `dds` | Same host / LAN | CycloneDDS backend. Use typed adapters for product streams; generic transport is compatibility/testing only and rejects registered product topics. |
 
+## Module Wire Delivery
+
+`Blueprint.wire(..., delivery=...)` selects how one Module `Out` port reaches
+one Module `In` port. This is a local graph delivery choice, not the system bus
+architecture. Existing `transport=` arguments are accepted as a compatibility
+alias for framework-level tests and explicit adapter experiments.
+
+Supported delivery values:
+
+- `None` or `callback`: direct in-process callback, zero-copy.
+- `local`: in-process `LocalTransport` bus, mainly for tests and local replay.
+- `shm`: same-host shared-memory adapter for selected high-bandwidth links.
+- `dds`: generic DDS adapter for explicit compatibility/debug links.
+
+Product sensor, SLAM, and navigation process boundaries should not be modeled
+by sprinkling `delivery="dds"` across ordinary Module wires. Use typed endpoint
+contracts under `src/runtime/endpoints/dds/` and `src/message/dds.py` for those
+boundaries.
+
 ## Typed DDS Endpoint
 
 Product Thunder field communication uses the typed DDS contract in
-`src/runtime/adapters/dds/contracts.py`. The default contract is
+`src/runtime/endpoints/dds/contracts.py`. The default contract is
 `thunder_field_dds_v1`, backed by the topic/type registry in
 `src/message/dds.py`. Registered product topics bind to concrete IDL/C++ message
 types such as Livox `CustomMsg`, `sensor_msgs/Imu`, `nav_msgs/Odometry`,
@@ -51,7 +70,7 @@ The default field graph uses:
   nav DDS Module adapters were removed to prevent field double writers.
 
 External Thunder endpoint processes should use
-`src/runtime/adapters/dds/endpoint_service.py` through the runnable
+`src/runtime/endpoints/dds/endpoint_service.py` through the runnable
 `scripts/deploy/thunder/run_dds_endpoint_service.py` entrypoint only for the
 temporary Python Brainstem command sink. Product navigation planning uses the
 C++ `lingtu-nav-dds` service for goal/path/cmd_vel DDS.
@@ -71,33 +90,15 @@ Validate the default Thunder endpoint deployment boundary:
 python tools/validate/validate_thunder_field_deployment.py
 ```
 
-## Legacy LCM Endpoint Payloads
+## Endpoint JSON Replay Payloads
 
-The generic `runtime.transport.lcm` backend was removed. LCM is no longer a
-runtime transport strategy. If an old endpoint still needs LCM, it must stay in
-`runtime.adapters.lcm` and use the versioned endpoint codec there. The shared
-JSON envelope in `json_codec.py` remains available for explicit adapters and
-tests, and carries:
+The shared JSON envelope in `json_codec.py` remains available for explicit
+replay adapters and tests, and carries:
 
 - `format`: currently `lingtu.transport.json.v1`
 - `type`: the Python `runtime.msgs.*` type name when available
 - `payload`: the message `to_dict()` payload, or a plain JSON value
 
-Do not use pickle for LCM endpoint traffic. High-rate binary payloads such as
-large point clouds should get explicit schema-specific encoders instead of
-falling back to generic Python serialization.
-
-Legacy LCM endpoint contracts live in `src/runtime/adapters/lcm/contracts.py`.
-The compatibility contract is `thunder_field_lcm_v1`; it names
-product-neutral schemas and LCM channels for odometry, point clouds,
-localization health, paths, active waypoints, command velocity, goals, cancels,
-and semantic instructions.
-Schema-aware endpoint payloads live in
-`src/runtime/adapters/lcm/endpoint_codec.py`, including binary-safe point cloud and IMU
-envelopes. The endpoint localization input adapter is
-`src/runtime/adapters/lcm/localization_adapter.py`. Navigation input/output must
-not use deleted Python `nav.in` / `nav.out` LCM modules on the Thunder field
-path. The product path is typed DDS plus native C++ endpoints.
 For `thunder_field`, the command output mode is `endpoint_only`: LingTu does
 not include an in-process `ThunderDriver` in the default field graph, and the
 endpoint source owns translation from DDS command velocity to robot hardware.
@@ -108,37 +109,29 @@ real motor actuation requires a dedicated C++ Thunder control sink that
 subscribes `rt/nav/cmd_vel`; do not fold that hardware role into the planner
 endpoint.
 
-Source plugins implement `src/runtime/adapters/lcm/source.py`. Deployment-specific
-motion command sinks are passed as `module:factory` sources outside the LingTu
-module graph. The runner accepts comma-separated source names, so control,
-localization publishing, sensor publishing, and replay can remain
-separate endpoint plugins while sharing one supervised endpoint process. The
-built-in `src/runtime/adapters/lcm/sources/jsonl.py` source reads normalized JSONL
-records from a file or external process stdout, then publishes them as
-contract-bound endpoint messages. Use it for no-ROS replay and for external
-SLAM/localization sidecars that are not ROS nodes. The built-in
-`src/runtime/adapters/lcm/sources/smoke.py` source provides a data-flow check:
+Source plugins live under `src/runtime/adapters/endpoint_sources/`.
+Deployment-specific motion command sinks are passed as `module:factory`
+sources outside the LingTu module graph. The runner accepts comma-separated
+source names, so control, localization publishing, sensor publishing, and
+replay can remain separate endpoint plugins while sharing one supervised
+endpoint process. The built-in JSONL source reads normalized JSONL records from
+a file or external process stdout, then publishes them as contract-bound
+endpoint messages. The built-in smoke source provides a data-flow check:
 
 ```bash
 python scripts/deploy/thunder/run_dds_endpoint_service.py --transport local --source smoke --once --json
 ```
 
-Validate the JSONL provider before using it as an endpoint source:
-
-```bash
-python tools/validate/validate_lcm_jsonl_feed.py /data/thunder/localization.jsonl --require-field-inputs
-```
-
 ## Boundary Rule
 
 DDS and SHM details stay inside `runtime.transport` or explicit compatibility
-adapters. LCM details stay in `runtime.adapters.lcm` only. Product modules and
-`runtime.msgs` should not import `lcm`,
-`cyclonedds`, or ROS message packages directly.
+adapters. Product modules and `runtime.msgs` should not import `cyclonedds` or
+ROS message packages directly.
 
-Use explicit wires for cross-process links:
+Keep normal Module wires in-process. Use typed endpoints for cross-process
+product links:
 
 ```python
-bp.wire("SlamBridgeModule", "map_cloud", "nav.terrain", "map_cloud", transport="shm")
-bp.wire("GatewayModule", "goal_pose", "nav.mission", "goal_pose", transport="dds")
+bp.wire("SlamBridgeModule", "map_cloud", "nav.terrain", "map_cloud")
+bp.wire("GatewayModule", "goal_pose", "nav.mission", "goal_pose")
 ```

@@ -17,7 +17,14 @@ Environment=LINGTU_NAV_PUBLISH_CMD_VEL=1
 Environment=LINGTU_NAV_CHECK_OBSTACLE=1
 Environment=LINGTU_NAV_USE_TRAVERSABILITY_COST=1
 Environment=LINGTU_NAV_TRAVERSABILITY_MAX_AGE_S=0.5
+Environment=LINGTU_NAV_TRAVERSABILITY_HARD_COST=101.0
+Environment=LINGTU_NAV_TRAVERSABILITY_SOFT_COST=40.0
+Environment=LINGTU_NAV_TRAVERSABILITY_WEIGHT=0.01
 Environment=LINGTU_NAV_TERRAIN_MAP_MAX_AGE_S=0.5
+Environment=LINGTU_NAV_VEHICLE_LENGTH_M=1.0
+Environment=LINGTU_NAV_VEHICLE_WIDTH_M=0.6
+Environment=LINGTU_NAV_SENSOR_OFFSET_X_M=0.0
+Environment=LINGTU_NAV_SENSOR_OFFSET_Y_M=0.0
 Environment=LINGTU_NAV_STATUS_FILE=/dev/shm/lingtu/nav_endpoint_status.json
 Environment=LINGTU_CYCLONEDDS_PREFIX=
 ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh; if [ -n "${LINGTU_CYCLONEDDS_PREFIX}" ] && [ -d "${LINGTU_CYCLONEDDS_PREFIX}/lib" ]; then export LD_LIBRARY_PATH="${LINGTU_CYCLONEDDS_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; fi; if [ ! -x "${LINGTU_NAV_DDS_BIN}" ]; then echo "ERROR: native navigation DDS endpoint is missing or not executable: ${LINGTU_NAV_DDS_BIN}" >&2; echo "Build it with: bash scripts/build/build_nav_endpoint.sh" >&2; exit 2; fi; exec "${LINGTU_NAV_DDS_BIN}" --domain-id "${LINGTU_DDS_DOMAIN_ID}" --path-library "${LINGTU_LOCAL_PLANNER_PATHS}" --map "${LINGTU_ACTIVE_OCTOMAP}" --tick-hz "${LINGTU_NAV_DDS_TICK_HZ}" --max-obstacle-points "${LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS}" --publish-cmd-vel "${LINGTU_NAV_PUBLISH_CMD_VEL}" --check-obstacle "${LINGTU_NAV_CHECK_OBSTACLE}" --use-traversability-cost "${LINGTU_NAV_USE_TRAVERSABILITY_COST}" --traversability-max-age-s "${LINGTU_NAV_TRAVERSABILITY_MAX_AGE_S}" --terrain-map-max-age-s "${LINGTU_NAV_TERRAIN_MAP_MAX_AGE_S}" --status-file "${LINGTU_NAV_STATUS_FILE}" --status-s 5'

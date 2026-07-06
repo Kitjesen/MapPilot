@@ -136,7 +136,7 @@ Factories live under `src/runtime/blueprints/stacks/`.
 | Encoder | `clip`, `mobileclip` |
 | LLM | `kimi`, `openai`, `claude`, `qwen`, `mock` |
 | Planner | `octoplanner3d` default; `pct` legacy/manual experiment |
-| PathFollower | `nav_kernel`, `pure_pursuit`, `pid` |
+| PathFollower | `nav_kernel`, `pid` |
 | Exploration | `none`, `tare` |
 
 ## Profiles
@@ -370,11 +370,14 @@ Use `mock` for offline and deterministic framework work.
 | --- | --- | --- | --- |
 | Mapping | `fastlio2` | SLAMModule -> Fast-LIO2 | first visit and map build |
 | Localization | `localizer` | SLAMModule -> Fast-LIO2 + ICP localizer | navigate against a saved map |
-| Bridge | `bridge` | SlamBridgeModule | external ROS 2/systemd SLAM stack |
+| Field navigation (real default) | `bridge` + `localization_adapter="cpp_slam_status"` | `CppSlamStatusAdapterModule` | the real `nav` profile's default against the physical `thunder_field` endpoint; ingests C++ SLAM status/localization over the native endpoint, no ROS 2 dependency |
+| Bridge (explicit ROS 2 compat only) | `bridge` + `localization_adapter="ros2_slam_bridge"` | SlamBridgeModule | only used when a profile explicitly opts into the ROS 2 compatibility bridge |
 | None | `none` | no SLAM module | stub/dev/sim_nav |
 
-The real `nav` profile uses bridge mode because robot-side SLAM services own
-the Livox device. Do not casually switch it back to managed localizer mode.
+The real `nav` profile uses the native `cpp_slam_status` adapter because
+robot-side SLAM services own the Livox device and publish status/localization
+over the field DDS endpoint, not ROS 2. Do not casually switch it back to the
+ROS 2 `SlamBridgeModule` or managed localizer mode.
 
 ## Exploration
 

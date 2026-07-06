@@ -100,18 +100,12 @@ LINGTU_ADAPTER_SAFETY_TOKENS: tuple[str, ...] = (
 )
 
 LINGTU_CMU_STACK_TOKENS: tuple[str, ...] = (
-    "robot=\"sim_endpoint\"",
-    "slam_profile=\"none\"",
-    "CMUUnityEndpointRuntime",
-    "enable_endpoint_waypoint_bridge=False",
-    "enable_nav_out=False",
-    "enable_frontier=args.enable_frontier",
-    "allow_direct_goal_fallback=not args.disable_direct_goal_fallback",
-    "direct_goal_fallback_on_planner_failure=not args.disable_direct_goal_fallback",
-    "exploration_backend=\"none\" if args.enable_frontier else \"tare_external\"",
-    "manage_external_services=False",
-    "run_startup_checks=False",
-    "latch_stop_signal=False",
+    "simulation-only",
+    "--planner",
+    "Refusing to start CMU Unity LingTu stack on default ROS_DOMAIN_ID",
+    "CMU Unity ROS endpoint runtime was removed",
+    "Refusing CMU Unity PCT without a same-source tomogram",
+    "LINGTU_CMU_ALLOW_STATIC_TOMOGRAM",
     "ROS_DOMAIN_ID",
 )
 
@@ -368,9 +362,7 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "exploration_backend_tare_external": (
             cmu_profile.get("exploration_backend") == "tare_external"
         ),
-        "endpoint_waypoint_bridge_disabled": (
-            cmu_profile.get("enable_endpoint_waypoint_bridge") is False
-        ),
+        "planner_octoplanner3d": cmu_profile.get("planner") == "octoplanner3d",
         "nav_out_disabled": (
             cmu_profile.get("enable_nav_out") is False
         ),

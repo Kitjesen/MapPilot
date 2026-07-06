@@ -62,12 +62,14 @@ struct LocalPlannerParams {
   double goalClearRange     = 0.5;
   double goalBehindRange    = 0.8;
   double nearFieldStopDis   = 0.5;
+  double footprintPadding   = 0.1;
   double freezeAng          = 90.0;
   double freezeTime         = 2.0;
   double omniDirGoalThre    = 1.0;
   int    slowPathNumThre    = 5;
   int    slowGroupNumThre   = 1;
   bool   useTraversabilityCost = true;
+  bool   traversabilityNearFieldStop = false;
   double traversabilityHardCost = 90.0;
   double traversabilitySoftCost = 40.0;
   double traversabilityWeight   = 0.01;
@@ -190,7 +192,8 @@ public:
     // Near-field stop check covers explicit obstacle points and native
     // traversability risk cells in front of the body.
     result.nearFieldStop =
-        checkNearFieldStop(obstacle_pts, n_pts) || checkNearFieldTraversability();
+        checkNearFieldStop(obstacle_pts, n_pts) ||
+        (p_.traversabilityNearFieldStop && checkNearFieldTraversability());
 
     // Transform obstacles to body frame and crop
     buildPlannerCloud(obstacle_pts, n_pts);
@@ -450,14 +453,16 @@ private:
 
   bool checkNearFieldStop(const float* pts, int n) {
     if (!p_.checkObstacle) return false;
-    double halfW = p_.vehicleWidth / 2.0 + 0.1;
+    const double halfW = footprintHalfWidth();
+    const double frontEdge = footprintFrontEdge();
     for (int i = 0; i < n; i++) {
       float px = pts[i*4], py = pts[i*4+1], pz = pts[i*4+2], h = pts[i*4+3];
       float dx = px - (float)vx_, dy = py - (float)vy_;
       // To body frame
       float bx = dx * (float)cosYaw_ + dy * (float)sinYaw_;
       float by = -dx * (float)sinYaw_ + dy * (float)cosYaw_;
-      if (bx > 0 && bx < (float)p_.nearFieldStopDis &&
+      if (insideFootprint(bx, by)) continue;
+      if (bx > (float)frontEdge && bx < (float)(frontEdge + p_.nearFieldStopDis) &&
           std::fabs(by) < halfW &&
           (h > (float)p_.obstacleHeightThre || !p_.useTerrainAnalysis)) {
         return true;
@@ -493,10 +498,13 @@ private:
         traversabilityGrid_.empty() || traversabilityResolution_ <= 0.0) {
       return false;
     }
-    double halfW = p_.vehicleWidth / 2.0 + 0.1;
+    const double halfW = footprintHalfWidth();
+    const double frontEdge = footprintFrontEdge();
     double step = std::clamp(
         traversabilityResolution_, 0.05, std::max(0.05, p_.nearFieldStopDis));
-    for (double bx = step * 0.5; bx < p_.nearFieldStopDis; bx += step) {
+    for (double bx = frontEdge + step * 0.5;
+         bx < frontEdge + p_.nearFieldStopDis;
+         bx += step) {
       if (traversabilityRiskAtBody(bx, 0.0) >=
           static_cast<float>(p_.traversabilityHardCost)) {
         return true;
@@ -511,6 +519,23 @@ private:
       }
     }
     return false;
+  }
+
+  double footprintHalfLength() const {
+    return std::max(0.0, p_.vehicleLength * 0.5) + std::max(0.0, p_.footprintPadding);
+  }
+
+  double footprintHalfWidth() const {
+    return std::max(0.0, p_.vehicleWidth * 0.5) + std::max(0.0, p_.footprintPadding);
+  }
+
+  double footprintFrontEdge() const {
+    return footprintHalfLength();
+  }
+
+  bool insideFootprint(float bx, float by) const {
+    return std::fabs(bx) <= static_cast<float>(footprintHalfLength()) &&
+           std::fabs(by) <= static_cast<float>(footprintHalfWidth());
   }
 
   void buildPlannerCloud(const float* pts, int n) {
@@ -531,6 +556,9 @@ private:
       for (int i = 0; i < n; i++) {
         float dx = pts[i*4] - fx, dy = pts[i*4+1] - fy;
         if (dx*dx + dy*dy >= adjRangeSq) continue;
+        float bx = dx * cosY + dy * sinY;
+        float by = -dx * sinY + dy * cosY;
+        if (insideFootprint(bx, by)) continue;
         bpcDx_[kept] = dx;
         bpcDy_[kept] = dy;
         bpcH_[kept] = pts[i*4+3];
@@ -552,6 +580,7 @@ private:
         if (!((dz > minZ && dz < maxZ) || useTerrain)) continue;
         float bx = dx * cosY + dy * sinY;
         float by = -dx * sinY + dy * cosY;
+        if (insideFootprint(bx, by)) continue;
         cloud_.push(bx, by, h);
       }
     }

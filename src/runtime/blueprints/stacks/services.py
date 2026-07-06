@@ -22,7 +22,7 @@ def services(
     bp = Blueprint()
 
     if not enable_navigation:
-        from runtime.blueprints.adapters.navigation_io import (
+        from runtime.adapters.navigation_io import (
             add_navigation_output_adapter,
         )
 

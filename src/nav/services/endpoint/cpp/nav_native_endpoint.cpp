@@ -275,9 +275,8 @@ std::vector<float> cloudToXyzh(
     const float x = readFloat(base + offsets.x);
     const float y = readFloat(base + offsets.y);
     const float z = readFloat(base + offsets.z);
-    const bool has_height = offsets.height >= 0 || offsets.intensity >= 0;
-    const int height_offset = offsets.height >= 0 ? offsets.height : offsets.intensity;
-    const float raw_height = has_height ? readFloat(base + height_offset) : 0.0f;
+    const bool has_height = offsets.height >= 0;
+    const float raw_height = has_height ? readFloat(base + offsets.height) : 0.0f;
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
       continue;
     }
@@ -431,10 +430,17 @@ struct CliConfig {
   double status_s{5.0};
   double traversability_max_age_s{1.5};
   double terrain_map_max_age_s{0.5};
+  double traversability_hard_cost{101.0};
+  double traversability_soft_cost{40.0};
+  double traversability_weight{0.01};
   std::size_t max_obstacle_points{20000};
   bool publish_cmd_vel{true};
   bool check_obstacle{true};
   bool use_traversability_cost{false};
+  double vehicle_length_m{1.0};
+  double vehicle_width_m{0.6};
+  double sensor_offset_x_m{0.0};
+  double sensor_offset_y_m{0.0};
   std::string path_library_dir;
   std::string map_path;
   std::string status_file;
@@ -522,6 +528,37 @@ CliConfig parseArgs(int argc, char** argv) {
   if (!terrain_map_max_age.empty()) {
     cfg.terrain_map_max_age_s = std::stod(terrain_map_max_age);
   }
+  const std::string traversability_hard_cost =
+      envOrEmpty("LINGTU_NAV_TRAVERSABILITY_HARD_COST");
+  if (!traversability_hard_cost.empty()) {
+    cfg.traversability_hard_cost = std::stod(traversability_hard_cost);
+  }
+  const std::string traversability_soft_cost =
+      envOrEmpty("LINGTU_NAV_TRAVERSABILITY_SOFT_COST");
+  if (!traversability_soft_cost.empty()) {
+    cfg.traversability_soft_cost = std::stod(traversability_soft_cost);
+  }
+  const std::string traversability_weight =
+      envOrEmpty("LINGTU_NAV_TRAVERSABILITY_WEIGHT");
+  if (!traversability_weight.empty()) {
+    cfg.traversability_weight = std::stod(traversability_weight);
+  }
+  const std::string vehicle_length = envOrEmpty("LINGTU_NAV_VEHICLE_LENGTH_M");
+  if (!vehicle_length.empty()) {
+    cfg.vehicle_length_m = std::stod(vehicle_length);
+  }
+  const std::string vehicle_width = envOrEmpty("LINGTU_NAV_VEHICLE_WIDTH_M");
+  if (!vehicle_width.empty()) {
+    cfg.vehicle_width_m = std::stod(vehicle_width);
+  }
+  const std::string sensor_offset_x = envOrEmpty("LINGTU_NAV_SENSOR_OFFSET_X_M");
+  if (!sensor_offset_x.empty()) {
+    cfg.sensor_offset_x_m = std::stod(sensor_offset_x);
+  }
+  const std::string sensor_offset_y = envOrEmpty("LINGTU_NAV_SENSOR_OFFSET_Y_M");
+  if (!sensor_offset_y.empty()) {
+    cfg.sensor_offset_y_m = std::stod(sensor_offset_y);
+  }
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     auto next = [&]() -> std::string {
@@ -552,6 +589,20 @@ CliConfig parseArgs(int argc, char** argv) {
       cfg.traversability_max_age_s = std::stod(next());
     } else if (arg == "--terrain-map-max-age-s") {
       cfg.terrain_map_max_age_s = std::stod(next());
+    } else if (arg == "--traversability-hard-cost") {
+      cfg.traversability_hard_cost = std::stod(next());
+    } else if (arg == "--traversability-soft-cost") {
+      cfg.traversability_soft_cost = std::stod(next());
+    } else if (arg == "--traversability-weight") {
+      cfg.traversability_weight = std::stod(next());
+    } else if (arg == "--vehicle-length-m") {
+      cfg.vehicle_length_m = std::stod(next());
+    } else if (arg == "--vehicle-width-m") {
+      cfg.vehicle_width_m = std::stod(next());
+    } else if (arg == "--sensor-offset-x-m") {
+      cfg.sensor_offset_x_m = std::stod(next());
+    } else if (arg == "--sensor-offset-y-m") {
+      cfg.sensor_offset_y_m = std::stod(next());
     } else if (arg == "--status-file") {
       cfg.status_file = next();
     } else if (arg == "--help" || arg == "-h") {
@@ -561,7 +612,10 @@ CliConfig parseArgs(int argc, char** argv) {
           "[--max-obstacle-points N] [--publish-cmd-vel true|false] "
           "[--check-obstacle true|false] "
           "[--use-traversability-cost true|false] [--traversability-max-age-s S] "
-          "[--terrain-map-max-age-s S] [--status-file PATH]");
+          "[--terrain-map-max-age-s S] [--traversability-hard-cost C] "
+          "[--traversability-soft-cost C] [--traversability-weight W] "
+          "[--vehicle-length-m M] [--vehicle-width-m M] [--sensor-offset-x-m M] "
+          "[--sensor-offset-y-m M] [--status-file PATH]");
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -573,6 +627,11 @@ CliConfig parseArgs(int argc, char** argv) {
   cfg.tick_hz = std::max(1.0, cfg.tick_hz);
   cfg.traversability_max_age_s = std::max(0.0, cfg.traversability_max_age_s);
   cfg.terrain_map_max_age_s = std::max(0.0, cfg.terrain_map_max_age_s);
+  cfg.traversability_hard_cost = std::max(0.0, cfg.traversability_hard_cost);
+  cfg.traversability_soft_cost = std::max(0.0, cfg.traversability_soft_cost);
+  cfg.traversability_weight = std::max(0.0, cfg.traversability_weight);
+  cfg.vehicle_length_m = std::max(0.1, cfg.vehicle_length_m);
+  cfg.vehicle_width_m = std::max(0.1, cfg.vehicle_width_m);
   return cfg;
 }
 
@@ -837,7 +896,14 @@ int main(int argc, char** argv) {
     nav_config.max_speed = 0.4;
     nav_config.local_planner.autonomySpeed = 0.4;
     nav_config.local_planner.maxSpeed = 1.0;
+    nav_config.local_planner.vehicleLength = cfg.vehicle_length_m;
+    nav_config.local_planner.vehicleWidth = cfg.vehicle_width_m;
+    nav_config.local_planner.sensorOffsetX = cfg.sensor_offset_x_m;
+    nav_config.local_planner.sensorOffsetY = cfg.sensor_offset_y_m;
     nav_config.local_planner.useTraversabilityCost = cfg.use_traversability_cost;
+    nav_config.local_planner.traversabilityHardCost = cfg.traversability_hard_cost;
+    nav_config.local_planner.traversabilitySoftCost = cfg.traversability_soft_cost;
+    nav_config.local_planner.traversabilityWeight = cfg.traversability_weight;
     nav_config.path_follower.maxSpeed = 0.4;
     nav_config.path_follower.maxAccel = 1.0;
 

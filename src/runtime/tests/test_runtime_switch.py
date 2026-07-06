@@ -521,7 +521,7 @@ def test_switch_guard_rejects_runtime_env_mismatches():
     cases = (
         ("LINGTU_ENDPOINT", "mujoco_live", "env endpoint does not match run spec"),
         ("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live", "env data source does not match run spec"),
-        ("LINGTU_MODULE_TRANSPORT", "lcm", "env module transport does not match run spec"),
+        ("LINGTU_MODULE_TRANSPORT", "zmq", "env module transport does not match run spec"),
         ("LINGTU_ENDPOINT_TRANSPORT", "local", "env endpoint transport does not match run spec"),
         ("LINGTU_RUNTIME_CONTRACT", "mujoco_fastlio2_live", "env runtime contract does not match run spec"),
         ("LINGTU_COMMAND_SINK", "mujoco_velocity_adapter", "env command sink does not match run spec"),

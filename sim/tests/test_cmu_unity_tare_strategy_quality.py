@@ -80,7 +80,7 @@ def _complete_runtime_metrics():
             "max_norm": 0.2,
         },
         "odometry": {
-            "/nav/odometry": {"samples": 5, "delta_m": 0.12},
+            "/slam/odometry": {"samples": 5, "delta_m": 0.12},
         },
         "cloud_coverage": {
             "best_topic": "/nav/terrain_map_ext",
@@ -88,7 +88,7 @@ def _complete_runtime_metrics():
             "best_area_delta_m2": 0.625,
             "topics": {
                 "/registered_scan": {"samples": 2, "area_delta_m2": 0.625},
-                "/nav/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
+                "/slam/registered_cloud": {"samples": 2, "area_delta_m2": 0.625},
                 "/nav/terrain_map_ext": {"samples": 2, "area_delta_m2": 0.625},
             },
         },

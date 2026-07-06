@@ -84,7 +84,7 @@ def test_cmu_unity_sim_gate_accepts_complete_preflight_workspace(tmp_path: Path)
     assert checks["lingtu_cmu_stack_simulation_contract"] is True
     assert (
         report["lingtu_contract"]["remaps"]["/state_estimation_at_scan"]
-        == "/nav/odometry"
+        == "/slam/odometry"
     )
     assert report["lingtu_contract"]["remaps"] == TARE_REMAPS
     assert (
@@ -112,47 +112,13 @@ def test_cmu_unity_lingtu_stack_script_is_simulation_only():
     script = cmu_unity_sim_gate.ROOT / "sim/scripts/cmu_unity_lingtu_stack.py"
     text = script.read_text(encoding="utf-8")
 
-    assert "robot=\"sim_endpoint\"" in text
-    assert "slam_profile=\"none\"" in text
-    assert "CMUUnityEndpointRuntime" in text
-    assert "enable_frontier=args.enable_frontier" in text
-    assert "--disable-direct-goal-fallback" in text
-    assert "LINGTU_CMU_ALLOW_STATIC_TOMOGRAM" in text
+    assert "simulation-only" in text.lower()
+    assert "--planner" in text
+    assert "Refusing to start CMU Unity LingTu stack on default ROS_DOMAIN_ID" in text
+    assert "CMU Unity ROS endpoint runtime was removed" in text
     assert "Refusing CMU Unity PCT without a same-source tomogram" in text
     assert "Refusing CMU Unity PCT with the legacy building2_9 tomogram" in text
-    assert "allow_direct_goal_fallback=not args.disable_direct_goal_fallback" in text
-    assert "LINGTU_CMU_WAYPOINT_THRESHOLD" in text
-    assert "LINGTU_CMU_SAFE_GOAL_TOLERANCE" in text
-    assert 'default=_env_float("LINGTU_CMU_WAYPOINT_THRESHOLD", 0.45)' in text
-    assert 'default=_env_float("LINGTU_CMU_FINAL_WAYPOINT_THRESHOLD", 0.35)' in text
-    assert "waypoint_threshold=args.waypoint_threshold" in text
-    assert "safe_goal_tolerance=args.safe_goal_tolerance" in text
-    assert "LINGTU_CMU_ACCEPT_PARTIAL_GOAL_PROGRESS" in text
-    assert "accept_partial_goal_progress=" in text
-    assert "LINGTU_CMU_PREFER_TARE_PATH_STRATEGY" in text
-    assert 'default=not _env_bool("LINGTU_CMU_PREFER_TARE_PATH_STRATEGY", True)' in text
-    assert "LINGTU_CMU_TARE_PATH_START_TOLERANCE" in text
-    assert "prefer_path_strategy=" in text
-    assert "path_start_tolerance_m=" in text
-    assert "path_goal_min_distance_m=" in text
-    assert "external_strategy_start_tolerance_m=" in text
-    assert "local_planner_allow_direct_track_fallback=True" in text
-    assert "local_planner_ignore_near_field_stop=True" in text
-    assert "local_planner_direct_track_fallback_min_distance_m=0.3" in text
-    assert "plan_safety_policy=args.plan_safety_policy" in text
-    assert "stuck_timeout=args.stuck_timeout" in text
-    assert "path_follower_goal_tolerance=args.path_follower_goal_tolerance" in text
-    assert (
-        "direct_goal_fallback_on_planner_failure=not args.disable_direct_goal_fallback"
-        in text
-    )
-    assert "enable_endpoint_waypoint_bridge=False" in text
-    assert "enable_nav_out=False" in text
-    assert "enable_ros2_path_bridge=True" not in text
-    assert "exploration_backend=\"none\" if args.enable_frontier else \"tare_external\"" in text
-    assert "manage_external_services=False" in text
-    assert "run_startup_checks=False" in text
-    assert "latch_stop_signal=False" in text
+    assert "LINGTU_CMU_ALLOW_STATIC_TOMOGRAM" in text
     assert "ROS_DOMAIN_ID" in text
     assert "thunder" not in text.lower()
 
@@ -191,7 +157,7 @@ def test_cmu_unity_runtime_wrapper_can_open_cmu_operator_rviz():
     assert "prepare_tare_scenario" in text
     assert "capture_cmu_unity_tomogram" in text
     assert "cmu_unity_tomogram_capture.py" in text
-    assert "/nav/map_cloud" in text
+    assert "/slam/map_cloud" in text
     assert "/nav/terrain_map_ext" in text
     assert "LINGTU_CMU_TOMOGRAM_FLAT_DEFAULT_FREE" in text
     assert "LINGTU_CMU_TOMOGRAM_CAPTURE_RETRIES" in text
@@ -364,7 +330,7 @@ def test_cmu_tomogram_capture_uses_sensor_qos_for_pointclouds():
 
 def test_cmu_tomogram_capture_defaults_to_lingtu_canonical_map_topics():
     assert cmu_unity_tomogram_capture.DEFAULT_TOPICS == (
-        "/nav/map_cloud",
+        "/slam/map_cloud",
         "/nav/terrain_map_ext",
     )
 

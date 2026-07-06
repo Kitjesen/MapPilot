@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from runtime.adapters.dds.endpoint_service import DDSEndpointService
+from runtime.endpoints.dds.endpoint_service import DDSEndpointService
 from runtime.msgs.geometry import Pose, Twist, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.runtime_interface import TOPICS

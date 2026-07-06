@@ -23,9 +23,9 @@ def test_driver_stack_keeps_runtime_compat_resolution_in_adapter():
     driver_stack_source = Path("src/runtime/blueprints/stacks/driver.py").read_text(
         encoding="utf-8"
     )
-    driver_runtime_source = Path(
-        "src/runtime/blueprints/adapters/driver_runtime.py"
-    ).read_text(encoding="utf-8")
+    driver_runtime_source = Path("src/runtime/adapters/driver_runtime.py").read_text(
+        encoding="utf-8"
+    )
 
     removed_driver_adapter = "drivers" + ".adapters"
 
@@ -700,7 +700,7 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
 
 
 def test_maps_stack_does_not_default_map_output_to_ros2():
-    from runtime.blueprints.adapters.mapping_slam import map_output_adapter_module
+    from runtime.adapters.mapping_slam import map_output_adapter_module
     from runtime.blueprints.stacks.maps import maps
 
     saved = snapshot()

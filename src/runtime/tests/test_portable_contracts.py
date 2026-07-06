@@ -34,7 +34,6 @@ FORBIDDEN_IMPORT_ROOTS = {
     "chromadb",
     "brainstem_api",
     "grpc",
-    "lcm",
     "open3d",
     "gtsam",
     "rerun",

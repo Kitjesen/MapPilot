@@ -169,6 +169,72 @@ saved-map quality gate also failed with aligned near ratio `45.73%`,
 far-ghost ratio `40.78%`, median nearest obstacle distance `0.463 m`, and p90
 distance `1.262 m`.
 
+## Continuous Mapping Quality Gate (3-5 min)
+
+Short endpoint motion gates are necessary but not sufficient. Use the continuous
+gate when claiming "sim radar mapping is stable":
+
+```bash
+export PYTHONPATH="$PWD/src:$PWD"
+
+python3 sim/scripts/mujoco/continuous_mapping_quality_gate.py \
+  --world industrial_park \
+  --duration 180 \
+  --domain-id 231 \
+  --drive-profile box_explore \
+  --run-dir artifacts/mujoco_continuous_mapping_gate_<timestamp>
+```
+
+The gate orchestrates one isolated native DDS session and fails unless all of
+the following pass:
+
+| Group | What it checks |
+| --- | --- |
+| Bridge | MuJoCo policy drive publishes `/imu/raw` + `/lidar/raw_frame`; native SLAM outputs exist at end |
+| Continuity | Periodic `status.json` samples stay `TRACKING`; zero dropped LiDAR/IMU; zero rollbacks; no scan stall; bounded odom/velocity |
+| Convergence | `sim_motion.jsonl` vs saved `trajectory.txt`: windowed path-length ratios, cumulative path ratio, rigid-aligned ATE |
+| Map quality | Native `save-map` PCD passes `saved_map_quality_gate.py` aligned obstacle overlap |
+
+Artifacts written under `--run-dir`:
+
+```text
+summary.json
+bridge_report.json
+sim_motion.jsonl
+slam_status_samples.jsonl
+saved_map/map.pcd
+saved_map/trajectory.txt
+saved_map_quality.json
+scale_convergence.png
+trajectory_overlay.png
+```
+
+Recommended acceptance thresholds (defaults in the gate):
+
+- Window path ratio `[0.5, 1.8]` every 30 s while driving
+- Cumulative path ratio `[0.7, 1.4]` over the whole drive phase
+- ATE RMSE `< 0.6 m`, ATE max `< 1.2 m` after 2D rigid alignment
+- Map quality aligned near ratio `>= 80%`, far ghost ratio `<= 15%`
+
+Do not use endpoint-only `motion.slam_to_sim_xy_ratio` from a 30 s run as
+long-map closure evidence. The 240 s red run passed short-window checks in
+isolation but failed endpoint displacement, yaw drift, and map ghosting together.
+
+Sunrise remote runner (from dev machine on the same LAN):
+
+```bash
+python sim/scripts/run_sunrise_continuous_mapping_gate.py \
+  --host 192.168.66.13 \
+  --duration 180 \
+  --domain-id 231
+```
+
+Field-run record with the first 180 s verdict matrix:
+[2026-07-06-mujoco-continuous-mapping-gate.md](./field-runs/2026-07-06-mujoco-continuous-mapping-gate.md).
+
+Keep `--domain-id` in **`200–232`**. Domain **234** fails CycloneDDS startup on
+sunrise (multicast port out of range).
+
 Interpretation of the long run: the raw LiDAR/IMU transport and short local map
 path are connected, but complete long-trajectory map acceptance is not closed
 yet. The current native DDS save path accumulates Fast-LIO odometry without

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from runtime.adapters.lcm.endpoint_service import LCMEndpointEvent
-from runtime.adapters.lcm.sources.brainstem import ThunderBrainstemSource, create
+from runtime.adapters.endpoint_sources.brainstem import ThunderBrainstemSource, create
+from runtime.adapters.endpoint_sources.types import EndpointEvent
 from runtime.msgs.geometry import Twist, Vector3
 from runtime.runtime_interface import TOPICS
 
@@ -27,7 +27,7 @@ def test_brainstem_source_normalizes_cmd_vel_for_walk() -> None:
         max_angular_speed=2.0,
         require_sdk=False,
     )
-    event = LCMEndpointEvent(
+    event = EndpointEvent(
         topic=TOPICS.cmd_vel,
         channel="LINGTU_NAV_CMD_VEL",
         schema="lingtu.geometry.twist.v1",

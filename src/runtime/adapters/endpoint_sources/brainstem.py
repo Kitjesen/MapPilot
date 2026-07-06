@@ -1,4 +1,4 @@
-"""Brainstem command sink for the Thunder field LCM endpoint."""
+"""Brainstem command sink for the Thunder field endpoint."""
 
 from __future__ import annotations
 
@@ -14,9 +14,8 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
 from runtime.msgs.geometry import Twist
+from runtime.adapters.endpoint_sources.types import EndpointEvent, EndpointService
 from runtime.runtime_interface import TOPICS
-
-from ..endpoint_service import LCMEndpointEvent, LCMEndpointService
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ class ThunderBrainstemSource:
         self._safe_disable = bool(safe_disable)
         self._require_sdk = bool(require_sdk)
 
-        self._service: LCMEndpointService | None = None
+        self._service: EndpointService | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -84,7 +83,7 @@ class ThunderBrainstemSource:
         self._sent: Counter[str] = Counter()
         self._errors: Counter[str] = Counter()
 
-    def start(self, service: LCMEndpointService) -> None:
+    def start(self, service: EndpointService) -> None:
         """Attach to the endpoint service and start the Brainstem connection."""
 
         if self._started:
@@ -120,8 +119,8 @@ class ThunderBrainstemSource:
         self._connected = False
         self._started = False
 
-    def on_lingtu_message(self, event: LCMEndpointEvent) -> None:
-        """Consume one LingTu-to-endpoint event from the LCM endpoint service."""
+    def on_lingtu_message(self, event: EndpointEvent) -> None:
+        """Consume one LingTu-to-endpoint event from the endpoint service."""
 
         self._received[event.topic] += 1
         self._last_receive_ts = event.ts

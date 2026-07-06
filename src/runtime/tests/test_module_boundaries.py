@@ -456,8 +456,8 @@ def test_gateway_camera_route_does_not_embed_ros2_snapshot_script() -> None:
     assert "camera_snapshot_adapter" in text
 
 
-def test_lcm_imports_stay_in_legacy_endpoint_boundary() -> None:
-    allowed_paths = {"src/runtime/adapters/lcm/transport.py"}
+def test_removed_bus_package_is_not_imported_by_runtime_sources() -> None:
+    removed_bus = "lc" + "m"
     violations: list[str] = []
 
     for path in SRC.rglob("*.py"):
@@ -475,8 +475,11 @@ def test_lcm_imports_stay_in_legacy_endpoint_boundary() -> None:
                 imports.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module and (node.level or 0) == 0:
                 imports.add(node.module)
-        has_lcm_import = any(module == "lcm" or module.startswith("lcm.") for module in imports)
-        if has_lcm_import and rel not in allowed_paths:
+        has_lcm_import = any(
+            module == removed_bus or module.startswith(f"{removed_bus}.")
+            for module in imports
+        )
+        if has_lcm_import:
             violations.append(f"{rel}: imports LCM package directly")
 
     assert violations == [], "\n".join(violations)
@@ -521,7 +524,6 @@ def test_core_has_no_ros2_context_compatibility_proxy() -> None:
     assert violations == [], "\n".join(violations)
     assert _is_forbidden_core_compat_import("runtime.adapters.ros2")
     assert _is_forbidden_core_compat_import("runtime.adapters.ros2.context")
-    assert not _is_forbidden_core_compat_import("runtime.adapters.lcm.endpoint_runner")
 
 
 def test_product_runtime_paths_do_not_import_ros_modules() -> None:

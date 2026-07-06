@@ -21,7 +21,6 @@ STALE_RUNTIME_PATHS = (
     "src/runtime/runtime_evidence.py",
     "src/runtime/runtime_validation_gates.py",
     "src/runtime/transport/dual.py",
-    "src/runtime/transport/lcm.py",
     "src/nav/services/plan/global_planner/direct.py",
     "src/nav/services/plan/global_planner/algorithm/direct_path.py",
 )

@@ -35,6 +35,14 @@ from typing import TYPE_CHECKING, Any, is_typeddict
 from .module import Module
 from .stream import In, Out
 from .transport.local import LocalTransport, Transport
+from .wiring import (
+    WireSpec as _WireSpec,
+    default_wire_topic,
+    explicit_wire_topic,
+    resolve_wire_delivery,
+    wire_delivery_cache_key,
+    wire_delivery_name,
+)
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -73,28 +81,6 @@ class _ModuleEntry:
         if runtime_id:
             return str(runtime_id)
         return self.module_cls.__name__
-
-
-# ---------------------------------------------------------------------------
-# _WireSpec
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class _WireSpec:
-    """One Out->In connection specification.
-
-    transport: None  -direct callback (zero-copy, same thread, default)
-               "dds" -CycloneDDS (cross-process, ~1 ms)
-               "shm" -shared memory (same machine, high-bandwidth, ~50 us)
-               Transport instance -custom backend
-    """
-
-    out_module: str
-    out_port: str
-    in_module: str
-    in_port: str
-    transport: Any = None
-    topic: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +148,7 @@ class Blueprint:
         in_module: str,
         in_port: str,
         transport: Any = None,
+        delivery: Any = None,
         topic: str | None = None,
     ) -> Blueprint:
         """Connect an Out port to an In port.
@@ -171,13 +158,25 @@ class Blueprint:
             out_port:   Source port name.
             in_module:  Destination module name.
             in_port:    Destination port name.
-            transport:  Delivery strategy (None = direct callback).
+            transport:  Backward-compatible alias for delivery.
+            delivery:   Per-wire delivery mode (None/callback, local, dds, shm,
+                        or a Transport instance).
             topic:      Optional stable transport topic contract.
 
         Returns:
             self
         """
-        self._wires.append(_WireSpec(out_module, out_port, in_module, in_port, transport, topic))
+        self._wires.append(
+            _WireSpec(
+                out_module,
+                out_port,
+                in_module,
+                in_port,
+                transport=transport,
+                topic=topic,
+                delivery=delivery,
+            )
+        )
         return self
 
     def global_config(self, n_workers: int = 0, **kwargs: Any) -> Blueprint:
@@ -232,8 +231,15 @@ class Blueprint:
         for ent in self._entries:
             ent.alias = pfx + ent.name
         self._wires = [
-            _WireSpec(pfx + w.out_module, w.out_port,
-                      pfx + w.in_module, w.in_port, w.transport, w.topic)
+            _WireSpec(
+                pfx + w.out_module,
+                w.out_port,
+                pfx + w.in_module,
+                w.in_port,
+                transport=w.transport,
+                topic=w.topic,
+                delivery=w.delivery,
+            )
             for w in self._wires
         ]
         if self._swap_config is not None:
@@ -545,24 +551,13 @@ class Blueprint:
 # ---------------------------------------------------------------------------
 
 def _resolve_transport(spec: Any) -> Transport | None:
-    """Resolve a transport spec string or instance to a Transport."""
-    if spec is None:
-        return None
-    if isinstance(spec, str):
-        if spec in {"dds", "shm", "lcm"}:
-            from .transport.factory import create_transport_adapter
-            return create_transport_adapter(spec)
-        if spec == "local":
-            return LocalTransport()
-        raise ValueError(f"Unknown transport spec: '{spec}'")
-    return spec  # already a Transport instance
+    """Compatibility wrapper for wire delivery resolution."""
+    return resolve_wire_delivery(spec)
 
 
 def _transport_cache_key(spec: Any) -> tuple[str, str]:
-    """Return a stable per-build key for a transport specification."""
-    if isinstance(spec, str):
-        return ("name", spec)
-    return ("object", str(id(spec)))
+    """Return a stable per-build key for a delivery specification."""
+    return wire_delivery_cache_key(spec)
 
 
 def _resolve_transport_cached(
@@ -584,29 +579,16 @@ def _resolve_transport_cached(
 
 
 def _transport_name(transport: Any) -> str:
-    """Return a readable transport name for diagnostics."""
-    if transport is None:
-        return "callback"
-    if isinstance(transport, str):
-        return transport
-    name = getattr(transport, "backend_name", None) or getattr(transport, "name", None)
-    return str(name or type(transport).__name__)
+    """Return a readable delivery/backend name for diagnostics."""
+    return wire_delivery_name(transport)
 
 
 def _explicit_topic(spec: _WireSpec) -> str | None:
-    if spec.topic is None:
-        return None
-    topic = str(spec.topic).strip()
-    if not topic:
-        raise ValueError(
-            "wire(): topic cannot be empty for "
-            f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}"
-        )
-    return topic
+    return explicit_wire_topic(spec)
 
 
 def _transport_topic(spec: _WireSpec) -> str:
-    return _explicit_topic(spec) or f"/{spec.out_module}/{spec.out_port}"
+    return default_wire_topic(spec)
 
 
 def _record_connection_metadata(
@@ -670,7 +652,8 @@ def _do_wire(
         )
 
     key = (spec.out_module, spec.out_port, spec.in_module, spec.in_port)
-    transport = _resolve_transport_cached(spec.transport, transport_cache)
+    delivery_spec = spec.delivery_spec
+    transport = _resolve_transport_cached(delivery_spec, transport_cache)
     explicit_topic = _explicit_topic(spec)
     if transport is None:
         out._add_callback(inp._deliver)

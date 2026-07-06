@@ -35,21 +35,21 @@ def test_runtime_binding_policy_prefers_operator_transport_over_endpoint_default
         "_module_transport": "local",
         "module_transport": "shm",
         "_endpoint_transport": "local",
-        "endpoint_transport": "lcm",
+        "endpoint_transport": "dds",
     }
 
     assert module_transport_for_config(config) == "shm"
-    assert endpoint_transport_for_config(config) == "lcm"
+    assert endpoint_transport_for_config(config) == "dds"
 
 
-def test_runtime_binding_policy_keeps_lcm_nav_disabled() -> None:
+def test_runtime_binding_policy_does_not_infer_removed_lcm_adapter() -> None:
     config = {
-        "_endpoint_transport": "lcm",
-        "_endpoint_contract": "thunder_field_lcm_v1",
+        "_endpoint_transport": "zmq",
+        "_endpoint_contract": "thunder_field_zmq_v1",
     }
 
-    assert endpoint_contract_for_config(config) == "thunder_field_lcm_v1"
-    assert localization_adapter_for_config(config) == "lcm_endpoint"
+    assert endpoint_contract_for_config(config) == "thunder_field_zmq_v1"
+    assert localization_adapter_for_config(config) == ""
 
 
 def test_runtime_binding_policy_derives_dds_localization_from_endpoint_transport() -> None:
@@ -376,7 +376,7 @@ def test_ros2_runtime_binding_violations_reports_ros2_rerun_bridge() -> None:
     ) == ["enable_ros2_rerun_bridge=true enables a ROS2 Rerun bridge"]
 
 
-def test_ros2_runtime_binding_violations_reports_endpoint_enablement_without_lcm() -> None:
+def test_ros2_runtime_binding_violations_reports_endpoint_enablement_without_adapter() -> None:
     assert ros2_runtime_binding_violations(
         {
             "slam_profile": "none",
@@ -412,7 +412,7 @@ def test_map_output_can_use_typed_dds_adapter() -> None:
     )
 
 
-def test_ros2_runtime_binding_violations_reports_nav_io_enablement_without_lcm() -> None:
+def test_ros2_runtime_binding_violations_reports_nav_io_enablement_without_adapter() -> None:
     assert ros2_runtime_binding_violations(
         {
             "slam_profile": "none",
@@ -426,14 +426,14 @@ def test_ros2_runtime_binding_violations_reports_nav_io_enablement_without_lcm()
     ]
 
 
-def test_ros2_runtime_binding_violations_rejects_lcm_nav_adapters() -> None:
+def test_ros2_runtime_binding_violations_rejects_removed_endpoint_nav_adapters() -> None:
     assert ros2_runtime_binding_violations(
         {
             "slam_profile": "bridge",
-            "_endpoint_transport": "lcm",
-            "_endpoint_contract": "thunder_field_lcm_v1",
-            "endpoint_egress_adapter": "lcm_endpoint",
-            "endpoint_ingress_adapter": "lcm_endpoint",
+            "_endpoint_transport": "zmq",
+            "_endpoint_contract": "thunder_field_zmq_v1",
+            "endpoint_egress_adapter": "removed_endpoint",
+            "endpoint_ingress_adapter": "removed_endpoint",
             "enable_nav_in": True,
             "enable_nav_out": True,
         },
@@ -443,9 +443,9 @@ def test_ros2_runtime_binding_violations_rejects_lcm_nav_adapters() -> None:
         "enable_nav_out=true without explicit non-ROS navigation output adapter has no safe default",
     ]
 
-def test_runtime_binding_policy_is_the_blueprint_transport_seam() -> None:
+def test_runtime_binding_policy_is_the_blueprint_delivery_seam() -> None:
     checked_files = [
-        ROOT / "src/runtime/blueprints/adapters/navigation_io.py",
+        ROOT / "src/runtime/adapters/navigation_io.py",
         ROOT / "src/runtime/introspection/profile_graph.py",
         ROOT / "src/runtime/blueprints/stacks/navigation_io.py",
         ROOT / "src/runtime/blueprints/stacks/composition.py",

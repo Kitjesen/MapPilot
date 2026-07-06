@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from runtime.adapters.lcm.contracts import THUNDER_FIELD_LCM_CONTRACT_NAME, endpoint_contract
-from runtime.adapters.lcm.endpoint_codec import dumps_endpoint_message
-from runtime.adapters.lcm.endpoint_runner import _load_source
-from runtime.adapters.lcm.sources.jsonl import JsonlEndpointSource, create
+from runtime.endpoints.dds.contracts import THUNDER_FIELD_DDS_CONTRACT_NAME, endpoint_contract
+from runtime.endpoints.dds.endpoint_runner import _load_source
+from runtime.adapters.endpoint_sources.endpoint_codec import dumps_endpoint_message
+from runtime.adapters.endpoint_sources.jsonl import JsonlEndpointSource, create
 from runtime.msgs.geometry import Pose, Twist
 from runtime.msgs.nav import Odometry
 from runtime.msgs.sensor import Imu, PointCloud2
@@ -16,7 +16,7 @@ from runtime.runtime_interface import TOPICS
 
 class _FakeEndpointService:
     def __init__(self) -> None:
-        self.contract = endpoint_contract(THUNDER_FIELD_LCM_CONTRACT_NAME)
+        self.contract = endpoint_contract(THUNDER_FIELD_DDS_CONTRACT_NAME)
         self.published: list[tuple[str, Any]] = []
 
     def publish_to_lingtu(self, topic: str, msg: Any) -> None:
@@ -103,7 +103,7 @@ def test_jsonl_source_publishes_sensor_and_localization_records(tmp_path) -> Non
 
 def test_jsonl_source_accepts_endpoint_envelopes(tmp_path) -> None:
     replay = tmp_path / "endpoint-envelope.jsonl"
-    contract = endpoint_contract(THUNDER_FIELD_LCM_CONTRACT_NAME)
+    contract = endpoint_contract(THUNDER_FIELD_DDS_CONTRACT_NAME)
     binding = contract.binding_for_topic(TOPICS.odometry)
     odometry = Odometry(
         pose=Pose(3.0, 4.0, 0.0),

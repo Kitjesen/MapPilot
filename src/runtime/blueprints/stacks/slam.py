@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from runtime.blueprint import Blueprint
-from runtime.blueprints.adapters.mapping_slam import localization_adapter_module
+from runtime.adapters.mapping_slam import localization_adapter_module
 from runtime.blueprints.stacks._registry import optional_stack_module
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def _uses_compat_adapter(adapter_name: str | None) -> bool:
 def slam_adapter_module_name(adapter_name: str | None) -> str:
     """Return the graph alias for an explicit localization adapter.
 
-    Only the ROS2 adapter is a bridge. DDS/LCM endpoints are native transport
+    Only the ROS2 adapter is a bridge. DDS endpoints are native transport
     adapters and should not appear in product graphs as ``SlamBridgeModule``.
     """
 

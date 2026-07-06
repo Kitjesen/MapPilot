@@ -129,7 +129,6 @@ REQUIRED_PACKAGE_OMIT_PATHS = (
     "src/runtime/same_source_map_artifacts.py",
     "src/runtime/transport/dds.py",
     "src/runtime/transport/shm.py",
-    "src/runtime/adapters/lcm/transport.py",
     "src/runtime/adapters/native/map_save.py",
     "src/runtime/adapters/native/relocalization.py",
     "src/drivers/real/thunder/blueprints.py",

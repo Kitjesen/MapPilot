@@ -94,7 +94,7 @@ High layers �?low layers only. L5→L2 (waypoint→PathFollower) is command di
 | Encoder | `clip` (ViT-B/32), `mobileclip` (edge) |
 | LLM | `kimi`, `openai`, `claude`, `qwen`, `mock` |
 | Planner | `astar` (pure Python), `pct` (C++ ele_planner.so) |
-| PathFollower | `nav_kernel` (C++ nanobind), `pure_pursuit`, `pid` |
+| PathFollower | `nav_kernel` (C++ nanobind), `pid` |
 
 All backends registered via `@register("category", "name")` in `runtime.registry`. Zero if/else.
 
@@ -325,11 +325,12 @@ export DASHSCOPE_API_KEY="sk-..."     # Qwen (China fallback)
 |------|-------------|---------|----------|
 | Mapping | `fastlio2` | SLAMModule →C++ Fast-LIO2 | First visit, build map |
 | Localization | `localizer` | SLAMModule →Fast-LIO2 + ICP Localizer | Navigate with pre-built map |
-| Bridge | `bridge` | SlamBridgeModule →ROS2 subscriber | External SLAM (systemd) |
+| Field navigation (real default) | `bridge` + `localization_adapter="cpp_slam_status"` | `CppSlamStatusAdapterModule` | The real `nav` profile's default against the physical `thunder_field` endpoint. Ingests C++ SLAM status/localization over the native endpoint, no ROS2 dependency. |
+| Bridge (explicit ROS2 compat only) | `bridge` + `localization_adapter="ros2_slam_bridge"` | SlamBridgeModule →ROS2 subscriber | Only used when a profile explicitly opts into the ROS2 compatibility bridge. |
 | None | `none` | —| stub/dev mode |
 
 Localizer requires Fast-LIO2 companion (provides `/cloud_registered` + `/Odometry`).
-SLAM odometry is explicitly wired to NavigationModule (priority over driver dead-reckoning).
+SLAM odometry is explicitly wired to Navigation (priority over driver dead-reckoning).
 
 ## REPL Commands
 

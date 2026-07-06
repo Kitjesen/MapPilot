@@ -62,7 +62,7 @@ def _pytest_ignore_collect_impl(candidate):
         return False
     try:
         source = candidate.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return False
     return "import numpy as np" in source or "from numpy" in source
 

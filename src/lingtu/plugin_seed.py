@@ -99,9 +99,6 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "localization.ntrip_client_module",
         "runtime.adapters.native.localization_adapter",
     ),
-    "slam_lcm": (
-        "runtime.adapters.lcm.localization_adapter",
-    ),
     "sim_lidar": (
         "drivers.sim.pointcloud",
     ),

@@ -12,11 +12,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { PathPoint, CostmapEvent, SlopeGridEvent, SceneGraphEvent } from '../types'
 import type { BinaryCloud } from '../hooks/useBinaryCloud'
 
-// Pre-allocated GPU capacity for the live point cloud.  60k matches the
-// gateway's per-frame cap; 200k gives headroom for future tuning without
-// reallocating the BufferGeometry on the GPU.
-const CLOUD_CAPACITY = 200_000
-
 export interface Scene3DHandle {
   resetCamera(): void
 }
@@ -53,10 +48,8 @@ interface Scene3DProps {
 
 const Z_FLOOR   = -0.2  // include floor-level scan points
 const Z_CEIL    = 2.8   // ignore points above ceiling (m)
-
-// Turbo-style height colormap is now applied inside the cloud decoder
-// worker (see web/src/workers/cloudDecoder.ts) so the main thread never
-// iterates per point.
+// The worker still owns binary decode and filtering. Scene3D projects a sampled
+// live cloud onto a 2D overlay so points remain visible across WebGL drivers.
 
 function removeFrom(scene: THREE.Scene, obj: THREE.Object3D | undefined | null) {
   if (!obj) return
@@ -75,11 +68,14 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const sceneRef   = useRef<THREE.Scene | null>(null)
   const cameraRef  = useRef<THREE.PerspectiveCamera | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const cloudOverlayRef = useRef<HTMLCanvasElement | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
   const rafRef     = useRef(0)
+  const latestCloudRef = useRef(cloud)
+  const cloudVisibleRef = useRef(layers.cloud)
+  const pointSizeRef = useRef(pointSize)
 
   // Scene objects — recreated on data change
-  const voxelRef   = useRef<THREE.InstancedMesh | null>(null)
   const trailLineRef = useRef<THREE.Line | null>(null)
   const pathLineRef  = useRef<THREE.Mesh | null>(null)
   const localPathRef = useRef<THREE.Mesh | null>(null)
@@ -94,6 +90,10 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const sgGroupRef     = useRef<THREE.Group | null>(null)
   const raycaster  = useRef(new THREE.Raycaster())
   const robotPosRef = useRef({ x: 0, y: 0 })
+
+  useEffect(() => { latestCloudRef.current = cloud }, [cloud])
+  useEffect(() => { cloudVisibleRef.current = layers.cloud }, [layers.cloud])
+  useEffect(() => { pointSizeRef.current = pointSize }, [pointSize])
 
   // ── Expose resetCamera ──────────────────────────────────────────
   useImperativeHandle(ref, () => ({
@@ -127,6 +127,51 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     mount.appendChild(renderer.domElement)
     rendererRef.current = renderer
 
+    const cloudOverlay = document.createElement('canvas')
+    cloudOverlay.style.position = 'absolute'
+    cloudOverlay.style.inset = '0'
+    cloudOverlay.style.width = '100%'
+    cloudOverlay.style.height = '100%'
+    cloudOverlay.style.pointerEvents = 'none'
+    cloudOverlay.style.zIndex = '1'
+    mount.appendChild(cloudOverlay)
+    cloudOverlayRef.current = cloudOverlay
+
+    const resizeOverlay = (nw: number, nh: number) => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      cloudOverlay.width = Math.max(1, Math.floor(nw * dpr))
+      cloudOverlay.height = Math.max(1, Math.floor(nh * dpr))
+    }
+    resizeOverlay(w, h)
+
+    const drawCloudOverlay = () => {
+      const overlay = cloudOverlayRef.current
+      if (!overlay) return
+      const ctx = overlay.getContext('2d')
+      if (!ctx) return
+      const width = overlay.width
+      const height = overlay.height
+      ctx.clearRect(0, 0, width, height)
+      const live = latestCloudRef.current
+      if (!cloudVisibleRef.current || live.count <= 0) return
+      const stride = Math.max(1, Math.ceil(live.count / 2500))
+      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const size = Math.max(2, pointSizeRef.current * 10) * dpr
+      const half = size / 2
+      const p = new THREE.Vector3()
+      ctx.fillStyle = 'rgba(94, 234, 255, 0.88)'
+      for (let src = 0; src < live.count; src += stride) {
+        const off = src * 3
+        p.set(live.positions[off], live.positions[off + 1], live.positions[off + 2])
+        p.project(camera)
+        if (p.z < -1 || p.z > 1) continue
+        const sx = (p.x * 0.5 + 0.5) * width
+        const sy = (-p.y * 0.5 + 0.5) * height
+        if (sx < -size || sx > width + size || sy < -size || sy > height + size) continue
+        ctx.fillRect(sx - half, sy - half, size, size)
+      }
+    }
+
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping  = true
     controls.dampingFactor  = 0.1
@@ -158,6 +203,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       rafRef.current = requestAnimationFrame(animate)
       controls.update()
       renderer.render(scene, camera)
+      drawCloudOverlay()
     }
     animate()
 
@@ -166,6 +212,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       camera.aspect = nw / nh
       camera.updateProjectionMatrix()
       renderer.setSize(nw, nh)
+      resizeOverlay(nw, nh)
     })
     ro.observe(mount)
 
@@ -175,6 +222,10 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       controls.dispose()
       renderer.dispose()
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
+      if (cloudOverlayRef.current && mount.contains(cloudOverlayRef.current)) {
+        mount.removeChild(cloudOverlayRef.current)
+      }
+      cloudOverlayRef.current = null
     }
   }, [])
 
@@ -182,78 +233,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   useEffect(() => {
     if (gridRef.current) gridRef.current.visible = layers.grid
   }, [layers.grid])
-
-  // ── Live point cloud (in-place GPU update) ──────────────────────
-  // The mesh + buffers are allocated ONCE at CLOUD_CAPACITY.  Each frame
-  // we copy the worker-decoded Float32Array into the existing attribute
-  // and bump needsUpdate + drawRange — no dispose, no GC pressure, no
-  // per-point JS work on the main thread (the worker already did colors).
-  useEffect(() => {
-    const scene = sceneRef.current
-    if (!scene) return
-    if (voxelRef.current) return  // already initialised
-
-    const geo = new THREE.BufferGeometry()
-    const posAttr = new THREE.BufferAttribute(new Float32Array(CLOUD_CAPACITY * 3), 3)
-    const colAttr = new THREE.BufferAttribute(new Float32Array(CLOUD_CAPACITY * 3), 3)
-    posAttr.setUsage(THREE.DynamicDrawUsage)
-    colAttr.setUsage(THREE.DynamicDrawUsage)
-    geo.setAttribute('position', posAttr)
-    geo.setAttribute('color', colAttr)
-    geo.setDrawRange(0, 0)
-    // Bounding sphere is recomputed lazily; set a generous one so frustum
-    // culling never hides points before the first real frame arrives.
-    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 200)
-
-    const mat = new THREE.PointsMaterial({
-      size: pointSize, vertexColors: true, sizeAttenuation: true,
-    })
-    const mesh = new THREE.Points(geo, mat)
-    mesh.frustumCulled = false
-    scene.add(mesh)
-    voxelRef.current = mesh as unknown as THREE.InstancedMesh
-    // pointSize is updated by the dedicated "Live point size update" effect
-    // below, so this initialiser only runs once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    const mesh = voxelRef.current as unknown as THREE.Points | null
-    if (!mesh) return
-    mesh.visible = layers.cloud
-  }, [layers.cloud])
-
-  useEffect(() => {
-    const mesh = voxelRef.current as unknown as THREE.Points | null
-    if (!mesh) return
-    const geo = mesh.geometry
-    const posAttr = geo.getAttribute('position') as THREE.BufferAttribute
-    const colAttr = geo.getAttribute('color') as THREE.BufferAttribute
-    const n = Math.min(cloud.count, CLOUD_CAPACITY)
-    if (n === 0) {
-      geo.setDrawRange(0, 0)
-      return
-    }
-    ;(posAttr.array as Float32Array).set(cloud.positions.subarray(0, n * 3))
-    ;(colAttr.array as Float32Array).set(cloud.colors.subarray(0, n * 3))
-    // Tell Three.js exactly which sub-range changed so the WebGL driver
-    // uploads only the live points instead of the full CLOUD_CAPACITY buffer.
-    posAttr.clearUpdateRanges()
-    posAttr.addUpdateRange(0, n * 3)
-    colAttr.clearUpdateRanges()
-    colAttr.addUpdateRange(0, n * 3)
-    posAttr.needsUpdate = true
-    colAttr.needsUpdate = true
-    geo.setDrawRange(0, n)
-  }, [cloud.seq, cloud.count, cloud.positions, cloud.colors])
-
-  // ── Live point size update ─────────────────────────────────────
-  useEffect(() => {
-    const mesh = voxelRef.current
-    if (!mesh) return
-    const mat = (mesh as unknown as THREE.Points).material as THREE.PointsMaterial
-    if (mat?.isPointsMaterial) { mat.size = pointSize; mat.needsUpdate = true }
-  }, [pointSize])
 
   // ── Trail ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -449,13 +428,14 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     //   60  saturated orange rgb(255,133, 38) — danger ring
     //   80  deep red      rgb(231, 72, 72)   — imminent collision
     //   100 lethal crimson rgb(183, 28, 28)  — wall / lethal
+    // Keep alpha modest so this diagnostic layer does not bury live cloud points.
     const STOPS: Array<[number, number, number, number, number]> = [
       [  0,  46, 196, 182,   0],
-      [ 20,  46, 196, 182,  70],
-      [ 40, 255, 214,  90, 120],
-      [ 60, 255, 133,  38, 170],
-      [ 80, 231,  72,  72, 210],
-      [100, 183,  28,  28, 235],
+      [ 20,  46, 196, 182,  44],
+      [ 40, 255, 214,  90,  74],
+      [ 60, 255, 133,  38, 108],
+      [ 80, 231,  72,  72, 138],
+      [100, 183,  28,  28, 162],
     ]
     const interp = (v: number): [number, number, number, number] => {
       for (let i = 0; i < STOPS.length - 1; i++) {
@@ -521,7 +501,9 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     //   Mesh:  lies flat on world XZ (x-rotation only).
     const mesh = new THREE.Mesh(geo, mat)
     mesh.rotation.x = -Math.PI / 2
+    mesh.renderOrder = 5
     const group = new THREE.Group()
+    group.renderOrder = 5
     // Derivation: plane local (mx, my) after x-rotation → Three (mx, 0, -my).
     // World CCW yaw in map frame composes with the y-mirror into +yaw around
     // Three Y. Don't negate.
@@ -755,7 +737,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       ref={mountRef}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
-      style={{ width: '100%', height: '100%', cursor: 'crosshair' }}
+      style={{ width: '100%', height: '100%', cursor: 'crosshair', position: 'relative' }}
     />
   )
 })

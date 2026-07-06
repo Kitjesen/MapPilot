@@ -21,7 +21,7 @@ RUNTIME_ENV_PATH = ROOT_DIR / "scripts" / "deploy" / "thunder" / "runtime-env.sh
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from runtime.adapters.dds.contracts import endpoint_contract  # noqa: E402
+from runtime.endpoints.dds.contracts import endpoint_contract  # noqa: E402
 from runtime.blueprints.profile_builder import blueprint_for_resolved_profile  # noqa: E402
 from runtime.profiles.endpoints import resolve_runtime_run_spec  # noqa: E402
 from runtime.profiles.resolver import resolve_runtime_config  # noqa: E402
@@ -141,10 +141,9 @@ def validate(profile: str = EXPECTED_PROFILE) -> dict[str, Any]:
     checked_files = {
         "src/runtime/profiles/catalog/endpoints.py",
         "src/runtime/blueprints/products/thunder.py",
-        "src/runtime/adapters/dds/contracts.py",
-        "src/runtime/adapters/dds/endpoint_runner.py",
-        "src/runtime/adapters/dds/endpoint_service.py",
-        "src/runtime/adapters/lcm/sources/brainstem.py",
+        "src/runtime/endpoints/dds/contracts.py",
+        "src/runtime/endpoints/dds/endpoint_runner.py",
+        "src/runtime/endpoints/dds/endpoint_service.py",
     }
 
     resolved = resolve_runtime_config(

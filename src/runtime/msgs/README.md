@@ -19,7 +19,7 @@ Keep Python module ports typed with these message classes. Serialization is an
 adapter concern:
 
 - In-process module graph: pass the Python objects directly.
-- LCM endpoints: use versioned endpoint schemas under `runtime.adapters.lcm`.
+- Endpoint replay: use versioned endpoint schemas under `runtime.adapters.endpoint_sources`.
 - DDS product topics: use `src/message/dds.py` and native C++ aliases from
   `src/message/cpp/dds_topics.hpp`.
 - Protobuf: add only for a real non-Python/non-DDS boundary that needs generated

@@ -35,7 +35,7 @@ build_large_terrain_assets: Any = None
 
 
 DEFAULT_MATRIX_ROUTES = ("terrain_short", "terrain_long", "terrain_narrow_gap", "terrain_slope_bypass")
-DEFAULT_PLANNERS = ("astar",)
+DEFAULT_PLANNERS = ("octoplanner3d",)
 SELECTION_POLICY = "first_route_ok_after_primary"
 PCT_OPTIMIZE_TRAJECTORY_ENV = "LINGTU_PCT_OPTIMIZE_TRAJECTORY"
 _FALSE_ENV_VALUES = {"0", "false", "no", "off"}
@@ -59,7 +59,7 @@ def _load_runtime() -> None:
 
         GlobalPlanner = _GlobalPlanner
     if evaluate_plan_safety is None or grid_from_tomogram is None or path_distance is None:
-        from nav.safety.plan_safety import (
+        from nav.services.safety.plan_safety import (
             evaluate_plan_safety as _evaluate_plan_safety,
             grid_from_tomogram as _grid_from_tomogram,
             path_distance as _path_distance,

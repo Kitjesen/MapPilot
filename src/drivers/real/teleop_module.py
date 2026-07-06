@@ -21,7 +21,7 @@ JPEG frames with /ws/teleop?video=1, but normal /ws/teleop is control-only.
 Ports:
   In:  color_image (Image)  鈥?camera frames to encode + forward
        joy_input   (dict)   鈥?raw joystick message from GatewayModule WS
-  Out: cmd_vel     (Twist)  鈥?scaled joystick 鈫?VelocityMux
+  Out: cmd_vel     (Twist)  鈥?scaled joystick 鈫?nav.velocity_mux
        teleop_active (bool) 鈥?True while joystick is active
 """
 
@@ -48,7 +48,7 @@ class TeleopModule(Module, layer=6):
 
     Teleop state (active/idle/release) is managed entirely here.
     GatewayModule forwards raw WS joy messages via ``joy_input`` port.
-    cmd_vel is published to VelocityMux (not directly to the driver).
+    cmd_vel is published to nav.velocity_mux (not directly to the driver).
     """
 
     # -- Inputs --
