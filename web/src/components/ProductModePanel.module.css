@@ -1,0 +1,464 @@
+.page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.header,
+.panel {
+  background: var(--glass);
+  backdrop-filter: blur(30px) saturate(120%);
+  -webkit-backdrop-filter: blur(30px) saturate(120%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  flex-shrink: 0;
+}
+
+.header h1 {
+  margin: 2px 0 3px;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.header p {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.kicker {
+  color: var(--accent) !important;
+  font-family: var(--font-mono);
+  font-size: 11px !important;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.72fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.main,
+.side {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.main,
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel {
+  padding: 13px;
+}
+
+.panelTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 11px;
+  color: var(--text);
+}
+
+.panelTitle h2 {
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.panelTitle svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.iconButton,
+.secondaryButton,
+.primaryButton,
+.servoButton,
+.servoButtonActive,
+.stopButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 11px;
+  color: var(--text-dim);
+  background: var(--glass-lo);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    color 0.15s var(--ease-out),
+    background 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out);
+}
+
+.iconButton:hover:not(:disabled),
+.secondaryButton:hover:not(:disabled),
+.servoButton:hover:not(:disabled),
+.stopButton:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--glass-hi);
+  border-color: var(--border-hi);
+}
+
+.iconButton:disabled,
+.secondaryButton:disabled,
+.primaryButton:disabled,
+.servoButton:disabled,
+.servoButtonActive:disabled,
+.stopButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.primaryButton {
+  color: var(--accent);
+  border-color: rgba(94, 234, 212, 0.32);
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.primaryButton:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: rgba(94, 234, 212, 0.5);
+  background: rgba(94, 234, 212, 0.14);
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.statusGrid div,
+.resultRows strong,
+.servoStatus strong {
+  min-width: 0;
+}
+
+.statusGrid div {
+  padding: 10px 11px;
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.statusGrid span,
+.formGrid span,
+.resultRows span,
+.servoTarget span,
+.servoStatus span {
+  display: block;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.statusGrid strong,
+.resultRows strong,
+.servoStatus strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.modeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.modeCard,
+.modeCardActive {
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 11px 12px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out),
+    box-shadow 0.15s var(--ease-out);
+}
+
+.modeCard:hover,
+.modeCardActive {
+  background: var(--glass-hi);
+  border-color: var(--border-hi);
+}
+
+.modeCardActive {
+  box-shadow: inset 0 0 0 1px rgba(94, 234, 212, 0.22);
+}
+
+.modeIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+  background: rgba(94, 234, 212, 0.08);
+  border: 1px solid rgba(94, 234, 212, 0.16);
+  border-radius: var(--r-sm);
+}
+
+.modeBody strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.modeBody small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.hotBadge,
+.coldBadge,
+.ok,
+.warn,
+.dim {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.hotBadge,
+.ok {
+  color: var(--accent);
+  background: rgba(94, 234, 212, 0.08);
+  border-color: rgba(94, 234, 212, 0.28);
+}
+
+.coldBadge,
+.warn {
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.dim {
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.formGrid label,
+.servoTarget {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.formGrid select,
+.servoTarget input {
+  width: 100%;
+  height: 34px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 0 9px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.formGrid select:focus,
+.servoTarget input:focus {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+.toggleRow {
+  min-height: 34px;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 9px !important;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.toggleRow input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
+.inlineWarn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.resultHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.resultHead strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.resultRows {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.blockerList,
+.effectsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.blockerList span,
+.effectsList span {
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.blockerList span {
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.effectsList span {
+  color: var(--accent);
+  background: rgba(94, 234, 212, 0.07);
+  border: 1px solid rgba(94, 234, 212, 0.18);
+}
+
+.sideHint {
+  margin-bottom: 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.servoModes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.servoButtonActive {
+  color: var(--accent);
+  border-color: rgba(94, 234, 212, 0.32);
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.stopButton {
+  color: var(--red);
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(248, 113, 113, 0.07);
+}
+
+.stopButton:hover:not(:disabled) {
+  color: var(--red);
+  background: rgba(248, 113, 113, 0.13);
+  border-color: rgba(248, 113, 113, 0.36);
+}
+
+.servoStatus {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 980px) {
+  .layout,
+  .statusGrid,
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}

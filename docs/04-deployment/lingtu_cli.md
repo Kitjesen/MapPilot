@@ -184,6 +184,15 @@ Profile-level switching may still require restart depending on the endpoint.
 Visual-servo target/mode switching is the explicit hot-switch entry inside
 profiles that already load `VisualServoModule`.
 
+The Web dashboard exposes the same contract in the `Runtime` tab:
+
+- Product mode cards call `POST /api/v1/runtime/switch`.
+- `Preflight` sends `execute=false`; it is read-only and should be run before
+  any switch.
+- `Execute Switch` sends `execute=true`; cold-restart modes are disabled until
+  the operator explicitly enables service restart in the UI.
+- Visual Servo `Find`, `Follow`, and `Stop` call `POST /api/v1/visual_servo`.
+
 ## Plan Preview
 
 ```bash

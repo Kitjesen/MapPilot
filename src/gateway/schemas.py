@@ -779,6 +779,7 @@ ProductModeProfile = Literal[
     "tracking",
     "nav",
     "inspection",
+    "tare_explore",
 ]
 
 

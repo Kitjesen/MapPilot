@@ -16,6 +16,8 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .sep {
@@ -30,11 +32,19 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+  max-width: min(560px, 48vw);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab,
 .tabActive {
-  padding: 4px 11px;
+  padding: 4px 9px;
   border-radius: var(--r-sm);
   font-family: var(--font-ui);
   font-size: var(--t-label-size);
@@ -58,7 +68,7 @@
 .tabActive {
   background: rgba(255, 255, 255, 0.08);
   color: var(--t-body-em-color);
-  font-size: var(--t-body-em-size);
+  font-size: var(--t-label-size);
   font-weight: var(--t-body-em-weight);
 }
 
@@ -178,6 +188,8 @@
   align-items: center;
   gap: var(--s-3);
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   justify-content: center;
 }
 

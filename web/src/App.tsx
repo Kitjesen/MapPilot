@@ -11,6 +11,9 @@ import { MapView } from './components/MapView'
 import { SlamPanel } from './components/SlamPanel'
 import { SceneView } from './components/SceneView'
 import { PlannerTuning } from './components/PlannerTuning'
+import { ProductModePanel } from './components/ProductModePanel'
+import { RuntimeDataflowView } from './components/RuntimeDataflowView'
+import { InspectionAcceptanceView } from './components/InspectionAcceptanceView'
 
 import { MiniMap } from './components/MiniMap'
 import { FloatingWidget } from './components/FloatingWidget'
@@ -97,6 +100,9 @@ function Dashboard() {
         {activeTab === 'scene' && <SceneView sseState={sseState} showToast={showToast} />}
         {activeTab === 'map' && <MapView showToast={showToast} />}
         {activeTab === 'slam' && <SlamPanel sseState={sseState} showToast={showToast} />}
+        {activeTab === 'dataflow' && <RuntimeDataflowView sseState={sseState} />}
+        {activeTab === 'inspection' && <InspectionAcceptanceView sseState={sseState} />}
+        {activeTab === 'runtime' && <ProductModePanel sseState={sseState} showToast={showToast} />}
         {activeTab === 'planner' && <PlannerTuning showToast={showToast} />}
 
       </main>

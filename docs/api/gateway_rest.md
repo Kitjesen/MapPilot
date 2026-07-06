@@ -34,6 +34,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/navigation/goal_candidate` — Construct and optionally preview a navigation goal without publishing it
   - `POST /api/v1/navigation/plan` — Preview navigation plan without publishing a goal
   - `POST /api/v1/stop` — Emergency stop
+  - `POST /api/v1/visual_servo` — Hot-switch visual servo target
 - **src\gateway\routes\diagnostics.py**:
   - `GET /api/v1/diagnostic_pack` — Export diagnostic tarball
   - `GET /api/v1/diagnostics/algorithm-benchmark/latest` — Read latest read-only algorithm benchmark summary
@@ -94,6 +95,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/runtime/dataflow/subscribe` — Create a read-only runtime dataflow SSE subscription plan
   - `GET /api/v1/runtime/dataflow/topic` — Inspect one runtime dataflow topic
   - `POST /api/v1/runtime/switch-plan` — Dry-run runtime endpoint switch plan
+  - `POST /api/v1/runtime/switch` — Validate and optionally execute a product mode switch
   - `GET /api/v1/scene_graph` — Current scene graph
   - `GET /api/v1/state` — Full robot state snapshot
   - `GET /health` — Liveness probe
@@ -206,6 +208,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** Emergency stop
 **Response model:** `ControlCommandResponse`
 **Handler:** `post_stop`
+
+### `POST /api/v1/visual_servo`
+**Summary:** Hot-switch visual servo target
+**Response model:** `ControlCommandResponse`
+**Handler:** `post_visual_servo`
 
 ## src\gateway\routes\diagnostics.py
 
@@ -483,6 +490,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** Dry-run runtime endpoint switch plan
 **Response model:** `RuntimeSwitchPlanResponse`
 **Handler:** `post_runtime_switch_plan`
+
+### `POST /api/v1/runtime/switch`
+**Summary:** Validate and optionally execute a product mode switch
+**Response model:** `RuntimeSwitchResponse`
+**Handler:** `post_runtime_switch`
 
 ### `GET /api/v1/scene_graph`
 **Summary:** Current scene graph

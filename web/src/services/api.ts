@@ -55,6 +55,8 @@ import type {
   SlamOperationResponse,
   SlamProfile,
   StateResponse,
+  VisualServoMode,
+  VisualServoRequest,
 } from '../types'
 
 const WEB_CLIENT_ID = 'web-dashboard'
@@ -542,6 +544,20 @@ export async function sendMode(mode: 'manual' | 'autonomous' | 'estop'): Promise
   return postJson<ControlCommandResponse>(
     apiPath('mode', '/api/v1/mode'),
     commandBody('mode', { mode }),
+  )
+}
+
+export async function sendVisualServo(
+  mode: VisualServoMode,
+  target?: string | null,
+): Promise<ControlCommandResponse> {
+  const body: VisualServoRequest = {
+    mode,
+    target: mode === 'stop' ? null : target,
+  }
+  return postJson<ControlCommandResponse>(
+    apiPath('visual_servo', '/api/v1/visual_servo'),
+    commandBody('visual_servo', body as unknown as Record<string, unknown>),
   )
 }
 

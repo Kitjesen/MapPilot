@@ -1049,6 +1049,39 @@ def test_runtime_switch_endpoint_rejects_hot_when_graph_requires_restart():
     assert gateway.stop_cmd.msg_count == 0
 
 
+def test_runtime_switch_endpoint_accepts_tare_explore_product_mode():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
+
+    result = asyncio.run(
+        post_runtime_switch(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="tare_explore",
+                request_id="tare-explore-switch-test",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.accepted is False
+    assert model.status == "planned"
+    assert model.lifecycle == "cold_restart"
+    assert model.product_mode_switch is not None
+    assert model.product_mode_switch["target"]["profile"] == "tare_explore"
+    assert model.command[:3] == ["bash", model.command[1], "mode"]
+    assert model.command[3:5] == ["switch", "tare_explore"]
+    assert "--map" not in model.command
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+
+
 def test_runtime_switch_endpoint_can_launch_robot_side_mode_switch(
     monkeypatch,
     tmp_path,

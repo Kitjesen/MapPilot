@@ -189,6 +189,20 @@ entry hot-switches only inside profiles that already load `VisualServoModule`.
 It does not dynamically create VisualServo in lightweight profiles such as
 `teleop`, `teleop_avoid`, or `map`.
 
+Web UI entry:
+
+```text
+Runtime tab
+  -> Preflight: POST /api/v1/runtime/switch {"execute":false}
+  -> Execute Switch: POST /api/v1/runtime/switch {"execute":true}
+  -> Visual Servo: POST /api/v1/visual_servo
+```
+
+The UI is a Gateway client, not a separate control plane. Cold-restart product
+modes stay disabled until the operator explicitly enables restart permission in
+the UI. Hot-switch product modes are still accepted or rejected by the backend
+plan based on the active graph and session.
+
 The legacy direct gRPC path is kept only for lightweight, compatibility, or
 local direct-driver chains:
 

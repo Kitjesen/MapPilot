@@ -53,6 +53,7 @@ Important current links include:
 | `runtime_dataflow`, `runtime_dataflow_topic`, `runtime_dataflow_subscribe` | Module-first dataflow summary, one-stream inspection, and read-only Gateway SSE subscription plan |
 | `runtime_switch_plan` | Read-only dry-run sim/replay/real runtime endpoint switch preflight |
 | `runtime_switch` | Product mode switch request; defaults to plan-only and requires explicit restart permission |
+| `visual_servo` | Hot target switch for find/follow/stop inside profiles that load `VisualServoModule` |
 | `field_check` | Backend product verdict for field/simulation/non-motion readiness |
 | `inspection_acceptance` | Read-only patrol acceptance summary over saved locations and plan previews |
 | `session`, `session_start`, `session_end` | mapping, navigation, exploration lifecycle |
@@ -64,7 +65,9 @@ Important current links include:
 | `real_runtime_evidence_latest` | latest real S100P runtime evidence for explicit field-mode status |
 | `algorithm_benchmark_latest` | latest read-only DimOS/algorithm benchmark artifact gate |
 
-The Dataflow tab uses `runtime_dataflow` for the read-only product stream table, runtime stage evidence, `runtime_dataflow_topic` for one-stream evidence, `runtime_dataflow_subscribe` to discover the filtered Gateway SSE URL for a whitelisted stream, `runtime_switch_plan` for dry-run sim-to-real endpoint preflight, and the backend `field_check` algorithm verdict derived from `algorithm_benchmark_latest`. Product mode execution uses `runtime_switch`; it stays plan-only unless the caller explicitly allows a cold restart. Its Product Check strip reads the backend `field_check` verdict in simulation mode by default, so PASS/FAIL stays aligned with Gateway acceptance rather than being recomputed in the browser. Field mode remains explicit when real S100P evidence is being reviewed. It must remain an observation surface: no arbitrary ModulePort publish, no arbitrary ROS topic publish, and no motion command bypass.
+The Dataflow tab uses `runtime_dataflow` for the read-only product stream table, runtime stage evidence, `runtime_dataflow_topic` for one-stream evidence, `runtime_dataflow_subscribe` to discover the filtered Gateway SSE URL for a whitelisted stream, `runtime_switch_plan` for dry-run sim-to-real endpoint preflight, and the backend `field_check` algorithm verdict derived from `algorithm_benchmark_latest`. Its Product Check strip reads the backend `field_check` verdict in simulation mode by default, so PASS/FAIL stays aligned with Gateway acceptance rather than being recomputed in the browser. Field mode remains explicit when real S100P evidence is being reviewed. It must remain an observation surface: no arbitrary ModulePort publish, no arbitrary ROS topic publish, and no motion command bypass.
+
+The Runtime tab is the operator-facing switch UI. It calls `runtime_switch` with `execute=false` for Preflight and `execute=true` only when the operator presses Execute Switch. Cold-restart modes require the explicit "Allow cold restart of robot-side services" toggle before Execute Switch is enabled. Navigation-like modes (`tracking`, `nav`, `inspection`) still depend on the backend plan to decide whether the current graph supports hot switch. The same tab exposes `visual_servo` find/follow/stop; `find` and `follow` remain motion-capable commands guarded by Gateway safety policy, while `stop` only releases visual-servo ownership.
 
 The Inspection tab uses `inspection_acceptance` for the backend verdict. It displays the Gateway-built summary, blockers, and per-point preview status; the UI must not recompute PASS/FAIL locally or publish any movement command.
 
@@ -75,6 +78,7 @@ Read-only UI actions:
 - Open dashboard, status cards, topbar, Scene view, Map preview, SLAM status.
 - Open the Dataflow tab and inspect runtime stream summary/detail.
 - Open the Inspection tab and run the read-only patrol acceptance check.
+- Open the Runtime tab and run product switch Preflight.
 - SSE `/api/v1/events`, point cloud `/ws/cloud`, camera `/ws/camera`.
 - Gateway bootstrap, health, readiness, runtime dataflow, map list, map points, navigation status.
 
@@ -85,12 +89,15 @@ State-changing but no robot motion:
 - Switch SLAM mode.
 - Manual or auto relocalization.
 - Reset accumulated map cloud.
+- Execute a product mode switch that only plans, stops current motion, or cold-restarts services without publishing a navigation goal.
+- Send Visual Servo `stop`.
 
 Robot motion capable:
 
 - Send navigation goal from Scene view or slash command.
 - Start exploration after safety/session gates pass.
 - Teleop or any command that enters autonomous motion.
+- Execute a product mode that starts an exploration/navigation behavior, or send Visual Servo `find`/`follow`.
 
 The UI now confirms map activation and saved-map load/relocalize. Goal sending is disabled when Gateway reports readiness blockers, localization loss, missing odometry, or an active command source.
 

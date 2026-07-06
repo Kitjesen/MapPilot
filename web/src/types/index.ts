@@ -701,6 +701,7 @@ export interface ClientLinks {
   navigate_click?: string
   stop?: string
   instruction?: string
+  visual_servo?: string
   mode?: string
   lease?: string
   maps?: string
@@ -1080,6 +1081,7 @@ export interface RuntimeSwitchPlanResponse {
   changed: string[]
   current_validation: RuntimeSwitchValidationSummary
   target_validation: RuntimeSwitchValidationSummary
+  product_mode_switch?: Record<string, unknown> | null
   blockers: string[]
   links: ClientLinks
   error?: string | null
@@ -1092,6 +1094,16 @@ export type ProductModeProfile =
   | 'tracking'
   | 'nav'
   | 'inspection'
+  | 'tare_explore'
+
+export type VisualServoMode = 'find' | 'follow' | 'stop'
+
+export interface VisualServoRequest {
+  mode: VisualServoMode
+  target?: string | null
+  client_id?: string
+  request_id?: string | null
+}
 
 export interface RuntimeSwitchRequest {
   current_profile?: string | null
@@ -1447,6 +1459,8 @@ export interface SessionEvent {
   type: 'session'
   data: {
     mode: 'idle' | 'mapping' | 'navigating' | 'exploring'
+    product_profile?: string | null
+    product_session?: string | null
     slam_profile?: string | null
     localization_backend?: string | null
     health_source?: string | null
@@ -1651,7 +1665,7 @@ export interface Toast {
   kind: ToastKind
 }
 
-export type Tab = 'console' | 'scene' | 'map' | 'slam' | 'planner'
+export type Tab = 'console' | 'scene' | 'map' | 'slam' | 'dataflow' | 'inspection' | 'runtime' | 'planner'
 
 export type SlamProfile = 'fastlio2' | 'localizer' | 'super_lio' | 'super_lio_relocation' | 'stop'
 
