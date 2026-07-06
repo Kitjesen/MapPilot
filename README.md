@@ -182,15 +182,18 @@ python lingtu.py nav
 > stop
 ```
 
-Robot-side operations use the field CLI:
+Field operations use the robot-side CLI. Run these on the S100P/sunrise board
+after SSH, or through the aliases documented in
+[`docs/04-deployment/lingtu_cli.md`](docs/04-deployment/lingtu_cli.md). They
+are not the normal local Windows development commands.
 
 ```bash
-bash scripts/lingtu status
-bash scripts/lingtu map start
-bash scripts/lingtu map save building_a
-bash scripts/lingtu nav start building_a
-bash scripts/lingtu nav goal 5 3
-bash scripts/lingtu svc status
+bash scripts/lingtu status                 # robot service/session snapshot
+bash scripts/lingtu map start              # switch SLAM to mapping mode
+bash scripts/lingtu map save building_a    # save map bundle and artifacts
+bash scripts/lingtu nav start building_a   # start saved-map navigation
+bash scripts/lingtu nav goal 5 3           # send a map-frame goal
+bash scripts/lingtu svc status             # systemd/native service status
 ```
 
 ## Composable Blueprint API
@@ -385,7 +388,9 @@ Start here:
 - ChromaDB, LLMs, WebRTC, Rerun, and heavy perception backends are optional.
 - TARE requires its external binary/submodule build.
 
-## Licensing
+## Project License
 
-This checkout does not currently include a root project license file. Vendored
-and third-party components keep their own license files in their subtrees.
+This checkout does not currently declare a project-level license in a root
+`LICENSE` file. Do not assume MIT/open-source redistribution rights until that
+file is added. Vendored and third-party components keep their own license files
+inside their subtrees.
