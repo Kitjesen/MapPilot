@@ -392,7 +392,10 @@ def check_lidar_camera_projection(cfg: dict, result: CheckResult, verbose: bool)
         # If Z <= 0, point is behind camera
         if pt_c[2] <= 0:
             projected_behind += 1
-            proj_results.append(f"  pt[{i}] lidar=({pt_l[0]:.1f},{pt_l[1]:.1f},{pt_l[2]:.1f}) → behind camera (Z={pt_c[2]:.2f})")
+            proj_results.append(
+                f"  pt[{i}] lidar=({pt_l[0]:.1f},{pt_l[1]:.1f},{pt_l[2]:.1f}) "
+                f"→ behind camera (Z={pt_c[2]:.2f})"
+            )
             continue
 
         # Project to pixels

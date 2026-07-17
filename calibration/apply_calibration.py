@@ -319,16 +319,16 @@ def _sanity_check_imu_noise(name: str, value: float) -> None:
     low, high = ICM40609_REFERENCE[name]
     if value < low / 5:
         logger.warning(
-            "  WARNING: %s=%.6g is unusually LOW for ICM-40609 (datasheet typical %.2g–%.2g). "
+            "  WARNING: %s=%.6g is unusually LOW for ICM-40609 (datasheet typical %.2g-%.2g). "
             "Possible causes: integration window too short, IMU saturated, units mis-converted.",
             name, value, low, high)
     elif value > high * 5:
         logger.warning(
-            "  WARNING: %s=%.6g is unusually HIGH for ICM-40609 (datasheet typical %.2g–%.2g). "
+            "  WARNING: %s=%.6g is unusually HIGH for ICM-40609 (datasheet typical %.2g-%.2g). "
             "Possible causes: vibration during recording, thermal drift, AC vent draft.",
             name, value, low, high)
     else:
-        logger.info("  %s=%.6g is within ICM-40609 expected range (%.2g–%.2g)",
+        logger.info("  %s=%.6g is within ICM-40609 expected range (%.2g-%.2g)",
                     name, value, low, high)
 
 
