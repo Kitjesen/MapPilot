@@ -11,6 +11,7 @@ from sim.evaluation.slam.public_datasets import (
 
 ROOT = Path(__file__).resolve().parents[3]
 DATASET_CLI_PATH = ROOT / "scripts" / "datasets" / "public_slam_dataset.py"
+SLAM_EVALUATION_README_PATH = ROOT / "sim" / "evaluation" / "slam" / "README.md"
 DATASET_CLI_SPEC = importlib.util.spec_from_file_location(
     "public_slam_dataset",
     DATASET_CLI_PATH,
@@ -206,3 +207,14 @@ def test_dataset_cli_writes_a_native_replay_manifest(tmp_path):
 
 def test_catalog_path_is_repository_owned():
     assert PUBLIC_DATASET_CATALOG_PATH == Path("sim/evaluation/slam/configs/public_datasets.json")
+
+
+def test_public_mid360_runbook_reaches_native_dds_and_fastlio2():
+    runbook = SLAM_EVALUATION_README_PATH.read_text(encoding="utf-8")
+
+    assert "--stdin-records" in runbook
+    assert "--dds" in runbook
+    assert "--domain-id 83" in runbook
+    assert "LINGTU_SLAM_BIN=" in runbook
+    assert "LINGTU_SLAM_MODE=mapping" in runbook
+    assert "scripts/deploy/thunder/run_slam_dds.sh" in runbook

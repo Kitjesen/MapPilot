@@ -44,6 +44,36 @@ build/livox_sdk2_stream/livox_sdk2_stream \
   --validate-records < /data/ltu/outdoor_hard_01a.ltu
 ```
 
+Run the native Fast-LIO2 runtime and the LTU1 publisher in two terminals on an
+isolated DDS domain. This keeps replay traffic away from the robot's live domain
+and does not start navigation, the driver, or any motion endpoint.
+
+Terminal 1:
+
+```bash
+LINGTU_SLAM_BIN="$PWD/build/slam_core/lingtu_slam_cyclone_runtime" \
+LINGTU_SLAM_MODE=mapping \
+LINGTU_SLAM_CONFIG="$PWD/src/localization/fastlio2/config/mid360_s100p.yaml" \
+LINGTU_DDS_DOMAIN_ID=83 \
+LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json \
+bash scripts/deploy/thunder/run_slam_dds.sh
+```
+
+Terminal 2:
+
+```bash
+build/livox_sdk2_stream/livox_sdk2_stream \
+  --stdin-records \
+  --dds \
+  --domain-id 83 \
+  --replay-rate 1.0 \
+  < /data/ltu/outdoor_hard_01a.ltu
+```
+
+The end-to-end path is therefore `rosbag2 -> normalized JSONL -> LTU1 -> native
+CycloneDDS -> Fast-LIO2 -> /tmp/lingtu_slam_status.json`. Use the readiness
+commands below to capture unique status observations and evaluate the result.
+
 The ROS adapter lazily imports `rosbag2_py`, `rclpy.serialization`, and the
 message packages, so normal LingTu startup has no ROS dependency. PointCloud2
 fields are decoded from their declared offsets, datatypes, row stride, and
