@@ -5,8 +5,10 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <memory>
+#include <new>
 #include <string>
 
 namespace {
@@ -24,10 +26,42 @@ std::string Text(const char* value) {
 }
 
 char* CopyString(const std::string& value) {
+#if defined(LINGTU_INSPECTION_C_API_TEST_FORCE_STRING_ALLOCATION_FAILURE)
+  char* copy = nullptr;
+#else
   auto* copy = static_cast<char*>(std::malloc(value.size() + 1U));
-  if (copy == nullptr) return nullptr;
+#endif
+  if (copy == nullptr) throw std::bad_alloc{};
   std::memcpy(copy, value.c_str(), value.size() + 1U);
   return copy;
+}
+
+void SetErrorNoThrow(Handle* state, const char* error) noexcept {
+  if (state == nullptr) return;
+  try {
+    state->error = error == nullptr ? "unknown inspection store failure" : error;
+  } catch (...) {
+    state->error.clear();
+  }
+}
+
+void SetErrorNoThrow(Handle* state, const std::string& error) noexcept {
+  if (state == nullptr) return;
+  try {
+    state->error = error;
+  } catch (...) {
+    state->error.clear();
+  }
+}
+
+void SetCurrentExceptionNoThrow(Handle* state) noexcept {
+  try {
+    throw;
+  } catch (const std::exception& exc) {
+    SetErrorNoThrow(state, exc.what());
+  } catch (...) {
+    SetErrorNoThrow(state, "unknown inspection store failure");
+  }
 }
 
 lingtu::nav::inspection::Route ToRoute(const lingtu_inspection_route& input) {
@@ -68,7 +102,11 @@ lingtu::nav::inspection::Route ToRoute(const lingtu_inspection_route& input) {
 extern "C" {
 
 uint32_t lingtu_inspection_store_abi_version() {
-  return kInspectionStoreAbiVersion;
+  try {
+    return kInspectionStoreAbiVersion;
+  } catch (...) {
+    return 0U;
+  }
 }
 
 lingtu_inspection_store_handle lingtu_inspection_store_create(const char* map_root) {
@@ -81,7 +119,10 @@ lingtu_inspection_store_handle lingtu_inspection_store_create(const char* map_ro
 }
 
 void lingtu_inspection_store_destroy(lingtu_inspection_store_handle handle) {
-  delete static_cast<Handle*>(handle);
+  try {
+    delete static_cast<Handle*>(handle);
+  } catch (...) {
+  }
 }
 
 int32_t lingtu_inspection_store_put(
@@ -94,10 +135,10 @@ int32_t lingtu_inspection_store_put(
   auto* state = static_cast<Handle*>(handle);
   try {
     const auto result = state->store.Put(ToRoute(*route));
-    state->error = result.ok ? std::string{} : result.reason;
+    SetErrorNoThrow(state, result.ok ? std::string{} : result.reason);
     return result.ok ? 0 : -1;
-  } catch (const std::exception& exc) {
-    state->error = exc.what();
+  } catch (...) {
+    SetCurrentExceptionNoThrow(state);
     return -1;
   }
 }
@@ -108,9 +149,14 @@ int32_t lingtu_inspection_store_delete(
     const char* route_id) {
   if (handle == nullptr) return -1;
   auto* state = static_cast<Handle*>(handle);
-  const auto result = state->store.Delete(Text(map_id), Text(route_id));
-  state->error = result.ok ? std::string{} : result.reason;
-  return result.ok ? 0 : -1;
+  try {
+    const auto result = state->store.Delete(Text(map_id), Text(route_id));
+    SetErrorNoThrow(state, result.ok ? std::string{} : result.reason);
+    return result.ok ? 0 : -1;
+  } catch (...) {
+    SetCurrentExceptionNoThrow(state);
+    return -1;
+  }
 }
 
 char* lingtu_inspection_store_get_json(
@@ -119,13 +165,18 @@ char* lingtu_inspection_store_get_json(
     const char* route_id) {
   if (handle == nullptr) return nullptr;
   auto* state = static_cast<Handle*>(handle);
-  const auto route = state->store.Get(Text(map_id), Text(route_id));
-  if (!route) {
-    state->error = "route_not_found";
+  try {
+    const auto route = state->store.Get(Text(map_id), Text(route_id));
+    if (!route) {
+      SetErrorNoThrow(state, "route_not_found");
+      return nullptr;
+    }
+    SetErrorNoThrow(state, "");
+    return CopyString(lingtu::nav::inspection::RouteToJson(*route));
+  } catch (...) {
+    SetCurrentExceptionNoThrow(state);
     return nullptr;
   }
-  state->error.clear();
-  return CopyString(lingtu::nav::inspection::RouteToJson(*route));
 }
 
 char* lingtu_inspection_store_list_json(
@@ -133,26 +184,45 @@ char* lingtu_inspection_store_list_json(
     const char* map_id) {
   if (handle == nullptr) return nullptr;
   auto* state = static_cast<Handle*>(handle);
-  state->error.clear();
-  return CopyString(
-      lingtu::nav::inspection::RouteListToJson(state->store.List(Text(map_id))));
+  try {
+    auto* result = CopyString(
+        lingtu::nav::inspection::RouteListToJson(state->store.List(Text(map_id))));
+    SetErrorNoThrow(state, "");
+    return result;
+  } catch (...) {
+    SetCurrentExceptionNoThrow(state);
+    return nullptr;
+  }
 }
 
 char* lingtu_inspection_store_status_json(
     lingtu_inspection_store_handle handle) {
   if (handle == nullptr) return nullptr;
   auto* state = static_cast<Handle*>(handle);
-  state->error.clear();
-  return CopyString(state->store.StatusJson());
+  try {
+    auto* result = CopyString(state->store.StatusJson());
+    SetErrorNoThrow(state, "");
+    return result;
+  } catch (...) {
+    SetCurrentExceptionNoThrow(state);
+    return nullptr;
+  }
 }
 
 const char* lingtu_inspection_store_last_error(lingtu_inspection_store_handle handle) {
-  if (handle == nullptr) return "invalid_inspection_store_handle";
-  return static_cast<Handle*>(handle)->error.c_str();
+  try {
+    if (handle == nullptr) return "invalid_inspection_store_handle";
+    return static_cast<Handle*>(handle)->error.c_str();
+  } catch (...) {
+    return "unknown inspection store failure";
+  }
 }
 
 void lingtu_inspection_string_free(char* value) {
-  std::free(value);
+  try {
+    std::free(value);
+  } catch (...) {
+  }
 }
 
 }  // extern "C"

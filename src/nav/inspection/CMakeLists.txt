@@ -36,4 +36,20 @@ if(BUILD_TESTING)
     target_compile_options(lingtu_inspection_test PRIVATE -UNDEBUG)
   endif()
   add_test(NAME lingtu_inspection_test COMMAND lingtu_inspection_test)
+
+  add_executable(lingtu_inspection_c_api_exception_test
+    test_c_api_exception.cpp
+    c_api.cpp)
+  target_link_libraries(lingtu_inspection_c_api_exception_test PRIVATE
+    lingtu_inspection_core)
+  target_compile_definitions(lingtu_inspection_c_api_exception_test PRIVATE
+    LINGTU_INSPECTION_C_API_TEST_FORCE_STRING_ALLOCATION_FAILURE=1)
+  if(MSVC)
+    target_compile_options(lingtu_inspection_c_api_exception_test PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(lingtu_inspection_c_api_exception_test PRIVATE -UNDEBUG)
+  endif()
+  add_test(
+    NAME lingtu_inspection_c_api_exception_test
+    COMMAND lingtu_inspection_c_api_exception_test)
 endif()

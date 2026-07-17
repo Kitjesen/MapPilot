@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,29 @@ def test_native_inspection_c_api_exports_store_abi_version() -> None:
 
     assert "lingtu_inspection_store_abi_version" in header
     assert "lingtu_inspection_store_abi_version" in source
+
+
+def _c_function_body(source: str, function_name: str) -> str:
+    signature = source.index(f"{function_name}(")
+    opening_brace = source.index("{", signature)
+    depth = 0
+    for offset, character in enumerate(source[opening_brace:], start=opening_brace):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening_brace + 1 : offset]
+    raise AssertionError(f"unterminated C function body: {function_name}")
+
+
+def test_every_native_inspection_c_export_has_a_catch_all_exception_boundary() -> None:
+    header = Path("src/nav/inspection/c_api.h").read_text(encoding="utf-8")
+    source = Path("src/nav/inspection/c_api.cpp").read_text(encoding="utf-8")
+    exports = set(re.findall(r"\b(lingtu_inspection_[a-z0-9_]+)\s*\(", header))
+
+    assert exports
+    for export in sorted(exports):
+        body = _c_function_body(source, export)
+        assert "try" in body, f"{export} is missing its C ABI exception boundary"
+        assert "catch (...)" in body, f"{export} can leak a non-standard C++ exception"

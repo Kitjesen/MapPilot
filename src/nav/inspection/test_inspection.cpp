@@ -3,10 +3,29 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace inspection = lingtu::nav::inspection;
+
+#ifdef _WIN32
+namespace lingtu::nav::inspection::detail {
+
+bool AtomicPublishFile(
+    const std::filesystem::path& temporary,
+    const std::filesystem::path& target,
+    std::string* error);
+
+}  // namespace lingtu::nav::inspection::detail
+#endif
 
 inspection::Route MakeRoute() {
   inspection::Route route;
@@ -90,6 +109,75 @@ void TestStore() {
   assert(!store.Get("factory", "north_loop").has_value());
   std::filesystem::remove_all(root, ec);
 }
+
+#ifdef _WIN32
+HANDLE LockFileForMove(const std::filesystem::path& path) {
+  return CreateFileW(
+      path.c_str(),
+      GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE,
+      nullptr,
+      OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL,
+      nullptr);
+}
+
+void TestFailedReplacementPreservesPublishedFiles() {
+  const auto root =
+      std::filesystem::temp_directory_path() / "lingtu_inspection_atomic_publish_test";
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+  inspection::Store store(root);
+
+  auto route = MakeRoute();
+  route.revision = 1U;
+  route.name = "published-route";
+  assert(store.Put(route).ok);
+
+  const auto route_target = store.RoutePath(route.map_id, route.id);
+  const auto route_temporary_path = route_target.string() + ".tmp.test";
+  {
+    std::ofstream out(route_temporary_path, std::ios::binary | std::ios::trunc);
+    out << "replacement-route";
+  }
+  const HANDLE route_temporary = LockFileForMove(route_temporary_path);
+  assert(route_temporary != INVALID_HANDLE_VALUE);
+  std::string route_error;
+  const bool route_published = inspection::detail::AtomicPublishFile(
+      route_temporary_path, route_target, &route_error);
+  CloseHandle(route_temporary);
+  assert(!route_published);
+  assert(route_error.find("route_publish_failed:") == 0U);
+  const auto preserved_route = store.Get(route.map_id, route.id);
+  assert(preserved_route.has_value());
+  assert(preserved_route->revision == 1U);
+  assert(preserved_route->name == "published-route");
+
+  inspection::RunStatus status;
+  status.state = inspection::RunState::kNavigating;
+  status.run_id = "published-status";
+  assert(store.PutStatus(status).ok);
+
+  const auto status_target = root / ".inspection" / "run_status.json";
+  const auto status_temporary_path = status_target.string() + ".tmp.test";
+  {
+    std::ofstream out(status_temporary_path, std::ios::binary | std::ios::trunc);
+    out << "replacement-status";
+  }
+  const HANDLE status_temporary = LockFileForMove(status_temporary_path);
+  assert(status_temporary != INVALID_HANDLE_VALUE);
+  std::string status_error;
+  const bool status_published = inspection::detail::AtomicPublishFile(
+      status_temporary_path, status_target, &status_error);
+  CloseHandle(status_temporary);
+  assert(!status_published);
+  assert(status_error.find("route_publish_failed:") == 0U);
+  assert(store.StatusJson().find("\"run_id\":\"published-status\"") !=
+         std::string::npos);
+
+  std::filesystem::remove_all(root, ec);
+}
+#endif
 
 void TestExecutor() {
   inspection::Executor executor;
@@ -507,6 +595,9 @@ void TestNavigationProgressExtendsDeadlineWithoutKillingLongLegs() {
 
 int main() {
   TestStore();
+#ifdef _WIN32
+  TestFailedReplacementPreservesPublishedFiles();
+#endif
   TestExecutor();
   TestRunStateCompatibility();
   TestActionValidation();

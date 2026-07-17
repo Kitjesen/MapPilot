@@ -9,6 +9,13 @@
 #include <stdexcept>
 #include <system_error>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace lingtu::nav::inspection {
 namespace {
 
@@ -85,25 +92,34 @@ std::filesystem::path TemporaryPath(const std::filesystem::path& path) {
   return path.string() + ".tmp." + std::to_string(tick);
 }
 
-bool PublishFile(
+}  // namespace
+
+namespace detail {
+
+bool AtomicPublishFile(
     const std::filesystem::path& temporary,
     const std::filesystem::path& target,
     std::string* error) {
   std::error_code ec;
-  std::filesystem::rename(temporary, target, ec);
-  if (!ec) return true;
 #ifdef _WIN32
-  std::filesystem::remove(target, ec);
-  ec.clear();
+  if (MoveFileExW(
+          temporary.c_str(),
+          target.c_str(),
+          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE) {
+    return true;
+  }
+  ec = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+#else
   std::filesystem::rename(temporary, target, ec);
   if (!ec) return true;
 #endif
   if (error != nullptr) *error = "route_publish_failed:" + ec.message();
-  std::filesystem::remove(temporary, ec);
+  std::error_code cleanup_ec;
+  std::filesystem::remove(temporary, cleanup_ec);
   return false;
 }
 
-}  // namespace
+}  // namespace detail
 
 Store::Store(std::filesystem::path map_root)
     : map_root_(std::filesystem::absolute(std::move(map_root))) {}
@@ -153,7 +169,7 @@ StoreResult Store::Put(const Route& route) {
   }
   out.close();
   std::string error;
-  if (!PublishFile(temporary, target, &error)) return {false, error};
+  if (!detail::AtomicPublishFile(temporary, target, &error)) return {false, error};
   return {true, "route_saved"};
 }
 
@@ -261,7 +277,7 @@ StoreResult Store::PutStatus(const RunStatus& status) {
   }
   out.close();
   std::string error;
-  if (!PublishFile(temporary, target, &error)) return {false, error};
+  if (!detail::AtomicPublishFile(temporary, target, &error)) return {false, error};
   return {true, "status_saved"};
 }
 
